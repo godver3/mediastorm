@@ -3,10 +3,38 @@ package parsett
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 )
+
+// getScriptPaths returns the paths to the Python script and venv python executable.
+// It first checks for Docker paths (scripts at /), then falls back to local development paths.
+func getScriptPaths(scriptName string) (scriptPath, pythonPath string, err error) {
+	// Docker paths (scripts copied to / in container)
+	dockerScript := "/" + scriptName
+	dockerPython := "/.venv/bin/python3"
+
+	if _, err := os.Stat(dockerScript); err == nil {
+		if _, err := os.Stat(dockerPython); err == nil {
+			return dockerScript, dockerPython, nil
+		}
+	}
+
+	// Local development paths (scripts in backend/, venv in project root)
+	_, currentFile, _, ok := runtime.Caller(1)
+	if !ok {
+		return "", "", fmt.Errorf("failed to get current file path")
+	}
+
+	// From backend/utils/parsett/, go up 2 levels to backend/
+	scriptPath = filepath.Join(filepath.Dir(currentFile), "..", "..", scriptName)
+	// From backend/utils/parsett/, go up 3 levels to project root for .venv
+	pythonPath = filepath.Join(filepath.Dir(currentFile), "..", "..", "..", ".venv", "bin", "python3")
+
+	return scriptPath, pythonPath, nil
+}
 
 // ParsedTitle represents the result from PTT's parse_title function
 type ParsedTitle struct {
@@ -34,15 +62,10 @@ type ParsedTitle struct {
 // ParseTitle calls the Python PTT library to parse a media title
 // Returns a ParsedTitle struct with the parsed information
 func ParseTitle(title string) (*ParsedTitle, error) {
-	// Get the path to the Python script
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, fmt.Errorf("failed to get current file path")
+	scriptPath, venvPython, err := getScriptPaths("parse_title.py")
+	if err != nil {
+		return nil, err
 	}
-
-	// The script is at the root of the NovaStream directory
-	scriptPath := filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "parse_title.py")
-	venvPython := filepath.Join(filepath.Dir(currentFile), "..", "..", "..", ".venv", "bin", "python3")
 
 	// Execute the Python script with the title as an argument
 	cmd := exec.Command(venvPython, scriptPath, title)
@@ -79,15 +102,10 @@ func ParseTitleBatch(titles []string) (map[string]*ParsedTitle, error) {
 		return make(map[string]*ParsedTitle), nil
 	}
 
-	// Get the path to the batch Python script
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, fmt.Errorf("failed to get current file path")
+	scriptPath, venvPython, err := getScriptPaths("parse_title_batch.py")
+	if err != nil {
+		return nil, err
 	}
-
-	// The batch script is at the root of the NovaStream directory
-	scriptPath := filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "parse_title_batch.py")
-	venvPython := filepath.Join(filepath.Dir(currentFile), "..", "..", "..", ".venv", "bin", "python3")
 
 	// Build command with all titles as arguments
 	args := append([]string{scriptPath}, titles...)
