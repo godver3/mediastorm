@@ -667,6 +667,14 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}
 
+	// If audio probe failed (no streams returned) and we're using fMP4 output (DV/HDR),
+	// force AAC transcoding to avoid potential TrueHD-in-MP4 experimental codec errors.
+	// TrueHD in MP4/fMP4 requires -strict -2 and likely won't play on Apple devices anyway.
+	if len(audioStreams) == 0 && (session.HasDV || session.HasHDR) {
+		log.Printf("[hls] session %s: audio probe returned no streams and fMP4 output required; forcing AAC transcoding for safety", session.ID)
+		forceAAC = true
+	}
+
 	// For seeking to work with -c:v copy, we need a seekable input
 	// Check if we can get a direct HTTP URL instead of using a pipe
 	log.Printf("[hls] session %s: checking for direct URL support (startOffset=%.3f)", session.ID, session.StartOffset)
