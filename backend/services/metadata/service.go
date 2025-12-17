@@ -1399,6 +1399,24 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		}
 
+		// In demo mode, clamp to season 1 only (skip season 0/specials if present)
+		if s.demo && len(cached.Seasons) > 0 {
+			var season1 *models.SeriesSeason
+			for i := range cached.Seasons {
+				if cached.Seasons[i].Number == 1 {
+					season1 = &cached.Seasons[i]
+					break
+				}
+			}
+			if season1 != nil {
+				log.Printf("[metadata] demo mode: clamping cached to season 1 only (had %d seasons) tvdbId=%d", len(cached.Seasons), tvdbID)
+				cached.Seasons = []models.SeriesSeason{*season1}
+			} else if len(cached.Seasons) > 1 {
+				log.Printf("[metadata] demo mode: no season 1 in cache, using first season tvdbId=%d", tvdbID)
+				cached.Seasons = cached.Seasons[:1]
+			}
+		}
+
 		return &cached, nil
 	}
 
@@ -1658,6 +1676,25 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	details := models.SeriesDetails{
 		Title:   seriesTitle,
 		Seasons: seasons,
+	}
+
+	// In demo mode, clamp to season 1 only (skip season 0/specials if present)
+	if s.demo && len(details.Seasons) > 0 {
+		var season1 *models.SeriesSeason
+		for i := range details.Seasons {
+			if details.Seasons[i].Number == 1 {
+				season1 = &details.Seasons[i]
+				break
+			}
+		}
+		if season1 != nil {
+			log.Printf("[metadata] demo mode: clamping to season 1 only (had %d seasons) tvdbId=%d", len(details.Seasons), tvdbID)
+			details.Seasons = []models.SeriesSeason{*season1}
+		} else if len(details.Seasons) > 1 {
+			// No season 1 found, just take first season
+			log.Printf("[metadata] demo mode: no season 1 found, using first season tvdbId=%d", tvdbID)
+			details.Seasons = details.Seasons[:1]
+		}
 	}
 
 	log.Printf("[metadata] series details artwork summary tvdbId=%d seasons=%d episodesWithImages=%d episodesWithoutImages=%d", tvdbID, len(seasons), episodesWithImage, episodesWithoutImage)

@@ -48,14 +48,14 @@ var demoTrendingSeries = []models.TrendingItem{
 	{
 		Rank: 1,
 		Title: models.Title{
-			ID:        "tvdb:series:70331",
-			Name:      "Flash Gordon",
-			Overview:  "Space adventurer Flash Gordon battles the forces of Ming the Merciless in a serial-style TV adaptation.",
-			Year:      1954,
+			ID:        "tvdb:series:71471",
+			Name:      "The Beverly Hillbillies",
+			Overview:  "A poor backwoods family strikes oil and moves to Beverly Hills, where their down-home ways clash hilariously with high society.",
+			Year:      1962,
 			Language:  "en",
 			MediaType: "tv",
-			TVDBID:    70331,
-			IMDBID:    "tt0140738",
+			TVDBID:    71471,
+			IMDBID:    "tt0055662",
 		},
 	},
 	{
