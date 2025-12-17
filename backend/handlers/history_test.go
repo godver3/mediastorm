@@ -95,7 +95,7 @@ func TestHistoryHandler_RecordEpisode(t *testing.T) {
 			LastWatched: models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1},
 		},
 	}
-	handler := handlers.NewHistoryHandler(svc, fakeUserService{})
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
 
 	payload := models.EpisodeWatchPayload{
 		SeriesID: "s1",
@@ -124,7 +124,7 @@ func TestHistoryHandler_RecordEpisode(t *testing.T) {
 func TestHistoryHandler_ListContinueWatching(t *testing.T) {
 	expected := []models.SeriesWatchState{{SeriesID: "s1"}}
 	svc := &fakeHistoryService{items: expected}
-	handler := handlers.NewHistoryHandler(svc, fakeUserService{})
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/users/user/history/continue", nil)
 	req = mux.SetURLVars(req, map[string]string{"userID": "user"})

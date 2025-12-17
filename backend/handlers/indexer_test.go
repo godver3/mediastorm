@@ -30,7 +30,7 @@ func TestIndexerHandler_Search(t *testing.T) {
 	fake := &fakeIndexerService{
 		results: []models.NZBResult{{Title: "The Expanse", Indexer: "nzbPlanet", SizeBytes: 1234}},
 	}
-	handler := NewIndexerHandler(fake)
+	handler := NewIndexerHandler(fake, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=The+Expanse&limit=2&cat=5000&cat=5040", nil)
 	rec := httptest.NewRecorder()
@@ -61,7 +61,7 @@ func TestIndexerHandler_Search(t *testing.T) {
 
 func TestIndexerHandler_SearchDefaultLimit(t *testing.T) {
 	fake := &fakeIndexerService{results: []models.NZBResult{}}
-	handler := NewIndexerHandler(fake)
+	handler := NewIndexerHandler(fake, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=expanse&limit=invalid", nil)
 	rec := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestIndexerHandler_SearchDefaultLimit(t *testing.T) {
 
 func TestIndexerHandler_SearchError(t *testing.T) {
 	fake := &fakeIndexerService{err: errors.New("indexer down")}
-	handler := NewIndexerHandler(fake)
+	handler := NewIndexerHandler(fake, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=expanse", nil)
 	rec := httptest.NewRecorder()

@@ -112,3 +112,4 @@ frontend/.husky
 .venv
 .vscode
 backend/config
+GEMINI.md
