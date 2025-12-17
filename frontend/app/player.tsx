@@ -27,7 +27,6 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   BackHandler,
   Platform,
@@ -48,11 +47,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { detectDolbyVision } from '@/app/details/playback';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useLoadingScreen } from '@/components/LoadingScreenContext';
+import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
 import type { AudioStreamMetadata, SubtitleStreamMetadata } from '@/services/api';
 import apiService from '@/services/api';
-import { markReleaseAsUnplayable } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -361,6 +360,7 @@ const findSubtitleTrackByPreference = (
 export default function PlayerScreen() {
   const { settings, userSettings } = useBackendSettings();
   const { hideLoadingScreen } = useLoadingScreen();
+  const { showToast } = useToast();
   const {
     movie,
     headerImage,
@@ -793,47 +793,9 @@ export default function PlayerScreen() {
           hasShownFatalErrorRef.current = true;
           console.warn('[player] HLS session fatal error:', status.fatalError);
 
-          // Get current source path for marking as unplayable
-          const currentSourcePath = sourcePath;
-
-          // Extract the release filename from the source path (last path segment, without extension)
-          // e.g., "/debrid/realdebrid/xxx/Interstellar.2014.2160p.mkv" -> "Interstellar.2014.2160p"
-          const releaseFilename = currentSourcePath
-            ? (currentSourcePath.split('/').filter(Boolean).pop() || '')
-                .replace(/\.(mkv|mp4|avi|m4v|webm|ts)$/i, '') // Remove common video extensions
-            : undefined;
-
-          // Show alert to user with option to mark release as unplayable
-          Alert.alert(
-            'Stream Error',
-            `This release cannot be played: ${status.fatalError}. The video file may be corrupted or contain unsupported data.`,
-            [
-              {
-                text: 'Go Back',
-                style: 'cancel',
-                onPress: () => {
-                  router.back();
-                },
-              },
-              ...(currentSourcePath && releaseFilename
-                ? [
-                    {
-                      text: 'Mark Unplayable',
-                      style: 'destructive' as const,
-                      onPress: async () => {
-                        await markReleaseAsUnplayable(
-                          currentSourcePath,
-                          releaseFilename, // Use release filename instead of movie title
-                          status.fatalError || 'Stream error',
-                        );
-                        router.back();
-                      },
-                    },
-                  ]
-                : []),
-            ],
-            { cancelable: false },
-          );
+          // Show error toast and navigate back
+          showToast(`Stream error: ${status.fatalError}`, { tone: 'danger', duration: 5000 });
+          router.back();
         }
       } catch (error) {
         // Status check failed - might be session expired, not necessarily an error
@@ -2488,13 +2450,14 @@ export default function PlayerScreen() {
 
       // Only retry for HLS streams, CoreMedia errors, and if we haven't retried too much
       const maxRetries = 2;
-      if (
+      const canRetry =
         isCoreMediaError &&
         isHlsStream &&
         initialSourcePath &&
         hlsSessionRetryCountRef.current < maxRetries &&
-        !isRetryingHlsSessionRef.current
-      ) {
+        !isRetryingHlsSessionRef.current;
+
+      if (canRetry) {
         hlsSessionRetryCountRef.current += 1;
         isRetryingHlsSessionRef.current = true;
 
@@ -2539,14 +2502,25 @@ export default function PlayerScreen() {
             playbackOffsetRef.current = response.startOffset;
             sessionBufferEndRef.current = response.startOffset;
           }
+          return; // Successfully created retry session
         } catch (retryError) {
           console.error('[player] failed to create retry HLS session:', retryError);
+          // Fall through to show error toast
         } finally {
           isRetryingHlsSessionRef.current = false;
         }
       }
+
+      // If we can't retry or retry failed, show error toast and navigate back
+      const errorMessage =
+        error?.error?.localizedDescription ||
+        error?.error?.localizedFailureReason ||
+        error?.message ||
+        'An error occurred during playback';
+      showToast(`Playback error: ${errorMessage}`, { tone: 'danger', duration: 5000 });
+      router.back();
     },
-    [isHlsStream, initialSourcePath, routeHasDolbyVision, routeDvProfile, routeHasHDR10, forceAacFromRoute],
+    [isHlsStream, initialSourcePath, routeHasDolbyVision, routeDvProfile, routeHasHDR10, forceAacFromRoute, showToast],
   );
 
   const handleVideoEnd = useCallback(() => {

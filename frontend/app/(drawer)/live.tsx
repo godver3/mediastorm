@@ -815,7 +815,7 @@ function LiveScreen() {
                     <View style={styles.actionsRow}>
                       <FocusablePressable
                         text="Categories"
-                        icon="albums-outline"
+                        icon={Platform.isTV ? 'albums-outline' : undefined}
                         onSelect={handleOpenCategoryModal}
                         disabled={availableCategories.length === 0}
                         focusKey="live-categories"
@@ -823,7 +823,7 @@ function LiveScreen() {
                       />
                       <FocusablePressable
                         text={isFilterActive ? 'Close Filter' : 'Filter'}
-                        icon={isFilterActive ? 'close-outline' : 'filter-outline'}
+                        icon={Platform.isTV ? (isFilterActive ? 'close-outline' : 'filter-outline') : undefined}
                         onSelect={handleToggleFilter}
                         focusKey="live-filter"
                         style={styles.headerActionButton}

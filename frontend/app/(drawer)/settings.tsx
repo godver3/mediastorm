@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -763,10 +764,41 @@ function SettingsScreen() {
 
   const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
   const [backendApiKeyInput, setBackendApiKeyInput] = useState(backendApiKey);
+
+  // TV inline text input refs and state
+  const { lock: lockNavigation, unlock: unlockNavigation } = useLockSpatialNavigation();
+  const backendUrlInputRef = useRef<TextInput>(null);
+  const backendPinInputRef = useRef<TextInput>(null);
+  const audioLangInputRef = useRef<TextInput>(null);
+  const subtitleLangInputRef = useRef<TextInput>(null);
+  const tempBackendUrlRef = useRef(backendUrl);
+  const tempBackendPinRef = useRef(backendApiKey);
+  const tempAudioLangRef = useRef('');
+  const tempSubtitleLangRef = useRef('');
+  const [activeInlineInput, setActiveInlineInput] = useState<string | null>(null);
+
+  // Sync temp refs with state
+  useEffect(() => {
+    tempBackendUrlRef.current = backendUrlInput;
+  }, [backendUrlInput]);
+
+  useEffect(() => {
+    tempBackendPinRef.current = backendApiKeyInput;
+  }, [backendApiKeyInput]);
+
   const [editableSettings, setEditableSettings] = useState<EditableBackendSettings | null>(
     settings ? toEditableSettings(settings) : null,
   );
   const [dirty, setDirty] = useState(false);
+
+  // Sync playback temp refs with editableSettings (after editableSettings is declared)
+  useEffect(() => {
+    tempAudioLangRef.current = editableSettings?.playback.preferredAudioLanguage || '';
+  }, [editableSettings?.playback.preferredAudioLanguage]);
+
+  useEffect(() => {
+    tempSubtitleLangRef.current = editableSettings?.playback.preferredSubtitleLanguage || '';
+  }, [editableSettings?.playback.preferredSubtitleLanguage]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const { releases: unplayableReleases, unmarkUnplayable, clearAll: clearUnplayableReleases } = useUnplayableReleases();
   const playbackOptions = useMemo<
@@ -1840,6 +1872,7 @@ function SettingsScreen() {
         type: 'header',
         id: 'playback-player-header',
         title: 'Player Preference',
+        description: 'Choose which video player to use for playback. Native uses the built-in player, or select an external app.',
       },
       {
         type: 'dropdown',
@@ -1857,11 +1890,12 @@ function SettingsScreen() {
         type: 'header',
         id: 'playback-lang-header',
         title: 'Audio & Subtitle Preferences',
+        description: 'Set your preferred languages using ISO 639-1 codes (e.g., "en" for English, "es" for Spanish).',
       },
       {
         type: 'text-field',
         id: 'playback-audio-lang',
-        label: 'Preferred Audio Language',
+        label: 'Audio Language',
         value: editableSettings.playback.preferredAudioLanguage || '',
         fieldKey: 'playback.preferredAudioLanguage',
         options: { placeholder: 'en' },
@@ -1869,7 +1903,7 @@ function SettingsScreen() {
       {
         type: 'text-field',
         id: 'playback-subtitle-lang',
-        label: 'Preferred Subtitle Language',
+        label: 'Subtitle Language',
         value: editableSettings.playback.preferredSubtitleLanguage || '',
         fieldKey: 'playback.preferredSubtitleLanguage',
         options: { placeholder: 'en' },
@@ -1890,6 +1924,7 @@ function SettingsScreen() {
         type: 'header',
         id: 'playback-loading-header',
         title: 'Loading Screen',
+        description: 'Display a themed loading screen with title information while content buffers.',
       },
       {
         type: 'toggle',
@@ -2132,15 +2167,152 @@ function SettingsScreen() {
   const renderGridItem = useCallback(
     ({ item }: { item: SettingsGridItem }) => {
       switch (item.type) {
-        case 'header':
-          return (
+        case 'header': {
+          // Only wrap topmost headers (first header of each tab) with focusable view for scroll
+          const topmostHeaders = ['connection-header', 'playback-player-header', 'filtering-size-header', 'home-shelves-header', 'live-hidden-header'];
+          const isTopmost = topmostHeaders.includes(item.id);
+
+          const headerContent = (
             <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
               <Text style={styles.tvGridHeaderTitle}>{item.title}</Text>
               {item.description && <Text style={styles.tvGridHeaderDescription}>{item.description}</Text>}
             </View>
           );
 
-        case 'text-field':
+          if (isTopmost) {
+            return (
+              <SpatialNavigationFocusableView
+                style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
+                focusKey={`grid-${item.id}`}>
+                {() => headerContent}
+              </SpatialNavigationFocusableView>
+            );
+          }
+          return headerContent;
+        }
+
+        case 'text-field': {
+          // Inline text input configuration for supported fields
+          const inlineFieldConfig: Record<string, {
+            inputRef: React.RefObject<TextInput | null>;
+            tempRef: React.MutableRefObject<string>;
+            setValue: (value: string) => void;
+          }> = {
+            'backendUrl': {
+              inputRef: backendUrlInputRef,
+              tempRef: tempBackendUrlRef,
+              setValue: setBackendUrlInput,
+            },
+            'backendApiKey': {
+              inputRef: backendPinInputRef,
+              tempRef: tempBackendPinRef,
+              setValue: setBackendApiKeyInput,
+            },
+            'playback.preferredAudioLanguage': {
+              inputRef: audioLangInputRef,
+              tempRef: tempAudioLangRef,
+              setValue: (value: string) => {
+                if (editableSettings) {
+                  setEditableSettings({
+                    ...editableSettings,
+                    playback: { ...editableSettings.playback, preferredAudioLanguage: value },
+                  });
+                  setDirty(true);
+                }
+              },
+            },
+            'playback.preferredSubtitleLanguage': {
+              inputRef: subtitleLangInputRef,
+              tempRef: tempSubtitleLangRef,
+              setValue: (value: string) => {
+                if (editableSettings) {
+                  setEditableSettings({
+                    ...editableSettings,
+                    playback: { ...editableSettings.playback, preferredSubtitleLanguage: value },
+                  });
+                  setDirty(true);
+                }
+              },
+            },
+          };
+
+          const fieldConfig = inlineFieldConfig[item.fieldKey];
+          if (fieldConfig) {
+            const { inputRef, tempRef, setValue } = fieldConfig;
+
+            const handleInlineFocus = () => {
+              lockNavigation();
+              setActiveInlineInput(item.fieldKey);
+            };
+
+            const handleInlineBlur = () => {
+              unlockNavigation();
+              setActiveInlineInput(null);
+              // Apply the value from temp ref on blur
+              if (Platform.isTV) {
+                setValue(tempRef.current);
+              }
+            };
+
+            const handleInlineChangeText = (text: string) => {
+              if (Platform.isTV) {
+                tempRef.current = text;
+              } else {
+                setValue(text);
+              }
+            };
+
+            return (
+              <SpatialNavigationFocusableView
+                style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
+                focusKey={`grid-${item.id}`}
+                onSelect={() => {
+                  inputRef.current?.focus();
+                }}
+                onBlur={() => {
+                  inputRef.current?.blur();
+                  Keyboard.dismiss();
+                }}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <Pressable tvParallaxProperties={{ enabled: false }}>
+                    <View style={[styles.tvGridInlineInputRow, isFocused && styles.tvGridInlineInputRowFocused]}>
+                      <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
+                      <TextInput
+                        ref={inputRef}
+                        style={[
+                          styles.tvGridInlineInput,
+                          isFocused && styles.tvGridInlineInputFocused,
+                        ]}
+                        {...(Platform.isTV ? { defaultValue: item.value } : { value: item.value })}
+                        onChangeText={handleInlineChangeText}
+                        onFocus={handleInlineFocus}
+                        onBlur={handleInlineBlur}
+                        placeholder={item.options?.placeholder}
+                        placeholderTextColor={theme.colors.text.muted}
+                        keyboardType={item.options?.keyboardType ?? 'default'}
+                        secureTextEntry={item.options?.secureTextEntry}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        spellCheck={false}
+                        editable={isFocused}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                        disableFullscreenUI={true}
+                        {...(Platform.OS === 'ios' &&
+                          Platform.isTV && {
+                          keyboardAppearance: 'dark',
+                        })}
+                      />
+                    </View>
+                  </Pressable>
+                )}
+              </SpatialNavigationFocusableView>
+            );
+          }
+
+          // For other text fields, keep the modal approach
           return (
             <SpatialNavigationFocusableView
               style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
@@ -2158,6 +2330,7 @@ function SettingsScreen() {
               )}
             </SpatialNavigationFocusableView>
           );
+        }
 
         case 'toggle':
           return (
@@ -2167,15 +2340,13 @@ function SettingsScreen() {
               onSelect={() => handleGridFieldUpdate(item.fieldKey, !item.value)}>
               {({ isFocused }: { isFocused: boolean }) => (
                 <View style={[styles.tvGridToggleRow, isFocused && styles.tvGridToggleRowFocused]}>
-                  <View style={styles.tvGridToggleLabel}>
-                    <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
-                    {item.description && <Text style={styles.tvGridToggleDescription}>{item.description}</Text>}
-                  </View>
+                  <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
                   <Switch
                     value={item.value}
                     onValueChange={(v) => handleGridFieldUpdate(item.fieldKey, v)}
-                    trackColor={{ false: theme.colors.background.base, true: theme.colors.accent.primary }}
+                    trackColor={{ false: theme.colors.background.elevated, true: theme.colors.accent.primary }}
                     thumbColor={theme.colors.text.inverse}
+                    style={isFocused ? styles.tvGridToggleSwitchFocused : undefined}
                   />
                 </View>
               )}
@@ -2184,10 +2355,10 @@ function SettingsScreen() {
 
         case 'dropdown':
           return (
-            <View style={[styles.tvGridDropdownRow, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
-              <Text style={styles.tvGridDropdownLabel}>{item.label}</Text>
+            <View style={[styles.tvGridDropdownRowInline, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
+              <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
               <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.tvGridDropdownOptions}>
+                <View style={styles.tvGridDropdownOptionsInline}>
                   {item.options.map((option) => (
                     <FocusablePressable
                       key={option.value}
@@ -2274,7 +2445,7 @@ function SettingsScreen() {
           return null;
       }
     },
-    [styles, theme, openTextInputModal, handleGridFieldUpdate, handleGridAction, moveShelfUp, moveShelfDown, updateShelf, setActiveTab],
+    [styles, theme, openTextInputModal, handleGridFieldUpdate, handleGridAction, moveShelfUp, moveShelfDown, updateShelf, setActiveTab, lockNavigation, unlockNavigation, activeInlineInput, setBackendUrlInput, setBackendApiKeyInput, editableSettings, setDirty],
   );
 
   return (
@@ -3191,6 +3362,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvContentArea: {
       flex: 1,
       paddingHorizontal: tvEdgeBufferHorizontal,
+      overflow: 'hidden',
     },
     // Legacy styles kept for mobile
     tvEdgeBuffer: {
@@ -3677,8 +3849,46 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.text.muted,
       fontStyle: 'italic',
     },
+    // TV Grid inline input styles
+    tvGridInlineInputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.lg,
+      marginTop: theme.spacing.xl,
+    },
+    tvGridInlineInputRowFocused: {
+      // No outer focus styling - focus is on the input itself
+    },
+    tvGridInlineInput: {
+      flex: 1,
+      fontSize: 28,
+      color: theme.colors.text.primary,
+      backgroundColor: theme.colors.background.base,
+      borderRadius: theme.radius.md,
+      borderWidth: 2,
+      borderColor: theme.colors.border.subtle,
+      minHeight: 56,
+      textAlignVertical: 'center',
+    },
+    tvGridInlineInputFocused: {
+      borderColor: theme.colors.accent.primary,
+      borderWidth: 3,
+      backgroundColor: theme.colors.background.surface,
+      shadowColor: theme.colors.accent.primary,
+      shadowOpacity: 0.3,
+      shadowOffset: { width: 0, height: 2 },
+      shadowRadius: 8,
+    },
+    tvGridInlineInputLabel: {
+      ...theme.typography.title.md,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+      minWidth: 220,
+      marginLeft: theme.spacing.lg,
+    },
     tvGridHeader: {
-      paddingVertical: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing['2xl'],
       paddingHorizontal: theme.spacing.sm,
     },
     tvGridHeaderTitle: {
@@ -3686,35 +3896,36 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.text.primary,
     },
     tvGridHeaderDescription: {
-      ...theme.typography.body.md,
+      ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
       marginTop: theme.spacing.xs,
+      marginBottom: theme.spacing.xl,
     },
     tvGridToggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.lg,
-      padding: theme.spacing.lg,
-      borderWidth: 2,
-      borderColor: theme.colors.border.subtle,
-      minHeight: 72,
+      gap: theme.spacing.lg,
+      marginTop: theme.spacing.xl,
     },
     tvGridToggleRowFocused: {
-      borderColor: theme.colors.accent.primary,
-      backgroundColor: theme.colors.background.elevated,
+      // Focus indicated by switch scale
     },
     tvGridToggleLabel: {
       flex: 1,
       gap: theme.spacing.xs,
     },
     tvGridToggleLabelText: {
-      ...theme.typography.body.lg,
+      ...theme.typography.title.md,
+      fontWeight: '600',
       color: theme.colors.text.primary,
+      marginLeft: theme.spacing.lg,
+    },
+    tvGridToggleSwitchFocused: {
+      transform: [{ scale: 1.3 }],
     },
     tvGridToggleDescription: {
-      ...theme.typography.body.sm,
+      ...theme.typography.body.md,
       color: theme.colors.text.secondary,
     },
     tvGridDropdownRow: {
@@ -3733,6 +3944,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: theme.spacing.sm,
+    },
+    tvGridDropdownRowInline: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.lg,
+      marginTop: theme.spacing.xl,
+    },
+    tvGridDropdownOptionsInline: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+      flex: 1,
+      justifyContent: 'flex-start',
     },
     tvGridButtonRow: {
       flexDirection: 'row',
