@@ -58,6 +58,7 @@ Required settings are indicated in the web UI settings page.
 Current roadmap:
 
 - cli_debrid style filtering
+- Fine-grained ranking
 - AIOstreams, Mediafusion, Jackett/Prowlarr support
 - Non-M3U IPTV support
 
