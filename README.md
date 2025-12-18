@@ -42,7 +42,7 @@ The cache folder will contain user settings and stream metadata.
 docker-compose up -d
 ```
 
-The backend will be available at `http://localhost:7777`.
+The backend will be available at `http://localhost:7777`. The backend logs will include a generated PIN to use to connect the frontend to the backend. You will need to add the PIN and your backend URL in the frontend app.
 
 ## Configuration
 
@@ -50,6 +50,8 @@ Access the admin panel at `http://localhost:7777/admin` to configure settings th
 
 - Service credentials
 - M3U link
+
+Required settings are indicated in the web UI settings page.
 
 ## Roadmap
 
