@@ -650,6 +650,66 @@
             to { transform: rotate(360deg); }
         }
 
+        /* Validation styles */
+        .form-input.invalid,
+        .form-select.invalid {
+            border-color: var(--danger);
+            background: rgba(239, 68, 68, 0.05);
+        }
+
+        .form-group.invalid .form-label {
+            color: var(--danger);
+        }
+
+        .section-warning {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            height: 20px;
+            padding: 0 6px;
+            background: var(--danger);
+            color: white;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+
+        .validation-message {
+            font-size: 0.75rem;
+            color: var(--danger);
+            margin-top: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .validation-message svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+        }
+
+        .section-validation-msg {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: var(--radius);
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+            color: var(--danger);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .section-validation-msg svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
         @media (max-width: 1024px) {
             .grid-4 { grid-template-columns: repeat(2, 1fr); }
             .grid-3 { grid-template-columns: repeat(2, 1fr); }

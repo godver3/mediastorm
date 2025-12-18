@@ -47,6 +47,142 @@
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
     const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV'];
 
+    // Validation state - stores errors by section and field
+    let validationErrors = {};
+
+    // Check if a value is empty/missing
+    function isEmpty(val) {
+        if (val === undefined || val === null) return true;
+        if (typeof val === 'string') return val.trim() === '';
+        if (typeof val === 'number') return false; // 0 is valid for numbers
+        if (Array.isArray(val)) return val.length === 0;
+        return false;
+    }
+
+    // Check if an array has at least one enabled item
+    function hasEnabledItem(arr) {
+        if (!Array.isArray(arr)) return false;
+        return arr.some(item => item.enabled === true);
+    }
+
+    // Validate all settings and return errors object
+    function validateSettings() {
+        const errors = {};
+
+        // Skip validation for user-specific settings
+        if (selectedUserId) return errors;
+
+        const serviceMode = currentSettings.streaming?.serviceMode || 'debrid';
+        const needsDebrid = serviceMode === 'debrid' || serviceMode === 'hybrid';
+        const needsUsenet = serviceMode === 'usenet' || serviceMode === 'hybrid';
+
+        // Server Settings - all required
+        const serverErrors = { fields: {}, messages: [] };
+        if (isEmpty(currentSettings.server?.host)) serverErrors.fields.host = 'Host is required';
+        if (isEmpty(currentSettings.server?.port) && currentSettings.server?.port !== 0) serverErrors.fields.port = 'Port is required';
+        if (isEmpty(currentSettings.server?.pin)) serverErrors.fields.pin = 'PIN is required';
+        if (Object.keys(serverErrors.fields).length > 0) errors.server = serverErrors;
+
+        // Streaming - all required
+        const streamingErrors = { fields: {}, messages: [] };
+        if (isEmpty(currentSettings.streaming?.serviceMode)) streamingErrors.fields.serviceMode = 'Service mode is required';
+        if (Object.keys(streamingErrors.fields).length > 0) errors.streaming = streamingErrors;
+
+        // Debrid Providers - at least one enabled if debrid/hybrid mode
+        if (needsDebrid) {
+            const debridProviders = currentSettings.streaming?.debridProviders || [];
+            if (!hasEnabledItem(debridProviders)) {
+                errors.debridProviders = {
+                    fields: {},
+                    messages: ['At least one enabled debrid provider is required for ' + serviceMode + ' mode']
+                };
+            }
+        }
+
+        // Usenet Providers - at least one enabled if usenet/hybrid mode
+        if (needsUsenet) {
+            const usenetProviders = currentSettings.usenet || [];
+            if (!hasEnabledItem(usenetProviders)) {
+                errors.usenet = {
+                    fields: {},
+                    messages: ['At least one enabled usenet provider is required for ' + serviceMode + ' mode']
+                };
+            }
+        }
+
+        // Content Filtering - if service priority selected, must have enabled provider of that type
+        const servicePriority = currentSettings.filtering?.servicePriority;
+        if (servicePriority === 'usenet') {
+            const usenetProviders = currentSettings.usenet || [];
+            if (!hasEnabledItem(usenetProviders)) {
+                if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
+                errors.filtering.fields.servicePriority = 'Usenet priority requires an enabled usenet provider';
+            }
+        } else if (servicePriority === 'debrid') {
+            const debridProviders = currentSettings.streaming?.debridProviders || [];
+            if (!hasEnabledItem(debridProviders)) {
+                if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
+                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider';
+            }
+        }
+
+        // Indexers - required if usenet/hybrid mode
+        if (needsUsenet) {
+            const indexers = currentSettings.indexers || [];
+            if (!hasEnabledItem(indexers)) {
+                errors.indexers = {
+                    fields: {},
+                    messages: ['At least one enabled indexer is required for ' + serviceMode + ' mode']
+                };
+            }
+        }
+
+        // Torrent Scrapers - required if debrid/hybrid mode
+        if (needsDebrid) {
+            const scrapers = currentSettings.torrentScrapers || [];
+            if (!hasEnabledItem(scrapers)) {
+                errors.torrentScrapers = {
+                    fields: {},
+                    messages: ['At least one enabled scraper is required for ' + serviceMode + ' mode']
+                };
+            }
+        }
+
+        // Metadata - all required
+        const metadataErrors = { fields: {}, messages: [] };
+        if (isEmpty(currentSettings.metadata?.tvdbApiKey)) metadataErrors.fields.tvdbApiKey = 'TVDB API Key is required';
+        if (isEmpty(currentSettings.metadata?.tmdbApiKey)) metadataErrors.fields.tmdbApiKey = 'TMDB API Key is required';
+        if (Object.keys(metadataErrors.fields).length > 0) errors.metadata = metadataErrors;
+
+        // Cache - all required
+        const cacheErrors = { fields: {}, messages: [] };
+        if (isEmpty(currentSettings.cache?.directory)) cacheErrors.fields.directory = 'Cache directory is required';
+        if (Object.keys(cacheErrors.fields).length > 0) errors.cache = cacheErrors;
+
+        // Import Settings - all required (numbers can be 0, so just check existence)
+        const importErrors = { fields: {}, messages: [] };
+        if (currentSettings.import?.rarMaxWorkers === undefined) importErrors.fields.rarMaxWorkers = 'RAR Max Workers is required';
+        if (currentSettings.import?.rarMaxCacheSizeMb === undefined) importErrors.fields.rarMaxCacheSizeMb = 'RAR Cache Size is required';
+        if (currentSettings.import?.rarMaxMemoryGB === undefined) importErrors.fields.rarMaxMemoryGB = 'RAR Max Memory is required';
+        if (Object.keys(importErrors.fields).length > 0) errors.import = importErrors;
+
+        return errors;
+    }
+
+    // Get error count for a section
+    function getSectionErrorCount(sectionKey) {
+        const sectionErrors = validationErrors[sectionKey];
+        if (!sectionErrors) return 0;
+        const fieldCount = Object.keys(sectionErrors.fields || {}).length;
+        const msgCount = (sectionErrors.messages || []).length;
+        return fieldCount + msgCount;
+    }
+
+    // Check if a specific field has an error
+    function getFieldError(sectionKey, fieldKey) {
+        return validationErrors[sectionKey]?.fields?.[fieldKey] || null;
+    }
+
     async function handleUserChange(userId) {
         selectedUserId = userId;
         if (userId) {
@@ -149,28 +285,34 @@
         }
         obj[keys[keys.length - 1]] = value;
     }
-    function renderInput(fieldKey, fieldDef, value, basePath) {
+    function renderInput(fieldKey, fieldDef, value, basePath, sectionKey) {
         const id = (basePath + '_' + fieldKey).replace(/\./g, '_');
         const isReadonly = fieldDef.readonly ? 'readonly' : '';
+        const fieldError = getFieldError(sectionKey, fieldKey);
+        const invalidClass = fieldError ? ' invalid' : '';
         switch (fieldDef.type) {
             case 'boolean':
                 return '<label class="toggle"><input type="checkbox" id="'+id+'" '+(value ? 'checked' : '')+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.checked)"><span class="toggle-slider"></span></label>';
             case 'select':
                 const options = fieldDef.options.map(opt => '<option value="'+opt+'" '+(value === opt ? 'selected' : '')+'>'+opt+'</option>').join('');
-                return '<select class="form-select" id="'+id+'" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">'+options+'</select>';
+                return '<select class="form-select'+invalidClass+'" id="'+id+'" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">'+options+'</select>';
             case 'number':
-                return '<input type="number" class="form-input" id="'+id+'" value="'+(value || 0)+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', parseFloat(this.value) || 0)">';
+                return '<input type="number" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || 0)+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', parseFloat(this.value) || 0)">';
             case 'password':
-                return '<input type="password" class="form-input" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
+                return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'tags':
                 const tags = Array.isArray(value) ? value : [];
                 const tagsHtml = tags.map(tag => '<span class="tag">'+tag+'<span class="tag-remove" onclick="removeTag(\''+basePath+'\', \''+fieldKey+'\', \''+tag+'\')">&times;</span></span>').join('');
-                return '<div class="tags-input" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
+                return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
             default:
-                return '<input type="text" class="form-input" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
+                return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
     }
-    function handleFieldChange(basePath, fieldKey, value) { setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value); }
+    function handleFieldChange(basePath, fieldKey, value) {
+        setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
+        // Re-render to update validation indicators (renderSettings runs validation)
+        renderSettings();
+    }
     function handleTagInput(event, basePath, fieldKey) {
         if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
@@ -247,7 +389,7 @@
             basePath = sectionKey;
         }
         const itemsHtml = items.map((item, index) => {
-            const fieldsHtml = Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, item[fieldKey], basePath+'.'+index)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>').join('');
+            const fieldsHtml = Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, item[fieldKey], basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>').join('');
             return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions"><button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
         }).join('');
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
@@ -260,10 +402,29 @@
         } else {
             sectionData = currentSettings[sectionKey] || {};
         }
-        return Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, sectionData[fieldKey], sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>').join('');
+        return Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => {
+            const fieldError = getFieldError(sectionKey, fieldKey);
+            const invalidClass = fieldError ? ' invalid' : '';
+            const errorHtml = fieldError ? '<div class="validation-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+fieldError+'</div>' : '';
+            return '<div class="form-group'+invalidClass+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, sectionData[fieldKey], sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
+        }).join('');
     }
     function renderSection(sectionKey, sectionDef) {
         const isOpen = window.location.hash === '#'+sectionKey;
+        const errorCount = getSectionErrorCount(sectionKey);
+        const sectionMessages = validationErrors[sectionKey]?.messages || [];
+
+        // Warning badge for section header
+        const warningBadge = errorCount > 0 ? '<span class="section-warning">'+errorCount+'</span>' : '';
+
+        // Section-level validation messages
+        let messagesHtml = '';
+        if (sectionMessages.length > 0) {
+            messagesHtml = sectionMessages.map(msg =>
+                '<div class="section-validation-msg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+msg+'</div>'
+            ).join('');
+        }
+
         const contentHtml = sectionDef.is_array ? renderArraySection(sectionKey, sectionDef) : '<div class="grid grid-2">'+renderObjectSection(sectionKey, sectionDef)+'</div>';
         let nestedHtml = '';
         for (const [nestedKey, nestedDef] of Object.entries(schema)) {
@@ -273,16 +434,36 @@
                 nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+renderArraySection(nestedKey, nestedDef)+'</div>';
             }
         }
-        return '<div class="section '+(isOpen ? 'open' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+'</div><svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-content">'+contentHtml+nestedHtml+'</div></div>';
+        return '<div class="section '+(isOpen ? 'open' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-content">'+messagesHtml+contentHtml+nestedHtml+'</div></div>';
     }
 
     function renderSettings() {
         const container = document.getElementById('settingsContainer');
 
+        // Run validation before rendering
+        validationErrors = validateSettings();
+
+        // Save currently open sections before re-rendering
+        const openSections = new Set();
+        container.querySelectorAll('.section.open').forEach(section => {
+            const id = section.id.replace('section-', '');
+            if (id) openSections.add(id);
+        });
+
         // Add info banner when user is selected
         let bannerHtml = '';
         if (selectedUserId) {
             bannerHtml = '<div style="background: var(--accent-bg, #2563eb20); border: 1px solid var(--accent, #2563eb); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Editing user-specific settings. Only Playback, Home Shelves, and Filtering are shown.</span></div>';
+        }
+
+        // Add validation error banner if there are errors
+        const totalErrors = Object.keys(validationErrors).length;
+        if (totalErrors > 0 && !selectedUserId) {
+            const errorSections = Object.keys(validationErrors).map(key => {
+                const sectionDef = schema[key];
+                return sectionDef?.label || key;
+            }).join(', ');
+            bannerHtml += '<div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--danger)" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><div><strong style="color: var(--danger);">Required settings missing</strong><p style="margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">Please complete all required fields before saving. Issues found in: '+errorSections+'</p></div></div>';
         }
 
         // Render sections grouped by their group property
@@ -301,12 +482,31 @@
         }
 
         container.innerHTML = html;
+
+        // Restore previously open sections
+        openSections.forEach(sectionKey => {
+            const section = document.getElementById('section-'+sectionKey);
+            if (section) section.classList.add('open');
+        });
+
         if (window.location.hash) {
             const section = document.getElementById('section-'+window.location.hash.substring(1));
             if (section) { section.classList.add('open'); section.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
         }
     }
     async function saveAllSettings() {
+        // Check for validation errors (only for global settings)
+        if (!selectedUserId) {
+            validationErrors = validateSettings();
+            if (Object.keys(validationErrors).length > 0) {
+                showToast('Cannot save: Please fix all required fields first', 'error');
+                renderSettings();
+                // Scroll to top to show the error banner
+                document.getElementById('settingsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+        }
+
         try {
             if (selectedUserId && userSettings) {
                 // Save user-specific settings
