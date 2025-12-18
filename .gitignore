@@ -88,7 +88,6 @@ frontend/build-1760379785308.apk
 .venv/lib
 *.pyc
 .venv
-backend/config
 TODO
 
 .pids
@@ -109,6 +108,5 @@ frontend/.husky
 .pids
 .venv
 .vscode
-backend/config
 GEMINI.md
 CLAUDE.md
