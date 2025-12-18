@@ -1,6 +1,14 @@
 # strmr
 
-A streaming media server with native mobile and TV apps.
+A streaming media server with native mobile and TV apps. strmr supports:
+
+- Usenet
+- Real Debrid/Torbox
+
+Scraping supports:
+
+- Torrentio
+- Newznab
 
 ## Backend Deployment
 
@@ -22,6 +30,8 @@ services:
     restart: unless-stopped
 ```
 
+The cache folder will contain user settings and stream metadata.
+
 2. Start the container:
 
 ```bash
@@ -34,10 +44,24 @@ The backend will be available at `http://localhost:7777`.
 
 Access the admin panel at `http://localhost:7777/admin` to configure settings that are not available in the mobile/TV apps, including:
 
-- Debrid service credentials
-- Addon configuration
-- Stream settings
-- And more
+- Service credentials
+- M3U link
+
+## Roadmap
+
+Current roadmap:
+
+- cli_debrid style filtering
+- AIOstreams, Mediafusion, Jackett/Prowlarr support
+- Non-M3U IPTV support
+
+## What to test?
+
+Please test: 
+
+- General searching/streaming/media matching
+- Test DV/HDR playback
+- Android TV performance
 
 ## Frontend Apps
 
