@@ -98,14 +98,12 @@ tv-nav-example
 novastream-backend
 test_dear_x_search.go
 .gocache
-.github
 dev.sh
 frontend/.claude
 frontend/.github
 frontend/.husky
 .claude
 .cursor
-.github
 .gocache
 .logs
 .pids

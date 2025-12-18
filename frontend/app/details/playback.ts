@@ -490,7 +490,7 @@ export const buildExternalPlayerTargets = (
   }
 
   if (player === 'infuse') {
-    if (Platform.OS === 'ios' || Platform.OS === 'macos' || isIosWeb) {
+    if (Platform.OS === 'ios' || Platform.OS === 'tvos' || Platform.OS === 'macos' || isIosWeb) {
       const callbackBase = `${APP_SCHEME}://x-callback-url`;
       const successUrl = `${callbackBase}/playbackDidFinish`;
       const errorUrl = `${callbackBase}/playbackDidFail`;
