@@ -1780,21 +1780,9 @@ function VirtualizedShelf({
         </View>
       ) : (
         <SpatialNavigationNode orientation="horizontal">
-          {() => (
-            <View style={{ height: rowHeight }}>
-              {autoFocus ? (
-                <DefaultFocus>
-                  <SpatialNavigationVirtualizedList
-                    data={cards}
-                    renderItem={renderItem}
-                    itemSize={itemSize}
-                    orientation="horizontal"
-                    numberOfRenderedItems={13}
-                    numberOfItemsVisibleOnScreen={7}
-                    onEndReachedThresholdItemsNumber={3}
-                  />
-                </DefaultFocus>
-              ) : (
+          <View style={{ height: rowHeight }}>
+            {autoFocus ? (
+              <DefaultFocus>
                 <SpatialNavigationVirtualizedList
                   data={cards}
                   renderItem={renderItem}
@@ -1804,9 +1792,19 @@ function VirtualizedShelf({
                   numberOfItemsVisibleOnScreen={7}
                   onEndReachedThresholdItemsNumber={3}
                 />
-              )}
-            </View>
-          )}
+              </DefaultFocus>
+            ) : (
+              <SpatialNavigationVirtualizedList
+                data={cards}
+                renderItem={renderItem}
+                itemSize={itemSize}
+                orientation="horizontal"
+                numberOfRenderedItems={13}
+                numberOfItemsVisibleOnScreen={7}
+                onEndReachedThresholdItemsNumber={3}
+              />
+            )}
+          </View>
         </SpatialNavigationNode>
       )}
     </View>
