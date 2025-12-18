@@ -2094,3 +2094,44 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 
 	return result, nil
 }
+
+// GetDirectURL returns the direct download URL for a given path.
+// This is useful for external players like Infuse that don't need our proxy.
+// For debrid paths, this unrestricts the link and returns the CDN URL.
+func (h *VideoHandler) GetDirectURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		h.HandleOptions(w, r)
+		return
+	}
+
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		http.Error(w, "missing path parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Check if provider supports direct URLs
+	directProvider, ok := h.streamer.(streaming.DirectURLProvider)
+	if !ok {
+		http.Error(w, "direct URL not supported for this path", http.StatusNotImplemented)
+		return
+	}
+
+	directURL, err := directProvider.GetDirectURL(r.Context(), path)
+	if err != nil {
+		if err == streaming.ErrNotFound {
+			http.Error(w, "path not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("[video] GetDirectURL error for path=%q: %v", path, err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	log.Printf("[video] GetDirectURL: path=%q -> %q", path, directURL)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"url": directURL,
+	})
+}

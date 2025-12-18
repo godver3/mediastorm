@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY backend/go.mod backend/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY backend/ .
 
 # Build the application (CGO required for rapidyenc)
 RUN CGO_ENABLED=1 go build -o strmr .
@@ -49,7 +49,7 @@ WORKDIR /root/
 COPY --from=builder /app/strmr .
 
 # Copy Python title parsing scripts to root (expected by parsett package)
-COPY parse_title.py parse_title_batch.py /
+COPY backend/parse_title.py backend/parse_title_batch.py /
 
 # Expose port
 EXPOSE 7777
