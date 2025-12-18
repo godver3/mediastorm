@@ -62,7 +62,7 @@ export default function ProfilesScreen() {
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
-  const { users, loading, error, activeUserId, selectUser, createUser, updateColor, deleteUser, refresh } = useUserProfiles();
+  const { users, loading, error, activeUserId, selectUser, createUser, renameUser, updateColor, deleteUser, refresh } = useUserProfiles();
   const { showToast } = useToast();
 
   const [newProfileName, setNewProfileName] = useState('');
@@ -70,6 +70,7 @@ export default function ProfilesScreen() {
   const [pending, setPending] = useState<PendingAction>(null);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
   const [newlyCreatedProfileId, setNewlyCreatedProfileId] = useState<string | null>(null);
+  const [openColorSelectorId, setOpenColorSelectorId] = useState<string | null>(null);
   const newProfileInputRef = useRef<TextInput | null>(null);
   const tempProfileNameRef = useRef('');
   const { lock, unlock } = useLockSpatialNavigation();
@@ -162,6 +163,23 @@ export default function ProfilesScreen() {
     [deleteUser, renameValues, users, showToast],
   );
 
+  const handleRenameProfile = useCallback(
+    async (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        showToast('Profile name cannot be empty.', { tone: 'danger' });
+        return;
+      }
+      try {
+        await renameUser(id, trimmed);
+        showToast(`Profile renamed to "${trimmed}".`, { tone: 'success' });
+      } catch (err) {
+        showToast(formatErrorMessage(err), { tone: 'danger' });
+      }
+    },
+    [renameUser, showToast],
+  );
+
   const handleUpdateColor = useCallback(
     async (id: string, color: string) => {
       setPending(`color:${id}`);
@@ -169,6 +187,7 @@ export default function ProfilesScreen() {
         await updateColor(id, color);
         // Update the selected profile with the new color so UI reflects immediately
         setSelectedProfile((current) => (current && current.id === id ? { ...current, color } : current));
+        setOpenColorSelectorId(null);
         showToast('Profile color updated.', { tone: 'success' });
       } catch (err) {
         showToast(formatErrorMessage(err), { tone: 'danger' });
@@ -673,13 +692,53 @@ export default function ProfilesScreen() {
                     const renameValue = renameValues[user.id] ?? '';
                     const isActive = activeUserId === user.id;
                     const activateKey = `activate:${user.id}` as const;
+                    const avatarColor = user.color || undefined;
+                    const isColorPickerOpen = openColorSelectorId === user.id;
 
                     return (
                       <View key={user.id} style={[styles.profileCard, isActive && styles.profileCardActive]}>
                         <View style={styles.profileHeader}>
-                          <TextInput value={renameValue} editable={false} style={[styles.input, styles.profileInput]} />
+                          <Pressable
+                            onPress={() => setOpenColorSelectorId(isColorPickerOpen ? null : user.id)}
+                            style={[styles.mobileAvatar, avatarColor && { backgroundColor: avatarColor }]}>
+                            <Text style={styles.mobileAvatarText}>{user.name.charAt(0).toUpperCase()}</Text>
+                          </Pressable>
+                          <TextInput
+                            value={renameValue}
+                            onChangeText={(text) =>
+                              setRenameValues((current) => ({ ...current, [user.id]: text }))
+                            }
+                            onBlur={() => {
+                              if (renameValue !== user.name) {
+                                void handleRenameProfile(user.id, renameValue);
+                              }
+                            }}
+                            placeholder="Profile name"
+                            placeholderTextColor={theme.colors.text.muted}
+                            style={[styles.input, styles.profileInput]}
+                          />
                           {isActive && <Text style={styles.activeBadge}>Active</Text>}
                         </View>
+
+                        {isColorPickerOpen && (
+                          <View style={styles.mobileColorPickerRow}>
+                            {PROFILE_COLORS.map((color) => {
+                              const isSelected = user.color === color.value;
+                              return (
+                                <Pressable
+                                  key={color.value}
+                                  onPress={() => handleUpdateColor(user.id, color.value)}
+                                  style={[
+                                    styles.colorSwatch,
+                                    { backgroundColor: color.value },
+                                    isSelected && styles.colorSwatchSelected,
+                                  ]}
+                                />
+                              );
+                            })}
+                          </View>
+                        )}
+
                         <SpatialNavigationNode orientation="horizontal">
                           <View style={styles.actionsRow}>
                             <FocusablePressable
@@ -889,6 +948,25 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     activeBadge: {
       ...theme.typography.label.md,
       color: theme.colors.accent.primary,
+    },
+    mobileAvatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: theme.colors.background.elevated,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    mobileAvatarText: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: theme.colors.text.primary,
+    },
+    mobileColorPickerRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+      marginVertical: theme.spacing.sm,
     },
 
     // TV Grid styles

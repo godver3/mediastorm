@@ -9,10 +9,11 @@ import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import { Tabs } from 'expo-router/tabs';
 import { useCallback, type ComponentProps } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenuContext } from '../../components/MenuContext';
 import { TVBackground } from '../../components/TVBackground';
+import { useUserProfiles } from '../../components/UserProfilesContext';
 import { useShouldUseTabs } from '../../hooks/useShouldUseTabs';
 
 // Tabs that should remain accessible when backend is unreachable
@@ -25,6 +26,7 @@ export default function DrawerLayout() {
   const { isOpen: isMenuOpen, closeMenu } = useMenuContext();
   const insets = useSafeAreaInsets();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
+  const { activeUser } = useUserProfiles();
 
   const shouldUseTabs = useShouldUseTabs();
 
@@ -91,14 +93,36 @@ export default function DrawerLayout() {
                 height: 56 + Math.max(insets.bottom, theme.spacing.md),
               },
             ],
-            tabBarIcon: ({ color }) => (
-              <MaterialCommunityIcons
-                name={getTabIconName(route.name)}
-                size={24}
-                color={disabled ? theme.colors.text.disabled : (color ?? theme.colors.text.muted)}
-                style={disabled ? { opacity: 0.4 } : undefined}
-              />
-            ),
+            tabBarIcon: ({ color, focused }) => {
+              if (route.name === 'profiles' && activeUser) {
+                return (
+                  <View
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      backgroundColor: activeUser.color || theme.colors.background.elevated,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      borderWidth: focused ? 2 : 0,
+                      borderColor: theme.colors.accent.primary,
+                      opacity: disabled ? 0.4 : 1,
+                    }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                      {activeUser.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                );
+              }
+              return (
+                <MaterialCommunityIcons
+                  name={getTabIconName(route.name)}
+                  size={24}
+                  color={disabled ? theme.colors.text.disabled : (color ?? theme.colors.text.muted)}
+                  style={disabled ? { opacity: 0.4 } : undefined}
+                />
+              );
+            },
             // Slide animation for tab transitions
             animation: 'shift',
           };

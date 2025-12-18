@@ -1610,9 +1610,10 @@ function VirtualizedShelf({
             // Android TV rendering with 2x badge and full content
             if (isAndroidTV) {
               return (
-                <View
+                <Pressable
                   style={[styles.card, isFocused && styles.cardFocused]}
                   renderToHardwareTextureAndroid
+                  tvParallaxProperties={{ enabled: false }}
                 >
                   <Image
                     source={card.cardImage}
@@ -1639,12 +1640,15 @@ function VirtualizedShelf({
                     </Text>
                     {card.year ? <Text style={styles.cardMetaAndroidTV}>{card.year}</Text> : null}
                   </View>
-                </View>
+                </Pressable>
               );
             }
             // Full rendering for other platforms
             return (
-              <View style={[styles.card, isFocused && styles.cardFocused]}>
+              <Pressable
+                style={[styles.card, isFocused && styles.cardFocused]}
+                tvParallaxProperties={{ enabled: false }}
+              >
                 <Image
                   key={`img-${cardKey}`}
                   source={card.cardImage}
@@ -1672,7 +1676,7 @@ function VirtualizedShelf({
                   </Text>
                   {card.year ? <Text style={styles.cardMeta}>{card.year}</Text> : null}
                 </View>
-              </View>
+              </Pressable>
             );
           }}
         </SpatialNavigationFocusableView>

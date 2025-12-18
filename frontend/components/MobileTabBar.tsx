@@ -10,6 +10,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
+import { useUserProfiles } from './UserProfilesContext';
 
 type TabKey = 'index' | 'search' | 'watchlist' | 'live' | 'profiles' | 'settings';
 
@@ -73,6 +74,7 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
   const pathname = usePathname();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { activeUser } = useUserProfiles();
 
   const styles = useMemo(() => createStyles(theme, insets.bottom), [theme, insets.bottom]);
 
@@ -110,11 +112,29 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
             onPress={onPress}
             style={styles.tabButton}
             testID={`mobile-tab-${item.key}`}>
-            <MaterialCommunityIcons
-              name={item.icon}
-              size={24}
-              color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
-            />
+            {item.key === 'profiles' && activeUser ? (
+              <View
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 12,
+                  backgroundColor: activeUser.color || theme.colors.background.elevated,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  borderWidth: isActive ? 2 : 0,
+                  borderColor: theme.colors.accent.primary,
+                }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                  {activeUser.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            ) : (
+              <MaterialCommunityIcons
+                name={item.icon}
+                size={24}
+                color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
+              />
+            )}
             <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{item.label}</Text>
           </Pressable>
         );

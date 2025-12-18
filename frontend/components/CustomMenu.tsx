@@ -251,7 +251,10 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                 const focusableView = (
                   <SpatialNavigationFocusableView key={item.name} onSelect={() => handleItemSelect(item.name)}>
                     {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.menuItem, isFocused && !disabled && styles.menuItemFocused, disabled && styles.menuItemDisabled]}>
+                      <Pressable
+                        style={[styles.menuItem, isFocused && !disabled && styles.menuItemFocused, disabled && styles.menuItemDisabled]}
+                        tvParallaxProperties={{ enabled: false }}
+                      >
                         <MaterialCommunityIcons
                           name={getMenuIconName(item.name)}
                           size={Platform.isTV ? 38 : 24}
@@ -259,7 +262,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                           style={[styles.icon, disabled && styles.iconDisabled]}
                         />
                         <Text style={[styles.menuText, isFocused && !disabled && styles.menuTextFocused, disabled && styles.menuTextDisabled]}>{item.label}</Text>
-                      </View>
+                      </Pressable>
                     )}
                   </SpatialNavigationFocusableView>
                 );

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo } from 'react';
 import { Image } from './Image';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import type { SeriesEpisode } from '../services/api';
@@ -223,20 +223,12 @@ interface EpisodeThumbnailProps {
   fadeEdge?: 'left' | 'right';
 }
 
-const EpisodeThumbnail = memo(function EpisodeThumbnail({
-  episode,
-  styles,
-  fadeEdge,
-}: EpisodeThumbnailProps) {
+const EpisodeThumbnail = memo(function EpisodeThumbnail({ episode, styles, fadeEdge }: EpisodeThumbnailProps) {
   return (
     <View>
       <View style={styles.episodeThumbnail}>
         {episode.image?.url ? (
-          <Image
-            source={episode.image.url}
-            style={styles.thumbnailImage}
-            contentFit="cover"
-          />
+          <Image source={episode.image.url} style={styles.thumbnailImage} contentFit="cover" />
         ) : (
           <View style={styles.thumbnailPlaceholder} />
         )}
@@ -253,11 +245,8 @@ const EpisodeThumbnail = memo(function EpisodeThumbnail({
         <LinearGradient
           colors={['transparent', 'rgba(0, 0, 0, 0.85)']}
           locations={[0.4, 1]}
-          style={styles.thumbnailOverlay}
-        >
-          <Text style={styles.thumbnailCode}>
-            {formatEpisodeCode(episode)}
-          </Text>
+          style={styles.thumbnailOverlay}>
+          <Text style={styles.thumbnailCode}>{formatEpisodeCode(episode)}</Text>
         </LinearGradient>
       </View>
     </View>
@@ -317,7 +306,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
 
     return {
       episodesBefore: before.slice(-maxBefore), // Take last N (closest to current)
-      episodesAfter: after.slice(0, maxAfter),   // Take first N (closest to current)
+      episodesAfter: after.slice(0, maxAfter), // Take first N (closest to current)
     };
   }, [allEpisodes, selectedSeason, activeEpisode]);
 
@@ -329,8 +318,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
       orientation="horizontal"
       focusKey="episode-strip-row"
       onActive={() => console.log('[TVEpisodeStrip NAV DEBUG] episode-strip-row ACTIVE')}
-      onInactive={() => console.log('[TVEpisodeStrip NAV DEBUG] episode-strip-row INACTIVE')}
-    >
+      onInactive={() => console.log('[TVEpisodeStrip NAV DEBUG] episode-strip-row INACTIVE')}>
       <View style={styles.container}>
         {/* Episodes before (left side) */}
         {episodesBefore.length > 0 && (
@@ -352,10 +340,11 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
             focusKey={`selected-episode-${activeEpisode.seasonNumber}-${activeEpisode.episodeNumber}`}
             onSelect={onSelect}
             onFocus={onFocus}
-            onBlur={onBlur}
-          >
+            onBlur={onBlur}>
             {({ isFocused }: { isFocused: boolean }) => (
-              <View style={[styles.selectedEpisodeContainer, isFocused && styles.selectedEpisodeContainerFocused]}>
+              <Pressable
+                style={[styles.selectedEpisodeContainer, isFocused && styles.selectedEpisodeContainerFocused]}
+                tvParallaxProperties={{ enabled: false }}>
                 <View style={styles.selectedImageContainer}>
                   <Image
                     source={activeEpisode.image?.url || ''}
@@ -384,12 +373,10 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                     )}
                   </View>
                   {activeEpisode.runtimeMinutes && (
-                    <Text style={styles.selectedMetadataText}>
-                      {activeEpisode.runtimeMinutes} min
-                    </Text>
+                    <Text style={styles.selectedMetadataText}>{activeEpisode.runtimeMinutes} min</Text>
                   )}
                 </View>
-              </View>
+              </Pressable>
             )}
           </SpatialNavigationFocusableView>
         </View>
