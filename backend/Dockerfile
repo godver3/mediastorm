@@ -24,7 +24,7 @@ RUN go mod download
 COPY backend/ .
 
 # Build the application (CGO required for rapidyenc)
-RUN CGO_ENABLED=1 go build -o strmr .
+RUN GOTOOLCHAIN=auto CGO_ENABLED=1 go build -o strmr .
 
 # Final stage
 FROM debian:bookworm-slim
