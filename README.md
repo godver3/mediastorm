@@ -16,7 +16,7 @@ Scraping supports:
 
 ## Backend Deployment
 
-Deploy the backend using Docker Compose:
+Deploy the backend using Docker Compose (or use the example in the repo):
 
 1. Create a `docker-compose.yml`:
 
