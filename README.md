@@ -1,5 +1,7 @@
 # strmr
 
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/69d71ca9-14df-44d2-a10d-f97ffaf9e109" />
+
 A streaming media server with native mobile and TV apps. strmr supports:
 
 - Usenet
