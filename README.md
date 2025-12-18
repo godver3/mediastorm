@@ -1,6 +1,8 @@
-# strmr
+<p align="center">
+<img width="400" height="240" alt="image" src="https://github.com/user-attachments/assets/2ef5cb4b-2db7-4b1c-aa54-9bad3a63b12a" />
+</p>
 
-<img width="152" height="152" alt="image" src="https://github.com/user-attachments/assets/bb69ce1b-d539-4957-a04b-da606d1a35ff" />
+# strmr
 
 A streaming media server with native mobile and TV apps. strmr supports:
 
