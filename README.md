@@ -61,6 +61,8 @@ Current roadmap:
 - Fine-grained ranking
 - AIOstreams, Mediafusion, Jackett/Prowlarr support
 - Non-M3U IPTV support
+- Custom shelf content
+- View Watch History
 
 ## What to test?
 
