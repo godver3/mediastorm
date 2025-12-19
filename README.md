@@ -76,7 +76,10 @@ The frontend is built with React Native and supports iOS, tvOS, Android, and And
 
 ### iOS / tvOS
 
-Available on TestFlight: [Join TestFlight](#) *(coming soon)*
+Available on TestFlight
+
+- iOS: [Join TestFlight](https://testflight.apple.com/join/8vCQ5gmH)
+- tvOS: [Join TestFlight](https://testflight.apple.com/join/X9bE3dq6)
 
 ### Android / Android TV
 
