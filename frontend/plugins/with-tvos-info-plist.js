@@ -16,11 +16,7 @@ const withTvOSInfoPlist = (config) => {
     if (isTvOS) {
       console.log('🍎 Cleaning up Info.plist for tvOS build...');
 
-      // Remove LSApplicationQueriesSchemes (not supported on tvOS)
-      if (infoPlist.LSApplicationQueriesSchemes) {
-        console.log('  ❌ Removing LSApplicationQueriesSchemes (not supported on tvOS)');
-        delete infoPlist.LSApplicationQueriesSchemes;
-      }
+      // Keep LSApplicationQueriesSchemes - tvOS supports URL schemes for external players like Infuse
 
       // Set LSRequiresIPhoneOS to false for tvOS
       if (infoPlist.LSRequiresIPhoneOS) {
