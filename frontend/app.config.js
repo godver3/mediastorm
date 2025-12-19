@@ -101,21 +101,19 @@ module.exports = ({ config }) => {
         deploymentTarget: '15.1',
         icon: './assets/ios_icons/icon-1024.png',
         infoPlist: {
+          LSApplicationQueriesSchemes: ['outplayer', 'infuse'],
+          ITSAppUsesNonExemptEncryption: false,
+          UIBackgroundModes: ['audio'],
           ...(isTV
             ? {
-                ITSAppUsesNonExemptEncryption: false,
                 UIUserInterfaceStyle: 'Automatic',
-                UIBackgroundModes: ['audio'],
               }
             : {
-                LSApplicationQueriesSchemes: ['outplayer', 'infuse'],
-                ITSAppUsesNonExemptEncryption: false,
                 UISupportedInterfaceOrientations: [
                   'UIInterfaceOrientationPortrait',
                   'UIInterfaceOrientationLandscapeLeft',
                   'UIInterfaceOrientationLandscapeRight',
                 ],
-                UIBackgroundModes: ['audio'],
               }),
         },
       },
