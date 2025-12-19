@@ -124,7 +124,7 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
                   borderWidth: isActive ? 2 : 0,
                   borderColor: theme.colors.accent.primary,
                 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                <Text style={{ fontSize: 12, lineHeight: 12, fontWeight: '700', color: '#fff' }}>
                   {activeUser.name.charAt(0).toUpperCase()}
                 </Text>
               </View>
