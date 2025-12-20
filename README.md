@@ -76,7 +76,7 @@ Please test:
 
 ## Frontend Apps
 
-The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV.
+The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV. Updates will be pushed through Expo OTA and auto update testing apps (1.0.x). New builds will be submitted periodically as major increments (1.x.0). Update details will be shared in the Discord. 
 
 ### iOS / tvOS
 
@@ -87,7 +87,7 @@ Available on TestFlight
 
 ### Android / Android TV
 
-Download the latest APK: [Releases](#) *(coming soon)*
+Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
 
 ## Acknowledgments
 
