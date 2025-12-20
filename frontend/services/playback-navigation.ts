@@ -7,6 +7,7 @@ interface NextEpisodeInfo {
   titleId: string;
   seasonNumber: number;
   episodeNumber: number;
+  autoPlay: boolean; // When true, automatically start playback instead of just selecting
   timestamp: number; // To invalidate stale data
 }
 
@@ -17,12 +18,14 @@ const MAX_AGE_MS = 5000; // Only valid for 5 seconds
 export const playbackNavigation = {
   /**
    * Set the next episode to show when returning to details page
+   * @param autoPlay - When true, automatically start playback of the episode
    */
-  setNextEpisode(titleId: string, seasonNumber: number, episodeNumber: number) {
+  setNextEpisode(titleId: string, seasonNumber: number, episodeNumber: number, autoPlay: boolean = false) {
     nextEpisodeToShow = {
       titleId,
       seasonNumber,
       episodeNumber,
+      autoPlay,
       timestamp: Date.now(),
     };
   },
@@ -30,7 +33,7 @@ export const playbackNavigation = {
   /**
    * Get and clear the next episode to show (if it matches the titleId and is still fresh)
    */
-  consumeNextEpisode(titleId: string): { seasonNumber: number; episodeNumber: number } | null {
+  consumeNextEpisode(titleId: string): { seasonNumber: number; episodeNumber: number; autoPlay: boolean } | null {
     if (!nextEpisodeToShow) {
       return null;
     }
@@ -52,6 +55,7 @@ export const playbackNavigation = {
     const result = {
       seasonNumber: nextEpisodeToShow.seasonNumber,
       episodeNumber: nextEpisodeToShow.episodeNumber,
+      autoPlay: nextEpisodeToShow.autoPlay,
     };
     nextEpisodeToShow = null;
     return result;

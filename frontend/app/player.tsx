@@ -40,7 +40,7 @@ import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
-import type { AudioStreamMetadata, SubtitleStreamMetadata } from '@/services/api';
+import type { AudioStreamMetadata, SubtitleStreamMetadata, SeriesEpisode } from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
 import type { NovaTheme } from '@/theme';
@@ -567,6 +567,8 @@ export default function PlayerScreen() {
     audioChannels?: string;
     audioBitrate?: number;
   } | null>(null);
+  // All episodes for navigation (series content only)
+  const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
   // Video dimensions for subtitle positioning (relative to video content, not screen)
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
   const effectiveMovie = useMemo(() => currentMovieUrl ?? resolvedMovie ?? null, [currentMovieUrl, resolvedMovie]);
@@ -3201,6 +3203,110 @@ export default function PlayerScreen() {
     };
   }, [resolvedMovie, updateDuration, sourcePath, settings]);
 
+  // Fetch series details for episode navigation (only for series content)
+  useEffect(() => {
+    const isSeries = mediaType === 'episode' || mediaType === 'series' || mediaType === 'tv' || mediaType === 'show';
+    if (!isSeries) {
+      setAllEpisodes([]);
+      return;
+    }
+
+    // Need at least one identifier to fetch series
+    if (!titleId && !tvdbId && !imdbId) {
+      console.log('[player] no series identifier available for episode navigation');
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchSeriesEpisodes = async () => {
+      try {
+        console.log('[player] fetching series details for episode navigation', { titleId, tvdbId, imdbId });
+        const details = await apiService.getSeriesDetails({
+          titleId: titleId || undefined,
+          tvdbId: tvdbId || undefined,
+          // imdbId is not supported by getSeriesDetails, but titleId should cover most cases
+        });
+
+        if (!isMounted) return;
+
+        // Flatten all episodes from all seasons
+        const episodes: SeriesEpisode[] = [];
+        for (const season of details.seasons || []) {
+          for (const episode of season.episodes || []) {
+            episodes.push(episode);
+          }
+        }
+
+        // Sort by season and episode number
+        episodes.sort((a, b) => {
+          if (a.seasonNumber !== b.seasonNumber) {
+            return a.seasonNumber - b.seasonNumber;
+          }
+          return a.episodeNumber - b.episodeNumber;
+        });
+
+        console.log('[player] loaded episodes for navigation', { count: episodes.length });
+        setAllEpisodes(episodes);
+      } catch (error) {
+        console.warn('[player] failed to fetch series details for episode navigation', error);
+      }
+    };
+
+    fetchSeriesEpisodes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [mediaType, titleId, tvdbId, imdbId]);
+
+  // Find current episode index and determine if prev/next exist
+  const currentEpisodeIndex = useMemo(() => {
+    if (!allEpisodes.length || !seasonNumber || !episodeNumber) return -1;
+    return allEpisodes.findIndex(
+      (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
+    );
+  }, [allEpisodes, seasonNumber, episodeNumber]);
+
+  const hasPreviousEpisode = currentEpisodeIndex > 0;
+  const hasNextEpisode = currentEpisodeIndex >= 0 && currentEpisodeIndex < allEpisodes.length - 1;
+
+  // Navigate to previous/next episode
+  const navigateToEpisode = useCallback(
+    (episode: SeriesEpisode) => {
+      const seriesId = titleId || imdbId || tvdbId;
+      if (!seriesId) {
+        console.warn('[player] no series identifier for episode navigation');
+        return;
+      }
+
+      console.log('[player] navigating to episode', { season: episode.seasonNumber, episode: episode.episodeNumber });
+
+      // Set the next episode in playback navigation with autoPlay flag
+      playbackNavigation.setNextEpisode(seriesId, episode.seasonNumber, episode.episodeNumber, true);
+
+      // Navigate back to details page - it will auto-play the episode
+      router.back();
+    },
+    [titleId, imdbId, tvdbId],
+  );
+
+  const handlePreviousEpisode = useCallback(() => {
+    if (!hasPreviousEpisode) return;
+    const previousEpisode = allEpisodes[currentEpisodeIndex - 1];
+    if (previousEpisode) {
+      navigateToEpisode(previousEpisode);
+    }
+  }, [hasPreviousEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
+
+  const handleNextEpisode = useCallback(() => {
+    if (!hasNextEpisode) return;
+    const nextEpisode = allEpisodes[currentEpisodeIndex + 1];
+    if (nextEpisode) {
+      navigateToEpisode(nextEpisode);
+    }
+  }, [hasNextEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
+
   // Hide loading screen on unmount (e.g., if user navigates back before video loads)
   useEffect(() => {
     return () => {
@@ -3385,6 +3491,10 @@ export default function PlayerScreen() {
                               seekIndicatorStartTime={seekIndicatorStartTimeRef.current}
                               isSeeking={isTVSeeking}
                               streamInfo={fullStreamInfo}
+                              hasPreviousEpisode={hasPreviousEpisode}
+                              hasNextEpisode={hasNextEpisode}
+                              onPreviousEpisode={handlePreviousEpisode}
+                              onNextEpisode={handleNextEpisode}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -3460,6 +3570,10 @@ export default function PlayerScreen() {
                           onSkipForward={handleSkipForward}
                           onFocusChange={handleFocusChange}
                           streamInfo={fullStreamInfo}
+                          hasPreviousEpisode={hasPreviousEpisode}
+                          hasNextEpisode={hasNextEpisode}
+                          onPreviousEpisode={handlePreviousEpisode}
+                          onNextEpisode={handleNextEpisode}
                         />
                       </SpatialNavigationNode>
                     </View>

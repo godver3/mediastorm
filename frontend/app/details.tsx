@@ -425,9 +425,11 @@ export default function DetailsScreen() {
   const [nextEpisodeFromPlayback, setNextEpisodeFromPlayback] = useState<{
     seasonNumber: number;
     episodeNumber: number;
+    autoPlay: boolean;
   } | null>(null);
   const allEpisodesRef = useRef<SeriesEpisode[]>([]);
   const handleEpisodeSelectRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
+  const handlePlayEpisodeRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
 
   // Check for next episode when screen comes into focus
   useFocusEffect(
@@ -438,14 +440,21 @@ export default function DetailsScreen() {
           console.log('[Details] Found next episode from playback:', nextEp);
           setNextEpisodeFromPlayback(nextEp);
 
-          // Try to select the episode immediately if we have the episodes loaded
-          if (allEpisodesRef.current.length > 0 && handleEpisodeSelectRef.current) {
+          // Try to select/play the episode immediately if we have the episodes loaded
+          if (allEpisodesRef.current.length > 0) {
             const matchingEpisode = allEpisodesRef.current.find(
               (ep) => ep.seasonNumber === nextEp.seasonNumber && ep.episodeNumber === nextEp.episodeNumber,
             );
             if (matchingEpisode) {
-              console.log('[Details] Selecting next episode:', matchingEpisode);
-              handleEpisodeSelectRef.current(matchingEpisode);
+              if (nextEp.autoPlay && handlePlayEpisodeRef.current) {
+                console.log('[Details] Auto-playing next episode:', matchingEpisode);
+                handlePlayEpisodeRef.current(matchingEpisode);
+                // Clear the state since we're handling it now
+                setNextEpisodeFromPlayback(null);
+              } else if (handleEpisodeSelectRef.current) {
+                console.log('[Details] Selecting next episode:', matchingEpisode);
+                handleEpisodeSelectRef.current(matchingEpisode);
+              }
             }
           }
         }
@@ -2352,7 +2361,7 @@ export default function DetailsScreen() {
     handleEpisodeSelectRef.current = handleEpisodeSelect;
   }, [handleEpisodeSelect]);
 
-  // Select next episode when episodes are loaded and we have a next episode to show
+  // Select/play next episode when episodes are loaded and we have a next episode to show
   useEffect(() => {
     if (nextEpisodeFromPlayback && allEpisodes.length > 0) {
       const matchingEpisode = allEpisodes.find(
@@ -2361,8 +2370,13 @@ export default function DetailsScreen() {
           ep.episodeNumber === nextEpisodeFromPlayback.episodeNumber,
       );
       if (matchingEpisode) {
-        console.log('[Details] Auto-selecting next episode after episodes loaded:', matchingEpisode);
-        handleEpisodeSelect(matchingEpisode);
+        if (nextEpisodeFromPlayback.autoPlay && handlePlayEpisodeRef.current) {
+          console.log('[Details] Auto-playing next episode after episodes loaded:', matchingEpisode);
+          handlePlayEpisodeRef.current(matchingEpisode);
+        } else {
+          console.log('[Details] Auto-selecting next episode after episodes loaded:', matchingEpisode);
+          handleEpisodeSelect(matchingEpisode);
+        }
         // Clear the next episode state after applying it
         setNextEpisodeFromPlayback(null);
       }
@@ -2390,6 +2404,11 @@ export default function DetailsScreen() {
     },
     [recordEpisodePlayback, resolveAndPlay, title],
   );
+
+  // Keep the play episode ref in sync with the callback
+  useEffect(() => {
+    handlePlayEpisodeRef.current = handlePlayEpisode;
+  }, [handlePlayEpisode]);
 
   const getItemIdForProgress = useCallback((): string | null => {
     const episodeToCheck = nextUpEpisode || activeEpisode;
