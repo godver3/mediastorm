@@ -81,11 +81,21 @@ module.exports = ({ config }) => {
         manifest: './public/manifest.json',
       },
       orientation: 'default',
+      splash: {
+        image: './assets/ios_icons/icon-1024.png',
+        resizeMode: 'contain',
+        backgroundColor: '#1a1a2e',
+      },
       android: {
         package: 'com.strmr.app',
         icon: './assets/ios_icons/icon-1024.png',
         adaptiveIcon: {
           foregroundImage: './assets/ios_icons/icon-1024.png',
+          backgroundColor: '#1a1a2e',
+        },
+        splash: {
+          image: './assets/ios_icons/icon-1024.png',
+          resizeMode: 'contain',
           backgroundColor: '#1a1a2e',
         },
         permissions: [],
