@@ -557,6 +557,16 @@ export default function PlayerScreen() {
     colorSpace?: string;
     isHDR10?: boolean;
   } | null>(null);
+  // Video/audio stream info for info modal (TV platforms)
+  const [streamInfo, setStreamInfo] = useState<{
+    resolution?: string;
+    videoBitrate?: number;
+    videoCodec?: string;
+    frameRate?: string;
+    audioCodec?: string;
+    audioChannels?: string;
+    audioBitrate?: number;
+  } | null>(null);
   // Video dimensions for subtitle positioning (relative to video content, not screen)
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
   const effectiveMovie = useMemo(() => currentMovieUrl ?? resolvedMovie ?? null, [currentMovieUrl, resolvedMovie]);
@@ -1266,6 +1276,74 @@ export default function PlayerScreen() {
       colorSpace: videoColorInfo?.colorSpace,
     };
   }, [routeHasDolbyVision, routeHasHDR10, routeDvProfile, videoColorInfo]);
+
+  // Build full stream info for TV info modal - combines media info, stream info, and HDR info
+  const fullStreamInfo = useMemo(() => {
+    // Build episode code if applicable
+    const episodeCode =
+      (mediaType === 'episode' || mediaType === 'series' || mediaType === 'tv' || mediaType === 'show') &&
+      seasonNumber &&
+      episodeNumber
+        ? `S${seasonNumber.toString().padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}`
+        : undefined;
+
+    // Build HDR format string
+    let hdrFormatStr: string | undefined;
+    if (routeHasDolbyVision) {
+      hdrFormatStr = routeDvProfile ? `Dolby Vision Profile ${routeDvProfile}` : 'Dolby Vision';
+    } else if (routeHasHDR10 || videoColorInfo?.isHDR10) {
+      hdrFormatStr = 'HDR10';
+    }
+
+    // Extract filename from source path
+    const extractFilename = (path?: string | null) => {
+      if (!path) return undefined;
+      try {
+        const url = new URL(path);
+        const pathname = url.pathname;
+        const filename = pathname.split('/').pop();
+        return filename ? decodeURIComponent(filename) : undefined;
+      } catch {
+        const filename = path.split('/').pop();
+        return filename || undefined;
+      }
+    };
+
+    return {
+      title: title || undefined,
+      episodeCode,
+      episodeName: episodeName || undefined,
+      year: year || undefined,
+      filename: displayName || extractFilename(sourcePath),
+      resolution: streamInfo?.resolution,
+      videoBitrate: streamInfo?.videoBitrate,
+      videoCodec: streamInfo?.videoCodec,
+      frameRate: streamInfo?.frameRate,
+      audioCodec: streamInfo?.audioCodec,
+      audioChannels: streamInfo?.audioChannels,
+      audioBitrate: streamInfo?.audioBitrate,
+      colorSpace: videoColorInfo?.colorSpace,
+      colorPrimaries: videoColorInfo?.colorPrimaries,
+      colorTransfer: videoColorInfo?.colorTransfer,
+      hdrFormat: hdrFormatStr,
+      playerImplementation: playerImplementationLabel || undefined,
+    };
+  }, [
+    title,
+    mediaType,
+    seasonNumber,
+    episodeNumber,
+    episodeName,
+    year,
+    displayName,
+    sourcePath,
+    streamInfo,
+    videoColorInfo,
+    routeHasDolbyVision,
+    routeHasHDR10,
+    routeDvProfile,
+    playerImplementationLabel,
+  ]);
 
   useEffect(() => {
     console.log('🎮 Movie:', effectiveMovie);
@@ -2988,6 +3066,33 @@ export default function PlayerScreen() {
             hasDolbyVision: primaryVideo.hasDolbyVision,
             dolbyVisionProfile: primaryVideo.dolbyVisionProfile,
           });
+
+          // Extract video/audio stream info for info modal
+          const primaryAudio = metadata.audioStreams?.[0];
+          const resolution =
+            primaryVideo.width && primaryVideo.height ? `${primaryVideo.width}x${primaryVideo.height}` : undefined;
+          const frameRate = primaryVideo.avgFrameRate
+            ? (() => {
+                // Parse frame rate like "24000/1001" or "24"
+                const match = primaryVideo.avgFrameRate.match(/^(\d+)\/(\d+)$/);
+                if (match) {
+                  const fps = parseInt(match[1], 10) / parseInt(match[2], 10);
+                  return `${fps.toFixed(3)} fps`;
+                }
+                const num = parseFloat(primaryVideo.avgFrameRate);
+                return !isNaN(num) ? `${num.toFixed(3)} fps` : undefined;
+              })()
+            : undefined;
+          const audioChannels = primaryAudio?.channelLayout || (primaryAudio?.channels ? `${primaryAudio.channels}ch` : undefined);
+          setStreamInfo({
+            resolution,
+            videoBitrate: primaryVideo.bitRate,
+            videoCodec: primaryVideo.codecLongName || primaryVideo.codecName,
+            frameRate,
+            audioCodec: primaryAudio?.codecLongName || primaryAudio?.codecName,
+            audioChannels,
+            audioBitrate: primaryAudio?.bitRate,
+          });
         }
 
         const fullDuration = Number(metadata.durationSeconds) || 0;
@@ -3279,6 +3384,7 @@ export default function PlayerScreen() {
                               seekIndicatorAmount={seekIndicatorAmount}
                               seekIndicatorStartTime={seekIndicatorStartTimeRef.current}
                               isSeeking={isTVSeeking}
+                              streamInfo={fullStreamInfo}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -3353,6 +3459,7 @@ export default function PlayerScreen() {
                           onSkipBackward={handleSkipBackward}
                           onSkipForward={handleSkipForward}
                           onFocusChange={handleFocusChange}
+                          streamInfo={fullStreamInfo}
                         />
                       </SpatialNavigationNode>
                     </View>
