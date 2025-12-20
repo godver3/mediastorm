@@ -2,6 +2,7 @@ import FocusablePressable from '@/components/FocusablePressable';
 import SeekBar from '@/components/player/SeekBar';
 import VolumeControl from '@/components/player/VolumeControl';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
+import { StreamInfoModal, type StreamInfoData } from '@/components/player/StreamInfoModal';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -37,6 +38,8 @@ interface ControlsProps {
   seekIndicatorStartTime?: number;
   /** When true, greys out control buttons (during TV D-pad seeking) */
   isSeeking?: boolean;
+  /** Stream info for TV info modal */
+  streamInfo?: StreamInfoData;
 }
 
 type TrackOption = {
@@ -45,7 +48,7 @@ type TrackOption = {
   description?: string;
 };
 
-type ActiveMenu = 'audio' | 'subtitles' | null;
+type ActiveMenu = 'audio' | 'subtitles' | 'info' | null;
 
 const Controls: React.FC<ControlsProps> = ({
   paused,
@@ -74,6 +77,7 @@ const Controls: React.FC<ControlsProps> = ({
   seekIndicatorAmount = 0,
   seekIndicatorStartTime = 0,
   isSeeking = false,
+  streamInfo,
 }) => {
   const theme = useTheme();
   const { width, height } = useWindowDimensions();
@@ -292,7 +296,7 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </View>
           )}
-          {(hasAudioSelection || hasSubtitleSelection) && (
+          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo)) && (
             <SpatialNavigationNode orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
@@ -366,12 +370,28 @@ const Controls: React.FC<ControlsProps> = ({
                     </Text>
                   </View>
                 )}
+                {/* Info button for TV platforms */}
+                {isTvPlatform && streamInfo && (
+                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                    <FocusablePressable
+                      icon="information-circle"
+                      focusKey="info-button"
+                      onSelect={() => openMenu('info')}
+                      onFocus={() => onFocusChange?.('info-button')}
+                      style={[styles.controlButton, styles.trackButton]}
+                      disabled={isSeeking || activeMenu !== null}
+                    />
+                    <Text style={styles.trackLabel} numberOfLines={1}>
+                      Info
+                    </Text>
+                  </View>
+                )}
               </View>
             </SpatialNavigationNode>
           )}
         </View>
       </SpatialNavigationNode>
-      {activeMenu !== null ? (
+      {activeMenu === 'audio' || activeMenu === 'subtitles' ? (
         <TrackSelectionModal
           visible={true}
           title={activeMenu === 'audio' ? 'Audio Tracks' : 'Subtitles'}
@@ -382,6 +402,9 @@ const Controls: React.FC<ControlsProps> = ({
           onClose={closeMenu}
           focusKeyPrefix={activeMenu}
         />
+      ) : null}
+      {activeMenu === 'info' && streamInfo ? (
+        <StreamInfoModal visible={true} info={streamInfo} onClose={closeMenu} />
       ) : null}
     </>
   );
