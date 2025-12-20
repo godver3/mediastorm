@@ -57,26 +57,24 @@
     "production": {
       "channel": "production",
       "autoIncrement": true,
-      "env": {
-        "GRADLE_OPTS": "-Xmx4096m -XX:MaxMetaspaceSize=1024m"
-      },
       "ios": {
         "buildConfiguration": "Release",
         "simulator": false
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease"
       }
     },
     "production_tv": {
       "extends": "production",
       "env": {
         "EXPO_TV": "1",
-        "ANDROID_HOME": "/root/android-sdk",
-        "GRADLE_OPTS": "-Xmx4096m -XX:MaxMetaspaceSize=1024m"
+        "ANDROID_HOME": "/root/android-sdk"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease"
       },
       "ios": {
         "buildConfiguration": "Release",

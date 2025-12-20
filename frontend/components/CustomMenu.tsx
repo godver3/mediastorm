@@ -2,7 +2,7 @@ import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
-import { DefaultFocus, SpatialNavigationFocusableView, SpatialNavigationNode } from '@/services/tv-navigation';
+import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -193,31 +193,39 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
               )}
               <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
             </View>
-            {menuItems.map((item, index) => {
-              const disabled = isRouteDisabled(item.name);
-              const isHome = index === 0;
-              const isLast = index === menuItems.length - 1;
-              // Use native Pressable focus handling instead of manual RemoteControlManager tracking
-              // nextFocusLeft points to self to trap focus within menu (prevent Left from leaving)
-              // nextFocusUp on first item and nextFocusDown on last item trap vertical navigation
-              const selfTag = menuItemTags[index];
-              return (
-                <Pressable
-                  key={item.name}
-                  ref={(ref) => {
-                    menuItemRefs.current[index] = ref;
-                  }}
-                  hasTVPreferredFocus={isHome && isVisible}
-                  onPress={() => handleItemSelect(item.name)}
-                  disabled={disabled}
-                  nextFocusLeft={selfTag ?? undefined}
-                  nextFocusUp={isHome ? (selfTag ?? undefined) : undefined}
-                  nextFocusDown={isLast ? (selfTag ?? undefined) : undefined}
-                  style={({ focused }) => [
-                    styles.menuItem,
-                    focused && !disabled && styles.menuItemFocused,
-                    disabled && styles.menuItemDisabled,
-                  ]}>
+            {(() => {
+              // Find first and last enabled items for focus trapping
+              const firstEnabledIndex = menuItems.findIndex((i) => !isRouteDisabled(i.name));
+              const lastEnabledIndex = menuItems.findLastIndex((i) => !isRouteDisabled(i.name));
+              const firstEnabledTag = menuItemTags[firstEnabledIndex];
+              const lastEnabledTag = menuItemTags[lastEnabledIndex];
+
+              return menuItems.map((item, index) => {
+                const disabled = isRouteDisabled(item.name);
+                const isFirstEnabled = index === firstEnabledIndex;
+                const isLastEnabled = index === lastEnabledIndex;
+                // Use native Pressable focus handling instead of manual RemoteControlManager tracking
+                // nextFocusLeft points to self to trap focus within menu (prevent Left from leaving)
+                // nextFocusUp on first enabled item and nextFocusDown on last enabled item trap vertical navigation
+                const selfTag = menuItemTags[index];
+                return (
+                  <Pressable
+                    key={item.name}
+                    ref={(ref) => {
+                      menuItemRefs.current[index] = ref;
+                    }}
+                    hasTVPreferredFocus={isFirstEnabled && isVisible}
+                    onPress={() => handleItemSelect(item.name)}
+                    disabled={disabled}
+                    focusable={!disabled}
+                    nextFocusLeft={selfTag ?? undefined}
+                    nextFocusUp={isFirstEnabled ? (firstEnabledTag ?? undefined) : undefined}
+                    nextFocusDown={isLastEnabled ? (lastEnabledTag ?? undefined) : undefined}
+                    style={({ focused }) => [
+                      styles.menuItem,
+                      focused && !disabled && styles.menuItemFocused,
+                      disabled && styles.menuItemDisabled,
+                    ]}>
                   {({ focused }) => (
                     <>
                       <MaterialCommunityIcons
@@ -243,8 +251,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                     </>
                   )}
                 </Pressable>
-              );
-            })}
+                );
+              });
+            })()}
           </View>
         ) : (
           <ScrollView
@@ -269,10 +278,20 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                   return theme.colors.text.primary;
                 };
 
-                // Wrap current route's item in DefaultFocus so it receives focus when drawer opens
-                const isCurrentRoute = index === currentRouteIndex;
-                const focusableView = (
-                  <SpatialNavigationFocusableView key={item.name} onSelect={() => handleItemSelect(item.name)}>
+                // Find the first non-disabled item to use as default focus target
+                const firstEnabledIndex = menuItems.findIndex((i) => !isRouteDisabled(i.name));
+                // Use first enabled item as fallback if current route is disabled
+                const defaultFocusIndex = isRouteDisabled(menuItems[currentRouteIndex]?.name)
+                  ? firstEnabledIndex
+                  : currentRouteIndex;
+                const shouldHaveDefaultFocus = index === defaultFocusIndex;
+
+                // Use SpatialNavigationNode with isFocusable={!disabled} to skip disabled items
+                const focusableNode = (
+                  <SpatialNavigationNode
+                    key={item.name}
+                    isFocusable={!disabled}
+                    onSelect={disabled ? undefined : () => handleItemSelect(item.name)}>
                     {({ isFocused }: { isFocused: boolean }) => (
                       <Pressable
                         style={[
@@ -297,10 +316,14 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                         </Text>
                       </Pressable>
                     )}
-                  </SpatialNavigationFocusableView>
+                  </SpatialNavigationNode>
                 );
 
-                return isCurrentRoute ? <DefaultFocus key={item.name}>{focusableView}</DefaultFocus> : focusableView;
+                return shouldHaveDefaultFocus ? (
+                  <DefaultFocus key={item.name}>{focusableNode}</DefaultFocus>
+                ) : (
+                  focusableNode
+                );
               })}
             </SpatialNavigationNode>
           </ScrollView>

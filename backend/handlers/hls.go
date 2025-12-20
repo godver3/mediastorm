@@ -19,10 +19,61 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"novastream/services/streaming"
 )
+
+// debugReader wraps an io.Reader to log bytes read and detect EOF
+type debugReader struct {
+	r           io.Reader
+	sessionID   string
+	bytesRead   int64
+	startTime   time.Time
+	lastLogTime time.Time
+	logInterval time.Duration
+	closed      atomic.Bool
+}
+
+func newDebugReader(r io.Reader, sessionID string) *debugReader {
+	return &debugReader{
+		r:           r,
+		sessionID:   sessionID,
+		startTime:   time.Now(),
+		lastLogTime: time.Now(),
+		logInterval: 30 * time.Second, // Log progress every 30 seconds
+	}
+}
+
+func (d *debugReader) Read(p []byte) (n int, err error) {
+	n, err = d.r.Read(p)
+	if n > 0 {
+		d.bytesRead += int64(n)
+		// Log progress periodically
+		if time.Since(d.lastLogTime) >= d.logInterval {
+			elapsed := time.Since(d.startTime)
+			mbRead := float64(d.bytesRead) / 1024 / 1024
+			mbPerSec := mbRead / elapsed.Seconds()
+			log.Printf("[hls] session %s: SOURCE_STREAM progress - %.2f MB read in %v (%.2f MB/s)",
+				d.sessionID, mbRead, elapsed.Round(time.Second), mbPerSec)
+			d.lastLogTime = time.Now()
+		}
+	}
+	if err != nil {
+		elapsed := time.Since(d.startTime)
+		mbRead := float64(d.bytesRead) / 1024 / 1024
+		if err == io.EOF {
+			log.Printf("[hls] session %s: SOURCE_STREAM EOF - total %.2f MB read in %v",
+				d.sessionID, mbRead, elapsed.Round(time.Second))
+		} else {
+			log.Printf("[hls] session %s: SOURCE_STREAM ERROR after %.2f MB in %v: %v",
+				d.sessionID, mbRead, elapsed.Round(time.Second), err)
+		}
+		d.closed.Store(true)
+	}
+	return n, err
+}
 
 // HLSSession represents an active HLS transcoding session
 type HLSSession struct {
@@ -1206,7 +1257,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			pipeReader = io.MultiReader(bytes.NewReader(headerPrefix), pipeReader)
 		}
 
-		cmd.Stdin = pipeReader
+		// Wrap with debug reader to track bytes read and detect when source stream ends
+		debugPipe := newDebugReader(pipeReader, session.ID)
+		cmd.Stdin = debugPipe
+		log.Printf("[hls] session %s: SOURCE_STREAM started (wrapped with debug reader)", session.ID)
 	}
 
 	stderr, err := cmd.StderrPipe()
@@ -1547,7 +1601,19 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	// Wait for FFmpeg to complete
 	log.Printf("[hls] session %s: waiting for FFmpeg to complete", session.ID)
+	waitStart := time.Now()
 	err = cmd.Wait()
+	waitDuration := time.Since(waitStart)
+
+	// Log FFmpeg exit details
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	log.Printf("[hls] session %s: FFMPEG_EXIT - exitCode=%d waitDuration=%v err=%v ctxErr=%v",
+		session.ID, exitCode, waitDuration, err, ctx.Err())
 
 	// Signal monitoring goroutines to stop
 	close(perfDone)
@@ -1697,6 +1763,19 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		return m.startTranscoding(newCtx, session, cachedForceAAC)
 	}
 
+	// Calculate expected vs actual segments for debugging
+	highestSegment := m.findHighestSegmentNumber(session)
+	expectedDuration := session.Duration - session.StartOffset
+	expectedSegments := 0
+	if expectedDuration > 0 {
+		expectedSegments = int(expectedDuration / hlsSegmentDuration)
+	}
+	actualSegments := highestSegment + 1
+	completionPercent := 0.0
+	if expectedSegments > 0 {
+		completionPercent = float64(actualSegments) / float64(expectedSegments) * 100
+	}
+
 	session.mu.Lock()
 	session.Completed = true
 	idleTriggered := session.IdleTimeoutTriggered
@@ -1707,11 +1786,20 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		return fmt.Errorf("ffmpeg wait: %w", err)
 	}
 
+	// Detailed completion logging
+	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - duration=%.2fs startOffset=%.2fs expectedDuration=%.2fs",
+		session.ID, session.Duration, session.StartOffset, expectedDuration)
+	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - expectedSegments=%d actualSegments=%d (highest=%d) completion=%.1f%%",
+		session.ID, expectedSegments, actualSegments, highestSegment, completionPercent)
+
 	if idleTriggered {
-		log.Printf("[hls] session %s: transcoding stopped due to idle timeout after %v (bytes streamed: %d, segments: %d)",
+		log.Printf("[hls] session %s: transcoding stopped due to IDLE_TIMEOUT after %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
+	} else if completionPercent < 95 && expectedSegments > 0 {
+		log.Printf("[hls] session %s: WARNING - PREMATURE_COMPLETION at %.1f%% (expected %d segments, got %d)",
+			session.ID, completionPercent, expectedSegments, actualSegments)
 	} else {
-		log.Printf("[hls] session %s: transcoding completed in %v (bytes streamed: %d, segments: %d)",
+		log.Printf("[hls] session %s: transcoding completed successfully in %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
 	}
 	return nil

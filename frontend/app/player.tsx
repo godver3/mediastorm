@@ -21,6 +21,7 @@ import {
   useLockSpatialNavigation,
   useSpatialNavigator,
 } from '@/services/tv-navigation';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -590,6 +591,22 @@ export default function PlayerScreen() {
       currentTime: currentTimeRef.current,
     });
   }, [sidecarSubtitleUrl, effectiveMovie, isHlsStream]);
+
+  // Prevent screen saver / display sleep while video is playing
+  // This is needed because VLC player on Android doesn't handle this automatically
+  useEffect(() => {
+    if (paused) {
+      deactivateKeepAwake();
+    } else {
+      activateKeepAwakeAsync().catch(() => {
+        // Ignore errors - keep-awake may not be available on all platforms
+      });
+    }
+
+    return () => {
+      deactivateKeepAwake();
+    };
+  }, [paused]);
 
   // Check if the current URL is already an HLS session playlist (not just the /hls/start endpoint)
   // Session playlist URLs look like: /video/hls/{sessionId}/stream.m3u8

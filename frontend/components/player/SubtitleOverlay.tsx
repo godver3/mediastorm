@@ -305,7 +305,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Find active cues for current time
   // syncTick is included to force re-evaluation on drift detection
   // SUBTITLE_DELAY_SECONDS: positive = subtitles appear later (fixes ahead-of-audio)
-  const SUBTITLE_DELAY_SECONDS = 0.5;
+  const SUBTITLE_DELAY_SECONDS = 1.0;
   const activeCues = useMemo(() => {
     if (!enabled || cues.length === 0) return [];
     const adjustedTime = currentTime + timeOffset - SUBTITLE_DELAY_SECONDS;
