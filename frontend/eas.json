@@ -69,7 +69,8 @@
       "extends": "production",
       "env": {
         "EXPO_TV": "1",
-        "ANDROID_HOME": "/root/android-sdk"
+        "ANDROID_HOME": "/root/android-sdk",
+        "GRADLE_OPTS": "-Xmx4096m -XX:MaxMetaspaceSize=1024m"
       },
       "android": {
         "buildType": "apk"
