@@ -14,6 +14,8 @@ Scraping supports:
 - Torrentio
 - Newznab
 
+Discord: https://discord.gg/kT74mwf4bu
+
 ## Backend Deployment
 
 Deploy the backend using Docker Compose (or use the example in the repo):
