@@ -62,7 +62,7 @@
         "simulator": false
       },
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
       }
     },
     "production_tv": {
@@ -70,6 +70,9 @@
       "env": {
         "EXPO_TV": "1",
         "ANDROID_HOME": "/root/android-sdk"
+      },
+      "android": {
+        "buildType": "apk"
       },
       "ios": {
         "buildConfiguration": "Release",

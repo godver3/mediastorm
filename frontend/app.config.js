@@ -9,6 +9,7 @@ module.exports = ({ config }) => {
       {
         android: {
           minSdkVersion: 26,
+          usesCleartextTraffic: true,
         },
         ios: {
           deploymentTarget: '15.1',

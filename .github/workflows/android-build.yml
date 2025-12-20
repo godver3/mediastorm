@@ -1,0 +1,107 @@
+name: Build Android APKs
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_production:
+        description: 'Build production (mobile)'
+        required: true
+        type: boolean
+        default: false
+      build_production_tv:
+        description: 'Build production_tv (Android TV)'
+        required: true
+        type: boolean
+        default: true
+      create_release:
+        description: 'Create GitHub release with APKs'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(node -p "require('./app.config.js')({}).expo.version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Build production APK
+        if: ${{ inputs.build_production }}
+        run: |
+          eas build --platform android --profile production --local --non-interactive --output ./build/strmr-production-v${{ steps.version.outputs.version }}.apk
+
+      - name: Build production_tv APK
+        if: ${{ inputs.build_production_tv }}
+        run: |
+          eas build --platform android --profile production_tv --local --non-interactive --output ./build/strmr-tv-v${{ steps.version.outputs.version }}.apk
+
+      - name: Upload production APK artifact
+        if: ${{ inputs.build_production }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: strmr-production-v${{ steps.version.outputs.version }}
+          path: frontend/build/strmr-production-v${{ steps.version.outputs.version }}.apk
+
+      - name: Upload production_tv APK artifact
+        if: ${{ inputs.build_production_tv }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: strmr-tv-v${{ steps.version.outputs.version }}
+          path: frontend/build/strmr-tv-v${{ steps.version.outputs.version }}.apk
+
+      - name: Create Release
+        if: ${{ inputs.create_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.date }}
+          name: Release v${{ steps.version.outputs.version }} (${{ steps.version.outputs.date }})
+          draft: false
+          prerelease: false
+          files: |
+            frontend/build/*.apk
+          body: |
+            ## Android Builds
+
+            ${{ inputs.build_production && '- **strmr-production**: Mobile Android build' || '' }}
+            ${{ inputs.build_production_tv && '- **strmr-tv**: Android TV build' || '' }}
+
+            Built from commit: ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
