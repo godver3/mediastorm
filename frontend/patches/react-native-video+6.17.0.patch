@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-video/android/build.gradle b/node_modules/react-native-video/android/build.gradle
-index 748b799..af3d8f8 100644
+index 748b799..1bc5314 100644
 --- a/node_modules/react-native-video/android/build.gradle
 +++ b/node_modules/react-native-video/android/build.gradle
-@@ -166,26 +166,10 @@ android {
+@@ -166,26 +166,11 @@ android {
      sourceSets {
          main {
              java {
@@ -26,14 +26,15 @@ index 748b799..af3d8f8 100644
 -                if (ExoplayerDependencies["useExoplayerRtsp"]) {
 -                    exclude 'androidx/media3/exoplayer/rtsp'
 -                }
-+                // Always exclude dash and smoothstreaming stubs - expo-video provides these
-+                // Keep other stubs (ima, hls, rtsp) so the code can compile
++                // Exclude all stubs for modules that expo-video provides at runtime
++                // Keep IMA and RTSP stubs since expo-video doesn't provide these
 +                exclude 'androidx/media3/exoplayer/smoothstreaming'
 +                exclude 'androidx/media3/exoplayer/dash'
++                exclude 'androidx/media3/exoplayer/hls'
              }
          }
      }
-@@ -233,87 +217,18 @@ dependencies {
+@@ -233,87 +218,15 @@ dependencies {
      implementation "androidx.core:core-ktx:$androidxCore_version"
      implementation "androidx.activity:activity-ktx:$androidxActivity_version"
  
@@ -52,14 +53,7 @@ index 748b799..af3d8f8 100644
 -            implementation "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
 -        }
 -    }
-+    // Core media3 dependencies
-+    implementation "androidx.media3:media3-exoplayer:$media3_version"
-+    implementation "androidx.media3:media3-datasource-okhttp:$media3_version"
-+    implementation "androidx.media3:media3-ui:$media3_version"
-+    implementation "androidx.media3:media3-session:$media3_version"
-+    implementation "androidx.media3:media3-datasource:$media3_version"
-+    implementation "androidx.media3:media3-common:$media3_version"
- 
+-
 -    if (ExoplayerDependencies["useExoplayerDash"]) {
 -        // For DASH playback support with ExoPlayer
 -        if (media3_buildFromSource) {
@@ -68,9 +62,7 @@ index 748b799..af3d8f8 100644
 -            implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
 -        }
 -    }
-+    // HLS - needed for streaming, keep as implementation
-+    implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
- 
+-
 -    if (ExoplayerDependencies["useExoplayerHls"]) {
 -        // For HLS playback support with ExoPlayer
 -        if (media3_buildFromSource) {
@@ -129,9 +121,17 @@ index 748b799..af3d8f8 100644
 -        // Common functionality used across multiple media libraries
 -        implementation "androidx.media3:media3-common:$media3_version"
 -    }
-+    // Dash and SmoothStreaming - use compileOnly to prevent bundling conflicts with expo-video
++    // All media3 modules use compileOnly - expo-video provides them at runtime
++    // This prevents react-native-video from bundling duplicate classes
++    compileOnly "androidx.media3:media3-exoplayer:$media3_version"
++    compileOnly "androidx.media3:media3-exoplayer-hls:$media3_version"
 +    compileOnly "androidx.media3:media3-exoplayer-dash:$media3_version"
 +    compileOnly "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
++    compileOnly "androidx.media3:media3-datasource-okhttp:$media3_version"
++    compileOnly "androidx.media3:media3-ui:$media3_version"
++    compileOnly "androidx.media3:media3-session:$media3_version"
++    compileOnly "androidx.media3:media3-datasource:$media3_version"
++    compileOnly "androidx.media3:media3-common:$media3_version"
  }
 \ No newline at end of file
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
