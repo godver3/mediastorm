@@ -6,6 +6,7 @@ import ExitButton from '@/components/player/ExitButton';
 import TVControlsModal from '@/components/player/TVControlsModal';
 import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
+import { StreamInfoModal } from '@/components/player/StreamInfoModal';
 import SubtitleOverlay from '@/components/player/SubtitleOverlay';
 import VideoPlayer, {
   VideoPlayerHandle,
@@ -550,6 +551,8 @@ export default function PlayerScreen() {
   // VLCKit does not support HDR output - it tone-maps to SDR
   const [hasDolbyVision, setHasDolbyVision] = useState<boolean>(routeHasDolbyVision);
   const [isFilenameDisplayed, setIsFilenameDisplayed] = useState<boolean>(false);
+  // Mobile stream info modal (on TV, this is handled in Controls component)
+  const [mobileStreamInfoVisible, setMobileStreamInfoVisible] = useState<boolean>(false);
   // Video color metadata for HDR info display
   const [videoColorInfo, setVideoColorInfo] = useState<{
     colorTransfer?: string;
@@ -652,6 +655,7 @@ export default function PlayerScreen() {
   const sessionBufferEndRef = useRef<number>(initialStartOffset);
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoEndedNaturallyRef = useRef(false); // Track if video ended naturally (vs user exit)
   const warmStartDebounceResolveRef = useRef<((value: boolean) => void) | null>(null);
   const pendingSessionSeekRef = useRef<number | null>(null);
   const pendingSeekAttemptRef = useRef<{ attempts: number; lastAttemptMs: number }>({
@@ -2069,9 +2073,15 @@ export default function PlayerScreen() {
     };
   }, []);
 
-  // Check if we should set next episode on unmount (when exiting player)
+  // Check if we should set next episode on unmount (when exiting player early but close to end)
   useEffect(() => {
     return () => {
+      // Skip if video ended naturally - handleVideoEnd already handled autoPlay
+      if (videoEndedNaturallyRef.current) {
+        console.log('[player] Skipping unmount next episode logic - video ended naturally');
+        return;
+      }
+
       // On unmount, check if we should advance to the next episode
       if (mediaType === 'episode' && seasonNumber && episodeNumber && titleId) {
         const currentPosition = currentTimeRef.current;
@@ -2090,7 +2100,7 @@ export default function PlayerScreen() {
         if (duration > 0) {
           const percentWatched = (currentPosition / duration) * 100;
 
-          // If watched >= 90%, set the next episode
+          // If watched >= 90%, set the next episode (but not autoPlay - user exited manually)
           if (percentWatched >= 90) {
             const nextEpisode = episodeNumber + 1;
             console.log('[player] ✅ Unmounting at >=90% watched, setting next episode:', {
@@ -2620,46 +2630,48 @@ export default function PlayerScreen() {
       titleId,
     });
 
+    // Mark that video ended naturally - prevents unmount cleanup from overwriting autoPlay
+    videoEndedNaturallyRef.current = true;
+
     // Only auto-navigate for TV show episodes
     if (mediaType === 'episode' && seasonNumber && episodeNumber) {
-      // Calculate the next episode
-      const nextEpisode = episodeNumber + 1;
+      // Find current episode index in allEpisodes
+      const currentIndex = allEpisodes.findIndex(
+        (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
+      );
+      const hasNext = currentIndex >= 0 && currentIndex < allEpisodes.length - 1;
+      const nextEp = hasNext ? allEpisodes[currentIndex + 1] : null;
 
-      console.log('🎬 Navigating to details page for next episode', {
-        seasonNumber,
-        nextEpisode,
-      });
+      if (nextEp) {
+        console.log('🎬 Auto-playing next episode', {
+          season: nextEp.seasonNumber,
+          episode: nextEp.episodeNumber,
+        });
 
-      // Store the next episode info so the details page can pick it up
-      if (titleId) {
-        playbackNavigation.setNextEpisode(titleId, seasonNumber, nextEpisode);
+        const seriesId = titleId || imdbId || tvdbId;
+        if (seriesId) {
+          // Set next episode with autoPlay=true so details page auto-plays
+          playbackNavigation.setNextEpisode(seriesId, nextEp.seasonNumber, nextEp.episodeNumber, true);
+        }
+
+        // Small delay for smooth transition, then navigate back to trigger autoplay
+        setTimeout(() => {
+          router.back();
+        }, 500);
+      } else {
+        console.log('🎬 No next episode available, returning to details');
+        // No next episode, just go back after a delay
+        setTimeout(() => {
+          router.back();
+        }, 1000);
       }
-
-      // Add a small delay to give user feedback that playback completed
-      setTimeout(() => {
-        // Navigate back - this will close the player and return to the details page
-        // The details page will handle showing the next episode via its own logic
-        router.back();
-      }, 1000); // 1 second delay
     } else {
       // For movies, just go back to the previous screen
       setTimeout(() => {
         router.back();
       }, 1000);
     }
-  }, [
-    mediaType,
-    seasonNumber,
-    episodeNumber,
-    router,
-    cleanSeriesTitle,
-    title,
-    titleId,
-    headerImage,
-    imdbId,
-    tvdbId,
-    yearParam,
-  ]);
+  }, [mediaType, seasonNumber, episodeNumber, router, titleId, imdbId, tvdbId, allEpisodes]);
 
   const handleTracksAvailable = useCallback(
     (audioTracks: TrackInfo[], subtitleTracks: TrackInfo[]) => {
@@ -3085,7 +3097,8 @@ export default function PlayerScreen() {
                 return !isNaN(num) ? `${num.toFixed(3)} fps` : undefined;
               })()
             : undefined;
-          const audioChannels = primaryAudio?.channelLayout || (primaryAudio?.channels ? `${primaryAudio.channels}ch` : undefined);
+          const audioChannels =
+            primaryAudio?.channelLayout || (primaryAudio?.channels ? `${primaryAudio.channels}ch` : undefined);
           setStreamInfo({
             resolution,
             videoBitrate: primaryVideo.bitRate,
@@ -3263,9 +3276,7 @@ export default function PlayerScreen() {
   // Find current episode index and determine if prev/next exist
   const currentEpisodeIndex = useMemo(() => {
     if (!allEpisodes.length || !seasonNumber || !episodeNumber) return -1;
-    return allEpisodes.findIndex(
-      (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
-    );
+    return allEpisodes.findIndex((ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber);
   }, [allEpisodes, seasonNumber, episodeNumber]);
 
   const hasPreviousEpisode = currentEpisodeIndex > 0;
@@ -3325,13 +3336,15 @@ export default function PlayerScreen() {
           onLayout={(event) => {
             const { width, height } = event.nativeEvent.layout;
             console.debug('[player] container layout', { width, height });
-          }}>
+          }}
+        >
           <View
             style={styles.videoWrapper}
             onLayout={(event) => {
               const { width, height } = event.nativeEvent.layout;
               console.debug('[player] video wrapper layout', { width, height });
-            }}>
+            }}
+          >
             <VideoPlayer
               key={effectiveMovie ?? 'novastream-player'}
               ref={videoRef}
@@ -3413,7 +3426,8 @@ export default function PlayerScreen() {
                   visible={controlsVisible || isTVSeeking}
                   onRequestClose={() => hideControls({ immediate: true })}
                   isChildModalOpen={isModalOpen}
-                  isSeeking={isTVSeeking}>
+                  isSeeking={isTVSeeking}
+                >
                   <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
                     <>
                       {/* Top gradient overlay */}
@@ -3432,11 +3446,13 @@ export default function PlayerScreen() {
                     <Animated.View
                       style={tvOverlayAnimatedStyle}
                       pointerEvents="box-none"
-                      renderToHardwareTextureAndroid={true}>
+                      renderToHardwareTextureAndroid={true}
+                    >
                       <View
                         style={styles.overlayContent}
                         pointerEvents="box-none"
-                        renderToHardwareTextureAndroid={true}>
+                        renderToHardwareTextureAndroid={true}
+                      >
                         <View style={styles.overlayTopRow} pointerEvents="box-none">
                           <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
                           <MediaInfoDisplay
@@ -3533,6 +3549,7 @@ export default function PlayerScreen() {
                         displayName={displayName}
                         playerImplementation={playerImplementationLabel}
                         onFilenameDisplayChange={setIsFilenameDisplayed}
+                        onShowStreamInfo={() => setMobileStreamInfoVisible(true)}
                         hdrInfo={hdrInfo}
                         safeAreaInsets={safeAreaInsets}
                       />
@@ -3583,6 +3600,15 @@ export default function PlayerScreen() {
             ) : null;
           })()}
 
+          {/* Mobile stream info modal (TV platforms use the modal in Controls component) */}
+          {!isTvPlatform && fullStreamInfo && (
+            <StreamInfoModal
+              visible={mobileStreamInfoVisible}
+              info={fullStreamInfo}
+              onClose={() => setMobileStreamInfoVisible(false)}
+            />
+          )}
+
           {debugOverlayEnabled && (
             <View style={styles.debugOverlay} pointerEvents="box-none">
               <View style={styles.debugCard} pointerEvents="auto">
@@ -3591,7 +3617,8 @@ export default function PlayerScreen() {
                   contentContainerStyle={styles.debugScrollContent}
                   showsVerticalScrollIndicator
                   contentInsetAdjustmentBehavior="never"
-                  automaticallyAdjustContentInsets={false}>
+                  automaticallyAdjustContentInsets={false}
+                >
                   {debugEntries.length === 0 ? (
                     <Text style={[styles.debugLine, styles.debugInfo]}>Console output will appear here.</Text>
                   ) : (

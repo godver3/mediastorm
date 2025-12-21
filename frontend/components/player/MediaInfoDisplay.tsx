@@ -32,6 +32,7 @@ interface MediaInfoDisplayProps {
   displayName?: string; // If provided, use this instead of extracting from sourcePath
   playerImplementation?: string | null;
   onFilenameDisplayChange?: (isDisplaying: boolean) => void;
+  onShowStreamInfo?: () => void; // Called when user taps on mobile to show stream info modal
   hdrInfo?: HdrInfo;
   safeAreaInsets?: SafeAreaInsets;
 }
@@ -81,6 +82,7 @@ export default function MediaInfoDisplay({
   displayName,
   playerImplementation,
   onFilenameDisplayChange,
+  onShowStreamInfo,
   hdrInfo,
   safeAreaInsets,
 }: MediaInfoDisplayProps) {
@@ -173,9 +175,13 @@ export default function MediaInfoDisplay({
   const displayText = showFilename && filename ? filename : formatMediaInfo();
   // Don't allow toggling if displayName is provided (we want to hide the real filename)
   const canToggle = !displayName && !!filename && filename !== formatMediaInfo();
+  // On mobile, pressing shows stream info modal if callback provided
+  const canShowInfo = !!onShowStreamInfo;
 
   const handlePress = () => {
-    if (canToggle) {
+    if (canShowInfo) {
+      onShowStreamInfo();
+    } else if (canToggle) {
       setShowFilename(!showFilename);
     }
   };
@@ -244,7 +250,7 @@ export default function MediaInfoDisplay({
   }
 
   return (
-    <Pressable style={styles.container} onPress={handlePress} disabled={!canToggle}>
+    <Pressable style={styles.container} onPress={handlePress} disabled={!canShowInfo && !canToggle}>
       <Text style={styles.text} numberOfLines={maxLines}>
         {displayText}
       </Text>

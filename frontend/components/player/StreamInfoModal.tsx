@@ -79,14 +79,33 @@ const formatColorInfo = (value?: string): string => {
 interface InfoRowProps {
   label: string;
   value?: string | null;
+  /** Allow unlimited lines (for long text like filenames) */
+  fullText?: boolean;
 }
 
-const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles> }> = ({ label, value, styles }) => {
+const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles> }> = ({
+  label,
+  value,
+  styles,
+  fullText,
+}) => {
   if (!value) return null;
+  const isMobile = Platform.OS !== 'web' && !Platform.isTV;
+
+  // For full text items on mobile, use vertical stacked layout
+  if (fullText && isMobile) {
+    return (
+      <View style={styles.infoRowStacked}>
+        <Text style={styles.infoLabelStacked}>{label}</Text>
+        <Text style={styles.infoValueStacked}>{value}</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue} numberOfLines={2}>
+      <Text style={styles.infoValue} numberOfLines={fullText ? undefined : 2}>
         {value}
       </Text>
     </View>
@@ -264,7 +283,8 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       transparent
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
-      hardwareAccelerated>
+      hardwareAccelerated
+    >
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={handleClose} tvParallaxProperties={{ enabled: false }} />
@@ -276,13 +296,14 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
             <ScrollView
               style={styles.contentScrollView}
               contentContainerStyle={styles.contentContainer}
-              scrollEnabled={!Platform.isTV}>
+              scrollEnabled={!Platform.isTV}
+            >
               {/* Media Info Section */}
               {mediaTitle && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Media</Text>
-                  <InfoRow label="Title" value={mediaTitle} styles={styles} />
-                  {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} />}
+                  <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
+                  {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
                 </View>
               )}
 
@@ -290,7 +311,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
               {info.filename && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>File</Text>
-                  <InfoRow label="Filename" value={info.filename} styles={styles} />
+                  <InfoRow label="Filename" value={info.filename} styles={styles} fullText />
                 </View>
               )}
 
@@ -340,7 +361,8 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
                       <Pressable
                         onPress={handleClose}
                         style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
-                        tvParallaxProperties={{ enabled: false }}>
+                        tvParallaxProperties={{ enabled: false }}
+                      >
                         <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
                       </Pressable>
                     )}
@@ -355,8 +377,10 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
   );
 };
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme) => {
+  const isMobile = Platform.OS !== 'web' && !Platform.isTV;
+
+  return StyleSheet.create({
     overlay: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'center',
@@ -368,9 +392,9 @@ const createStyles = (theme: NovaTheme) =>
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: '70%',
-      maxWidth: 600,
-      maxHeight: '80%',
+      width: isMobile ? '92%' : '70%',
+      maxWidth: isMobile ? undefined : 600,
+      maxHeight: '85%',
       backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.xl,
       borderWidth: 2,
@@ -457,4 +481,24 @@ const createStyles = (theme: NovaTheme) =>
     closeButtonTextFocused: {
       color: theme.colors.text.inverse,
     },
+    // Stacked layout for full text items on mobile
+    infoRowStacked: {
+      flexDirection: 'column',
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.sm,
+      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      borderRadius: theme.radius.sm,
+      marginBottom: theme.spacing.xs,
+    },
+    infoLabelStacked: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      marginBottom: theme.spacing.xs,
+    },
+    infoValueStacked: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      fontWeight: '500',
+    },
   });
+};
