@@ -19,6 +19,10 @@ type usersService interface {
 	SetColor(id, color string) (models.User, error)
 	Delete(id string) error
 	Exists(id string) bool
+	SetPin(id, pin string) (models.User, error)
+	ClearPin(id string) (models.User, error)
+	VerifyPin(id, pin string) error
+	HasPin(id string) bool
 }
 
 var _ usersService = (*users.Service)(nil)
@@ -157,4 +161,96 @@ func (h *UsersHandler) SetColor(w http.ResponseWriter, r *http.Request) {
 
 func (h *UsersHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// SetPin sets or updates a user's PIN.
+func (h *UsersHandler) SetPin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		Pin string `json:"pin"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetPin(id, body.Pin)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, users.ErrUserNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, users.ErrPinRequired), errors.Is(err, users.ErrPinTooShort):
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ClearPin removes a user's PIN.
+func (h *UsersHandler) ClearPin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.ClearPin(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// VerifyPin verifies a user's PIN.
+func (h *UsersHandler) VerifyPin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		Pin string `json:"pin"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := h.Service.VerifyPin(id, body.Pin)
+	if err != nil {
+		status := http.StatusUnauthorized
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"valid": true})
 }

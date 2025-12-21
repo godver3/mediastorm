@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	// DefaultUserID represents the legacy single-user watchlist owner.
@@ -14,6 +17,24 @@ type User struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Color     string    `json:"color,omitempty"`
+	PinHash   string    `json:"-"` // bcrypt hash of PIN, excluded from JSON (security)
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// HasPin returns true if the user has a PIN set.
+func (u User) HasPin() bool {
+	return u.PinHash != ""
+}
+
+// MarshalJSON implements custom JSON marshaling to include the computed hasPin field.
+func (u User) MarshalJSON() ([]byte, error) {
+	type UserAlias User // prevent recursion
+	return json.Marshal(&struct {
+		UserAlias
+		HasPin bool `json:"hasPin"`
+	}{
+		UserAlias: UserAlias(u),
+		HasPin:    u.HasPin(),
+	})
 }

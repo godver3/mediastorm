@@ -141,6 +141,11 @@ func Register(
 	api.HandleFunc("/users/{userID}", usersHandler.Options).Methods(http.MethodOptions)
 	api.HandleFunc("/users/{userID}/color", usersHandler.SetColor).Methods(http.MethodPut)
 	api.HandleFunc("/users/{userID}/color", usersHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/users/{userID}/pin", usersHandler.SetPin).Methods(http.MethodPut)
+	api.HandleFunc("/users/{userID}/pin", usersHandler.ClearPin).Methods(http.MethodDelete)
+	api.HandleFunc("/users/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.VerifyPin).Methods(http.MethodPost)
+	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.Options).Methods(http.MethodOptions)
 
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
