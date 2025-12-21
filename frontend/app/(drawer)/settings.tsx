@@ -1704,7 +1704,7 @@ function SettingsScreen() {
       }
       return {
         ...current,
-        indexers: [...current.indexers, { name: '', url: '', apiKey: '', type: 'torznab', enabled: true }],
+        indexers: [...current.indexers, { name: '', url: '', apiKey: '', type: 'newznab', enabled: true }],
       };
     });
   }, []);
@@ -1907,7 +1907,7 @@ function SettingsScreen() {
       <DropdownField
         label="Type"
         value={indexer.type}
-        options={[{ label: 'Torznab', value: 'torznab' }]}
+        options={[{ label: 'Newznab', value: 'newznab' }]}
         onChange={(value) => updateIndexer(index, 'type', value)}
         styles={styles}
       />

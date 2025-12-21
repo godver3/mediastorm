@@ -487,6 +487,49 @@
             transform: rotate(180deg);
         }
 
+        .section-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-save-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .section-save-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .section-save-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .section-save-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .section.has-changes {
+            border-color: var(--accent);
+        }
+
+        .section.has-changes .section-title svg {
+            color: var(--accent);
+        }
+
         .section-content {
             padding: 0 1.25rem 1.25rem;
             display: none;

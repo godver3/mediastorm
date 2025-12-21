@@ -456,6 +456,148 @@
     // Testable sections
     const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders'];
 
+    // Deep equality check for comparing values
+    function deepEqual(a, b) {
+        if (a === b) return true;
+        if (a == null || b == null) return a == b;
+        if (typeof a !== typeof b) return false;
+        if (typeof a !== 'object') return false;
+        if (Array.isArray(a) !== Array.isArray(b)) return false;
+
+        if (Array.isArray(a)) {
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) {
+                if (!deepEqual(a[i], b[i])) return false;
+            }
+            return true;
+        }
+
+        const keysA = Object.keys(a);
+        const keysB = Object.keys(b);
+        if (keysA.length !== keysB.length) return false;
+
+        for (const key of keysA) {
+            if (!keysB.includes(key) || !deepEqual(a[key], b[key])) return false;
+        }
+        return true;
+    }
+
+    // Check if a specific section has unsaved changes
+    function sectionHasChanges(sectionKey) {
+        const sectionDef = schema[sectionKey];
+        if (!sectionDef) return false;
+
+        const parentKey = sectionDef.parent;
+        const isPerUserSection = perUserSections.includes(sectionKey) || (parentKey && perUserSections.includes(parentKey));
+
+        let hasDirectChanges = false;
+
+        if (selectedUserId && isPerUserSection) {
+            // Compare user settings
+            if (!userSettings || !originalUserSettings) return false;
+
+            if (sectionDef.parent) {
+                const currentVal = userSettings[sectionDef.parent]?.[sectionDef.key];
+                const originalVal = originalUserSettings[sectionDef.parent]?.[sectionDef.key];
+                hasDirectChanges = !deepEqual(currentVal, originalVal);
+            } else {
+                const currentVal = userSettings[sectionKey];
+                const originalVal = originalUserSettings[sectionKey];
+                hasDirectChanges = !deepEqual(currentVal, originalVal);
+            }
+        } else {
+            // Compare global settings
+            if (sectionDef.parent) {
+                const currentVal = currentSettings[sectionDef.parent]?.[sectionDef.key];
+                const originalVal = originalSettings[sectionDef.parent]?.[sectionDef.key];
+                hasDirectChanges = !deepEqual(currentVal, originalVal);
+            } else {
+                const currentVal = currentSettings[sectionKey];
+                const originalVal = originalSettings[sectionKey];
+                hasDirectChanges = !deepEqual(currentVal, originalVal);
+            }
+        }
+
+        if (hasDirectChanges) return true;
+
+        // Also check nested sections that are rendered within this section
+        for (const [nestedKey, nestedDef] of Object.entries(schema)) {
+            if (nestedDef.parent === sectionKey && !nestedDef.group) {
+                if (sectionHasChanges(nestedKey)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Save a specific section (still saves all, but used for UX)
+    async function saveSection(sectionKey, event) {
+        event.stopPropagation(); // Don't toggle section when clicking save
+
+        const btn = event.target.closest('.section-save-btn');
+        if (!btn) return;
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span>';
+
+        // Check validation first
+        if (!selectedUserId) {
+            validationErrors = validateSettings();
+            if (Object.keys(validationErrors).length > 0) {
+                showToast('Cannot save: Please fix all required fields first', 'error');
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                renderSettings();
+                return;
+            }
+        }
+
+        try {
+            if (selectedUserId && userSettings) {
+                // Save user-specific settings
+                const response = await fetch('/admin/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userSettings)
+                });
+                if (response.ok) {
+                    originalUserSettings = JSON.parse(JSON.stringify(userSettings));
+                    btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+                    showToast('Settings saved successfully');
+                    setTimeout(() => renderSettings(), 500);
+                } else {
+                    const result = await response.text();
+                    showToast(result || 'Failed to save settings', 'error');
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            } else {
+                // Save global settings
+                const response = await fetch('/api/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-PIN': originalSettings.server?.pin || '' },
+                    body: JSON.stringify(currentSettings)
+                });
+                if (response.ok) {
+                    originalSettings = JSON.parse(JSON.stringify(currentSettings));
+                    btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+                    showToast('Settings saved successfully');
+                    setTimeout(() => renderSettings(), 500);
+                } else {
+                    const result = await response.json();
+                    showToast(result.error || 'Failed to save settings', 'error');
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            }
+        } catch (e) {
+            showToast('Failed to save settings: ' + e.message, 'error');
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        }
+    }
+
     function renderArraySection(sectionKey, sectionDef) {
         let items, basePath;
         const parentKey = sectionDef.parent;
@@ -506,9 +648,13 @@
         const isOpen = window.location.hash === '#'+sectionKey;
         const errorCount = getSectionErrorCount(sectionKey);
         const sectionMessages = validationErrors[sectionKey]?.messages || [];
+        const hasChanges = sectionHasChanges(sectionKey);
 
         // Warning badge for section header
         const warningBadge = errorCount > 0 ? '<span class="section-warning">'+errorCount+'</span>' : '';
+
+        // Save button for section header (only show when section has changes)
+        const saveBtn = hasChanges ? '<button class="section-save-btn" onclick="saveSection(\''+sectionKey+'\', event)" title="Save changes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save</button>' : '';
 
         // Section-level validation messages
         let messagesHtml = '';
@@ -527,7 +673,7 @@
                 nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+renderArraySection(nestedKey, nestedDef)+'</div>';
             }
         }
-        return '<div class="section '+(isOpen ? 'open' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-content">'+messagesHtml+contentHtml+nestedHtml+'</div></div>';
+        return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+messagesHtml+contentHtml+nestedHtml+'</div></div>';
     }
 
     function renderSettings() {
@@ -616,10 +762,10 @@
                     showToast(result || 'Failed to save user settings', 'error');
                 }
             } else {
-                // Save global settings
+                // Save global settings - use original PIN for auth since we might be changing it
                 const response = await fetch('/api/settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-PIN': currentSettings.server?.pin || '' },
+                    headers: { 'Content-Type': 'application/json', 'X-PIN': originalSettings.server?.pin || '' },
                     body: JSON.stringify(currentSettings)
                 });
                 if (response.ok) {
