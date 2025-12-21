@@ -194,7 +194,7 @@ export const ManualSelection = ({
           <View style={styles.manualResultMetaRow}>
             {!demoMode && <Text style={badgeStyles}>{serviceLabel}</Text>}
             <Text style={metaStyles}>
-              {result.indexer} • {formatFileSize(result.sizeBytes)}
+              {result.indexer === 'jackett' ? 'Jackett' : result.indexer} • {formatFileSize(result.sizeBytes)}
               {serviceType === 'usenet' && result.publishDate ? ` • ${formatPublishDate(result.publishDate)}` : ''}
             </Text>
           </View>

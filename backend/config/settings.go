@@ -463,6 +463,13 @@ func (m *Manager) Load() (Settings, error) {
 	}
 	// PlaylistURL defaults to empty string, no backfill needed
 
+	// Backfill Indexers: migrate torznab to newznab (usenet indexers use newznab)
+	for i := range s.Indexers {
+		if strings.ToLower(s.Indexers[i].Type) == "torznab" {
+			s.Indexers[i].Type = "newznab"
+		}
+	}
+
 	// Backfill TorrentScrapers if empty
 	if len(s.TorrentScrapers) == 0 {
 		s.TorrentScrapers = []TorrentScraperConfig{

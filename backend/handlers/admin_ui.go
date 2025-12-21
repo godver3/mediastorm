@@ -195,7 +195,7 @@ var SettingsSchema = map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name"},
 			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Indexer API URL"},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Indexer API key"},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torznab"}, "description": "Indexer type"},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab"}, "description": "Indexer type"},
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this indexer"},
 		},
 	},
@@ -206,9 +206,11 @@ var SettingsSchema = map[string]interface{}{
 		"order":    3,
 		"is_array": true,
 		"fields": map[string]interface{}{
-			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name"},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio"}, "description": "Scraper type"},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper"},
+			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett"}, "description": "Scraper type", "order": 1},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Jackett API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 2},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 4},
 		},
 	},
 	"playback": map[string]interface{}{
@@ -893,8 +895,10 @@ func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 
 // TestScraperRequest represents a request to test the torrentio scraper
 type TestScraperRequest struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey"`
 }
 
 // addBrowserHeaders adds browser-like headers to avoid being blocked
@@ -907,7 +911,7 @@ func addBrowserHeaders(req *http.Request) {
 	req.Header.Set("Cache-Control", "no-cache")
 }
 
-// TestScraper tests the torrentio scraper by running a search
+// TestScraper tests a torrent scraper by running a test search
 func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	var req TestScraperRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -915,14 +919,26 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Test torrentio by checking cinemeta and then torrentio endpoints
+	w.Header().Set("Content-Type", "application/json")
+
+	switch strings.ToLower(req.Type) {
+	case "jackett":
+		h.testJackettScraper(w, req)
+	case "torrentio":
+		fallthrough
+	default:
+		h.testTorrentioScraper(w)
+	}
+}
+
+// testTorrentioScraper tests torrentio by checking cinemeta and then torrentio endpoints
+func (h *AdminUIHandler) testTorrentioScraper(w http.ResponseWriter) {
 	client := &http.Client{Timeout: 15 * time.Second}
 
 	// First test cinemeta (used by torrentio)
 	cinemetaURL := "https://v3-cinemeta.strem.io/catalog/movie/search=test.json"
 	cinemetaReq, err := http.NewRequest(http.MethodGet, cinemetaURL, nil)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Failed to create request: %v", err),
@@ -933,7 +949,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(cinemetaReq)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Cinemeta connection failed: %v", err),
@@ -943,7 +958,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Cinemeta returned HTTP %d", resp.StatusCode),
@@ -955,7 +969,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	torrentioURL := "https://torrentio.strem.fun/stream/movie/tt0133093.json"
 	torrentioReq, err := http.NewRequest(http.MethodGet, torrentioURL, nil)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Failed to create request: %v", err),
@@ -966,7 +979,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 
 	resp, err = client.Do(torrentioReq)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Torrentio connection failed: %v", err),
@@ -976,7 +988,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Torrentio returned HTTP %d", resp.StatusCode),
@@ -989,7 +1000,6 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		Streams []interface{} `json:"streams"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": "Torrentio is reachable (couldn't parse stream count)",
@@ -997,10 +1007,65 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Torrentio is working (%d streams found)", len(result.Streams)),
+	})
+}
+
+// testJackettScraper tests Jackett by fetching capabilities
+func (h *AdminUIHandler) testJackettScraper(w http.ResponseWriter, req TestScraperRequest) {
+	if req.URL == "" || req.APIKey == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Jackett URL and API key are required",
+		})
+		return
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	baseURL := strings.TrimRight(req.URL, "/")
+
+	// Test by fetching capabilities
+	capsURL := fmt.Sprintf("%s/api/v2.0/indexers/all/results/torznab/api?apikey=%s&t=caps", baseURL, req.APIKey)
+	capsReq, err := http.NewRequest(http.MethodGet, capsURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+
+	resp, err := client.Do(capsReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Jackett connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Invalid API key",
+		})
+		return
+	}
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Jackett returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Jackett is working",
 	})
 }
 

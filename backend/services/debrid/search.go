@@ -37,14 +37,53 @@ type SearchService struct {
 }
 
 // NewSearchService constructs a new debrid search service.
+// If no scrapers are provided, it builds them from config settings.
 func NewSearchService(cfg *config.Manager, scrapers ...Scraper) *SearchService {
 	if len(scrapers) == 0 {
+		scrapers = buildScrapersFromConfig(cfg)
+	}
+	if len(scrapers) == 0 {
+		// Fallback to torrentio if no scrapers configured
 		scrapers = []Scraper{NewTorrentioScraper(nil)}
 	}
 	return &SearchService{
 		cfg:      cfg,
 		scrapers: scrapers,
 	}
+}
+
+// buildScrapersFromConfig creates scrapers based on torrentScrapers config.
+func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
+	if cfg == nil {
+		return nil
+	}
+	settings, err := cfg.Load()
+	if err != nil {
+		log.Printf("[debrid] failed to load config for scrapers: %v", err)
+		return nil
+	}
+
+	var scrapers []Scraper
+	for _, scraperCfg := range settings.TorrentScrapers {
+		if !scraperCfg.Enabled {
+			continue
+		}
+		switch strings.ToLower(scraperCfg.Type) {
+		case "torrentio":
+			log.Printf("[debrid] Initializing Torrentio scraper: %s", scraperCfg.Name)
+			scrapers = append(scrapers, NewTorrentioScraper(nil))
+		case "jackett":
+			if scraperCfg.URL == "" || scraperCfg.APIKey == "" {
+				log.Printf("[debrid] Skipping Jackett scraper %s: missing URL or API key", scraperCfg.Name)
+				continue
+			}
+			log.Printf("[debrid] Initializing Jackett scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
+			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, nil))
+		default:
+			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
+		}
+	}
+	return scrapers
 }
 
 // SetUserSettingsProvider sets the user settings provider for per-user filtering.
