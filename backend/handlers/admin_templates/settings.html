@@ -42,6 +42,7 @@
     let selectedUserId = '';
     let userSettings = null;
     let originalUserSettings = null;
+    let profilesData = []; // Profiles with PIN status
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
@@ -228,6 +229,9 @@
         'list': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
         'filter': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
         'monitor': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+        'users': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+        'lock': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+        'unlock': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
     };
 
     function getIcon(name) { return icons[name] || icons['server']; }
@@ -653,8 +657,8 @@
         // Warning badge for section header
         const warningBadge = errorCount > 0 ? '<span class="section-warning">'+errorCount+'</span>' : '';
 
-        // Save button for section header (only show when section has changes)
-        const saveBtn = hasChanges ? '<button class="section-save-btn" onclick="saveSection(\''+sectionKey+'\', event)" title="Save changes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save</button>' : '';
+        // Save button for section header (only show when section has changes and not a custom section)
+        const saveBtn = (hasChanges && !sectionDef.custom) ? '<button class="section-save-btn" onclick="saveSection(\''+sectionKey+'\', event)" title="Save changes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save</button>' : '';
 
         // Section-level validation messages
         let messagesHtml = '';
@@ -664,7 +668,13 @@
             ).join('');
         }
 
-        const contentHtml = sectionDef.is_array ? renderArraySection(sectionKey, sectionDef) : '<div class="grid grid-2">'+renderObjectSection(sectionKey, sectionDef)+'</div>';
+        // Handle custom sections (like profiles)
+        let contentHtml;
+        if (sectionDef.custom && sectionKey === 'profiles') {
+            contentHtml = renderProfilesSection();
+        } else {
+            contentHtml = sectionDef.is_array ? renderArraySection(sectionKey, sectionDef) : '<div class="grid grid-2">'+renderObjectSection(sectionKey, sectionDef)+'</div>';
+        }
         let nestedHtml = '';
         for (const [nestedKey, nestedDef] of Object.entries(schema)) {
             // Only render as nested if parent matches AND section doesn't have its own group
@@ -674,6 +684,114 @@
             }
         }
         return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+messagesHtml+contentHtml+nestedHtml+'</div></div>';
+    }
+
+    // Profile management functions
+    async function loadProfiles() {
+        try {
+            const response = await fetch('/admin/api/profiles');
+            if (response.ok) {
+                profilesData = await response.json();
+            } else {
+                console.error('Failed to load profiles');
+                profilesData = [];
+            }
+        } catch (e) {
+            console.error('Error loading profiles:', e);
+            profilesData = [];
+        }
+    }
+
+    async function setProfilePin(profileId, pin) {
+        try {
+            const response = await fetch('/admin/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: pin })
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                const idx = profilesData.findIndex(p => p.id === profileId);
+                if (idx >= 0) profilesData[idx] = updated;
+                showToast('PIN set successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to set PIN', 'error');
+            }
+        } catch (e) {
+            showToast('Error setting PIN: ' + e.message, 'error');
+        }
+    }
+
+    async function clearProfilePin(profileId) {
+        try {
+            const response = await fetch('/admin/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                const idx = profilesData.findIndex(p => p.id === profileId);
+                if (idx >= 0) profilesData[idx] = updated;
+                showToast('PIN removed successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to remove PIN', 'error');
+            }
+        } catch (e) {
+            showToast('Error removing PIN: ' + e.message, 'error');
+        }
+    }
+
+    function handlePinFormSubmit(event, profileId) {
+        event.preventDefault();
+        const input = document.getElementById('pin-input-' + profileId);
+        const pin = input.value.trim();
+        if (pin.length < 4) {
+            showToast('PIN must be at least 4 characters', 'error');
+            return;
+        }
+        setProfilePin(profileId, pin);
+        input.value = '';
+    }
+
+    function renderProfilesSection() {
+        if (profilesData.length === 0) {
+            return '<div style="color: var(--text-secondary); text-align: center; padding: 2rem;">No profiles found. Profiles can be created in the app.</div>';
+        }
+
+        return '<div class="array-items">' + profilesData.map(profile => {
+            const avatarColor = profile.color || '#3B82F6';
+            const initial = (profile.name || 'U').charAt(0).toUpperCase();
+            const pinStatus = profile.hasPin
+                ? '<span style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--success); font-size: 0.875rem;">' + icons.lock + ' PIN Protected</span>'
+                : '<span style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">' + icons.unlock + ' No PIN</span>';
+
+            const pinActions = profile.hasPin
+                ? '<button class="btn btn-sm btn-danger" onclick="if(confirm(\'Remove PIN from this profile?\')) clearProfilePin(\'' + profile.id + '\')">Remove PIN</button>'
+                : '<form onsubmit="handlePinFormSubmit(event, \'' + profile.id + '\')">' +
+                  '<input type="password" id="pin-input-' + profile.id + '" class="form-input" placeholder="Enter PIN">' +
+                  '<button type="submit" class="btn btn-sm btn-primary">Set PIN</button>' +
+                  '</form>';
+
+            return '<div class="array-item">' +
+                '<div class="array-item-header profile-header">' +
+                '<div class="array-item-title" style="display: flex; align-items: center; gap: 0.75rem;">' +
+                '<div style="width: 36px; height: 36px; border-radius: 50%; background: ' + avatarColor + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1rem;">' + initial + '</div>' +
+                '<div>' +
+                '<div style="font-weight: 600;">' + profile.name + '</div>' +
+                '<div style="font-size: 0.75rem; color: var(--text-secondary);">ID: ' + profile.id + '</div>' +
+                '</div>' +
+                '</div>' +
+                '<div class="profile-pin-status">' + pinStatus + '</div>' +
+                '</div>' +
+                '<div class="profile-pin-section">' +
+                '<div class="profile-pin-label">Profile PIN Protection</div>' +
+                '<div class="profile-pin-actions">' + pinActions + '</div>' +
+                '</div>' +
+                '</div>';
+        }).join('') + '</div>';
     }
 
     function renderSettings() {
@@ -789,7 +907,10 @@
             showToast('Settings reset to last saved state');
         }
     }
-    document.addEventListener('DOMContentLoaded', () => { renderSettings(); });
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadProfiles();
+        renderSettings();
+    });
     window.addEventListener('hashchange', () => {
         const hash = window.location.hash.substring(1);
         if (hash) {

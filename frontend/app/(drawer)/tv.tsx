@@ -23,6 +23,7 @@ import { useCallback, useMemo } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import MediaGrid from '../../components/MediaGrid';
 import { useMenuContext } from '../../components/MenuContext';
+import { useUserProfiles } from '../../components/UserProfilesContext';
 import { useTrendingTVShows } from '../../hooks/useApi';
 import { Title } from '../../services/api';
 
@@ -30,8 +31,9 @@ export default function TVShowsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
+  const { pendingPinUserId } = useUserProfiles();
   const isFocused = useIsFocused();
-  const isActive = isFocused && !isMenuOpen;
+  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
   const focusedIndex = 0;
   const router = useRouter();
 

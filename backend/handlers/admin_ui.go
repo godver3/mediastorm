@@ -85,6 +85,7 @@ func (s *adminSessionStore) revoke(token string) {
 // SettingsGroups defines the order and labels for settings groups
 var SettingsGroups = []map[string]string{
 	{"id": "server", "label": "Server"},
+	{"id": "accounts", "label": "Accounts"},
 	{"id": "providers", "label": "Providers"},
 	{"id": "sources", "label": "Sources"},
 	{"id": "experience", "label": "Experience"},
@@ -103,6 +104,14 @@ var SettingsSchema = map[string]interface{}{
 			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
 			"pin":  map[string]interface{}{"type": "password", "label": "PIN", "description": "6-digit authentication PIN"},
 		},
+	},
+	"profiles": map[string]interface{}{
+		"label":   "Profiles",
+		"icon":    "users",
+		"group":   "accounts",
+		"order":   0,
+		"custom":  true, // Custom rendered section
+		"fields":  map[string]interface{}{},
 	},
 	"streaming": map[string]interface{}{
 		"label": "Streaming",
@@ -1128,6 +1137,121 @@ type TestDebridProviderRequest struct {
 	Name     string `json:"name"`
 	Provider string `json:"provider"`
 	APIKey   string `json:"apiKey"`
+}
+
+// ProfileWithPinStatus represents a profile with its PIN status
+type ProfileWithPinStatus struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Color     string    `json:"color,omitempty"`
+	HasPin    bool      `json:"hasPin"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// GetProfiles returns all profiles with their PIN status
+func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	users := h.usersService.List()
+	profiles := make([]ProfileWithPinStatus, len(users))
+	for i, u := range users {
+		profiles[i] = ProfileWithPinStatus{
+			ID:        u.ID,
+			Name:      u.Name,
+			Color:     u.Color,
+			HasPin:    u.HasPin(),
+			CreatedAt: u.CreatedAt,
+			UpdatedAt: u.UpdatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(profiles)
+}
+
+// SetProfilePinRequest represents a request to set a profile's PIN
+type SetProfilePinRequest struct {
+	Pin string `json:"pin"`
+}
+
+// SetProfilePin sets a profile's PIN
+func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req SetProfilePinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.SetPin(profileID, req.Pin)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "at least") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:        user.ID,
+		Name:      user.Name,
+		Color:     user.Color,
+		HasPin:    user.HasPin(),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	})
+}
+
+// ClearProfilePin removes a profile's PIN
+func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.ClearPin(profileID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:        user.ID,
+		Name:      user.Name,
+		Color:     user.Color,
+		HasPin:    user.HasPin(),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	})
 }
 
 // TestDebridProvider tests a debrid provider by checking their API

@@ -19,6 +19,7 @@ import { LiveProvider } from '../components/LiveContext';
 import { LoadingScreenProvider } from '../components/LoadingScreenContext';
 import { MenuProvider } from '../components/MenuContext';
 import { ContinueWatchingProvider } from '../components/ContinueWatchingContext';
+import { PinEntryModal } from '../components/PinEntryModal';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
@@ -173,6 +174,7 @@ export default function RootLayout() {
         <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
           <BackendSettingsProvider>
             <UserProfilesProvider>
+              <PinEntryModal />
               <LiveProvider>
                 <WatchlistProvider>
                   <WatchStatusProvider>

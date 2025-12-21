@@ -222,7 +222,7 @@ function IndexScreen() {
     refresh: refreshContinueWatching,
     hideFromContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId } = useUserProfiles();
+  const { refresh: refreshUserProfiles, activeUserId, pendingPinUserId } = useUserProfiles();
   const {
     data: trendingMovies,
     error: trendingMoviesError,
@@ -1413,7 +1413,7 @@ function IndexScreen() {
 
   return (
     <SpatialNavigationRoot
-      isActive={isFocused && !isMenuOpen}
+      isActive={isFocused && !isMenuOpen && !pendingPinUserId}
       onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       {/* Android TV focus anchor - captures initial native focus and transfers to spatial navigation */}
       <AndroidTVFocusAnchor targetFocusId={androidTVInitialFocusId} />
