@@ -545,18 +545,6 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-small"></span>';
 
-        // Check validation first
-        if (!selectedUserId) {
-            validationErrors = validateSettings();
-            if (Object.keys(validationErrors).length > 0) {
-                showToast('Cannot save: Please fix all required fields first', 'error');
-                btn.innerHTML = originalHtml;
-                btn.disabled = false;
-                renderSettings();
-                return;
-            }
-        }
-
         try {
             if (selectedUserId && userSettings) {
                 // Save user-specific settings
@@ -821,14 +809,14 @@
             bannerHtml = '<div style="background: var(--accent-bg, #2563eb20); border: 1px solid var(--accent, #2563eb); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Editing user-specific settings. Only Playback, Home Shelves, and Filtering are shown.</span></div>';
         }
 
-        // Add validation error banner if there are errors
+        // Add validation warning banner if there are issues
         const totalErrors = Object.keys(validationErrors).length;
         if (totalErrors > 0 && !selectedUserId) {
             const errorSections = Object.keys(validationErrors).map(key => {
                 const sectionDef = schema[key];
                 return sectionDef?.label || key;
             }).join(', ');
-            bannerHtml += '<div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--danger)" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><div><strong style="color: var(--danger);">Required settings missing</strong><p style="margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">Please complete all required fields before saving. Issues found in: '+errorSections+'</p></div></div>';
+            bannerHtml += '<div style="background: rgba(234, 179, 8, 0.1); border: 1px solid var(--warning, #eab308); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--warning, #eab308)" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div><strong style="color: var(--warning, #eab308);">Configuration warning</strong><p style="margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">Some recommended settings may be incomplete. Issues found in: '+errorSections+'</p></div></div>';
         }
 
         // Render sections grouped by their group property
@@ -860,18 +848,6 @@
         }
     }
     async function saveAllSettings() {
-        // Check for validation errors (only for global settings)
-        if (!selectedUserId) {
-            validationErrors = validateSettings();
-            if (Object.keys(validationErrors).length > 0) {
-                showToast('Cannot save: Please fix all required fields first', 'error');
-                renderSettings();
-                // Scroll to top to show the error banner
-                document.getElementById('settingsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
-                return;
-            }
-        }
-
         try {
             if (selectedUserId && userSettings) {
                 // Save user-specific settings
