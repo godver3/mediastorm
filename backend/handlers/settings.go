@@ -29,7 +29,9 @@ type SettingsResponse struct {
 func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	s, err := h.Manager.Load()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	resp := SettingsResponse{
@@ -45,11 +47,15 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	// Allow unknown fields for backward compatibility with old configs
 	if err := dec.Decode(&s); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	if err := h.Manager.Save(s); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

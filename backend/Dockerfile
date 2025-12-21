@@ -39,11 +39,18 @@ RUN python3 -m venv /.venv && \
     /.venv/bin/pip install --no-cache-dir parsett
 
 # Download static ffmpeg build with Dolby Vision (libdovi) support
-RUN wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
-    && tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz \
-    && mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ \
-    && mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ \
-    && rm -rf ffmpeg-master-latest-linux64-gpl ffmpeg-master-latest-linux64-gpl.tar.xz \
+# Use TARGETARCH to select the correct binary for multi-platform builds
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        FFMPEG_ARCH="linuxarm64"; \
+    else \
+        FFMPEG_ARCH="linux64"; \
+    fi && \
+    wget -q "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz" \
+    && tar -xf "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz" \
+    && mv "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl/bin/ffmpeg" /usr/local/bin/ \
+    && mv "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl/bin/ffprobe" /usr/local/bin/ \
+    && rm -rf "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl" "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz" \
     && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
 
 WORKDIR /root/

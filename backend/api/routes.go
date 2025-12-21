@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -254,12 +255,16 @@ func pinMiddleware(expectedPIN string) mux.MiddlewareFunc {
 			}
 
 			if receivedPIN == "" {
-				http.Error(w, "missing PIN", http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "missing PIN"})
 				return
 			}
 
 			if subtle.ConstantTimeCompare([]byte(receivedPIN), []byte(trimmed)) != 1 {
-				http.Error(w, "invalid PIN", http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "invalid PIN"})
 				return
 			}
 
