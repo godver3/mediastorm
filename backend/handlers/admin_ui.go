@@ -207,9 +207,9 @@ var SettingsSchema = map[string]interface{}{
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett"}, "description": "Scraper type", "order": 1},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Jackett API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 2},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean"}, "description": "Scraper type", "order": 1},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"operator": "or","conditions": []map[string]interface{}{{"field": "type", "value": "jackett"},{"field": "type", "value": "zilean"},},},"order": 2},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 4},
 		},
 	},
