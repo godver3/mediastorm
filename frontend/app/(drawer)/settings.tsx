@@ -790,8 +790,9 @@ function SettingsScreen() {
     fieldKey: string;
     options?: TextInputOptions;
   }>({ visible: false, label: '', value: '', fieldKey: '' });
+  const { activeUserId, pendingPinUserId } = useUserProfiles();
   const isActive =
-    isFocused && !isMenuOpen && !isHiddenChannelsModalOpen && !isUnplayableReleasesModalOpen && !textInputModal.visible;
+    isFocused && !isMenuOpen && !isHiddenChannelsModalOpen && !isUnplayableReleasesModalOpen && !textInputModal.visible && !pendingPinUserId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
 
   const tabs = useMemo<TabOption[]>(
@@ -823,7 +824,6 @@ function SettingsScreen() {
     loadUserSettings,
     updateUserSettings,
   } = useBackendSettings();
-  const { activeUserId } = useUserProfiles();
   const { hiddenChannels, unhideChannel } = useLiveHiddenChannels();
   const { favorites } = useLiveFavorites();
   const { selectedCategories } = useLiveCategories();

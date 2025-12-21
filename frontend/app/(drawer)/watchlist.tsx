@@ -2,6 +2,7 @@ import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import MediaGrid from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
+import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import type { Title } from '@/services/api';
 import {
@@ -29,7 +30,8 @@ export default function WatchlistScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const isActive = isFocused && !isMenuOpen;
+  const { pendingPinUserId } = useUserProfiles();
+  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
   const { items, loading, error } = useWatchlist();
   const watchlistTitles = useMemo(() => mapWatchlistToTitles(items), [items]);

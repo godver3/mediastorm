@@ -21,6 +21,7 @@ import { useLiveCategories, useLiveFavorites, useLiveHiddenChannels } from '@/co
 import LoadingIndicator from '@/components/LoadingIndicator';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
+import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import {
@@ -212,6 +213,7 @@ function LiveScreen() {
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
   const { showToast } = useToast();
+  const { pendingPinUserId } = useUserProfiles();
   const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false);
   const [actionChannel, setActionChannel] = useState<LiveChannel | null>(null);
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
@@ -219,7 +221,7 @@ function LiveScreen() {
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
 
-  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive;
+  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId;
 
   // Guard against duplicate "select" events on tvOS
   const selectGuardRef = useRef(false);

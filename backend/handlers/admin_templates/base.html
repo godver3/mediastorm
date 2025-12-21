@@ -577,6 +577,49 @@
             background: var(--bg-secondary);
         }
 
+        .profile-pin-section {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .profile-pin-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .profile-pin-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .profile-pin-actions form {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .profile-pin-actions .form-input {
+            width: 160px;
+            min-width: 120px;
+        }
+
+        .profile-header {
+            flex-wrap: wrap;
+        }
+
+        .profile-pin-status {
+            display: flex;
+            align-items: center;
+        }
+
         .add-item-btn {
             width: 100%;
             padding: 0.75rem;
@@ -870,6 +913,34 @@
 
             .form-select {
                 padding: 0.5rem 0.75rem;
+            }
+
+            .profile-pin-section {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .profile-pin-actions {
+                width: 100%;
+            }
+
+            .profile-pin-actions form {
+                width: 100%;
+            }
+
+            .profile-pin-actions .form-input {
+                flex: 1;
+                width: auto;
+            }
+
+            .profile-header {
+                gap: 0.5rem;
+            }
+
+            .profile-pin-status {
+                width: 100%;
+                order: 3;
+                margin-top: 0.25rem;
             }
         }
     </style>

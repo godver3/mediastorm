@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"novastream/models"
 )
@@ -20,6 +21,9 @@ var (
 	ErrStorageDirRequired = errors.New("storage directory not provided")
 	ErrNameRequired       = errors.New("name is required")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrPinRequired        = errors.New("PIN is required")
+	ErrPinInvalid         = errors.New("invalid PIN")
+	ErrPinTooShort        = errors.New("PIN must be at least 4 characters")
 )
 
 // Service manages persistence of NovaStream user profiles.
@@ -171,6 +175,119 @@ func (s *Service) SetColor(id, color string) (models.User, error) {
 	}
 
 	return user, nil
+}
+
+// SetPin sets or updates the user's PIN.
+func (s *Service) SetPin(id, pin string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	pin = strings.TrimSpace(pin)
+	if pin == "" {
+		return models.User{}, ErrPinRequired
+	}
+	if len(pin) < 4 {
+		return models.User{}, ErrPinTooShort
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Hash the PIN with bcrypt
+	hash, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
+	if err != nil {
+		return models.User{}, fmt.Errorf("hash PIN: %w", err)
+	}
+
+	user.PinHash = string(hash)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// ClearPin removes the user's PIN.
+func (s *Service) ClearPin(id string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.PinHash = ""
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// VerifyPin checks if the provided PIN matches the user's stored PIN hash.
+// Returns nil if PIN is correct, ErrPinInvalid if incorrect, or ErrUserNotFound if user doesn't exist.
+func (s *Service) VerifyPin(id, pin string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrUserNotFound
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return ErrUserNotFound
+	}
+
+	// If no PIN is set, any PIN (or empty) is valid
+	if user.PinHash == "" {
+		return nil
+	}
+
+	// Verify the PIN against the hash
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PinHash), []byte(pin)); err != nil {
+		return ErrPinInvalid
+	}
+
+	return nil
+}
+
+// HasPin returns true if the user has a PIN set.
+func (s *Service) HasPin(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return false
+	}
+
+	return user.PinHash != ""
 }
 
 // Delete removes a user by ID. The last remaining user cannot be deleted.

@@ -1,6 +1,7 @@
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useMenuContext } from '@/components/MenuContext';
+import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useSearchTitles } from '@/hooks/useApi';
 import { Title } from '@/services/api';
 import {
@@ -93,8 +94,9 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const router = useRouter();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
+  const { pendingPinUserId } = useUserProfiles();
   const isFocused = useIsFocused();
-  const isActive = isFocused && !isMenuOpen;
+  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
   // Reset navigation flag when screen becomes focused again
   // And clean up keyboard overlay when screen loses focus or unmounts

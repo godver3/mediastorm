@@ -421,6 +421,7 @@ export interface UserProfile {
   id: string;
   name: string;
   color?: string;
+  hasPin?: boolean; // Whether this profile has a PIN set (pinHash not exposed to frontend)
   createdAt: string;
   updatedAt: string;
 }
@@ -1219,6 +1220,38 @@ class ApiService {
       method: 'PUT',
       body: JSON.stringify({ color }),
     });
+  }
+
+  async setUserPin(id: string, pin: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(id);
+    return this.request<UserProfile>(`/users/${safeId}/pin`, {
+      method: 'PUT',
+      body: JSON.stringify({ pin }),
+    });
+  }
+
+  async clearUserPin(id: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(id);
+    return this.request<UserProfile>(`/users/${safeId}/pin`, {
+      method: 'DELETE',
+    });
+  }
+
+  async verifyUserPin(id: string, pin: string): Promise<boolean> {
+    const safeId = this.normaliseUserId(id);
+    try {
+      const result = await this.request<{ valid: boolean }>(`/users/${safeId}/pin/verify`, {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      });
+      return result.valid;
+    } catch (error) {
+      // 401 means invalid PIN
+      if ((error as ApiError).status === 401) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async deleteUser(id: string): Promise<void> {
