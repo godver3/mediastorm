@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -817,4 +822,469 @@ func (h *AdminUIHandler) renderLoginError(w http.ResponseWriter, errMsg string) 
 // HasPIN returns true if a PIN is configured
 func (h *AdminUIHandler) HasPIN() bool {
 	return h.pin != ""
+}
+
+// TestIndexerRequest represents a request to test an indexer
+type TestIndexerRequest struct {
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey"`
+	Name   string `json:"name"`
+}
+
+// TestIndexer tests an indexer by running a search
+func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
+	var req TestIndexerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" {
+		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+
+	// Build the test URL
+	testURL := strings.TrimSpace(req.URL)
+	if !strings.HasSuffix(strings.ToLower(testURL), "/api") {
+		testURL = strings.TrimRight(testURL, "/") + "/api"
+	}
+
+	// Make a test search request
+	client := &http.Client{Timeout: 15 * time.Second}
+	searchURL := fmt.Sprintf("%s?t=search&q=test&apikey=%s", testURL, req.APIKey)
+
+	resp, err := client.Get(searchURL)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Indexer is reachable and responding",
+	})
+}
+
+// TestScraperRequest represents a request to test the torrentio scraper
+type TestScraperRequest struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// addBrowserHeaders adds browser-like headers to avoid being blocked
+func addBrowserHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("DNT", "1")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Cache-Control", "no-cache")
+}
+
+// TestScraper tests the torrentio scraper by running a search
+func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
+	var req TestScraperRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Test torrentio by checking cinemeta and then torrentio endpoints
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	// First test cinemeta (used by torrentio)
+	cinemetaURL := "https://v3-cinemeta.strem.io/catalog/movie/search=test.json"
+	cinemetaReq, err := http.NewRequest(http.MethodGet, cinemetaURL, nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	addBrowserHeaders(cinemetaReq)
+
+	resp, err := client.Do(cinemetaReq)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Cinemeta connection failed: %v", err),
+		})
+		return
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Cinemeta returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Test torrentio with a known IMDB ID (The Matrix)
+	torrentioURL := "https://torrentio.strem.fun/stream/movie/tt0133093.json"
+	torrentioReq, err := http.NewRequest(http.MethodGet, torrentioURL, nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	addBrowserHeaders(torrentioReq)
+
+	resp, err = client.Do(torrentioReq)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Torrentio connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Torrentio returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Parse response to count streams
+	var result struct {
+		Streams []interface{} `json:"streams"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Torrentio is reachable (couldn't parse stream count)",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Torrentio is working (%d streams found)", len(result.Streams)),
+	})
+}
+
+// TestUsenetProviderRequest represents a request to test a usenet provider
+type TestUsenetProviderRequest struct {
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	SSL      bool   `json:"ssl"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TestUsenetProvider tests a usenet provider by connecting to the NNTP server
+func (h *AdminUIHandler) TestUsenetProvider(w http.ResponseWriter, r *http.Request) {
+	var req TestUsenetProviderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Host == "" {
+		http.Error(w, "Host is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	// Connect to the NNTP server
+	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Connection failed: %v", err),
+		})
+		return
+	}
+	defer conn.Close()
+
+	// Handle SSL if needed
+	if req.SSL {
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: req.Host})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("TLS handshake failed: %v", err),
+			})
+			return
+		}
+		conn = tlsConn
+	}
+
+	// Set deadline for reading
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// Read greeting
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to read greeting: %v", err),
+		})
+		return
+	}
+
+	// Check for valid NNTP greeting (200 or 201)
+	if !strings.HasPrefix(line, "200") && !strings.HasPrefix(line, "201") {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Unexpected greeting: %s", strings.TrimSpace(line)),
+		})
+		return
+	}
+
+	// Try to authenticate if credentials provided
+	if req.Username != "" {
+		// Send AUTHINFO USER
+		fmt.Fprintf(conn, "AUTHINFO USER %s\r\n", req.Username)
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Auth failed: %v", err),
+			})
+			return
+		}
+
+		// Check if password is required (381) or auth succeeded (281)
+		if strings.HasPrefix(line, "381") {
+			// Send password
+			fmt.Fprintf(conn, "AUTHINFO PASS %s\r\n", req.Password)
+			line, err = reader.ReadString('\n')
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error":   fmt.Sprintf("Password auth failed: %v", err),
+				})
+				return
+			}
+		}
+
+		if !strings.HasPrefix(line, "281") && !strings.HasPrefix(line, "200") {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Authentication rejected: %s", strings.TrimSpace(line)),
+			})
+			return
+		}
+	}
+
+	// Send QUIT
+	fmt.Fprintf(conn, "QUIT\r\n")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "NNTP connection successful, authentication passed",
+	})
+}
+
+// TestDebridProviderRequest represents a request to test a debrid provider
+type TestDebridProviderRequest struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	APIKey   string `json:"apiKey"`
+}
+
+// TestDebridProvider tests a debrid provider by checking their API
+func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Request) {
+	var req TestDebridProviderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.APIKey == "" {
+		http.Error(w, "API Key is required", http.StatusBadRequest)
+		return
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	switch strings.ToLower(req.Provider) {
+	case "realdebrid":
+		// Test Real-Debrid by getting user info
+		apiReq, err := http.NewRequest(http.MethodGet, "https://api.real-debrid.com/rest/1.0/user", nil)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Failed to create request: %v", err),
+			})
+			return
+		}
+		apiReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", req.APIKey))
+
+		resp, err := client.Do(apiReq)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Invalid API key",
+			})
+			return
+		}
+
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))),
+			})
+			return
+		}
+
+		var user struct {
+			Username string `json:"username"`
+			Email    string `json:"email"`
+			Type     string `json:"type"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Real-Debrid API is reachable",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Connected as %s (%s)", user.Username, user.Type),
+		})
+
+	case "torbox":
+		// Test Torbox by getting user info
+		apiReq, err := http.NewRequest(http.MethodGet, "https://api.torbox.app/v1/api/user/me", nil)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Failed to create request: %v", err),
+			})
+			return
+		}
+		apiReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", req.APIKey))
+
+		resp, err := client.Do(apiReq)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Invalid API key",
+			})
+			return
+		}
+
+		var result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Email string `json:"email"`
+				Plan  int    `json:"plan"`
+			} `json:"data"`
+			Detail string `json:"detail"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "TorBox API is reachable",
+			})
+			return
+		}
+
+		if !result.Success {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   result.Detail,
+			})
+			return
+		}
+
+		planNames := map[int]string{0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
+		planName := planNames[result.Data.Plan]
+		if planName == "" {
+			planName = fmt.Sprintf("Plan %d", result.Data.Plan)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Connected as %s (%s)", result.Data.Email, planName),
+		})
+
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Unknown provider: %s", req.Provider),
+		})
+	}
 }
