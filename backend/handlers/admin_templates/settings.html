@@ -366,6 +366,96 @@
         let arr = sectionDef.parent ? targetSettings[sectionDef.parent]?.[sectionDef.key] : targetSettings[sectionKey];
         if (arr && arr.length > index) { arr.splice(index, 1); renderSettings(); }
     }
+    // Test provider functions
+    async function testProvider(sectionKey, index) {
+        const btn = document.getElementById('test-btn-'+sectionKey+'-'+index);
+        const resultSpan = document.getElementById('test-result-'+sectionKey+'-'+index);
+        if (!btn) return;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Testing...';
+        resultSpan.textContent = '';
+        resultSpan.className = 'test-result';
+
+        let endpoint, payload;
+        const sectionDef = schema[sectionKey];
+        let items;
+
+        if (sectionDef.parent) {
+            items = currentSettings[sectionDef.parent]?.[sectionDef.key] || [];
+        } else {
+            items = currentSettings[sectionKey] || [];
+        }
+        const item = items[index];
+        if (!item) {
+            btn.disabled = false;
+            btn.textContent = 'Test';
+            resultSpan.textContent = 'Item not found';
+            resultSpan.className = 'test-result error';
+            return;
+        }
+
+        switch(sectionKey) {
+            case 'indexers':
+                endpoint = '/admin/api/test/indexer';
+                payload = { url: item.url, apiKey: item.apiKey, name: item.name };
+                break;
+            case 'torrentScrapers':
+                endpoint = '/admin/api/test/scraper';
+                payload = { name: item.name, type: item.type };
+                break;
+            case 'usenet':
+                endpoint = '/admin/api/test/usenet-provider';
+                payload = {
+                    name: item.name,
+                    host: item.host,
+                    port: item.port,
+                    ssl: item.ssl,
+                    username: item.username,
+                    password: item.password
+                };
+                break;
+            case 'debridProviders':
+                endpoint = '/admin/api/test/debrid-provider';
+                payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
+                break;
+            default:
+                btn.disabled = false;
+                btn.textContent = 'Test';
+                resultSpan.textContent = 'Unknown section';
+                resultSpan.className = 'test-result error';
+                return;
+        }
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            btn.disabled = false;
+            btn.textContent = 'Test';
+
+            if (result.success) {
+                resultSpan.textContent = result.message || 'Success';
+                resultSpan.className = 'test-result success';
+            } else {
+                resultSpan.textContent = result.error || 'Test failed';
+                resultSpan.className = 'test-result error';
+            }
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Test';
+            resultSpan.textContent = 'Error: ' + e.message;
+            resultSpan.className = 'test-result error';
+        }
+    }
+
+    // Testable sections
+    const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders'];
+
     function renderArraySection(sectionKey, sectionDef) {
         let items, basePath;
         const parentKey = sectionDef.parent;
@@ -388,9 +478,12 @@
             }
             basePath = sectionKey;
         }
+        const isTestable = testableSections.includes(sectionKey);
         const itemsHtml = items.map((item, index) => {
             const fieldsHtml = Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, item[fieldKey], basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>').join('');
-            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions"><button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
+            const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
+            const testResult = isTestable ? '<span id="test-result-'+sectionKey+'-'+index+'" class="test-result"></span>' : '';
+            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+testResult+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
         }).join('');
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
