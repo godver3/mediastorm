@@ -2,14 +2,21 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"novastream/config"
+	"novastream/internal/pool"
+	"novastream/services/debrid"
+	"novastream/services/metadata"
 )
 
 type SettingsHandler struct {
-	Manager  *config.Manager
-	DemoMode bool
+	Manager            *config.Manager
+	DemoMode           bool
+	PoolManager        pool.Manager
+	MetadataService    *metadata.Service
+	DebridSearchService *debrid.SearchService
 }
 
 func NewSettingsHandler(m *config.Manager) *SettingsHandler {
@@ -18,6 +25,21 @@ func NewSettingsHandler(m *config.Manager) *SettingsHandler {
 
 func NewSettingsHandlerWithDemoMode(m *config.Manager, demoMode bool) *SettingsHandler {
 	return &SettingsHandler{Manager: m, DemoMode: demoMode}
+}
+
+// SetPoolManager sets the pool manager for hot reloading usenet providers
+func (h *SettingsHandler) SetPoolManager(pm pool.Manager) {
+	h.PoolManager = pm
+}
+
+// SetMetadataService sets the metadata service for hot reloading API keys
+func (h *SettingsHandler) SetMetadataService(ms *metadata.Service) {
+	h.MetadataService = ms
+}
+
+// SetDebridSearchService sets the debrid search service for hot reloading scrapers
+func (h *SettingsHandler) SetDebridSearchService(ds *debrid.SearchService) {
+	h.DebridSearchService = ds
 }
 
 // SettingsResponse wraps config.Settings with additional runtime information.
@@ -58,7 +80,35 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Hot reload services that need it
+	h.reloadServices(s)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(s)
+}
+
+// reloadServices reloads services that cache configuration at startup
+func (h *SettingsHandler) reloadServices(s config.Settings) {
+	// Reload NNTP connection pool with new usenet providers
+	if h.PoolManager != nil {
+		providers := config.ToNNTPProviders(s.Usenet)
+		if err := h.PoolManager.SetProviders(providers); err != nil {
+			log.Printf("[settings] failed to reload usenet pool: %v", err)
+		} else {
+			log.Printf("[settings] reloaded usenet pool with %d provider(s)", len(providers))
+		}
+	}
+
+	// Reload metadata service with new API keys
+	if h.MetadataService != nil {
+		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language)
+		log.Printf("[settings] reloaded metadata service API keys")
+	}
+
+	// Reload debrid scrapers (Torrentio, Jackett, etc.)
+	if h.DebridSearchService != nil {
+		h.DebridSearchService.ReloadScrapers()
+	}
 }

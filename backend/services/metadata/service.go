@@ -49,6 +49,13 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 	}
 }
 
+// UpdateAPIKeys updates the API keys for TVDB and TMDB clients
+// This allows hot reloading when settings change
+func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
+	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{})
+	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{})
+}
+
 func cacheKey(parts ...string) string {
 	h := sha1.Sum([]byte(strings.Join(parts, ":")))
 	return hex.EncodeToString(h[:])

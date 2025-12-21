@@ -91,6 +91,18 @@ func (s *SearchService) SetUserSettingsProvider(provider userSettingsProvider) {
 	s.userSettings = provider
 }
 
+// ReloadScrapers rebuilds the scraper list from current config.
+// This allows hot reloading when torrent scraper settings change.
+func (s *SearchService) ReloadScrapers() {
+	scrapers := buildScrapersFromConfig(s.cfg)
+	if len(scrapers) == 0 {
+		// Fallback to torrentio if no scrapers configured
+		scrapers = []Scraper{NewTorrentioScraper(nil)}
+	}
+	s.scrapers = scrapers
+	log.Printf("[debrid] reloaded %d scraper(s)", len(scrapers))
+}
+
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
 // If a userID is provided and the user has custom settings, those are returned.
 // Otherwise, falls back to global settings.

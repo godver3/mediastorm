@@ -121,6 +121,9 @@ func main() {
 
 	// Initialize pool manager early so usenet service can use it
 	poolManager := pool.NewManager()
+	settingsHandler.SetPoolManager(poolManager)           // Enable hot reload of usenet providers
+	settingsHandler.SetMetadataService(metadataService)   // Enable hot reload of API keys
+	settingsHandler.SetDebridSearchService(debridSearchService) // Enable hot reload of scrapers
 
 	usenetService := usenet.NewService(cfgManager, poolManager)
 	streamRoot := filepath.Join(settings.Cache.Directory, "streams")
