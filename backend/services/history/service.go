@@ -1140,6 +1140,91 @@ func (s *Service) ListWatchHistory(userID string) ([]models.WatchHistoryItem, er
 	return items, nil
 }
 
+// WatchHistoryPage represents a paginated response of watch history items.
+type WatchHistoryPage struct {
+	Items      []models.WatchHistoryItem `json:"items"`
+	Total      int                       `json:"total"`
+	Page       int                       `json:"page"`
+	PageSize   int                       `json:"pageSize"`
+	TotalPages int                       `json:"totalPages"`
+}
+
+// ListWatchHistoryPaginated returns paginated watched items for a user.
+// Supports optional filtering by media type ("movie", "episode", or "" for all).
+func (s *Service) ListWatchHistoryPaginated(userID string, page, pageSize int, mediaTypeFilter string) (*WatchHistoryPage, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, ErrUserIDRequired
+	}
+
+	// Default/validate pagination params
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Collect and filter items
+	items := make([]models.WatchHistoryItem, 0)
+	if perUser, ok := s.watchHistory[userID]; ok {
+		for _, item := range perUser {
+			// Apply media type filter if specified
+			if mediaTypeFilter != "" && item.MediaType != mediaTypeFilter {
+				continue
+			}
+			items = append(items, item)
+		}
+	}
+
+	// Sort by most recently watched
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].WatchedAt.Equal(items[j].WatchedAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].WatchedAt.After(items[j].WatchedAt)
+	})
+
+	total := len(items)
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	// Calculate slice bounds
+	start := (page - 1) * pageSize
+	end := start + pageSize
+
+	if start >= total {
+		// Page is beyond available data
+		return &WatchHistoryPage{
+			Items:      []models.WatchHistoryItem{},
+			Total:      total,
+			Page:       page,
+			PageSize:   pageSize,
+			TotalPages: totalPages,
+		}, nil
+	}
+
+	if end > total {
+		end = total
+	}
+
+	return &WatchHistoryPage{
+		Items:      items[start:end],
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
 // GetWatchHistoryItem returns a specific watch history item.
 func (s *Service) GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error) {
 	userID = strings.TrimSpace(userID)
