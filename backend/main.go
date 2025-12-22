@@ -353,6 +353,11 @@ func main() {
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 
+	// Redirect root to admin dashboard
+	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	}).Methods(http.MethodGet)
+
 	// Mount WebDAV handler if enabled
 	if webdavHandler != nil {
 		r.PathPrefix(settings.WebDAV.Prefix + "/").Handler(webdavHandler)
