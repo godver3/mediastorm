@@ -208,9 +208,10 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
 			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean"}, "description": "Scraper type", "order": 1},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"operator": "or","conditions": []map[string]interface{}{{"field": "type", "value": "jackett"},{"field": "type", "value": "zilean"},},},"order": 2},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 4},
+			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "Torrentio URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}}}, "order": 3},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 5},
 		},
 	},
 	"playback": map[string]interface{}{
@@ -924,6 +925,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	switch strings.ToLower(req.Type) {
 	case "jackett":
 		h.testJackettScraper(w, req)
+	case "zilean":
+		h.testZileanScraper(w, req)
 	case "torrentio":
 		fallthrough
 	default:
@@ -1066,6 +1069,55 @@ func (h *AdminUIHandler) testJackettScraper(w http.ResponseWriter, req TestScrap
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Jackett is working",
+	})
+}
+
+// testZileanScraper tests a Zilean instance by querying its DMM filtered API
+func (h *AdminUIHandler) testZileanScraper(w http.ResponseWriter, req TestScraperRequest) {
+	if req.URL == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Zilean URL is required",
+		})
+		return
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	baseURL := strings.TrimRight(req.URL, "/")
+
+	// Test by making a simple query to the DMM filtered endpoint
+	testURL := fmt.Sprintf("%s/dmm/filtered?Query=test", baseURL)
+	testReq, err := http.NewRequest(http.MethodGet, testURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	testReq.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(testReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Zilean connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Zilean returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Zilean is working",
 	})
 }
 
