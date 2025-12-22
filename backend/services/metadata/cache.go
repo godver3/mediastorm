@@ -83,3 +83,29 @@ func (c *fileCache) set(key string, v any) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// clear removes all cached metadata files from the cache directory.
+// This is used when API keys change to force fresh data to be fetched.
+func (c *fileCache) clear() error {
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Nothing to clear
+		}
+		return err
+	}
+	var removed int
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if filepath.Ext(entry.Name()) == ".json" {
+			path := filepath.Join(c.dir, entry.Name())
+			if err := os.Remove(path); err != nil {
+				continue // Best effort, skip files we can't remove
+			}
+			removed++
+		}
+	}
+	return nil
+}

@@ -54,6 +54,18 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
 	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{})
 	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{})
+
+	// Clear all cached metadata so fresh data is fetched with new API keys
+	if err := s.cache.clear(); err != nil {
+		log.Printf("[metadata] warning: failed to clear cache: %v", err)
+	} else {
+		log.Printf("[metadata] cleared metadata cache due to API key change")
+	}
+}
+
+// ClearCache removes all cached metadata files
+func (s *Service) ClearCache() error {
+	return s.cache.clear()
 }
 
 func cacheKey(parts ...string) string {

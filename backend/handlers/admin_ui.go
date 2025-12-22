@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -292,7 +293,18 @@ type AdminUIHandler struct {
 	usersService        *users.Service
 	userSettingsService *user_settings.Service
 	configManager       *config.Manager
+	metadataService     MetadataCacheClearer
 	pin                 string
+}
+
+// MetadataCacheClearer interface for clearing metadata cache
+type MetadataCacheClearer interface {
+	ClearCache() error
+}
+
+// SetMetadataService sets the metadata service for cache clearing
+func (h *AdminUIHandler) SetMetadataService(ms MetadataCacheClearer) {
+	h.metadataService = ms
 }
 
 // NewAdminUIHandler creates a new admin UI handler
@@ -1377,6 +1389,23 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	})
+}
+
+// ClearMetadataCache clears all cached metadata files
+func (h *AdminUIHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	if err := h.metadataService.ClearCache(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("[admin] metadata cache cleared by user request")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Metadata cache cleared"})
 }
 
 // TestDebridProvider tests a debrid provider by checking their API
