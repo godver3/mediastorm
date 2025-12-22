@@ -1006,7 +1006,8 @@ export default function PlayerScreen() {
   }, [prefersSystemControls, playerImplementation]);
   const shouldAutoHideControls = !usesSystemManagedControls;
   const autoHideDurationMs = isTvPlatform ? 3000 : 3000;
-  const shouldHideStatusBar = Platform.OS === 'ios' && !Platform.isTV && !usesSystemManagedControls && !controlsVisible;
+  // Hide status bar on mobile devices (iOS and Android) when controls are hidden for immersive experience
+  const shouldHideStatusBar = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !usesSystemManagedControls && !controlsVisible;
   const isTouchOverlayToggleSupported = Platform.OS !== 'web' && !Platform.isTV;
 
   useEffect(() => {
@@ -1231,6 +1232,41 @@ export default function PlayerScreen() {
         }
       };
       lockOrientation();
+    };
+  }, []);
+
+  // Hide Android navigation bar for immersive video experience
+  useEffect(() => {
+    if (Platform.OS !== 'android' || Platform.isTV) {
+      return;
+    }
+
+    const hideNavigationBar = async () => {
+      try {
+        // Dynamic require to avoid loading native module at parse time on other platforms
+        const NavigationBar = require('expo-navigation-bar');
+        await NavigationBar.setVisibilityAsync('hidden');
+        await NavigationBar.setBehaviorAsync('overlay-swipe');
+        console.log('[Player] Android navigation bar hidden');
+      } catch (error) {
+        console.warn('[Player] Failed to hide Android navigation bar:', error);
+      }
+    };
+
+    hideNavigationBar();
+
+    // Cleanup: show navigation bar when player closes
+    return () => {
+      const showNavigationBar = async () => {
+        try {
+          const NavigationBar = require('expo-navigation-bar');
+          await NavigationBar.setVisibilityAsync('visible');
+          console.log('[Player] Android navigation bar restored');
+        } catch (error) {
+          console.warn('[Player] Failed to restore Android navigation bar:', error);
+        }
+      };
+      showNavigationBar();
     };
   }, []);
 

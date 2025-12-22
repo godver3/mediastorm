@@ -322,7 +322,10 @@ export default function SearchScreen() {
   }, [setQuery, setSubmittedQuery]);
 
   const hasQuery = submittedQuery.trim().length > 0;
-  const isCompact = theme.breakpoint === 'compact';
+  // Always use mobile layout on phones/tablets (non-TV Android/iOS)
+  // This ensures foldable devices like Galaxy Fold 6 get the scrollable mobile view
+  const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
+  const isCompact = isMobileDevice || theme.breakpoint === 'compact';
   const showClearButton = isCompact && query.trim().length > 0;
 
   // Scroll to row when it receives focus (for TV navigation) — match home index behavior

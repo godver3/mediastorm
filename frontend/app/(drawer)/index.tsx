@@ -410,8 +410,11 @@ function IndexScreen() {
     scrollMetricsRef.current.viewportHeight = screenHeight;
   }, [screenHeight]);
 
-  const isCompact = theme.breakpoint === 'compact';
-  const shouldUseMobileLayout = isCompact;
+  // Always use mobile layout on phones/tablets (non-TV Android/iOS)
+  // This ensures foldable devices like Galaxy Fold 6 get the scrollable mobile view
+  // even when unfolded with large screen widths that would otherwise trigger desktop layout
+  const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
+  const shouldUseMobileLayout = isMobileDevice;
 
   const triggerReloadAfterAuthFailure = useCallback(() => {
     console.log('[Homepage] Triggering full API reload');
