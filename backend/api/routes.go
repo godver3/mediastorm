@@ -63,6 +63,8 @@ func Register(
 	api.HandleFunc("/settings", settingsHandler.GetSettings).Methods(http.MethodGet)
 	api.HandleFunc("/settings", settingsHandler.PutSettings).Methods(http.MethodPut)
 	api.HandleFunc("/settings", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/settings/cache/clear", settingsHandler.ClearMetadataCache).Methods(http.MethodPost)
+	api.HandleFunc("/settings/cache/clear", handleOptions).Methods(http.MethodOptions)
 
 	api.HandleFunc("/discover/new", metadataHandler.DiscoverNew).Methods(http.MethodGet)
 	api.HandleFunc("/discover/new", handleOptions).Methods(http.MethodOptions)
