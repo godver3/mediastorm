@@ -3,11 +3,13 @@ package debrid
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"novastream/config"
 	"novastream/models"
@@ -35,15 +37,21 @@ func NewPlaybackService(cfg *config.Manager, healthService *HealthService) *Play
 func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
 	log.Printf("[debrid-playback] resolve start title=%q link=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Link))
 
-	// Extract info hash from candidate
+	// Extract info hash from candidate (may be empty if using torrent file upload)
 	infoHash := strings.TrimSpace(candidate.Attributes["infoHash"])
 	if infoHash == "" {
 		if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
 			infoHash = extractInfoHashFromMagnet(candidate.Link)
 		}
-		if infoHash == "" {
-			return nil, fmt.Errorf("missing info hash")
-		}
+	}
+
+	// Check if we have a torrent URL (for cases without magnet/infohash)
+	torrentURL := strings.TrimSpace(candidate.Attributes["torrentURL"])
+
+	// We need either infohash/magnet or torrent URL
+	hasMagnet := strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:")
+	if infoHash == "" && !hasMagnet && torrentURL == "" {
+		return nil, fmt.Errorf("missing info hash and no torrent URL available")
 	}
 
 	// Get provider config
@@ -81,17 +89,37 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
 	}
 
-	return s.resolveWithProvider(ctx, client, candidate, infoHash)
+	return s.resolveWithProvider(ctx, client, candidate, infoHash, torrentURL)
 }
 
-func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash string) (*models.PlaybackResolution, error) {
+func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash, torrentURL string) (*models.PlaybackResolution, error) {
 	providerName := client.Name()
 
-	// Add the magnet to the provider
-	log.Printf("[debrid-playback] adding magnet to %s", providerName)
-	addResp, err := client.AddMagnet(ctx, candidate.Link)
-	if err != nil {
-		return nil, fmt.Errorf("add magnet: %w", err)
+	var addResp *AddMagnetResult
+	var err error
+
+	// Determine how to add the torrent: magnet link or torrent file upload
+	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
+		// Use magnet link
+		log.Printf("[debrid-playback] adding magnet to %s", providerName)
+		addResp, err = client.AddMagnet(ctx, candidate.Link)
+		if err != nil {
+			return nil, fmt.Errorf("add magnet: %w", err)
+		}
+	} else if torrentURL != "" {
+		// Download and upload torrent file
+		log.Printf("[debrid-playback] downloading torrent file from %s", torrentURL)
+		torrentData, filename, downloadErr := s.downloadTorrentFile(ctx, torrentURL)
+		if downloadErr != nil {
+			return nil, fmt.Errorf("download torrent file: %w", downloadErr)
+		}
+		log.Printf("[debrid-playback] uploading torrent file (%d bytes) to %s", len(torrentData), providerName)
+		addResp, err = client.AddTorrentFile(ctx, torrentData, filename)
+		if err != nil {
+			return nil, fmt.Errorf("add torrent file: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("no magnet link or torrent URL available")
 	}
 
 	torrentID := addResp.ID
@@ -343,4 +371,73 @@ func (s *PlaybackService) FilterCachedResults(ctx context.Context, results []mod
 
 	log.Printf("[debrid-playback] filtered results: %d cached out of %d checked", len(cached), checked)
 	return cached
+}
+
+// downloadTorrentFile downloads a .torrent file from a URL and returns its contents.
+func (s *PlaybackService) downloadTorrentFile(ctx context.Context, torrentURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create request: %w", err)
+	}
+
+	// Set common headers that some trackers expect
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Limit torrent file size to 10MB (should be more than enough)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return nil, "", fmt.Errorf("read response: %w", err)
+	}
+
+	// Verify it looks like a torrent file (starts with "d" for bencoded dictionary)
+	if len(data) < 10 || data[0] != 'd' {
+		return nil, "", fmt.Errorf("invalid torrent file format (expected bencoded data)")
+	}
+
+	// Extract filename from URL or Content-Disposition header
+	filename := extractTorrentFilename(resp, torrentURL)
+
+	log.Printf("[debrid-playback] downloaded torrent file: %s (%d bytes)", filename, len(data))
+	return data, filename, nil
+}
+
+// extractTorrentFilename tries to get a filename for the torrent file.
+func extractTorrentFilename(resp *http.Response, torrentURL string) string {
+	// Try Content-Disposition header first
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if strings.Contains(cd, "filename=") {
+			parts := strings.Split(cd, "filename=")
+			if len(parts) >= 2 {
+				filename := strings.Trim(parts[1], `"' `)
+				if filename != "" {
+					return filename
+				}
+			}
+		}
+	}
+
+	// Try to extract from URL path
+	if parsed, err := url.Parse(torrentURL); err == nil {
+		filename := path.Base(parsed.Path)
+		if filename != "" && filename != "." && filename != "/" {
+			if !strings.HasSuffix(strings.ToLower(filename), ".torrent") {
+				filename += ".torrent"
+			}
+			return filename
+		}
+	}
+
+	return "download.torrent"
 }

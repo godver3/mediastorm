@@ -27,6 +27,7 @@ type ScrapeResult struct {
 	Indexer     string
 	Magnet      string
 	InfoHash    string
+	TorrentURL  string // URL to download .torrent file (used when no magnet/infohash available)
 	FileIndex   int
 	SizeBytes   int64
 	Seeders     int

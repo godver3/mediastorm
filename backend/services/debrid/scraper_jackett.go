@@ -200,7 +200,7 @@ func (j *JackettScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 			attrs[attr.Name] = attr.Value
 		}
 
-		// Get infohash - critical for magnet links
+		// Get infohash - try multiple sources
 		infoHash := strings.ToLower(attrs["infohash"])
 		if infoHash == "" {
 			// Try to extract from magnet link
@@ -210,16 +210,46 @@ func (j *JackettScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 			}
 		}
 
-		if infoHash == "" {
-			log.Printf("[jackett] Skipping result without infohash: %s", item.Title)
+		// Get download URL - this could be a magnet link or a torrent file URL
+		downloadURL := item.Link
+		if downloadURL == "" {
+			downloadURL = item.GUID
+		}
+		if downloadURL == "" {
+			downloadURL = item.Enclosure.URL
+		}
+
+		// Determine if we have a magnet link or a torrent file URL
+		var magnet, torrentURL string
+		if strings.HasPrefix(downloadURL, "magnet:") {
+			magnet = downloadURL
+		} else if downloadURL != "" {
+			// It's likely a torrent file download URL
+			torrentURL = downloadURL
+		}
+
+		// Build magnet from infohash if we have it but no magnet
+		if magnet == "" && infoHash != "" {
+			magnet = buildMagnetFromHash(infoHash, item.Title)
+		}
+
+		// Skip results that have neither magnet, infohash, nor torrent URL
+		if magnet == "" && infoHash == "" && torrentURL == "" {
+			log.Printf("[jackett] Skipping result with no magnet/infohash/torrent URL: %s", item.Title)
 			continue
 		}
 
-		// Deduplicate by infohash
-		if _, exists := seen[infoHash]; exists {
-			continue
+		// Deduplicate - prefer infohash, fall back to torrent URL
+		dedupeKey := infoHash
+		if dedupeKey == "" {
+			dedupeKey = torrentURL
 		}
-		seen[infoHash] = struct{}{}
+		if dedupeKey != "" {
+			if _, exists := seen[dedupeKey]; exists {
+				continue
+			}
+			seen[dedupeKey] = struct{}{}
+		}
 
 		// Get seeders
 		seeders := 0
@@ -236,21 +266,6 @@ func (j *JackettScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 			if s, ok := attrs["size"]; ok {
 				size, _ = strconv.ParseInt(s, 10, 64)
 			}
-		}
-
-		// Get download URL / magnet
-		downloadURL := item.Link
-		if downloadURL == "" {
-			downloadURL = item.GUID
-		}
-		if downloadURL == "" {
-			downloadURL = item.Enclosure.URL
-		}
-
-		// Build magnet if we have infohash but no magnet URL
-		magnet := downloadURL
-		if !strings.HasPrefix(magnet, "magnet:") && infoHash != "" {
-			magnet = buildMagnetFromHash(infoHash, item.Title)
 		}
 
 		// Extract resolution from title
@@ -270,6 +285,7 @@ func (j *JackettScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 			Indexer:     tracker,
 			Magnet:      magnet,
 			InfoHash:    infoHash,
+			TorrentURL:  torrentURL,
 			FileIndex:   -1, // Jackett doesn't provide file index
 			SizeBytes:   size,
 			Seeders:     seeders,

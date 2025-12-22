@@ -91,6 +91,10 @@ Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
 
 ## Acknowledgments
 
+Thanks to [nzbdav](https://github.com/nzbdav-dev/nzbdav) and [altmount](https://github.com/javi11/altmount) for paving the way with usenet streaming.
+
+Inspired by [plex_debrid](https://github.com/itsToggle/plex_debrid) and [riven](https://github.com/rivenmedia/riven).
+
 Special thanks to [Parsett (PTT)](https://github.com/dreulavelle/PTT) for media title parsing.
 
 ## License
