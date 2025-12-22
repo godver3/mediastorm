@@ -678,6 +678,11 @@
         } else {
             contentHtml = sectionDef.is_array ? renderArraySection(sectionKey, sectionDef) : '<div class="grid grid-2">'+renderObjectSection(sectionKey, sectionDef)+'</div>';
         }
+
+        // Add clear cache button for cache section
+        if (sectionKey === 'cache') {
+            contentHtml += '<div class="cache-actions" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);"><button class="btn btn-secondary" id="clear-cache-btn" onclick="clearMetadataCache()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Clear Metadata Cache</button><p class="form-hint" style="margin-top: 0.5rem;">Remove all cached metadata and posters. Fresh data will be fetched from TVDB/TMDB on next request.</p></div>';
+        }
         let nestedHtml = '';
         for (const [nestedKey, nestedDef] of Object.entries(schema)) {
             // Only render as nested if parent matches AND section doesn't have its own group
@@ -744,6 +749,36 @@
             }
         } catch (e) {
             showToast('Error removing PIN: ' + e.message, 'error');
+        }
+    }
+
+    async function clearMetadataCache() {
+        const btn = document.getElementById('clear-cache-btn');
+        if (!btn) return;
+
+        if (!confirm('Clear all cached metadata and posters? This will force fresh data to be fetched from TVDB/TMDB.')) {
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Clearing...';
+
+        try {
+            const response = await fetch('/admin/api/cache/clear', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            if (response.ok) {
+                showToast('Metadata cache cleared successfully');
+            } else {
+                showToast(result.error || 'Failed to clear cache', 'error');
+            }
+        } catch (e) {
+            showToast('Error clearing cache: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
         }
     }
 

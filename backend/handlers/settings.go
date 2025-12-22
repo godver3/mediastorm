@@ -112,3 +112,21 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 		h.DebridSearchService.ReloadScrapers()
 	}
 }
+
+// ClearMetadataCache clears all cached metadata files
+func (h *SettingsHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.MetadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	if err := h.MetadataService.ClearCache(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("[settings] metadata cache cleared by user request")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Metadata cache cleared"})
+}
