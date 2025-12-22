@@ -44,9 +44,8 @@ func main() {
 		log.Fatalf("Failed to parse watch history: %v", err)
 	}
 
-	// Initialize metadata service
-	metadataCache := filepath.Join(cacheDir, "metadata")
-	metadataService := metadata.NewService(tvdbAPIKey, tmdbAPIKey, "en", metadataCache, 24, false)
+	// Initialize metadata service (it will use cacheDir/metadata subdirectory internally)
+	metadataService := metadata.NewService(tvdbAPIKey, tmdbAPIKey, "en", cacheDir, 24, false)
 
 	ctx := context.Background()
 	updated := 0

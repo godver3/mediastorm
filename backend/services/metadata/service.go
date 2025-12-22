@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,10 +41,13 @@ type inflightRequest struct {
 const tvdbArtworkBaseURL = "https://artworks.thetvdb.com"
 
 func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool) *Service {
+	// Use a dedicated subdirectory for metadata cache to avoid conflicts with
+	// other data stored in the cache directory (users, watchlists, history, etc.)
+	metadataCacheDir := filepath.Join(cacheDir, "metadata")
 	return &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}),
-		cache:            newFileCache(cacheDir, ttlHours),
+		cache:            newFileCache(metadataCacheDir, ttlHours),
 		demo:             demo,
 		inflightRequests: make(map[string]*inflightRequest),
 	}
