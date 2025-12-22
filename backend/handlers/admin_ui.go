@@ -22,6 +22,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/history"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
 )
@@ -287,11 +288,13 @@ type AdminUIHandler struct {
 	indexTemplate       *template.Template
 	settingsTemplate    *template.Template
 	statusTemplate      *template.Template
+	historyTemplate     *template.Template
 	loginTemplate       *template.Template
 	settingsPath        string
 	hlsManager          *HLSManager
 	usersService        *users.Service
 	userSettingsService *user_settings.Service
+	historyService      *history.Service
 	configManager       *config.Manager
 	metadataService     MetadataCacheClearer
 	pin                 string
@@ -305,6 +308,11 @@ type MetadataCacheClearer interface {
 // SetMetadataService sets the metadata service for cache clearing
 func (h *AdminUIHandler) SetMetadataService(ms MetadataCacheClearer) {
 	h.metadataService = ms
+}
+
+// SetHistoryService sets the history service for watch history data
+func (h *AdminUIHandler) SetHistoryService(hs *history.Service) {
+	h.historyService = hs
 }
 
 // NewAdminUIHandler creates a new admin UI handler
@@ -419,6 +427,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		indexTemplate:       createPageTemplate("index.html"),
 		settingsTemplate:    createPageTemplate("settings.html"),
 		statusTemplate:      createPageTemplate("status.html"),
+		historyTemplate:     createPageTemplate("history.html"),
 		loginTemplate:       loginTmpl,
 		settingsPath:        settingsPath,
 		hlsManager:          hlsManager,
@@ -522,6 +531,25 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.statusTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Status template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// HistoryPage serves the watch history page
+func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
+	var usersList []models.User
+	if h.usersService != nil {
+		usersList = h.usersService.List()
+	}
+
+	data := AdminPageData{
+		CurrentPath: "/admin/history",
+		Users:       usersList,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.historyTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("History template error: %v\n", err)
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1406,6 +1434,66 @@ func (h *AdminUIHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Reque
 	}
 	log.Printf("[admin] metadata cache cleared by user request")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Metadata cache cleared"})
+}
+
+// GetWatchHistory returns watch history for a user (admin session auth)
+func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "userId parameter required"})
+		return
+	}
+
+	if h.historyService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "history service not available"})
+		return
+	}
+
+	items, err := h.historyService.ListWatchHistory(userID)
+	if err != nil {
+		log.Printf("[admin] GetWatchHistory error for user %s: %v", userID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// GetContinueWatching returns continue watching items for a user (admin session auth)
+func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "userId parameter required"})
+		return
+	}
+
+	if h.historyService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "history service not available"})
+		return
+	}
+
+	items, err := h.historyService.ListContinueWatching(userID)
+	if err != nil {
+		log.Printf("[admin] GetContinueWatching error for user %s: %v", userID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
 }
 
 // TestDebridProvider tests a debrid provider by checking their API
