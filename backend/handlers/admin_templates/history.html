@@ -64,12 +64,13 @@
         <div id="historyCount" style="color: var(--text-muted); font-size: 0.875rem;">-</div>
     </div>
     <div class="card-body" style="padding: 0;">
-        <div id="historyContainer">
+        <div id="historyTableContainer">
             <div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);">
                 <div class="spinner" style="margin-right: 0.5rem;"></div>
                 Loading watch history...
             </div>
         </div>
+        <div id="paginationContainer"></div>
     </div>
 </div>
 
@@ -96,8 +97,12 @@
 
 {{define "scripts"}}
 <script>
-    let allHistoryItems = [];
+    let currentPage = 1;
     let currentFilter = 'all';
+    let pageSize = 50;
+    let totalItems = 0;
+    let totalPages = 1;
+    let cachedStats = { movies: 0, episodes: 0, lastActivity: null };
 
     function getSelectedProfile() {
         return document.getElementById('profileSelect').value;
@@ -120,6 +125,7 @@
 
     function filterHistory(filter, btn) {
         currentFilter = filter;
+        currentPage = 1; // Reset to first page when filter changes
 
         // Update button states
         document.querySelectorAll('.filter-btn').forEach(b => {
@@ -129,19 +135,73 @@
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary', 'active');
 
-        renderHistory();
+        loadHistoryPage();
     }
 
-    function renderHistory() {
-        const container = document.getElementById('historyContainer');
-        const countEl = document.getElementById('historyCount');
+    function goToPage(page) {
+        if (page < 1 || page > totalPages) return;
+        currentPage = page;
+        loadHistoryPage();
+    }
 
-        let items = allHistoryItems;
-        if (currentFilter !== 'all') {
-            items = items.filter(item => item.mediaType === currentFilter);
+    function renderPagination() {
+        const container = document.getElementById('paginationContainer');
+        if (totalPages <= 1) {
+            container.innerHTML = '';
+            return;
         }
 
-        countEl.textContent = items.length + ' items';
+        let html = '<div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--border);">';
+
+        // Previous button
+        html += '<button class="btn btn-secondary" onclick="goToPage(' + (currentPage - 1) + ')" ' + (currentPage === 1 ? 'disabled' : '') + ' style="padding: 0.5rem 0.75rem;">';
+        html += '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>';
+        html += '</button>';
+
+        // Page numbers
+        const maxVisiblePages = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+        if (endPage - startPage + 1 < maxVisiblePages) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+
+        if (startPage > 1) {
+            html += '<button class="btn btn-secondary" onclick="goToPage(1)" style="padding: 0.5rem 0.75rem;">1</button>';
+            if (startPage > 2) {
+                html += '<span style="color: var(--text-muted);">...</span>';
+            }
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            if (i === currentPage) {
+                html += '<button class="btn btn-primary" style="padding: 0.5rem 0.75rem;">' + i + '</button>';
+            } else {
+                html += '<button class="btn btn-secondary" onclick="goToPage(' + i + ')" style="padding: 0.5rem 0.75rem;">' + i + '</button>';
+            }
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                html += '<span style="color: var(--text-muted);">...</span>';
+            }
+            html += '<button class="btn btn-secondary" onclick="goToPage(' + totalPages + ')" style="padding: 0.5rem 0.75rem;">' + totalPages + '</button>';
+        }
+
+        // Next button
+        html += '<button class="btn btn-secondary" onclick="goToPage(' + (currentPage + 1) + ')" ' + (currentPage === totalPages ? 'disabled' : '') + ' style="padding: 0.5rem 0.75rem;">';
+        html += '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>';
+        html += '</button>';
+
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function renderHistoryTable(items) {
+        const container = document.getElementById('historyTableContainer');
+        const countEl = document.getElementById('historyCount');
+
+        countEl.textContent = totalItems + ' items' + (currentFilter !== 'all' ? ' (' + currentFilter + 's)' : '');
 
         if (items.length === 0) {
             container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No watch history found</p></div>';
@@ -176,58 +236,93 @@
             '</tbody></table></div>';
     }
 
-    async function loadHistory() {
+    async function loadHistoryPage() {
         const profileId = getSelectedProfile();
-        const container = document.getElementById('historyContainer');
-        const continueContainer = document.getElementById('continueWatchingContainer');
+        const container = document.getElementById('historyTableContainer');
 
-        // Show loading states
+        // Show loading state
         container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading watch history...</div>';
-        continueContainer.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading...</div>';
 
         try {
-            // Fetch watch history (using admin API with session auth)
-            const historyResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId));
+            // Build URL with pagination and filter
+            let url = '/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=' + currentPage + '&pageSize=' + pageSize;
+            if (currentFilter !== 'all') {
+                url += '&mediaType=' + encodeURIComponent(currentFilter);
+            }
+
+            const historyResponse = await fetch(url);
             if (!historyResponse.ok) {
                 const errorText = await historyResponse.text();
                 console.error('Watch history API error:', historyResponse.status, errorText);
                 throw new Error('Failed to fetch watch history: ' + historyResponse.status + ' - ' + errorText);
             }
             const historyData = await historyResponse.json();
-            allHistoryItems = historyData || [];
 
-            // Sort by watchedAt descending
-            allHistoryItems.sort((a, b) => {
-                const dateA = a.watchedAt ? new Date(a.watchedAt) : new Date(0);
-                const dateB = b.watchedAt ? new Date(b.watchedAt) : new Date(0);
-                return dateB - dateA;
-            });
+            totalItems = historyData.total || 0;
+            totalPages = historyData.totalPages || 1;
+            currentPage = historyData.page || 1;
 
-            // Update stats
-            const movies = allHistoryItems.filter(i => i.mediaType === 'movie');
-            const episodes = allHistoryItems.filter(i => i.mediaType === 'episode');
-            document.getElementById('moviesWatched').textContent = movies.length;
-            document.getElementById('episodesWatched').textContent = episodes.length;
+            // Render table and pagination
+            renderHistoryTable(historyData.items || []);
+            renderPagination();
 
-            // Last activity
-            if (allHistoryItems.length > 0 && allHistoryItems[0].watchedAt) {
-                document.getElementById('lastActivity').textContent = formatDate(allHistoryItems[0].watchedAt);
-            } else {
-                document.getElementById('lastActivity').textContent = '-';
+        } catch (e) {
+            console.error('Error loading history page:', e);
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load watch history</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">' + e.message + '</p></div>';
+            document.getElementById('paginationContainer').innerHTML = '';
+        }
+    }
+
+    async function loadStats() {
+        const profileId = getSelectedProfile();
+
+        try {
+            // Fetch stats for movies count
+            const moviesResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=movie');
+            if (moviesResponse.ok) {
+                const moviesData = await moviesResponse.json();
+                cachedStats.movies = moviesData.total || 0;
+                document.getElementById('moviesWatched').textContent = cachedStats.movies;
             }
 
-            // Render history
-            renderHistory();
+            // Fetch stats for episodes count
+            const episodesResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=episode');
+            if (episodesResponse.ok) {
+                const episodesData = await episodesResponse.json();
+                cachedStats.episodes = episodesData.total || 0;
+                document.getElementById('episodesWatched').textContent = cachedStats.episodes;
+            }
 
-            // Fetch continue watching (using admin API with session auth)
+            // Fetch last activity (first item from all history)
+            const lastResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1');
+            if (lastResponse.ok) {
+                const lastData = await lastResponse.json();
+                if (lastData.items && lastData.items.length > 0 && lastData.items[0].watchedAt) {
+                    cachedStats.lastActivity = lastData.items[0].watchedAt;
+                    document.getElementById('lastActivity').textContent = formatDate(cachedStats.lastActivity);
+                } else {
+                    document.getElementById('lastActivity').textContent = '-';
+                }
+            }
+        } catch (e) {
+            console.error('Error loading stats:', e);
+        }
+    }
+
+    async function loadContinueWatching() {
+        const profileId = getSelectedProfile();
+        const continueContainer = document.getElementById('continueWatchingContainer');
+
+        continueContainer.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading...</div>';
+
+        try {
             const continueResponse = await fetch('/admin/api/history/continue?userId=' + encodeURIComponent(profileId));
             if (!continueResponse.ok) {
                 const errorText = await continueResponse.text();
                 console.error('Continue watching API error:', continueResponse.status, errorText);
                 throw new Error('Failed to fetch continue watching: ' + continueResponse.status + ' - ' + errorText);
             }
-            const continueData = await continueResponse.json();
-            const continueItems = continueData || [];
+            const continueItems = await continueResponse.json() || [];
 
             document.getElementById('seriesInProgress').textContent = continueItems.length;
 
@@ -242,18 +337,38 @@
                     }).join('') +
                     '</tbody></table></div>';
             }
-
         } catch (e) {
-            console.error('Error loading history:', e);
-            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load watch history</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">' + e.message + '</p></div>';
+            console.error('Error loading continue watching:', e);
             continueContainer.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load data</p></div>';
-
-            // Reset stats on error
-            document.getElementById('moviesWatched').textContent = '-';
-            document.getElementById('episodesWatched').textContent = '-';
             document.getElementById('seriesInProgress').textContent = '-';
-            document.getElementById('lastActivity').textContent = '-';
         }
+    }
+
+    async function loadHistory() {
+        // Reset pagination state
+        currentPage = 1;
+        currentFilter = 'all';
+
+        // Reset filter buttons
+        document.querySelectorAll('.filter-btn').forEach(b => {
+            b.classList.remove('btn-primary', 'active');
+            b.classList.add('btn-secondary');
+        });
+        document.querySelector('.filter-btn[data-filter="all"]').classList.remove('btn-secondary');
+        document.querySelector('.filter-btn[data-filter="all"]').classList.add('btn-primary', 'active');
+
+        // Reset stats display
+        document.getElementById('moviesWatched').textContent = '-';
+        document.getElementById('episodesWatched').textContent = '-';
+        document.getElementById('seriesInProgress').textContent = '-';
+        document.getElementById('lastActivity').textContent = '-';
+
+        // Load all data in parallel
+        await Promise.all([
+            loadHistoryPage(),
+            loadStats(),
+            loadContinueWatching()
+        ]);
     }
 
     document.addEventListener('DOMContentLoaded', () => {

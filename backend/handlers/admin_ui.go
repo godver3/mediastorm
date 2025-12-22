@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,7 +137,7 @@ var SettingsSchema = map[string]interface{}{
 		"key":      "debridProviders",
 		"fields": map[string]interface{}{
 			"name":     map[string]interface{}{"type": "text", "label": "Name", "description": "Provider display name"},
-			"provider": map[string]interface{}{"type": "select", "label": "Provider", "options": []string{"realdebrid", "torbox"}, "description": "Provider type"},
+			"provider": map[string]interface{}{"type": "select", "label": "Provider", "options": []string{"realdebrid", "torbox", "alldebrid"}, "description": "Provider type"},
 			"apiKey":   map[string]interface{}{"type": "password", "label": "API Key", "description": "Provider API key"},
 			"enabled":  map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this provider"},
 		},
@@ -1607,6 +1608,7 @@ func (h *AdminUIHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Reque
 }
 
 // GetWatchHistory returns watch history for a user (admin session auth)
+// Supports pagination via query params: page (default 1), pageSize (default 50), mediaType (optional filter)
 func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
 	if userID == "" {
@@ -1623,7 +1625,24 @@ func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	items, err := h.historyService.ListWatchHistory(userID)
+	// Parse pagination params
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	pageSize := 50
+	if ps := r.URL.Query().Get("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 {
+			pageSize = parsed
+		}
+	}
+
+	mediaTypeFilter := r.URL.Query().Get("mediaType")
+
+	result, err := h.historyService.ListWatchHistoryPaginated(userID, page, pageSize, mediaTypeFilter)
 	if err != nil {
 		log.Printf("[admin] GetWatchHistory error for user %s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -1633,7 +1652,7 @@ func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(result)
 }
 
 // GetContinueWatching returns continue watching items for a user (admin session auth)
@@ -1814,6 +1833,84 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": fmt.Sprintf("Connected as %s (%s)", result.Data.Email, planName),
+		})
+
+	case "alldebrid":
+		// Test AllDebrid by getting user info
+		apiReq, err := http.NewRequest(http.MethodGet, "https://api.alldebrid.com/v4/user?agent=strmr", nil)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Failed to create request: %v", err),
+			})
+			return
+		}
+		apiReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", req.APIKey))
+
+		resp, err := client.Do(apiReq)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Invalid API key",
+			})
+			return
+		}
+
+		var adResult struct {
+			Status string `json:"status"`
+			Data   struct {
+				Username  string `json:"username"`
+				Email     string `json:"email"`
+				IsPremium bool   `json:"isPremium"`
+			} `json:"data"`
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&adResult); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "AllDebrid API is reachable",
+			})
+			return
+		}
+
+		if adResult.Status != "success" {
+			errMsg := "Unknown error"
+			if adResult.Error != nil {
+				errMsg = adResult.Error.Message
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   errMsg,
+			})
+			return
+		}
+
+		accountType := "Free"
+		if adResult.Data.IsPremium {
+			accountType = "Premium"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Connected as %s (%s)", adResult.Data.Username, accountType),
 		})
 
 	default:
