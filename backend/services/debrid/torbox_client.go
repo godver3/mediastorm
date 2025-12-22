@@ -1,11 +1,13 @@
 package debrid
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -176,6 +178,87 @@ func (c *TorboxClient) AddMagnet(ctx context.Context, magnetURL string) (*AddMag
 	return &AddMagnetResult{
 		ID:  strconv.Itoa(result.Data.TorrentID),
 		URI: trimmedMagnet,
+	}, nil
+}
+
+// AddTorrentFile uploads a .torrent file to Torbox and returns the torrent ID.
+func (c *TorboxClient) AddTorrentFile(ctx context.Context, torrentData []byte, filename string) (*AddMagnetResult, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("torbox API key not configured")
+	}
+
+	if len(torrentData) == 0 {
+		return nil, fmt.Errorf("torrent data is empty")
+	}
+
+	if filename == "" {
+		filename = "upload.torrent"
+	}
+
+	endpoint := fmt.Sprintf("%s/torrents/createtorrent", c.baseURL)
+
+	// Create multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Add the torrent file
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("create form file: %w", err)
+	}
+
+	if _, err := part.Write(torrentData); err != nil {
+		return nil, fmt.Errorf("write torrent data: %w", err)
+	}
+
+	// Add additional form fields
+	if err := writer.WriteField("seed", "1"); err != nil {
+		return nil, fmt.Errorf("write seed field: %w", err)
+	}
+	if err := writer.WriteField("allow_zip", "false"); err != nil {
+		return nil, fmt.Errorf("write allow_zip field: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("build add torrent request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("add torrent request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("torbox authentication failed: invalid API key")
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	var result torboxResponse[torboxCreateTorrentData]
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode add torrent response: %w (body: %s)", err, string(body))
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("add torrent failed: %s (error: %s)", result.Detail, result.Error)
+	}
+
+	log.Printf("[torbox] torrent file uploaded: torrent_id=%d hash=%s name=%s", result.Data.TorrentID, result.Data.Hash, result.Data.Name)
+
+	return &AddMagnetResult{
+		ID:  strconv.Itoa(result.Data.TorrentID),
+		URI: filename,
 	}, nil
 }
 

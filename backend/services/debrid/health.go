@@ -3,9 +3,13 @@ package debrid
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"novastream/config"
 	"novastream/internal/mediaresolve"
@@ -40,21 +44,27 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		return nil, fmt.Errorf("health service not configured")
 	}
 
-	// Extract info hash from result attributes
+	// Extract info hash from result attributes (may be empty for torrent file uploads)
 	infoHash := strings.TrimSpace(result.Attributes["infoHash"])
 	if infoHash == "" {
 		// Try to extract from magnet link
 		if strings.HasPrefix(strings.ToLower(result.Link), "magnet:") {
 			infoHash = extractInfoHashFromMagnet(result.Link)
 		}
-		if infoHash == "" {
-			return &DebridHealthCheck{
-				Healthy:      false,
-				Status:       "error",
-				Cached:       false,
-				ErrorMessage: "missing info hash",
-			}, nil
-		}
+	}
+
+	// Check if we have a torrent URL (for cases without magnet/infohash)
+	torrentURL := strings.TrimSpace(result.Attributes["torrentURL"])
+
+	// We need either infohash/magnet or torrent URL
+	hasMagnet := strings.HasPrefix(strings.ToLower(result.Link), "magnet:")
+	if infoHash == "" && !hasMagnet && torrentURL == "" {
+		return &DebridHealthCheck{
+			Healthy:      false,
+			Status:       "error",
+			Cached:       false,
+			ErrorMessage: "missing info hash and no torrent URL available",
+		}, nil
 	}
 
 	settings, err := s.cfg.Load()
@@ -106,25 +116,74 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		}, nil
 	}
 
-	return s.checkProviderHealth(ctx, client, result, infoHash, result.Link, verifyUncached)
+	return s.checkProviderHealth(ctx, client, result, infoHash, torrentURL, verifyUncached)
 }
 
-func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider, result models.NZBResult, infoHash, magnetURL string, verifyUncached bool) (*DebridHealthCheck, error) {
+func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider, result models.NZBResult, infoHash, torrentURL string, verifyUncached bool) (*DebridHealthCheck, error) {
 	providerName := client.Name()
 
 	// Use add+check+remove method to verify cache status
-	log.Printf("[debrid-health] %s checking torrent %s via add+check+remove", providerName, infoHash)
+	identifier := infoHash
+	if identifier == "" {
+		identifier = torrentURL
+	}
+	log.Printf("[debrid-health] %s checking torrent %s via add+check+remove", providerName, identifier)
 
-	addResp, err := client.AddMagnet(ctx, magnetURL)
-	if err != nil {
-		log.Printf("[debrid-health] %s add magnet failed for %s: %v", providerName, infoHash, err)
+	var addResp *AddMagnetResult
+	var err error
+
+	// Determine how to add the torrent: magnet link or torrent file upload
+	if strings.HasPrefix(strings.ToLower(result.Link), "magnet:") {
+		// Use magnet link
+		log.Printf("[debrid-health] adding magnet to %s", providerName)
+		addResp, err = client.AddMagnet(ctx, result.Link)
+		if err != nil {
+			log.Printf("[debrid-health] %s add magnet failed for %s: %v", providerName, identifier, err)
+			return &DebridHealthCheck{
+				Healthy:      false,
+				Status:       "error",
+				Cached:       false,
+				Provider:     providerName,
+				InfoHash:     infoHash,
+				ErrorMessage: fmt.Sprintf("add magnet failed: %v", err),
+			}, nil
+		}
+	} else if torrentURL != "" {
+		// Download and upload torrent file
+		log.Printf("[debrid-health] downloading torrent file from %s", torrentURL)
+		torrentData, filename, downloadErr := s.downloadTorrentFile(ctx, torrentURL)
+		if downloadErr != nil {
+			log.Printf("[debrid-health] %s download torrent failed for %s: %v", providerName, identifier, downloadErr)
+			return &DebridHealthCheck{
+				Healthy:      false,
+				Status:       "error",
+				Cached:       false,
+				Provider:     providerName,
+				InfoHash:     infoHash,
+				ErrorMessage: fmt.Sprintf("download torrent file failed: %v", downloadErr),
+			}, nil
+		}
+		log.Printf("[debrid-health] uploading torrent file (%d bytes) to %s", len(torrentData), providerName)
+		addResp, err = client.AddTorrentFile(ctx, torrentData, filename)
+		if err != nil {
+			log.Printf("[debrid-health] %s add torrent file failed for %s: %v", providerName, identifier, err)
+			return &DebridHealthCheck{
+				Healthy:      false,
+				Status:       "error",
+				Cached:       false,
+				Provider:     providerName,
+				InfoHash:     infoHash,
+				ErrorMessage: fmt.Sprintf("add torrent file failed: %v", err),
+			}, nil
+		}
+	} else {
 		return &DebridHealthCheck{
 			Healthy:      false,
 			Status:       "error",
 			Cached:       false,
 			Provider:     providerName,
 			InfoHash:     infoHash,
-			ErrorMessage: fmt.Sprintf("add magnet failed: %v", err),
+			ErrorMessage: "no magnet link or torrent URL available",
 		}, nil
 	}
 
@@ -370,4 +429,73 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 	selection.promotePreferredToFront()
 
 	return selection
+}
+
+// downloadTorrentFile downloads a .torrent file from a URL and returns its contents.
+func (s *HealthService) downloadTorrentFile(ctx context.Context, torrentURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create request: %w", err)
+	}
+
+	// Set common headers that some trackers expect
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Limit torrent file size to 10MB (should be more than enough)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return nil, "", fmt.Errorf("read response: %w", err)
+	}
+
+	// Verify it looks like a torrent file (starts with "d" for bencoded dictionary)
+	if len(data) < 10 || data[0] != 'd' {
+		return nil, "", fmt.Errorf("invalid torrent file format (expected bencoded data)")
+	}
+
+	// Extract filename from URL or Content-Disposition header
+	filename := s.extractTorrentFilename(resp, torrentURL)
+
+	log.Printf("[debrid-health] downloaded torrent file: %s (%d bytes)", filename, len(data))
+	return data, filename, nil
+}
+
+// extractTorrentFilename tries to get a filename for the torrent file.
+func (s *HealthService) extractTorrentFilename(resp *http.Response, torrentURL string) string {
+	// Try Content-Disposition header first
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if strings.Contains(cd, "filename=") {
+			parts := strings.Split(cd, "filename=")
+			if len(parts) >= 2 {
+				filename := strings.Trim(parts[1], `"' `)
+				if filename != "" {
+					return filename
+				}
+			}
+		}
+	}
+
+	// Try to extract from URL path
+	if parsed, err := url.Parse(torrentURL); err == nil {
+		filename := path.Base(parsed.Path)
+		if filename != "" && filename != "." && filename != "/" {
+			if !strings.HasSuffix(strings.ToLower(filename), ".torrent") {
+				filename += ".torrent"
+			}
+			return filename
+		}
+	}
+
+	return "download.torrent"
 }
