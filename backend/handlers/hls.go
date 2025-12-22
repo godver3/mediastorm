@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"novastream/services/streaming"
@@ -110,8 +111,10 @@ type HLSSession struct {
 	SegmentRequestCount  int
 	IdleTimeoutTriggered bool
 
-	// Segment tracking for cleanup
+	// Segment tracking for cleanup and rate limiting
 	MinSegmentRequested int // Minimum segment number that has been requested (-1 = none yet)
+	MaxSegmentRequested int // Maximum segment number that has been requested (-1 = none yet)
+	Paused              bool // True if FFmpeg is paused (SIGSTOP) waiting for player to catch up
 
 	// Input error recovery (for usenet disconnections)
 	InputErrorDetected bool // Set to true when FFmpeg input stream fails (usenet disconnect)
@@ -153,6 +156,13 @@ const (
 
 	// HLS segment duration in seconds (must match -hls_time value)
 	hlsSegmentDuration = 4.0
+
+	// Rate limiting: pause FFmpeg when buffer gets too far ahead of player
+	// Note: Players keep buffering even when paused, so we need generous thresholds
+	// Pause when (segmentsOnDisk - maxRequested) exceeds this value
+	hlsBufferPauseThreshold = 15 // ~60 seconds of buffer ahead (15 * 4s segments)
+	// Resume when buffer drops to this level
+	hlsBufferResumeThreshold = 8 // ~32 seconds of buffer ahead
 )
 
 // HLSManager manages HLS transcoding sessions
@@ -380,6 +390,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		StreamStartTime:     now,
 		LastSegmentRequest:  now, // Initialize to now to avoid immediate timeout
 		MinSegmentRequested: -1,  // Initialize to -1 (no segments requested yet)
+		MaxSegmentRequested: -1,  // Initialize to -1 (no segments requested yet)
 	}
 
 	m.mu.Lock()
@@ -1599,6 +1610,122 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}()
 
+	// Start rate limiting goroutine to pause FFmpeg when too far ahead of player
+	rateLimitDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Second) // Check every 2 seconds
+		defer ticker.Stop()
+		var lastSkipLog time.Time
+
+		for {
+			select {
+			case <-ticker.C:
+				session.mu.RLock()
+				maxRequested := session.MaxSegmentRequested
+				paused := session.Paused
+				completed := session.Completed
+				pid := session.FFmpegPID
+				outputDir := session.OutputDir
+				hasDV := session.HasDV
+				hasHDR := session.HasHDR
+				session.mu.RUnlock()
+
+				// Don't rate limit if completed or player hasn't requested any segments yet
+				if completed || maxRequested < 0 || pid == 0 {
+					// Log why we're skipping (every 30 seconds to avoid spam)
+					if maxRequested < 0 && time.Since(lastSkipLog) > 30*time.Second {
+						log.Printf("[hls] session %s: RATE_LIMIT skipped - no playback position reported (maxRequested=%d). Frontend should send ?time=<seconds> with keepalive.",
+							session.ID, maxRequested)
+						lastSkipLog = time.Now()
+					}
+					continue
+				}
+
+				// Find segment files on disk
+				segmentExt := ".ts"
+				if hasDV || hasHDR {
+					segmentExt = ".m4s"
+				}
+				pattern := filepath.Join(outputDir, "segment*"+segmentExt)
+				segmentFiles, _ := filepath.Glob(pattern)
+
+				// Find highest segment number from filenames (not just count, since cleanup removes old ones)
+				highestSegment := -1
+				for _, f := range segmentFiles {
+					base := filepath.Base(f)
+					var segNum int
+					if _, err := fmt.Sscanf(base, "segment%d", &segNum); err == nil {
+						if segNum > highestSegment {
+							highestSegment = segNum
+						}
+					}
+				}
+
+				// Cleanup old segments that are well behind playback position (keep 3 behind)
+				cleanupThreshold := maxRequested - 3
+				if cleanupThreshold > 0 {
+					deletedCount := 0
+					for i := 0; i < cleanupThreshold; i++ {
+						oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d%s", i, segmentExt))
+						if err := os.Remove(oldSegment); err == nil {
+							deletedCount++
+						}
+					}
+					if deletedCount > 0 {
+						log.Printf("[hls] session %s: RATE_LIMIT cleanup deleted %d old segments (keeping from segment %d onwards)",
+							session.ID, deletedCount, cleanupThreshold)
+					}
+				}
+
+				// Skip rate limiting if no segments found yet
+				if highestSegment < 0 {
+					continue
+				}
+
+				bufferAhead := highestSegment - maxRequested
+
+				if !paused && bufferAhead > hlsBufferPauseThreshold {
+					// Pause FFmpeg - too far ahead of player
+					if err := syscall.Kill(pid, syscall.SIGSTOP); err == nil {
+						session.mu.Lock()
+						session.Paused = true
+						session.mu.Unlock()
+						log.Printf("[hls] session %s: RATE_LIMIT paused FFmpeg (buffer=%d segments ahead, highestSeg=%d, requested=%d)",
+							session.ID, bufferAhead, highestSegment, maxRequested)
+					} else {
+						log.Printf("[hls] session %s: failed to pause FFmpeg: %v", session.ID, err)
+					}
+				} else if paused && bufferAhead <= hlsBufferResumeThreshold {
+					// Resume FFmpeg - player is catching up
+					if err := syscall.Kill(pid, syscall.SIGCONT); err == nil {
+						session.mu.Lock()
+						session.Paused = false
+						session.mu.Unlock()
+						log.Printf("[hls] session %s: RATE_LIMIT resumed FFmpeg (buffer=%d segments ahead, highestSeg=%d, requested=%d)",
+							session.ID, bufferAhead, highestSegment, maxRequested)
+					} else {
+						log.Printf("[hls] session %s: failed to resume FFmpeg: %v", session.ID, err)
+					}
+				}
+
+			case <-rateLimitDone:
+				// Ensure FFmpeg is resumed before exiting
+				session.mu.RLock()
+				paused := session.Paused
+				pid := session.FFmpegPID
+				session.mu.RUnlock()
+				if paused && pid > 0 {
+					_ = syscall.Kill(pid, syscall.SIGCONT)
+					session.mu.Lock()
+					session.Paused = false
+					session.mu.Unlock()
+					log.Printf("[hls] session %s: resumed FFmpeg on rate limit shutdown", session.ID)
+				}
+				return
+			}
+		}
+	}()
+
 	// Wait for FFmpeg to complete
 	log.Printf("[hls] session %s: waiting for FFmpeg to complete", session.ID)
 	waitStart := time.Now()
@@ -1618,6 +1745,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// Signal monitoring goroutines to stop
 	close(perfDone)
 	close(idleDone)
+	close(rateLimitDone)
 
 	completionTime := time.Since(startTime)
 
@@ -2014,6 +2142,7 @@ func (m *HLSManager) GetSession(sessionID string) (*HLSSession, bool) {
 
 // KeepAlive updates the last activity time for a session to prevent idle timeout
 // This is used by the frontend to keep paused streams alive
+// Optional query param: time=<seconds> to report current playback position for rate limiting
 func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID string) {
 	session, exists := m.GetSession(sessionID)
 	if !exists {
@@ -2023,6 +2152,19 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 
 	session.mu.Lock()
 	session.LastSegmentRequest = time.Now()
+
+	// If frontend reports playback time, use it to update MaxSegmentRequested for rate limiting
+	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
+		if playbackTime, err := strconv.ParseFloat(timeStr, 64); err == nil && playbackTime >= 0 {
+			// Calculate segment number from playback time (hlsSegmentDuration = 4 seconds)
+			segmentNum := int(playbackTime / hlsSegmentDuration)
+			if segmentNum > session.MaxSegmentRequested {
+				session.MaxSegmentRequested = segmentNum
+				log.Printf("[hls] session %s: keepalive updated MaxSegmentRequested to %d (time=%.1fs)",
+					sessionID, segmentNum, playbackTime)
+			}
+		}
+	}
 	session.mu.Unlock()
 
 	log.Printf("[hls] session %s: keepalive received, extended idle timeout", sessionID)
@@ -2035,16 +2177,18 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 
 // HLSSessionStatus represents the status of an HLS session for frontend polling
 type HLSSessionStatus struct {
-	SessionID          string  `json:"sessionId"`
-	Status             string  `json:"status"` // "active", "completed", "error"
-	FatalError         string  `json:"fatalError,omitempty"`
-	FatalErrorTime     int64   `json:"fatalErrorTime,omitempty"` // Unix timestamp
-	Duration           float64 `json:"duration,omitempty"`
-	SegmentsCreated    int     `json:"segmentsCreated"`
-	BitstreamErrors    int     `json:"bitstreamErrors"`
-	HDRMetadataDisabled bool   `json:"hdrMetadataDisabled"`
-	DVDisabled         bool    `json:"dvDisabled"`
-	RecoveryAttempts   int     `json:"recoveryAttempts"`
+	SessionID           string  `json:"sessionId"`
+	Status              string  `json:"status"` // "active", "completed", "error"
+	FatalError          string  `json:"fatalError,omitempty"`
+	FatalErrorTime      int64   `json:"fatalErrorTime,omitempty"` // Unix timestamp
+	Duration            float64 `json:"duration,omitempty"`
+	SegmentsCreated     int     `json:"segmentsCreated"`
+	MaxSegmentRequested int     `json:"maxSegmentRequested"` // Highest segment requested by player
+	Paused              bool    `json:"paused"`              // True if FFmpeg is paused (rate limited)
+	BitstreamErrors     int     `json:"bitstreamErrors"`
+	HDRMetadataDisabled bool    `json:"hdrMetadataDisabled"`
+	DVDisabled          bool    `json:"dvDisabled"`
+	RecoveryAttempts    int     `json:"recoveryAttempts"`
 }
 
 // GetSessionStatus returns the current status of an HLS session
@@ -2060,6 +2204,8 @@ func (m *HLSManager) GetSessionStatus(w http.ResponseWriter, r *http.Request, se
 		SessionID:           session.ID,
 		Duration:            session.Duration,
 		SegmentsCreated:     session.SegmentsCreated,
+		MaxSegmentRequested: session.MaxSegmentRequested,
+		Paused:              session.Paused,
 		BitstreamErrors:     session.BitstreamErrors,
 		HDRMetadataDisabled: session.HDRMetadataDisabled,
 		DVDisabled:          session.DVDisabled,
@@ -2222,6 +2368,10 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 		if session.MinSegmentRequested < 0 || segmentNum < session.MinSegmentRequested {
 			session.MinSegmentRequested = segmentNum
 			log.Printf("[hls] session %s: updated MinSegmentRequested to %d", sessionID, segmentNum)
+		}
+		if segmentNum > session.MaxSegmentRequested {
+			session.MaxSegmentRequested = segmentNum
+			log.Printf("[hls] session %s: updated MaxSegmentRequested to %d", sessionID, segmentNum)
 		}
 		session.mu.Unlock()
 	}
