@@ -600,7 +600,7 @@ const ExpoVideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     return (
       <Pressable onPress={onInteract} style={styles.root} tvParallaxProperties={{ enabled: false }}>
-        <View style={styles.videoContainer}>
+        <View style={styles.videoContainer} pointerEvents="box-none">
           <VideoView
             ref={videoRef}
             player={player}

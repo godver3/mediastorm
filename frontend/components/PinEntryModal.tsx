@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -21,8 +22,10 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
+  // Use larger sizes for TV and wide screens (tablets, foldables)
+  const useLargeSizing = Platform.isTV || isLargeScreen;
+  return StyleSheet.create({
     modalOverlay: {
       flex: 1,
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -33,8 +36,8 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.background.surface,
       borderRadius: 16,
       padding: 32,
-      minWidth: Platform.isTV ? 480 : 320,
-      maxWidth: Platform.isTV ? 600 : 400,
+      minWidth: useLargeSizing ? 480 : 320,
+      maxWidth: useLargeSizing ? 600 : 400,
       alignItems: 'center',
     },
     header: {
@@ -56,13 +59,13 @@ const createStyles = (theme: NovaTheme) =>
       color: 'white',
     },
     modalTitle: {
-      fontSize: Platform.isTV ? 28 : 22,
+      fontSize: useLargeSizing ? 28 : 22,
       fontWeight: '700',
       color: theme.colors.text.primary,
       marginBottom: 8,
     },
     modalSubtitle: {
-      fontSize: Platform.isTV ? 18 : 14,
+      fontSize: useLargeSizing ? 18 : 14,
       color: theme.colors.text.secondary,
       textAlign: 'center',
     },
@@ -75,18 +78,18 @@ const createStyles = (theme: NovaTheme) =>
     },
     errorText: {
       color: '#EF4444',
-      fontSize: Platform.isTV ? 16 : 14,
+      fontSize: useLargeSizing ? 16 : 14,
       textAlign: 'center',
     },
     pinInput: {
       backgroundColor: theme.colors.background.elevated,
       borderRadius: 12,
       paddingHorizontal: 20,
-      paddingVertical: Platform.isTV ? 16 : 14,
-      fontSize: Platform.isTV ? 24 : 18,
+      paddingVertical: useLargeSizing ? 16 : 14,
+      fontSize: useLargeSizing ? 24 : 18,
       color: theme.colors.text.primary,
       textAlign: 'center',
-      minWidth: Platform.isTV ? 280 : 200,
+      minWidth: useLargeSizing ? 280 : 200,
       marginBottom: 24,
       borderWidth: 2,
       borderColor: 'transparent',
@@ -105,10 +108,10 @@ const createStyles = (theme: NovaTheme) =>
     },
     button: {
       paddingHorizontal: 24,
-      paddingVertical: Platform.isTV ? 14 : 12,
+      paddingVertical: useLargeSizing ? 14 : 12,
       borderRadius: 8,
       backgroundColor: theme.colors.background.elevated,
-      minWidth: Platform.isTV ? 140 : 100,
+      minWidth: useLargeSizing ? 140 : 100,
       alignItems: 'center',
     },
     buttonPrimary: {
@@ -122,7 +125,7 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: '#2563eb',
     },
     buttonText: {
-      fontSize: Platform.isTV ? 18 : 16,
+      fontSize: useLargeSizing ? 18 : 16,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -130,10 +133,13 @@ const createStyles = (theme: NovaTheme) =>
       color: 'white',
     },
   });
+};
 
 export const PinEntryModal: React.FC = () => {
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: screenWidth } = useWindowDimensions();
+  const isLargeScreen = screenWidth >= 600;
+  const styles = useMemo(() => createStyles(theme, isLargeScreen), [theme, isLargeScreen]);
   const {
     users,
     pendingPinUserId,

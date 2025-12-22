@@ -322,10 +322,10 @@ export default function SearchScreen() {
   }, [setQuery, setSubmittedQuery]);
 
   const hasQuery = submittedQuery.trim().length > 0;
-  // Always use mobile layout on phones/tablets (non-TV Android/iOS)
-  // This ensures foldable devices like Galaxy Fold 6 get the scrollable mobile view
+  // Use mobile layout on phones, but switch to grid layout on wider screens (tablets, foldables)
   const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
-  const isCompact = isMobileDevice || theme.breakpoint === 'compact';
+  const isWideScreen = screenWidth >= 600;
+  const isCompact = (isMobileDevice && !isWideScreen) || theme.breakpoint === 'compact';
   const showClearButton = isCompact && query.trim().length > 0;
 
   // Scroll to row when it receives focus (for TV navigation) — match home index behavior
@@ -447,9 +447,10 @@ export default function SearchScreen() {
       );
     }
 
-    // For TV/desktop, use focusable grid with spatial navigation
+    // For TV/desktop/wide tablets, use focusable grid with spatial navigation
     // Split items into rows for proper grid navigation
-    const columnsPerRow = Platform.isTV ? 6 : 7;
+    // Column count based on screen width for better responsiveness
+    const columnsPerRow = screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4;
     const rows: ResultTitle[][] = [];
     for (let i = 0; i < filteredItems.length; i += columnsPerRow) {
       rows.push(filteredItems.slice(i, i + columnsPerRow));
@@ -687,8 +688,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
   // Calculate card dimensions for proper grid layout
   const isCompact = theme.breakpoint === 'compact';
 
-  // Grid configuration
-  const columnsCount = isCompact ? 2 : Platform.isTV ? 6 : 7; // 2 columns for mobile, 6 for tvOS, 7 for desktop/web
+  // Grid configuration - use 4 columns on wide mobile screens (foldables, tablets)
+  const isWideCompact = isCompact && screenWidth >= 600;
+  const columnsCount = isCompact ? (isWideCompact ? 4 : 2) : Platform.isTV ? 6 : 7;
   const gap = isCompact ? theme.spacing.md : theme.spacing.lg;
   const horizontalPadding = isCompact ? theme.spacing.lg : theme.spacing['2xl'];
 

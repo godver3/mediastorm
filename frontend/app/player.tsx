@@ -800,9 +800,9 @@ export default function PlayerScreen() {
         return;
       }
 
-      // Send keepalive ping
+      // Send keepalive ping with current playback time for rate limiting
       try {
-        await apiService.keepaliveHlsSession(sessionId);
+        await apiService.keepaliveHlsSession(sessionId, currentTimeRef.current);
       } catch (error) {
         console.warn('[player] keepalive ping failed:', error);
       }
@@ -2263,17 +2263,27 @@ export default function PlayerScreen() {
   }, [usesSystemManagedControls, showControls]);
 
   const handleVideoInteract = useCallback(() => {
+    console.log('[player] handleVideoInteract called', {
+      controlsVisible,
+      isTouchOverlayToggleSupported,
+      usesSystemManagedControls,
+      isTvPlatform,
+    });
+
     if (usesSystemManagedControls) {
+      console.log('[player] handleVideoInteract: skipping (system managed controls)');
       return;
     }
 
     if (isTouchOverlayToggleSupported && controlsVisible) {
+      console.log('[player] handleVideoInteract: hiding controls');
       hideControls();
       return;
     }
 
+    console.log('[player] handleVideoInteract: showing controls');
     showControls();
-  }, [controlsVisible, hideControls, isTouchOverlayToggleSupported, showControls, usesSystemManagedControls]);
+  }, [controlsVisible, hideControls, isTouchOverlayToggleSupported, isTvPlatform, showControls, usesSystemManagedControls]);
 
   const seek = useCallback(
     (rawTime: number, shouldShowControls: boolean = true) => {
