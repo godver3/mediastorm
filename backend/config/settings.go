@@ -58,9 +58,9 @@ type IndexerConfig struct {
 }
 
 type TorrentScraperConfig struct {
-	Name    string            `json:"name"`    // "Torrentio", "Prowlarr", "Jackett"
-	Type    string            `json:"type"`    // "torrentio", "prowlarr", "jackett"
-	URL     string            `json:"url"`     // For Prowlarr/Jackett
+	Name    string            `json:"name"`    // "Torrentio", "Prowlarr", "Jackett", "Zilean"
+	Type    string            `json:"type"`    // "torrentio", "prowlarr", "jackett", "zilean"
+	URL     string            `json:"url"`     // For Prowlarr/Jackett/Zilean
 	APIKey  string            `json:"apiKey"`  // For Prowlarr/Jackett
 	Options string            `json:"options"` // For Torrentio: URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
 	Enabled bool              `json:"enabled"`

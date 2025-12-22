@@ -79,6 +79,13 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			}
 			log.Printf("[debrid] Initializing Jackett scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
 			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, nil))
+		case "zilean":
+			if scraperCfg.URL == "" {
+				log.Printf("[debrid] Skipping Zilean scraper %s: missing URL", scraperCfg.Name)
+				continue
+			}
+			log.Printf("[debrid] Initializing Zilean scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
+			scrapers = append(scrapers, NewZileanScraper(scraperCfg.URL, nil))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
