@@ -142,12 +142,14 @@ func TestJackettParseResponse(t *testing.T) {
 		t.Fatalf("parseResponse failed: %v", err)
 	}
 
-	// Should have 2 results (one without infohash is skipped)
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	// Should have 3 results:
+	// - 2 with infohash
+	// - 1 without infohash but with torrent URL (now supported)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
 	}
 
-	// Check first result
+	// Check first result (has infohash and magnet)
 	first := results[0]
 	if first.Title != "Test.Movie.2024.1080p.BluRay.x264-GROUP" {
 		t.Errorf("unexpected title: %s", first.Title)
@@ -168,13 +170,28 @@ func TestJackettParseResponse(t *testing.T) {
 		t.Errorf("unexpected provider: %s", first.Provider)
 	}
 
-	// Check second result
+	// Check second result (has infohash from attribute)
 	second := results[1]
 	if second.InfoHash != "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3" {
 		t.Errorf("unexpected infohash: %s", second.InfoHash)
 	}
 	if second.Resolution != "720p" {
 		t.Errorf("unexpected resolution: %s", second.Resolution)
+	}
+
+	// Check third result (no infohash, but has torrent URL)
+	third := results[2]
+	if third.Title != "No.Hash.Movie.2024" {
+		t.Errorf("unexpected title: %s", third.Title)
+	}
+	if third.InfoHash != "" {
+		t.Errorf("expected empty infohash, got: %s", third.InfoHash)
+	}
+	if third.TorrentURL != "https://tracker.com/download/456" {
+		t.Errorf("expected torrent URL, got: %s", third.TorrentURL)
+	}
+	if third.Magnet != "" {
+		t.Errorf("expected empty magnet, got: %s", third.Magnet)
 	}
 }
 

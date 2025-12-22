@@ -16,6 +16,10 @@ type Provider interface {
 	// AddMagnet adds a magnet link and returns the torrent/download ID.
 	AddMagnet(ctx context.Context, magnetURL string) (*AddMagnetResult, error)
 
+	// AddTorrentFile uploads a .torrent file and returns the torrent/download ID.
+	// This is used when only a torrent file URL is available (no magnet/infohash).
+	AddTorrentFile(ctx context.Context, torrentData []byte, filename string) (*AddMagnetResult, error)
+
 	// GetTorrentInfo retrieves information about a torrent by ID.
 	GetTorrentInfo(ctx context.Context, torrentID string) (*TorrentInfo, error)
 

@@ -362,6 +362,56 @@ func (c *RealDebridClient) AddMagnet(ctx context.Context, magnetURL string) (*Ad
 	}, nil
 }
 
+// AddTorrentFile uploads a .torrent file to Real-Debrid and returns the torrent ID.
+// Real-Debrid expects the raw torrent file binary data sent directly in the request body.
+func (c *RealDebridClient) AddTorrentFile(ctx context.Context, torrentData []byte, filename string) (*AddMagnetResult, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("real-debrid API key not configured")
+	}
+
+	if len(torrentData) == 0 {
+		return nil, fmt.Errorf("torrent data is empty")
+	}
+
+	endpoint := fmt.Sprintf("%s/torrents/addTorrent", c.baseURL)
+
+	// Real-Debrid expects raw binary data, not multipart form
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(torrentData))
+	if err != nil {
+		return nil, fmt.Errorf("build add torrent request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := c.doWithRetry(req, 3)
+	if err != nil {
+		return nil, fmt.Errorf("add torrent request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("real-debrid authentication failed: invalid API key")
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("add torrent failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var result addMagnetResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode add torrent response: %w", err)
+	}
+
+	log.Printf("[realdebrid] torrent file uploaded: id=%s", result.ID)
+
+	return &AddMagnetResult{
+		ID:  result.ID,
+		URI: result.URI,
+	}, nil
+}
+
 // TorrentInfo represents detailed information about a torrent.
 type TorrentInfo struct {
 	ID       string   `json:"id"`

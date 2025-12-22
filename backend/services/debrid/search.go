@@ -247,12 +247,18 @@ func hasActiveDebridProviders(providers []config.DebridProviderSettings) bool {
 }
 
 func normalizeScrapeResult(res ScrapeResult) models.NZBResult {
+	// Determine Link - prefer magnet, fall back to torrent URL
+	link := safeString(res.Magnet)
+	if link == "" && res.TorrentURL != "" {
+		link = safeString(res.TorrentURL)
+	}
+
 	result := models.NZBResult{
 		Title:       safeString(res.Title),
 		Indexer:     safeString(res.Indexer),
 		GUID:        "",
-		Link:        safeString(res.Magnet),
-		DownloadURL: safeString(res.Magnet),
+		Link:        link,
+		DownloadURL: link,
 		SizeBytes:   res.SizeBytes,
 		Categories:  nil,
 		Attributes:  map[string]string{},
@@ -263,6 +269,10 @@ func normalizeScrapeResult(res ScrapeResult) models.NZBResult {
 		lowered := strings.ToLower(res.InfoHash)
 		result.Attributes["infoHash"] = lowered
 		result.GUID = fmt.Sprintf("magnet:%s", lowered)
+	}
+	// Store torrent URL for downloading .torrent file when no magnet/infohash available
+	if res.TorrentURL != "" {
+		result.Attributes["torrentURL"] = res.TorrentURL
 	}
 	if res.FileIndex >= 0 {
 		result.Attributes["fileIndex"] = fmt.Sprintf("%d", res.FileIndex)
