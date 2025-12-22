@@ -351,8 +351,12 @@ func main() {
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.CreateProfile)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.RenameProfile)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.DeleteProfile)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.SetProfilePin)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/profiles/color", adminUIHandler.RequireAuth(adminUIHandler.SetProfileColor)).Methods(http.MethodPut)
 
 	// Cache management endpoints
 	r.HandleFunc("/admin/api/cache/clear", adminUIHandler.RequireAuth(adminUIHandler.ClearMetadataCache)).Methods(http.MethodPost)
