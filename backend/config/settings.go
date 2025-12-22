@@ -435,6 +435,7 @@ func (m *Manager) Load() (Settings, error) {
 		s.Streaming.DebridProviders = []DebridProviderSettings{
 			{Name: "Real Debrid", Provider: "realdebrid"},
 			{Name: "Torbox", Provider: "torbox"},
+			{Name: "AllDebrid", Provider: "alldebrid"},
 		}
 	}
 
