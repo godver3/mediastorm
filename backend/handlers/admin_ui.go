@@ -1419,6 +1419,176 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// CreateProfileRequest represents a request to create a profile
+type CreateProfileRequest struct {
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+// CreateProfile creates a new profile
+func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	var req CreateProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.Create(req.Name)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "required") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	// Set color if provided
+	if req.Color != "" {
+		user, err = h.usersService.SetColor(user.ID, req.Color)
+		if err != nil {
+			// Log but don't fail - profile was created
+			log.Printf("[admin] failed to set color for new profile %s: %v", user.ID, err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:        user.ID,
+		Name:      user.Name,
+		Color:     user.Color,
+		HasPin:    user.HasPin(),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	})
+}
+
+// RenameProfileRequest represents a request to rename a profile
+type RenameProfileRequest struct {
+	Name string `json:"name"`
+}
+
+// RenameProfile renames a profile
+func (h *AdminUIHandler) RenameProfile(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req RenameProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.Rename(profileID, req.Name)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "required") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:        user.ID,
+		Name:      user.Name,
+		Color:     user.Color,
+		HasPin:    user.HasPin(),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	})
+}
+
+// DeleteProfile deletes a profile
+func (h *AdminUIHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	err := h.usersService.Delete(profileID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "last") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// SetProfileColorRequest represents a request to set a profile's color
+type SetProfileColorRequest struct {
+	Color string `json:"color"`
+}
+
+// SetProfileColor updates a profile's color
+func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req SetProfileColorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.SetColor(profileID, req.Color)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:        user.ID,
+		Name:      user.Name,
+		Color:     user.Color,
+		HasPin:    user.HasPin(),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	})
+}
+
 // ClearMetadataCache clears all cached metadata files
 func (h *AdminUIHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

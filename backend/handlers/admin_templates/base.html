@@ -368,6 +368,25 @@
             font-size: 0.8125rem;
         }
 
+        .btn-icon {
+            padding: 0.375rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-icon svg {
+            width: 16px;
+            height: 16px;
+            margin: 0;
+        }
+
+        /* Color picker radio button styling */
+        input[name="new-profile-color"]:checked + .color-option {
+            border-color: white !important;
+            box-shadow: 0 0 0 2px var(--accent);
+        }
+
         .stat-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border);

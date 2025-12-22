@@ -232,6 +232,11 @@
         'users': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
         'lock': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
         'unlock': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
+        'edit': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+        'trash': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+        'plus': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+        'check': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+        'x': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     };
 
     function getIcon(name) { return icons[name] || icons['server']; }
@@ -752,6 +757,155 @@
         }
     }
 
+    // Profile colors matching the mobile app
+    const profileColors = [
+        { name: 'Blue', value: '#3B82F6' },
+        { name: 'Purple', value: '#8B5CF6' },
+        { name: 'Pink', value: '#EC4899' },
+        { name: 'Red', value: '#EF4444' },
+        { name: 'Orange', value: '#F97316' },
+        { name: 'Yellow', value: '#EAB308' },
+        { name: 'Green', value: '#22C55E' },
+        { name: 'Teal', value: '#14B8A6' },
+    ];
+
+    async function createProfile(name, color) {
+        try {
+            const response = await fetch('/admin/api/profiles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, color: color })
+            });
+            if (response.ok) {
+                const created = await response.json();
+                profilesData.push(created);
+                showToast('Profile created successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to create profile', 'error');
+            }
+        } catch (e) {
+            showToast('Error creating profile: ' + e.message, 'error');
+        }
+    }
+
+    async function renameProfile(profileId, newName) {
+        try {
+            const response = await fetch('/admin/api/profiles?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                const idx = profilesData.findIndex(p => p.id === profileId);
+                if (idx >= 0) profilesData[idx] = updated;
+                showToast('Profile renamed successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to rename profile', 'error');
+            }
+        } catch (e) {
+            showToast('Error renaming profile: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteProfile(profileId) {
+        if (!confirm('Delete this profile? This action cannot be undone.')) {
+            return;
+        }
+        try {
+            const response = await fetch('/admin/api/profiles?profileId=' + encodeURIComponent(profileId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                profilesData = profilesData.filter(p => p.id !== profileId);
+                showToast('Profile deleted successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to delete profile', 'error');
+            }
+        } catch (e) {
+            showToast('Error deleting profile: ' + e.message, 'error');
+        }
+    }
+
+    async function setProfileColor(profileId, color) {
+        try {
+            const response = await fetch('/admin/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ color: color })
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                const idx = profilesData.findIndex(p => p.id === profileId);
+                if (idx >= 0) profilesData[idx] = updated;
+                showToast('Color updated');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to update color', 'error');
+            }
+        } catch (e) {
+            showToast('Error updating color: ' + e.message, 'error');
+        }
+    }
+
+    function handleCreateProfileSubmit(event) {
+        event.preventDefault();
+        const nameInput = document.getElementById('new-profile-name');
+        const colorInput = document.querySelector('input[name="new-profile-color"]:checked');
+        const name = nameInput.value.trim();
+        if (!name) {
+            showToast('Profile name is required', 'error');
+            return;
+        }
+        const color = colorInput ? colorInput.value : profileColors[0].value;
+        createProfile(name, color);
+        nameInput.value = '';
+    }
+
+    function handleRenameProfileSubmit(event, profileId) {
+        event.preventDefault();
+        const input = document.getElementById('rename-input-' + profileId);
+        const newName = input.value.trim();
+        if (!newName) {
+            showToast('Profile name is required', 'error');
+            return;
+        }
+        renameProfile(profileId, newName);
+    }
+
+    function toggleRenameForm(profileId) {
+        const formEl = document.getElementById('rename-form-' + profileId);
+        const displayEl = document.getElementById('name-display-' + profileId);
+        if (formEl && displayEl) {
+            const isEditing = formEl.style.display !== 'none';
+            formEl.style.display = isEditing ? 'none' : 'flex';
+            displayEl.style.display = isEditing ? 'block' : 'none';
+            if (!isEditing) {
+                const input = document.getElementById('rename-input-' + profileId);
+                if (input) input.focus();
+            }
+        }
+    }
+
+    function toggleAddProfileForm() {
+        const form = document.getElementById('add-profile-form');
+        if (form) {
+            const isHidden = form.style.display === 'none';
+            form.style.display = isHidden ? 'block' : 'none';
+            if (isHidden) {
+                const input = document.getElementById('new-profile-name');
+                if (input) input.focus();
+            }
+        }
+    }
+
     async function clearMetadataCache() {
         const btn = document.getElementById('clear-cache-btn');
         if (!btn) return;
@@ -795,11 +949,52 @@
     }
 
     function renderProfilesSection() {
-        if (profilesData.length === 0) {
-            return '<div style="color: var(--text-secondary); text-align: center; padding: 2rem;">No profiles found. Profiles can be created in the app.</div>';
+        const canDelete = profilesData.length > 1;
+
+        // Render color picker dots
+        function renderColorPicker(profileId, currentColor) {
+            return '<div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">' +
+                profileColors.map(c => {
+                    const isSelected = c.value === currentColor;
+                    const border = isSelected ? '2px solid white' : '2px solid transparent';
+                    const boxShadow = isSelected ? '0 0 0 2px var(--accent)' : 'none';
+                    return '<button type="button" onclick="setProfileColor(\'' + profileId + '\', \'' + c.value + '\')" ' +
+                        'style="width: 24px; height: 24px; border-radius: 50%; background: ' + c.value + '; border: ' + border + '; box-shadow: ' + boxShadow + '; cursor: pointer; padding: 0;" ' +
+                        'title="' + c.name + '"></button>';
+                }).join('') +
+                '</div>';
         }
 
-        return '<div class="array-items">' + profilesData.map(profile => {
+        // Render the add profile form
+        function renderAddProfileForm() {
+            return '<div id="add-profile-form" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border);">' +
+                '<form onsubmit="handleCreateProfileSubmit(event)">' +
+                '<div style="margin-bottom: 1rem;">' +
+                '<label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem;">Profile Name</label>' +
+                '<input type="text" id="new-profile-name" class="form-input" placeholder="Enter profile name" style="width: 100%;">' +
+                '</div>' +
+                '<div style="margin-bottom: 1rem;">' +
+                '<label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem;">Color</label>' +
+                '<div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">' +
+                profileColors.map((c, i) => {
+                    const checked = i === 0 ? ' checked' : '';
+                    return '<label style="cursor: pointer;">' +
+                        '<input type="radio" name="new-profile-color" value="' + c.value + '"' + checked + ' style="display: none;">' +
+                        '<span style="display: block; width: 32px; height: 32px; border-radius: 50%; background: ' + c.value + '; border: 2px solid transparent;" ' +
+                        'class="color-option" title="' + c.name + '"></span>' +
+                        '</label>';
+                }).join('') +
+                '</div>' +
+                '</div>' +
+                '<div style="display: flex; gap: 0.5rem;">' +
+                '<button type="submit" class="btn btn-sm btn-primary">Create Profile</button>' +
+                '<button type="button" class="btn btn-sm" onclick="toggleAddProfileForm()">Cancel</button>' +
+                '</div>' +
+                '</form>' +
+                '</div>';
+        }
+
+        const profilesHtml = profilesData.map(profile => {
             const avatarColor = profile.color || '#3B82F6';
             const initial = (profile.name || 'U').charAt(0).toUpperCase();
             const pinStatus = profile.hasPin
@@ -808,28 +1003,51 @@
 
             const pinActions = profile.hasPin
                 ? '<button class="btn btn-sm btn-danger" onclick="if(confirm(\'Remove PIN from this profile?\')) clearProfilePin(\'' + profile.id + '\')">Remove PIN</button>'
-                : '<form onsubmit="handlePinFormSubmit(event, \'' + profile.id + '\')">' +
-                  '<input type="password" id="pin-input-' + profile.id + '" class="form-input" placeholder="Enter PIN">' +
+                : '<form onsubmit="handlePinFormSubmit(event, \'' + profile.id + '\')" style="display: flex; gap: 0.5rem; align-items: center;">' +
+                  '<input type="password" id="pin-input-' + profile.id + '" class="form-input" placeholder="Enter PIN" style="width: 120px;">' +
                   '<button type="submit" class="btn btn-sm btn-primary">Set PIN</button>' +
                   '</form>';
 
+            const deleteBtn = canDelete
+                ? '<button class="btn btn-sm btn-icon btn-danger" onclick="deleteProfile(\'' + profile.id + '\')" title="Delete profile">' + icons.trash + '</button>'
+                : '<button class="btn btn-sm btn-icon" disabled title="Cannot delete last profile" style="opacity: 0.5; cursor: not-allowed;">' + icons.trash + '</button>';
+
             return '<div class="array-item">' +
-                '<div class="array-item-header profile-header">' +
-                '<div class="array-item-title" style="display: flex; align-items: center; gap: 0.75rem;">' +
-                '<div style="width: 36px; height: 36px; border-radius: 50%; background: ' + avatarColor + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1rem;">' + initial + '</div>' +
-                '<div>' +
-                '<div style="font-weight: 600;">' + profile.name + '</div>' +
+                '<div class="array-item-header profile-header" style="flex-wrap: wrap; gap: 0.75rem;">' +
+                '<div class="array-item-title" style="display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 200px;">' +
+                '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + avatarColor + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1.125rem; flex-shrink: 0;">' + initial + '</div>' +
+                '<div style="flex: 1;">' +
+                '<div id="name-display-' + profile.id + '" style="font-weight: 600;">' + profile.name + '</div>' +
+                '<form id="rename-form-' + profile.id + '" onsubmit="handleRenameProfileSubmit(event, \'' + profile.id + '\')" style="display: none; gap: 0.5rem; align-items: center;">' +
+                '<input type="text" id="rename-input-' + profile.id + '" class="form-input" value="' + profile.name + '" style="width: 150px; padding: 0.25rem 0.5rem;">' +
+                '<button type="submit" class="btn btn-sm btn-icon btn-primary" title="Save">' + icons.check + '</button>' +
+                '<button type="button" class="btn btn-sm btn-icon" onclick="toggleRenameForm(\'' + profile.id + '\')" title="Cancel">' + icons.x + '</button>' +
+                '</form>' +
                 '<div style="font-size: 0.75rem; color: var(--text-secondary);">ID: ' + profile.id + '</div>' +
                 '</div>' +
                 '</div>' +
-                '<div class="profile-pin-status">' + pinStatus + '</div>' +
+                '<div style="display: flex; align-items: center; gap: 0.5rem;">' +
+                '<button class="btn btn-sm btn-icon" onclick="toggleRenameForm(\'' + profile.id + '\')" title="Rename profile">' + icons.edit + '</button>' +
+                deleteBtn +
                 '</div>' +
-                '<div class="profile-pin-section">' +
-                '<div class="profile-pin-label">Profile PIN Protection</div>' +
-                '<div class="profile-pin-actions">' + pinActions + '</div>' +
+                '</div>' +
+                '<div style="padding: 0 1rem 1rem; display: grid; gap: 1rem;">' +
+                '<div>' +
+                '<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">Color</div>' +
+                renderColorPicker(profile.id, avatarColor) +
+                '</div>' +
+                '<div>' +
+                '<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">PIN Protection ' + pinStatus + '</div>' +
+                '<div>' + pinActions + '</div>' +
+                '</div>' +
                 '</div>' +
                 '</div>';
-        }).join('') + '</div>';
+        }).join('');
+
+        const addButton = '<button class="btn btn-primary" onclick="toggleAddProfileForm()" style="margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem;">' +
+            icons.plus + ' Add Profile</button>';
+
+        return '<div class="array-items">' + profilesHtml + '</div>' + addButton + renderAddProfileForm();
     }
 
     function renderSettings() {
