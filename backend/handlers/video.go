@@ -10,11 +10,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -64,6 +66,11 @@ type VideoHandler struct {
 	ffprobePath string
 	streamer    streaming.Provider
 	hlsManager  *HLSManager
+
+	// Local WebDAV access for ffprobe seeking (usenet paths)
+	webdavMu       sync.RWMutex
+	webdavBaseURL  string
+	webdavPrefix   string
 }
 
 // NewVideoHandler creates a new video handler without an attached provider.
@@ -793,11 +800,67 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 	return started, nil
 }
 
+// buildWebDAVURL constructs a WebDAV URL for ffprobe seekable access (usenet paths)
+func (h *VideoHandler) buildWebDAVURL(cleanPath string) string {
+	h.webdavMu.RLock()
+	base := h.webdavBaseURL
+	prefix := h.webdavPrefix
+	h.webdavMu.RUnlock()
+
+	if base == "" || prefix == "" {
+		return ""
+	}
+
+	// Path should start with the webdav prefix (e.g., /webdav or /streams)
+	pathToUse := cleanPath
+	if !strings.HasPrefix(pathToUse, "/") {
+		pathToUse = "/" + pathToUse
+	}
+
+	// If path doesn't start with prefix, prepend it
+	if !strings.HasPrefix(pathToUse, prefix) {
+		pathToUse = prefix + pathToUse
+	}
+
+	return base + pathToUse
+}
+
 func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath string) (*ffprobeOutput, error) {
 	if h.streamer == nil {
 		return nil, fmt.Errorf("stream provider not configured")
 	}
 
+	// Try to get a direct URL first - this allows ffprobe to seek for moov atom at end of file
+	if directProvider, ok := h.streamer.(streaming.DirectURLProvider); ok {
+		directURL, err := directProvider.GetDirectURL(ctx, cleanPath)
+		if err == nil && directURL != "" {
+			log.Printf("[video] ffprobe using direct URL for seekable access: %s", cleanPath)
+			meta, err := h.runFFProbe(ctx, directURL, nil)
+			if err != nil {
+				// Log but don't fail - fall through to WebDAV or piped approach
+				log.Printf("[video] ffprobe with direct URL failed, trying alternatives: %v", err)
+			} else {
+				return meta, nil
+			}
+		} else if err != nil && !errors.Is(err, streaming.ErrNotFound) {
+			log.Printf("[video] GetDirectURL failed for %q: %v", cleanPath, err)
+		}
+	}
+
+	// Try WebDAV URL for usenet paths - allows ffprobe to seek
+	if webdavURL := h.buildWebDAVURL(cleanPath); webdavURL != "" {
+		log.Printf("[video] ffprobe using WebDAV URL for seekable access: %s", cleanPath)
+		meta, err := h.runFFProbe(ctx, webdavURL, nil)
+		if err != nil {
+			// Log but don't fail - fall through to piped approach
+			log.Printf("[video] ffprobe with WebDAV URL failed, falling back to piped probe: %v", err)
+		} else {
+			return meta, nil
+		}
+	}
+
+	// Fall back to piped approach (when direct URL and WebDAV fail)
+	log.Printf("[video] ffprobe falling back to piped probe for: %s", cleanPath)
 	request := streaming.Request{Path: cleanPath, Method: http.MethodGet}
 	if providerProbeSampleBytes > 0 {
 		request.RangeHeader = fmt.Sprintf("bytes=0-%d", providerProbeSampleBytes-1)
@@ -1905,12 +1968,38 @@ func (h *VideoHandler) Shutdown() {
 	}
 }
 
-// ConfigureLocalWebDAVAccess passes local WebDAV connection info to the HLS manager.
+// ConfigureLocalWebDAVAccess passes local WebDAV connection info to the HLS manager
+// and stores it for ffprobe seekable access on usenet paths.
 func (h *VideoHandler) ConfigureLocalWebDAVAccess(baseURL, prefix, username, password string) {
-	if h == nil || h.hlsManager == nil {
+	if h == nil {
 		return
 	}
-	h.hlsManager.ConfigureLocalWebDAVAccess(baseURL, prefix, username, password)
+
+	// Store locally for ffprobe WebDAV URL building
+	base := strings.TrimSpace(baseURL)
+	if base != "" {
+		parsed, err := url.Parse(base)
+		if err == nil {
+			if username != "" {
+				parsed.User = url.UserPassword(username, password)
+			}
+			parsed.Path = ""
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+
+			h.webdavMu.Lock()
+			h.webdavBaseURL = strings.TrimRight(parsed.String(), "/")
+			h.webdavPrefix = "/" + strings.Trim(prefix, "/")
+			h.webdavMu.Unlock()
+
+			log.Printf("[video] configured WebDAV access for ffprobe: base=%q prefix=%q", h.webdavBaseURL, h.webdavPrefix)
+		}
+	}
+
+	// Pass to HLS manager as well
+	if h.hlsManager != nil {
+		h.hlsManager.ConfigureLocalWebDAVAccess(baseURL, prefix, username, password)
+	}
 }
 
 // GetHLSManager returns the HLS manager for admin/monitoring purposes.
