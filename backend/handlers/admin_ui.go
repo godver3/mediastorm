@@ -208,9 +208,10 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
 			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett"}, "description": "Scraper type", "order": 1},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Jackett API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 2},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 4},
+			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "Torrentio URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Jackett API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 3},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 5},
 		},
 	},
 	"playback": map[string]interface{}{
@@ -895,10 +896,11 @@ func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 
 // TestScraperRequest represents a request to test the torrentio scraper
 type TestScraperRequest struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	URL    string `json:"url"`
-	APIKey string `json:"apiKey"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	URL     string `json:"url"`
+	APIKey  string `json:"apiKey"`
+	Options string `json:"options"` // Torrentio URL options
 }
 
 // addBrowserHeaders adds browser-like headers to avoid being blocked
@@ -927,12 +929,12 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	case "torrentio":
 		fallthrough
 	default:
-		h.testTorrentioScraper(w)
+		h.testTorrentioScraper(w, req.Options)
 	}
 }
 
 // testTorrentioScraper tests torrentio by checking cinemeta and then torrentio endpoints
-func (h *AdminUIHandler) testTorrentioScraper(w http.ResponseWriter) {
+func (h *AdminUIHandler) testTorrentioScraper(w http.ResponseWriter, options string) {
 	client := &http.Client{Timeout: 15 * time.Second}
 
 	// First test cinemeta (used by torrentio)
@@ -966,7 +968,14 @@ func (h *AdminUIHandler) testTorrentioScraper(w http.ResponseWriter) {
 	}
 
 	// Test torrentio with a known IMDB ID (The Matrix)
-	torrentioURL := "https://torrentio.strem.fun/stream/movie/tt0133093.json"
+	// Include options in URL if provided
+	var torrentioURL string
+	options = strings.TrimSpace(options)
+	if options != "" {
+		torrentioURL = fmt.Sprintf("https://torrentio.strem.fun/%s/stream/movie/tt0133093.json", options)
+	} else {
+		torrentioURL = "https://torrentio.strem.fun/stream/movie/tt0133093.json"
+	}
 	torrentioReq, err := http.NewRequest(http.MethodGet, torrentioURL, nil)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{

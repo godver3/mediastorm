@@ -433,7 +433,8 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 
 // downloadTorrentFile downloads a .torrent file from a URL and returns its contents.
 func (s *HealthService) downloadTorrentFile(ctx context.Context, torrentURL string) ([]byte, string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	// 60s timeout for private trackers via Jackett (two-hop: backend → Jackett → tracker)
+	client := &http.Client{Timeout: 60 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
 	if err != nil {

@@ -58,10 +58,11 @@ type IndexerConfig struct {
 }
 
 type TorrentScraperConfig struct {
-	Name    string            `json:"name"`   // "Torrentio", "Prowlarr", "Jackett"
-	Type    string            `json:"type"`   // "torrentio", "prowlarr", "jackett"
-	URL     string            `json:"url"`    // For Prowlarr/Jackett
-	APIKey  string            `json:"apiKey"` // For Prowlarr/Jackett
+	Name    string            `json:"name"`    // "Torrentio", "Prowlarr", "Jackett"
+	Type    string            `json:"type"`    // "torrentio", "prowlarr", "jackett"
+	URL     string            `json:"url"`     // For Prowlarr/Jackett
+	APIKey  string            `json:"apiKey"`  // For Prowlarr/Jackett
+	Options string            `json:"options"` // For Torrentio: URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
 	Enabled bool              `json:"enabled"`
 	Config  map[string]string `json:"config,omitempty"` // Scraper-specific config
 }
@@ -222,7 +223,7 @@ func DefaultSettings() Settings {
 		Usenet:   []UsenetSettings{},
 		Indexers: []IndexerConfig{},
 		TorrentScrapers: []TorrentScraperConfig{
-			{Name: "Torrentio", Type: "torrentio", Enabled: true},
+			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
 		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "en"},
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
@@ -473,7 +474,7 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill TorrentScrapers if empty
 	if len(s.TorrentScrapers) == 0 {
 		s.TorrentScrapers = []TorrentScraperConfig{
-			{Name: "Torrentio", Type: "torrentio", Enabled: true},
+			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		}
 	}
 
