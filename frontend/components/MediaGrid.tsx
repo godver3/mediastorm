@@ -40,7 +40,9 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
   const isCompact = theme.breakpoint === 'compact';
 
   // Calculate card dimensions for mobile grid layout (matching search page)
-  const mobileColumnsCount = 2;
+  // Use 4 columns on wide mobile screens (foldables, tablets), 2 on phones
+  const isWideCompact = isCompact && screenWidth && screenWidth >= 600;
+  const mobileColumnsCount = isWideCompact ? 4 : 2;
   const mobileGap = theme.spacing.md;
   // Account for parent container padding (watchlist page has theme.spacing.xl)
   const totalPadding = parentPadding > 0 ? parentPadding : 0;

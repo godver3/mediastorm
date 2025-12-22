@@ -526,7 +526,7 @@ const VlcVideoPlayerInner = (
 
   return (
     <Pressable onPress={onInteract} style={styles.root} tvParallaxProperties={{ enabled: false }}>
-      <View style={styles.videoContainer}>
+      <View style={styles.videoContainer} pointerEvents="box-none">
         <VLCPlayer
           key={`vlc-player-${resolvedMovie}`}
           ref={videoRef}

@@ -1465,12 +1465,15 @@ class ApiService {
 
   /**
    * Send a keepalive ping for an HLS session to prevent idle timeout while paused
+   * @param sessionId - The HLS session ID
+   * @param currentTime - Optional current playback time in seconds for rate limiting
    */
-  async keepaliveHlsSession(sessionId: string): Promise<void> {
+  async keepaliveHlsSession(sessionId: string, currentTime?: number): Promise<void> {
     if (!sessionId) {
       throw new Error('Session ID is required for keepalive');
     }
-    await this.request(`/video/hls/${encodeURIComponent(sessionId)}/keepalive`, {
+    const params = currentTime !== undefined && currentTime >= 0 ? `?time=${currentTime}` : '';
+    await this.request(`/video/hls/${encodeURIComponent(sessionId)}/keepalive${params}`, {
       method: 'POST',
     });
   }

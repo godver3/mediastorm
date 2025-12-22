@@ -63,7 +63,9 @@ export function NovaThemeProvider({ children }: { children: ReactNode }) {
   const colorScheme: SupportedColorScheme = 'dark';
   // TV platforms use fixed 'immersive' breakpoint to avoid text size flicker
   // caused by useWindowDimensions() returning inconsistent values on first render
-  const breakpoint = Platform.isTV ? 'immersive' : getBreakpoint(width);
+  // Non-TV iOS/Android (phones, tablets, foldables) always use 'compact' for mobile layout
+  const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
+  const breakpoint = Platform.isTV ? 'immersive' : isMobileDevice ? 'compact' : getBreakpoint(width);
   const isTV = Platform.isTV;
   const typography = useMemo(() => getTypographyForBreakpoint(breakpoint, isTV), [breakpoint, isTV]);
   const spacing = useMemo(() => getSpacingForTV(isTV), [isTV]);

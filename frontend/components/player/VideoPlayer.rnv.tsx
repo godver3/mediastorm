@@ -361,43 +361,45 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     return (
       <Pressable style={styles.container} onPress={onInteract} tvParallaxProperties={{ enabled: false }}>
-        <Video
-          key={`rnv-player-${sourceKey}`}
-          ref={videoRef}
-          source={source}
-          style={styles.video}
-          paused={paused}
-          volume={resolvedVolume}
-          controls={controls}
-          resizeMode="contain"
-          progressUpdateInterval={250}
-          onLoad={handleLoad}
-          onProgress={handleProgress}
-          onBuffer={handleBuffer}
-          onEnd={handleEnd}
-          onError={handleError}
-          onFullscreenPlayerWillPresent={handleFullscreenPlayerWillPresent}
-          onFullscreenPlayerDidPresent={handleFullscreenPlayerDidPresent}
-          onFullscreenPlayerWillDismiss={handleFullscreenPlayerWillDismiss}
-          onFullscreenPlayerDidDismiss={handleFullscreenPlayerDidDismiss}
-          onReadyForDisplay={handleReadyForDisplay}
-          onPlaybackStateChanged={handlePlaybackStateChanged}
-          onVideoTracks={handleVideoTracks}
-          onAspectRatio={handleAspectRatio}
-          onPlaybackRateChange={handlePlaybackRateChange}
-          selectedAudioTrack={selectedAudioTrack}
-          selectedTextTrack={selectedTextTrack}
-          // HDR-related props
-          allowsExternalPlayback={true}
-          automaticallyWaitsToMinimizeStalling={true}
-          preferredForwardBufferDuration={30}
-          // Now Playing / Control Center integration
-          showNotificationControls={true}
-          playInBackground={true}
-          playWhenInactive={true}
-          // Suppress "LIVE" indicator on Android TV for HLS streams
-          controlsStyles={{ liveLabel: '' }}
-        />
+        <View style={styles.videoContainer} pointerEvents="box-none">
+          <Video
+            key={`rnv-player-${sourceKey}`}
+            ref={videoRef}
+            source={source}
+            style={styles.video}
+            paused={paused}
+            volume={resolvedVolume}
+            controls={controls}
+            resizeMode="contain"
+            progressUpdateInterval={250}
+            onLoad={handleLoad}
+            onProgress={handleProgress}
+            onBuffer={handleBuffer}
+            onEnd={handleEnd}
+            onError={handleError}
+            onFullscreenPlayerWillPresent={handleFullscreenPlayerWillPresent}
+            onFullscreenPlayerDidPresent={handleFullscreenPlayerDidPresent}
+            onFullscreenPlayerWillDismiss={handleFullscreenPlayerWillDismiss}
+            onFullscreenPlayerDidDismiss={handleFullscreenPlayerDidDismiss}
+            onReadyForDisplay={handleReadyForDisplay}
+            onPlaybackStateChanged={handlePlaybackStateChanged}
+            onVideoTracks={handleVideoTracks}
+            onAspectRatio={handleAspectRatio}
+            onPlaybackRateChange={handlePlaybackRateChange}
+            selectedAudioTrack={selectedAudioTrack}
+            selectedTextTrack={selectedTextTrack}
+            // HDR-related props
+            allowsExternalPlayback={true}
+            automaticallyWaitsToMinimizeStalling={true}
+            preferredForwardBufferDuration={30}
+            // Now Playing / Control Center integration
+            showNotificationControls={true}
+            playInBackground={true}
+            playWhenInactive={true}
+            // Suppress "LIVE" indicator on Android TV for HLS streams
+            controlsStyles={{ liveLabel: '' }}
+          />
+        </View>
       </Pressable>
     );
   },
@@ -409,6 +411,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  videoContainer: {
+    flex: 1,
   },
   video: {
     position: 'absolute',

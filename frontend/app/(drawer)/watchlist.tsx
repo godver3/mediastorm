@@ -20,12 +20,13 @@ import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
 export default function WatchlistScreen() {
   const theme = useTheme();
+  const { width: screenWidth } = useWindowDimensions();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const isFocused = useIsFocused();
@@ -145,7 +146,7 @@ export default function WatchlistScreen() {
               error={error}
               onItemPress={handleTitlePress}
               layout="grid"
-              numColumns={Platform.isTV ? 6 : 7}
+              numColumns={screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4}
               defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
             />
           </SpatialNavigationNode>
