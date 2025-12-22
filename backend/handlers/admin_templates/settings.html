@@ -355,6 +355,7 @@
             switch (fieldDef.type) {
                 case 'boolean': newItem[fieldKey] = false; break;
                 case 'number': newItem[fieldKey] = 0; break;
+                case 'select': newItem[fieldKey] = fieldDef.options?.[0] || ''; break;
                 default: newItem[fieldKey] = '';
             }
         }

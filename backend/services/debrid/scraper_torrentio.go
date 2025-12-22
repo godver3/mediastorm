@@ -28,16 +28,20 @@ const (
 // TorrentioScraper queries torrentio for releases using Cinemeta-backed metadata resolution.
 type TorrentioScraper struct {
 	baseURL    string
+	options    string // URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
 	httpClient *http.Client
 }
 
 // NewTorrentioScraper constructs a scraper with sane defaults.
-func NewTorrentioScraper(client *http.Client) *TorrentioScraper {
+// The options parameter is inserted between the base URL and /stream path
+// (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam").
+func NewTorrentioScraper(client *http.Client, options string) *TorrentioScraper {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &TorrentioScraper{
 		baseURL:    torrentioDefaultBaseURL,
+		options:    strings.TrimSpace(options),
 		httpClient: client,
 	}
 }
@@ -430,7 +434,14 @@ func (t *TorrentioScraper) fetchStreams(ctx context.Context, mediaType MediaType
 	if id == "" {
 		return nil, fmt.Errorf("empty torrentio id")
 	}
-	endpoint := fmt.Sprintf("%s/stream/%s/%s.json", t.baseURL, mediaType, url.PathEscape(id))
+	// Build endpoint with optional path options
+	// Format: baseURL/[options/]stream/mediaType/id.json
+	var endpoint string
+	if t.options != "" {
+		endpoint = fmt.Sprintf("%s/%s/stream/%s/%s.json", t.baseURL, t.options, mediaType, url.PathEscape(id))
+	} else {
+		endpoint = fmt.Sprintf("%s/stream/%s/%s.json", t.baseURL, mediaType, url.PathEscape(id))
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
