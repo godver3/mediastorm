@@ -355,6 +355,7 @@
             switch (fieldDef.type) {
                 case 'boolean': newItem[fieldKey] = false; break;
                 case 'number': newItem[fieldKey] = 0; break;
+                case 'select': newItem[fieldKey] = fieldDef.options?.[0] || ''; break;
                 default: newItem[fieldKey] = '';
             }
         }
@@ -630,8 +631,14 @@
                 .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
                 .map(([fieldKey, fieldDef]) => {
                 const showWhen = fieldDef.showWhen;
-                if (showWhen && item[showWhen.field] !== showWhen.value) {
-                    return '';
+                if (showWhen) {
+                    let shouldShow = false;
+                    if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
+                        shouldShow = showWhen.conditions.some(cond => item[cond.field] === cond.value);
+                    } else {
+                        shouldShow = item[showWhen.field] === showWhen.value;
+                    }
+                    if (!shouldShow) return '';
                 }
                 return '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, item[fieldKey], basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
             }).join('');
