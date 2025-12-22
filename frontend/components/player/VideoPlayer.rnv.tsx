@@ -372,6 +372,9 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             controls={controls}
             resizeMode="contain"
             progressUpdateInterval={250}
+            // Use SurfaceView instead of TextureView for HDR/Dolby Vision support on Android
+            // TextureView doesn't support HDR content and can cause crashes with DV/remux content
+            useTextureView={false}
             onLoad={handleLoad}
             onProgress={handleProgress}
             onBuffer={handleBuffer}
