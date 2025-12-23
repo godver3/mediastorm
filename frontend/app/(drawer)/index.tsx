@@ -73,6 +73,9 @@ const HERO_PLACEHOLDER: HeroContent = {
   headerImage: 'https://via.placeholder.com/1920x1080/333/fff?text=Loading...',
 };
 
+const WATCHLIST_MORE_CARD_ID = '__watchlist_more__';
+const MAX_WATCHLIST_ITEMS_ON_HOME = 10;
+
 const getConnectionStatusMessage = (
   retryCountdown: number | null,
   isReachable: boolean,
@@ -625,10 +628,23 @@ function IndexScreen() {
   // Cache series overviews for continue watching items
   const [seriesOverviews, setSeriesOverviews] = useState<Map<string, string>>(new Map());
 
-  const watchlistCards = useMemo(
-    () => mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems)),
-    [watchlistItems],
-  );
+  const watchlistCards = useMemo(() => {
+    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems));
+    if (allCards.length <= MAX_WATCHLIST_ITEMS_ON_HOME) {
+      return allCards;
+    }
+    const limitedCards = allCards.slice(0, MAX_WATCHLIST_ITEMS_ON_HOME);
+    const remainingCount = allCards.length - MAX_WATCHLIST_ITEMS_ON_HOME;
+    const moreCard: CardData = {
+      id: WATCHLIST_MORE_CARD_ID,
+      title: `+${remainingCount} More`,
+      description: 'View your full watchlist',
+      headerImage: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
+      cardImage: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
+      mediaType: 'more',
+    };
+    return [...limitedCards, moreCard];
+  }, [watchlistItems]);
   const continueWatchingCards = useMemo(
     () => mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems),
     [continueWatchingItems, seriesOverviews, watchlistItems],
@@ -723,7 +739,30 @@ function IndexScreen() {
   const trendingMovieCards = useMemo(() => mapTrendingToCards(trendingMovies ?? undefined), [trendingMovies]);
   const trendingShowCards = useMemo(() => mapTrendingToCards(trendingTVShows ?? undefined), [trendingTVShows]);
 
-  const watchlistTitles = useMemo(() => mapWatchlistToTitles(watchlistItems), [watchlistItems]);
+  const watchlistTitles = useMemo(() => {
+    const allTitles = mapWatchlistToTitles(watchlistItems);
+    if (allTitles.length <= MAX_WATCHLIST_ITEMS_ON_HOME) {
+      return allTitles;
+    }
+    const limitedTitles = allTitles.slice(0, MAX_WATCHLIST_ITEMS_ON_HOME);
+    const remainingCount = allTitles.length - MAX_WATCHLIST_ITEMS_ON_HOME;
+    const moreTitle: Title & { uniqueKey: string } = {
+      id: WATCHLIST_MORE_CARD_ID,
+      name: `+${remainingCount} More`,
+      overview: 'View your full watchlist',
+      year: 0,
+      language: 'en',
+      mediaType: 'more',
+      poster: {
+        url: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
+        type: 'poster',
+        width: 0,
+        height: 0,
+      },
+      uniqueKey: 'more:watchlist',
+    };
+    return [...limitedTitles, moreTitle];
+  }, [watchlistItems]);
   const continueWatchingTitles = useMemo(
     () => mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems),
     [continueWatchingItems, seriesOverviews, watchlistItems],
@@ -906,6 +945,12 @@ function IndexScreen() {
 
   const handleCardSelect = useCallback(
     (card: CardData) => {
+      // Handle "more" card for watchlist
+      if (card.id === WATCHLIST_MORE_CARD_ID) {
+        router.push('/watchlist');
+        return;
+      }
+
       // Check if this is a continue watching item
       // For series: ID format is "tmdb:tv:127235:S03E09" (has episode code)
       // For movies: ID format is just "tmdb:movie:1571470" (no episode code)
@@ -982,6 +1027,12 @@ function IndexScreen() {
 
   const handleTitlePress = useCallback(
     (item: Title) => {
+      // Handle "more" card for watchlist
+      if (item.id === WATCHLIST_MORE_CARD_ID) {
+        router.push('/watchlist');
+        return;
+      }
+
       // For TV shows, check if there's continue watching progress to use
       const isTVShow = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
       let initialSeason = '';
@@ -1358,7 +1409,8 @@ function IndexScreen() {
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
             onLayout={handleMobileScrollLayout}
-            onContentSizeChange={handleMobileContentSizeChange}>
+            onContentSizeChange={handleMobileContentSizeChange}
+          >
             <View style={mobileStyles.hero}>
               <Image source={heroSource.headerImage} style={mobileStyles.heroImage} contentFit="cover" />
               <LinearGradient
@@ -1415,7 +1467,8 @@ function IndexScreen() {
   return (
     <SpatialNavigationRoot
       isActive={isFocused && !isMenuOpen && !pendingPinUserId}
-      onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+      onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
+    >
       {/* Android TV focus anchor - captures initial native focus and transfers to spatial navigation */}
       <AndroidTVFocusAnchor targetFocusId={androidTVInitialFocusId} />
       <Stack.Screen options={{ headerShown: false }} />
@@ -1424,7 +1477,8 @@ function IndexScreen() {
           <View
             style={desktopStyles?.styles.topSpacer}
             pointerEvents="none"
-            renderToHardwareTextureAndroid={isAndroidTV}>
+            renderToHardwareTextureAndroid={isAndroidTV}
+          >
             {focusedDesktopCard &&
               heroImageDimensions &&
               (() => {
@@ -1455,7 +1509,8 @@ function IndexScreen() {
                                 fontSize: desktopStyles?.styles.topYear.fontSize * 1.25,
                                 lineHeight: desktopStyles?.styles.topYear.lineHeight * 1.25,
                               },
-                            ]}>
+                            ]}
+                          >
                             {focusedDesktopCard.year}
                           </Text>
                         )}
@@ -1467,7 +1522,8 @@ function IndexScreen() {
                               lineHeight: desktopStyles?.styles.topDescription.lineHeight * 1.25,
                             },
                           ]}
-                          numberOfLines={4}>
+                          numberOfLines={4}
+                        >
                           {focusedDesktopCard.description}
                         </Text>
                       </View>
@@ -1540,7 +1596,8 @@ function IndexScreen() {
             removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
             scrollEventThrottle={16}
             onLayout={handleDesktopScrollLayout}
-            onContentSizeChange={handleDesktopContentSizeChange}>
+            onContentSizeChange={handleDesktopContentSizeChange}
+          >
             {!Platform.isTV && (
               <View style={desktopStyles?.styles.hero}>
                 <Image source={heroSource.headerImage} style={desktopStyles?.styles.heroImage} contentFit="cover" />
@@ -1684,7 +1741,8 @@ function VirtualizedShelf({
             lastFocusTimeRef.current = now;
             onCardFocus(card);
             onRowFocus(shelfKey);
-          }}>
+          }}
+        >
           {({ isFocused }: { isFocused: boolean }) => {
             // Android TV rendering with 2x badge and full content
             if (isAndroidTV) {
@@ -1692,7 +1750,8 @@ function VirtualizedShelf({
                 <Pressable
                   style={[styles.card, isFocused && styles.cardFocused]}
                   renderToHardwareTextureAndroid
-                  tvParallaxProperties={{ enabled: false }}>
+                  tvParallaxProperties={{ enabled: false }}
+                >
                   <Image source={card.cardImage} style={styles.cardImage} contentFit="cover" transition={0} />
                   {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
                     <View style={styles.progressBadgeAndroidTV}>
@@ -1720,7 +1779,8 @@ function VirtualizedShelf({
             return (
               <Pressable
                 style={[styles.card, isFocused && styles.cardFocused]}
-                tvParallaxProperties={{ enabled: false }}>
+                tvParallaxProperties={{ enabled: false }}
+              >
                 <Image
                   key={`img-${cardKey}`}
                   source={card.cardImage}
