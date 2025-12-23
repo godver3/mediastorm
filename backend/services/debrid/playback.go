@@ -25,6 +25,12 @@ type PlaybackService struct {
 func NewPlaybackService(cfg *config.Manager, healthService *HealthService) *PlaybackService {
 	if healthService == nil {
 		healthService = NewHealthService(cfg)
+		// Try to set ffprobe path from settings for pre-resolved stream validation
+		if cfg != nil {
+			if settings, err := cfg.Load(); err == nil && settings.Transmux.FFprobePath != "" {
+				healthService.SetFFProbePath(settings.Transmux.FFprobePath)
+			}
+		}
 	}
 	return &PlaybackService{
 		cfg:           cfg,
