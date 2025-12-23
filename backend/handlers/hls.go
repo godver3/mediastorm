@@ -534,16 +534,23 @@ func (m *HLSManager) waitForFirstSegment(ctx context.Context, session *HLSSessio
 	segment0Path := filepath.Join(session.OutputDir, "segment0.m4s")
 	segment0TsPath := filepath.Join(session.OutputDir, "segment0.ts")
 
-	// Use a shorter timeout than the context (max 10 seconds)
-	deadline := time.Now().Add(10 * time.Second)
+	// Use a longer timeout for external URLs (Real-Debrid etc) since FFmpeg needs to buffer more data
+	// Don't use the request context since the client may timeout before we're ready
+	isExternalURL := strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://")
+	timeout := 15 * time.Second
+	if isExternalURL {
+		timeout = 30 * time.Second
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	pollInterval := 100 * time.Millisecond
 
-	log.Printf("[hls] session %s: waiting for first segment to be ready", session.ID)
+	log.Printf("[hls] session %s: waiting for first segment to be ready (timeout=%v, external=%v)", session.ID, timeout, isExternalURL)
 
-	for time.Now().Before(deadline) {
+	for {
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-waitCtx.Done():
+			return fmt.Errorf("timeout waiting for first segment")
 		default:
 		}
 
@@ -584,8 +591,6 @@ func (m *HLSManager) waitForFirstSegment(ctx context.Context, session *HLSSessio
 
 		time.Sleep(pollInterval)
 	}
-
-	return fmt.Errorf("timeout waiting for first segment")
 }
 
 // fixDVCodecTag modifies the init.mp4 to replace hev1 codec tag with dvhe/dvh1
