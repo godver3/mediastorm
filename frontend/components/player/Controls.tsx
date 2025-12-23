@@ -26,6 +26,8 @@ interface ControlsProps {
   subtitleTracks?: TrackOption[];
   selectedSubtitleTrackId?: string | null;
   onSelectSubtitleTrack?: (id: string) => void;
+  /** Callback to open subtitle search modal */
+  onSearchSubtitles?: () => void;
   onModalStateChange?: (isOpen: boolean) => void;
   onScrubStart?: () => void;
   onScrubEnd?: () => void;
@@ -45,6 +47,11 @@ interface ControlsProps {
   hasNextEpisode?: boolean;
   onPreviousEpisode?: () => void;
   onNextEpisode?: () => void;
+  /** Subtitle offset adjustment (for external/searched subtitles) */
+  showSubtitleOffset?: boolean;
+  subtitleOffset?: number;
+  onSubtitleOffsetEarlier?: () => void;
+  onSubtitleOffsetLater?: () => void;
 }
 
 type TrackOption = {
@@ -71,6 +78,7 @@ const Controls: React.FC<ControlsProps> = ({
   subtitleTracks = [],
   selectedSubtitleTrackId,
   onSelectSubtitleTrack,
+  onSearchSubtitles,
   onModalStateChange,
   onScrubStart,
   onScrubEnd,
@@ -87,10 +95,14 @@ const Controls: React.FC<ControlsProps> = ({
   hasNextEpisode = false,
   onPreviousEpisode,
   onNextEpisode,
+  showSubtitleOffset = false,
+  subtitleOffset = 0,
+  onSubtitleOffsetEarlier,
+  onSubtitleOffsetLater,
 }) => {
   const theme = useTheme();
   const { width, height } = useWindowDimensions();
-  const styles = useMemo(() => useControlsStyles(theme), [theme]);
+  const styles = useMemo(() => useControlsStyles(theme, width), [theme, width]);
   const showVolume = Platform.OS === 'web';
   const isTvPlatform = Platform.isTV;
   const isMobile = Platform.OS !== 'web' && !isTvPlatform;
@@ -111,21 +123,31 @@ const Controls: React.FC<ControlsProps> = ({
   }, [audioTracks, selectedAudioTrackId]);
 
   const subtitleSummary = useMemo(() => {
-    if (!subtitleTracks.length) {
-      return undefined;
+    // Show "External" when using external/searched subtitles
+    if (showSubtitleOffset) {
+      return 'External';
+    }
+    // Always show something - "Search" if no embedded tracks, otherwise the selected track
+    if (!subtitleTracks.length || !subtitleTracks.some((track) => Number.isFinite(Number(track.id)))) {
+      return 'Search';
     }
     const fallback = subtitleTracks[0]?.label;
     if (!selectedSubtitleTrackId) {
       return fallback;
     }
     return subtitleTracks.find((track) => track.id === selectedSubtitleTrackId)?.label ?? fallback;
-  }, [selectedSubtitleTrackId, subtitleTracks]);
+  }, [selectedSubtitleTrackId, subtitleTracks, showSubtitleOffset]);
+
+  // Format subtitle offset for display (e.g., "-0.25s", "+0.50s", "0s")
+  const formattedSubtitleOffset = useMemo(() => {
+    if (subtitleOffset === 0) return '0s';
+    const sign = subtitleOffset > 0 ? '+' : '';
+    return `${sign}${subtitleOffset.toFixed(2)}s`;
+  }, [subtitleOffset]);
 
   const hasAudioSelection = allowTrackSelection && Boolean(onSelectAudioTrack) && audioTracks.length > 0;
-  const hasSubtitleSelection =
-    allowTrackSelection &&
-    Boolean(onSelectSubtitleTrack) &&
-    subtitleTracks.some((track) => Number.isFinite(Number(track.id)));
+  // Always show subtitle button when onSelectSubtitleTrack is provided (for external subtitle search)
+  const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack);
   const showFullscreenButton = Boolean(onToggleFullscreen) && !isMobile && !isLiveTV && !isTvPlatform;
 
   const activeMenuRef = useRef<ActiveMenu>(null);
@@ -235,6 +257,23 @@ const Controls: React.FC<ControlsProps> = ({
           )}
         </View>
       )}
+      {/* Mobile subtitle offset controls - above play button in landscape, below in portrait */}
+      {isMobile && showSubtitleOffset && (
+        <View style={[styles.subtitleOffsetContainer, isLandscape && styles.subtitleOffsetContainerLandscape]} pointerEvents="box-none">
+          <View style={styles.subtitleOffsetRow}>
+            <Pressable onPress={onSubtitleOffsetEarlier} style={styles.subtitleOffsetButton}>
+              <Ionicons name="remove" size={18} color={theme.colors.text.primary} />
+            </Pressable>
+            <View style={styles.subtitleOffsetLabelContainer}>
+              <Text style={styles.subtitleOffsetLabel}>Subtitle</Text>
+              <Text style={styles.subtitleOffsetValue}>{formattedSubtitleOffset}</Text>
+            </View>
+            <Pressable onPress={onSubtitleOffsetLater} style={styles.subtitleOffsetButton}>
+              <Ionicons name="add" size={18} color={theme.colors.text.primary} />
+            </Pressable>
+          </View>
+        </View>
+      )}
       <SpatialNavigationNode orientation="vertical">
         <View
           style={[
@@ -319,7 +358,7 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </View>
           )}
-          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (hasPreviousEpisode || hasNextEpisode))) && (
+          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (hasPreviousEpisode || hasNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
             <SpatialNavigationNode orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
@@ -424,6 +463,41 @@ const Controls: React.FC<ControlsProps> = ({
                     </Text>
                   </View>
                 )}
+                {/* Subtitle offset controls for TV platforms */}
+                {isTvPlatform && showSubtitleOffset && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
+                  <>
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      <FocusablePressable
+                        icon="remove-circle-outline"
+                        focusKey="subtitle-offset-earlier"
+                        onSelect={onSubtitleOffsetEarlier}
+                        onFocus={() => onFocusChange?.('subtitle-offset-earlier')}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                      />
+                      <Text style={styles.trackLabel} numberOfLines={1}>
+                        Sub-
+                      </Text>
+                    </View>
+                    <View style={styles.subtitleOffsetTvDisplay} pointerEvents="box-none">
+                      <Text style={styles.subtitleOffsetTvLabel}>Subtitle</Text>
+                      <Text style={styles.subtitleOffsetTvValue}>{formattedSubtitleOffset}</Text>
+                    </View>
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      <FocusablePressable
+                        icon="add-circle-outline"
+                        focusKey="subtitle-offset-later"
+                        onSelect={onSubtitleOffsetLater}
+                        onFocus={() => onFocusChange?.('subtitle-offset-later')}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                      />
+                      <Text style={styles.trackLabel} numberOfLines={1}>
+                        Sub+
+                      </Text>
+                    </View>
+                  </>
+                )}
                 {/* Info button for TV platforms */}
                 {isTvPlatform && streamInfo && (
                   <View style={styles.trackButtonGroup} pointerEvents="box-none">
@@ -455,6 +529,7 @@ const Controls: React.FC<ControlsProps> = ({
           onSelect={handleSelectTrack}
           onClose={closeMenu}
           focusKeyPrefix={activeMenu}
+          onSearchSubtitles={activeMenu === 'subtitles' ? onSearchSubtitles : undefined}
         />
       ) : null}
       {activeMenu === 'info' && streamInfo ? (
@@ -464,7 +539,12 @@ const Controls: React.FC<ControlsProps> = ({
   );
 };
 
-const useControlsStyles = (theme: NovaTheme) => {
+const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
+  // Calculate dynamic gap for center controls based on screen width
+  // Button widths: play (80) + 2x skip (60) + 2x episode (50) = 300px max
+  // We want comfortable spacing that scales down on narrow screens
+  const centerControlsGap = Math.max(theme.spacing.sm, Math.min(theme.spacing.xl, (screenWidth - 300) / 6));
+
   return StyleSheet.create({
     centerControls: {
       position: 'absolute',
@@ -475,7 +555,7 @@ const useControlsStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: theme.spacing.xl,
+      gap: centerControlsGap,
     },
     skipButtonContainer: {
       flex: 0,
@@ -603,6 +683,66 @@ const useControlsStyles = (theme: NovaTheme) => {
     buttonGroup: {
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    // Mobile subtitle offset styles
+    subtitleOffsetContainer: {
+      position: 'absolute',
+      top: '60%',
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    subtitleOffsetContainerLandscape: {
+      top: '25%', // Above play button in landscape (with clearance)
+    },
+    subtitleOffsetRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
+      borderRadius: theme.radius.md,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      gap: theme.spacing.sm,
+    },
+    subtitleOffsetButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: 'rgba(255, 255, 255, 0.15)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    subtitleOffsetLabelContainer: {
+      alignItems: 'center',
+      minWidth: 60,
+    },
+    subtitleOffsetLabel: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontSize: 10,
+    },
+    subtitleOffsetValue: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+      fontSize: 14,
+    },
+    // TV subtitle offset styles
+    subtitleOffsetTvDisplay: {
+      alignItems: 'center',
+      marginRight: theme.spacing.lg,
+      marginBottom: theme.spacing.xs,
+    },
+    subtitleOffsetTvLabel: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontSize: 10,
+    },
+    subtitleOffsetTvValue: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
     },
   });
 };

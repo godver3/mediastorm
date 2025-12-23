@@ -649,12 +649,80 @@
         } else {
             sectionData = currentSettings[sectionKey] || {};
         }
-        return Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => {
-            const fieldError = getFieldError(sectionKey, fieldKey);
-            const invalidClass = fieldError ? ' invalid' : '';
-            const errorHtml = fieldError ? '<div class="validation-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+fieldError+'</div>' : '';
-            return '<div class="form-group'+invalidClass+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, sectionData[fieldKey], sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
-        }).join('');
+        const fieldsHtml = Object.entries(sectionDef.fields)
+            .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+            .map(([fieldKey, fieldDef]) => {
+                const fieldError = getFieldError(sectionKey, fieldKey);
+                const invalidClass = fieldError ? ' invalid' : '';
+                const errorHtml = fieldError ? '<div class="validation-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+fieldError+'</div>' : '';
+                return '<div class="form-group'+invalidClass+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, sectionData[fieldKey], sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
+            }).join('');
+
+        // Add test button for testable object sections
+        let testHtml = '';
+        if (sectionDef.testable) {
+            testHtml = '<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.75rem;">'+
+                '<button id="test-btn-'+sectionKey+'" class="btn btn-secondary" onclick="testObjectSection(\''+sectionKey+'\')">'+
+                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection</button>'+
+                '<span id="test-result-'+sectionKey+'" class="test-result"></span></div>';
+        }
+        return fieldsHtml + testHtml;
+    }
+
+    // Test object section (non-array sections like subtitles)
+    async function testObjectSection(sectionKey) {
+        const btn = document.getElementById('test-btn-'+sectionKey);
+        const resultSpan = document.getElementById('test-result-'+sectionKey);
+        if (!btn) return;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Testing...';
+        resultSpan.textContent = '';
+        resultSpan.className = 'test-result';
+
+        let endpoint, payload;
+        const sectionData = currentSettings[sectionKey] || {};
+
+        switch(sectionKey) {
+            case 'subtitles':
+                endpoint = '/admin/api/test/subtitles';
+                payload = {
+                    username: sectionData.openSubtitlesUsername || '',
+                    password: sectionData.openSubtitlesPassword || ''
+                };
+                break;
+            default:
+                btn.disabled = false;
+                btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection';
+                resultSpan.textContent = 'Unknown section';
+                resultSpan.className = 'test-result error';
+                return;
+        }
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection';
+
+            if (result.success) {
+                resultSpan.textContent = result.message || 'Success';
+                resultSpan.className = 'test-result success';
+            } else {
+                resultSpan.textContent = result.error || 'Test failed';
+                resultSpan.className = 'test-result error';
+            }
+        } catch (e) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection';
+            resultSpan.textContent = 'Error: ' + e.message;
+            resultSpan.className = 'test-result error';
+        }
     }
     function renderSection(sectionKey, sectionDef) {
         const isOpen = window.location.hash === '#'+sectionKey;

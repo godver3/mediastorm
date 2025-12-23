@@ -301,6 +301,9 @@ func main() {
 	// Create debug video handler with MP4Box for DV/HDR testing
 	debugVideoHandler := handlers.NewDebugVideoHandler("MP4Box", settings.Transmux.FFprobePath)
 
+	// Create subtitles handler for external subtitle search
+	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -318,6 +321,7 @@ func main() {
 		liveHandler,
 		debugVideoHandler,
 		userSettingsHandler,
+		subtitlesHandler,
 		settings.Server.PIN,
 	)
 
@@ -348,6 +352,7 @@ func main() {
 	r.HandleFunc("/admin/api/test/scraper", adminUIHandler.RequireAuth(adminUIHandler.TestScraper)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/usenet-provider", adminUIHandler.RequireAuth(adminUIHandler.TestUsenetProvider)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/debrid-provider", adminUIHandler.RequireAuth(adminUIHandler.TestDebridProvider)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/subtitles", adminUIHandler.RequireAuth(adminUIHandler.TestSubtitles)).Methods(http.MethodPost)
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)

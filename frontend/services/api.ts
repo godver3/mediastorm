@@ -77,6 +77,16 @@ export interface SearchResult {
   score: number;
 }
 
+export interface SubtitleSearchResult {
+  id: string;
+  provider: string;
+  language: string;
+  release: string;
+  downloads: number;
+  hearing_impaired: boolean;
+  page_link?: string;
+}
+
 export interface SeriesEpisode {
   id: string;
   tvdbId?: number;
@@ -1548,6 +1558,50 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(updates),
     });
+  }
+
+  // Subtitle search methods
+  async searchSubtitles(params: {
+    imdbId?: string;
+    title?: string;
+    year?: number;
+    season?: number;
+    episode?: number;
+    language?: string;
+  }): Promise<SubtitleSearchResult[]> {
+    const query = new URLSearchParams();
+    if (params.imdbId) query.set('imdbId', params.imdbId);
+    if (params.title) query.set('title', params.title);
+    if (params.year !== undefined) query.set('year', String(params.year));
+    if (params.season !== undefined) query.set('season', String(params.season));
+    if (params.episode !== undefined) query.set('episode', String(params.episode));
+    if (params.language) query.set('language', params.language);
+
+    return this.request<SubtitleSearchResult[]>(`/subtitles/search?${query.toString()}`);
+  }
+
+  getSubtitleDownloadUrl(params: {
+    subtitleId: string;
+    provider: string;
+    imdbId?: string;
+    title?: string;
+    year?: number;
+    season?: number;
+    episode?: number;
+    language?: string;
+  }): string {
+    const query = new URLSearchParams();
+    query.set('subtitleId', params.subtitleId);
+    query.set('provider', params.provider);
+    if (params.imdbId) query.set('imdbId', params.imdbId);
+    if (params.title) query.set('title', params.title);
+    if (params.year !== undefined) query.set('year', String(params.year));
+    if (params.season !== undefined) query.set('season', String(params.season));
+    if (params.episode !== undefined) query.set('episode', String(params.episode));
+    if (params.language) query.set('language', params.language);
+    if (this.apiKey) query.set('apiKey', this.apiKey);
+
+    return `${this.baseUrl}/subtitles/download?${query.toString()}`;
   }
 }
 

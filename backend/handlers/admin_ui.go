@@ -282,6 +282,17 @@ var SettingsSchema = map[string]interface{}{
 			"rarMaxMemoryGB":    map[string]interface{}{"type": "number", "label": "RAR Max Memory (GB)", "description": "Maximum memory for RAR operations"},
 		},
 	},
+	"subtitles": map[string]interface{}{
+		"label":    "Subtitles",
+		"icon":     "film",
+		"group":    "sources",
+		"order":    4,
+		"testable": true,
+		"fields": map[string]interface{}{
+			"openSubtitlesUsername": map[string]interface{}{"type": "text", "label": "OpenSubtitles Username", "description": "OpenSubtitles.org username (optional, enables more results)", "order": 0},
+			"openSubtitlesPassword": map[string]interface{}{"type": "password", "label": "OpenSubtitles Password", "description": "OpenSubtitles.org password", "order": 1},
+		},
+	},
 }
 
 // AdminUIHandler serves the admin dashboard UI
@@ -1683,6 +1694,110 @@ func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+// TestSubtitlesRequest represents a request to test OpenSubtitles credentials
+type TestSubtitlesRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TestSubtitles tests OpenSubtitles.org credentials by attempting to log in
+func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
+	var req TestSubtitlesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if req.Username == "" || req.Password == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Username and password are required",
+		})
+		return
+	}
+
+	// OpenSubtitles.org uses XML-RPC API at https://api.opensubtitles.org/xml-rpc
+	// We'll test by calling the LogIn method
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	// Build XML-RPC request for LogIn
+	xmlPayload := fmt.Sprintf(`<?xml version="1.0"?>
+<methodCall>
+  <methodName>LogIn</methodName>
+  <params>
+    <param><value><string>%s</string></value></param>
+    <param><value><string>%s</string></value></param>
+    <param><value><string>en</string></value></param>
+    <param><value><string>strmr v1.0</string></value></param>
+  </params>
+</methodCall>`, req.Username, req.Password)
+
+	apiReq, err := http.NewRequest(http.MethodPost, "https://api.opensubtitles.org/xml-rpc", strings.NewReader(xmlPayload))
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	apiReq.Header.Set("Content-Type", "text/xml")
+
+	resp, err := client.Do(apiReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to read response: %v", err),
+		})
+		return
+	}
+
+	bodyStr := string(body)
+
+	// Check for successful login (status 200 OK in the XML response)
+	if strings.Contains(bodyStr, "<name>status</name>") && strings.Contains(bodyStr, "200 OK") {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "OpenSubtitles login successful",
+		})
+		return
+	}
+
+	// Check for common error statuses
+	if strings.Contains(bodyStr, "401") {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Invalid username or password",
+		})
+		return
+	}
+
+	if strings.Contains(bodyStr, "411") {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Invalid user agent (API blocked)",
+		})
+		return
+	}
+
+	// Generic failure
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"error":   "Login failed - check credentials",
+	})
 }
 
 // TestDebridProvider tests a debrid provider by checking their API
