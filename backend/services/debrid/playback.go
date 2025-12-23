@@ -44,7 +44,7 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 	log.Printf("[debrid-playback] resolve start title=%q link=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Link))
 
 	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
-	// Pre-resolved streams already have a direct playback URL, no debrid resolution needed
+	// Pre-resolved streams already have a direct playback URL, but we need to verify they're cached
 	if candidate.Attributes["preresolved"] == "true" {
 		streamURL := strings.TrimSpace(candidate.Attributes["stream_url"])
 		if streamURL == "" {
@@ -56,6 +56,20 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 		}
 
 		log.Printf("[debrid-playback] using pre-resolved stream URL: %s", streamURL)
+
+		// Verify the pre-resolved stream is actually cached (not a placeholder)
+		if s.healthService != nil {
+			healthCheck, err := s.healthService.CheckHealth(ctx, candidate, false)
+			if err != nil {
+				log.Printf("[debrid-playback] health check failed for pre-resolved stream: %v", err)
+				return nil, fmt.Errorf("health check failed: %w", err)
+			}
+			if !healthCheck.Healthy || !healthCheck.Cached {
+				log.Printf("[debrid-playback] pre-resolved stream not cached: %s", healthCheck.ErrorMessage)
+				return nil, fmt.Errorf("stream not cached: %s", healthCheck.ErrorMessage)
+			}
+			log.Printf("[debrid-playback] pre-resolved stream verified as cached")
+		}
 
 		// Extract filename from attributes or URL
 		filename := strings.TrimSpace(candidate.Attributes["raw_title"])
