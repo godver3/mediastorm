@@ -1,0 +1,540 @@
+{{template "base" .}}
+
+{{define "title"}}Tools - strmr Admin{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Tools</h1>
+    <p>Import and manage your media library</p>
+</div>
+
+<!-- Plex Watchlist Import Card -->
+<div class="card">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Import Plex Watchlist
+        </h2>
+    </div>
+    <div class="card-body">
+        <!-- Step 1: Login -->
+        <div id="loginSection">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                Import your Plex watchlist to strmr. Click the button below to authenticate with Plex.
+            </p>
+            <button class="btn btn-primary" onclick="loginWithPlex()" id="loginBtn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                    <polyline points="10 17 15 12 10 7"/>
+                    <line x1="15" y1="12" x2="3" y2="12"/>
+                </svg>
+                Login with Plex
+            </button>
+        </div>
+
+        <!-- Waiting for auth spinner -->
+        <div id="waitingSection" style="display: none;">
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius);">
+                <div class="spinner"></div>
+                <div>
+                    <div style="font-weight: 500;">Waiting for authorization...</div>
+                    <div style="color: var(--text-muted); font-size: 0.875rem;">Complete the login in the Plex window that opened</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Authenticated -->
+        <div id="authenticatedSection" style="display: none;">
+            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success); border-radius: var(--radius); margin-bottom: 1.5rem;">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <div>
+                    <div style="font-weight: 500; color: var(--success);">Connected to Plex</div>
+                    <div style="color: var(--text-muted); font-size: 0.875rem;" id="plexUsername"></div>
+                </div>
+                <button class="btn btn-secondary" style="margin-left: auto;" onclick="logout()">Disconnect</button>
+            </div>
+
+            <!-- Profile Selection -->
+            <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Import to Profile</label>
+                <select id="profileSelect" class="form-select" style="max-width: 300px;">
+                    {{range .Users}}
+                    <option value="{{.ID}}">{{.Name}}</option>
+                    {{end}}
+                </select>
+            </div>
+
+            <!-- Fetch Watchlist Button -->
+            <button class="btn btn-primary" onclick="fetchWatchlist()" id="fetchBtn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="1 4 1 10 7 10"/>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                </svg>
+                Fetch Watchlist
+            </button>
+        </div>
+
+        <!-- Loading watchlist spinner -->
+        <div id="loadingWatchlist" style="display: none;">
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 2rem; justify-content: center;">
+                <div class="spinner"></div>
+                <div style="color: var(--text-muted);">Loading watchlist...</div>
+            </div>
+        </div>
+
+        <!-- Step 3: Preview Table -->
+        <div id="previewSection" style="display: none; margin-top: 1.5rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                <div>
+                    <span style="font-weight: 500;" id="watchlistCount">0 items</span>
+                    <span style="color: var(--text-muted);"> in your Plex watchlist</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-secondary" onclick="selectAll(true)">Select All</button>
+                    <button class="btn btn-secondary" onclick="selectAll(false)">Deselect All</button>
+                </div>
+            </div>
+
+            <div style="overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius);">
+                <table class="data-table" style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="selectAllCheckbox" onchange="selectAll(this.checked)" checked>
+                            </th>
+                            <th style="width: 50px;"></th>
+                            <th>Title</th>
+                            <th style="width: 80px;">Year</th>
+                            <th style="width: 100px;">Type</th>
+                            <th style="width: 100px;">IDs</th>
+                        </tr>
+                    </thead>
+                    <tbody id="watchlistTableBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Import Button -->
+            <div style="margin-top: 1.5rem; display: flex; align-items: center; gap: 1rem;">
+                <button class="btn btn-primary" onclick="importSelected()" id="importBtn">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Import <span id="selectedCount">0</span> Selected Items
+                </button>
+                <div id="importStatus" style="color: var(--text-muted);"></div>
+            </div>
+        </div>
+
+        <!-- Import Progress -->
+        <div id="importingSection" style="display: none; margin-top: 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem; background: var(--bg-tertiary); border-radius: var(--radius);">
+                <div class="spinner"></div>
+                <div>
+                    <div style="font-weight: 500;">Importing items...</div>
+                    <div style="color: var(--text-muted); font-size: 0.875rem;" id="importProgress">0 of 0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Complete -->
+        <div id="completeSection" style="display: none; margin-top: 1.5rem;">
+            <div style="padding: 1.5rem; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success); border-radius: var(--radius);">
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                    <span style="font-weight: 500; color: var(--success);">Import Complete</span>
+                </div>
+                <div id="importSummary" style="color: var(--text-secondary);"></div>
+            </div>
+            <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetImport()">Import More</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .data-table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+    .data-table th,
+    .data-table td {
+        padding: 0.75rem 1rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+    }
+    .data-table th {
+        background: var(--bg-tertiary);
+        font-weight: 500;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+    .data-table tbody tr:hover {
+        background: var(--bg-hover);
+    }
+    .data-table tbody tr.disabled {
+        opacity: 0.5;
+    }
+    .poster-thumb {
+        width: 35px;
+        height: 52px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: var(--bg-tertiary);
+    }
+    .type-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+    .type-badge.movie {
+        background: rgba(99, 102, 241, 0.2);
+        color: var(--accent);
+    }
+    .type-badge.series {
+        background: rgba(34, 197, 94, 0.2);
+        color: var(--success);
+    }
+    .id-badges {
+        display: flex;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+    .id-badge {
+        font-size: 0.7rem;
+        padding: 0.125rem 0.375rem;
+        background: var(--bg-tertiary);
+        border-radius: 3px;
+        color: var(--text-muted);
+    }
+    input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // State
+    let plexToken = null;
+    let watchlistItems = [];
+    let selectedItems = new Set();
+    let pollInterval = null;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if there's a stored token (for page refresh)
+        const storedToken = sessionStorage.getItem('plexToken');
+        const storedUsername = sessionStorage.getItem('plexUsername');
+        if (storedToken) {
+            plexToken = storedToken;
+            showAuthenticated(storedUsername || 'Plex User');
+        }
+    });
+
+    // Step 1: Login with Plex
+    async function loginWithPlex() {
+        const loginBtn = document.getElementById('loginBtn');
+        loginBtn.disabled = true;
+        loginBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div> Starting...';
+
+        try {
+            const response = await fetch('/admin/api/plex/pin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to create PIN');
+            }
+
+            const data = await response.json();
+
+            // Open Plex auth in new window
+            const authWindow = window.open(data.authUrl, 'plex_auth', 'width=800,height=600');
+
+            // Show waiting state
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('waitingSection').style.display = 'block';
+
+            // Poll for authentication
+            pollInterval = setInterval(async () => {
+                try {
+                    const checkResponse = await fetch(`/admin/api/plex/pin/${data.id}`);
+                    const checkData = await checkResponse.json();
+
+                    if (checkData.authenticated) {
+                        clearInterval(pollInterval);
+                        plexToken = checkData.authToken;
+
+                        // Store in session for page refresh
+                        sessionStorage.setItem('plexToken', plexToken);
+                        sessionStorage.setItem('plexUsername', checkData.username || 'Plex User');
+
+                        // Close auth window if still open
+                        if (authWindow && !authWindow.closed) {
+                            authWindow.close();
+                        }
+
+                        showAuthenticated(checkData.username || 'Plex User');
+                    }
+                } catch (err) {
+                    console.error('Poll error:', err);
+                }
+            }, 2000);
+
+            // Stop polling after 5 minutes
+            setTimeout(() => {
+                if (pollInterval) {
+                    clearInterval(pollInterval);
+                    document.getElementById('waitingSection').style.display = 'none';
+                    document.getElementById('loginSection').style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
+                    showToast('Authentication timed out. Please try again.', 'error');
+                }
+            }, 300000);
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            loginBtn.disabled = false;
+            loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
+        }
+    }
+
+    function showAuthenticated(username) {
+        document.getElementById('waitingSection').style.display = 'none';
+        document.getElementById('loginSection').style.display = 'none';
+        document.getElementById('authenticatedSection').style.display = 'block';
+        document.getElementById('plexUsername').textContent = `Logged in as ${username}`;
+    }
+
+    function logout() {
+        plexToken = null;
+        watchlistItems = [];
+        selectedItems.clear();
+        sessionStorage.removeItem('plexToken');
+        sessionStorage.removeItem('plexUsername');
+
+        document.getElementById('authenticatedSection').style.display = 'none';
+        document.getElementById('previewSection').style.display = 'none';
+        document.getElementById('completeSection').style.display = 'none';
+        document.getElementById('loginSection').style.display = 'block';
+
+        const loginBtn = document.getElementById('loginBtn');
+        loginBtn.disabled = false;
+        loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
+    }
+
+    // Step 2: Fetch Watchlist
+    async function fetchWatchlist() {
+        const fetchBtn = document.getElementById('fetchBtn');
+        fetchBtn.disabled = true;
+        document.getElementById('loadingWatchlist').style.display = 'block';
+        document.getElementById('previewSection').style.display = 'none';
+
+        try {
+            const response = await fetch('/admin/api/plex/watchlist', {
+                headers: {
+                    'X-Plex-Token': plexToken
+                }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch watchlist');
+            }
+
+            const data = await response.json();
+            watchlistItems = data.items || [];
+
+            // Select all by default
+            selectedItems.clear();
+            watchlistItems.forEach(item => selectedItems.add(item.ratingKey));
+
+            renderWatchlistTable();
+            document.getElementById('loadingWatchlist').style.display = 'none';
+            document.getElementById('previewSection').style.display = 'block';
+            updateSelectedCount();
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            document.getElementById('loadingWatchlist').style.display = 'none';
+        } finally {
+            fetchBtn.disabled = false;
+        }
+    }
+
+    function renderWatchlistTable() {
+        const tbody = document.getElementById('watchlistTableBody');
+        const countEl = document.getElementById('watchlistCount');
+
+        countEl.textContent = `${watchlistItems.length} item${watchlistItems.length !== 1 ? 's' : ''}`;
+
+        if (watchlistItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Your Plex watchlist is empty</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = watchlistItems.map(item => {
+            const isSelected = selectedItems.has(item.ratingKey);
+            const ids = item.externalIds || {};
+            const idBadges = Object.entries(ids)
+                .filter(([k, v]) => v && k !== 'plex')
+                .map(([k, v]) => `<span class="id-badge">${k.toUpperCase()}</span>`)
+                .join('');
+
+            return `
+                <tr class="${isSelected ? '' : 'disabled'}">
+                    <td>
+                        <input type="checkbox"
+                               ${isSelected ? 'checked' : ''}
+                               onchange="toggleItem('${item.ratingKey}', this.checked)">
+                    </td>
+                    <td>
+                        ${item.posterUrl
+                            ? `<img src="${item.posterUrl}" class="poster-thumb" loading="lazy" onerror="this.style.display='none'">`
+                            : '<div class="poster-thumb"></div>'}
+                    </td>
+                    <td style="font-weight: 500;">${escapeHtml(item.title)}</td>
+                    <td style="color: var(--text-muted);">${item.year || '-'}</td>
+                    <td><span class="type-badge ${item.type}">${item.type}</span></td>
+                    <td><div class="id-badges">${idBadges || '<span class="id-badge">PLEX</span>'}</div></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function toggleItem(ratingKey, checked) {
+        if (checked) {
+            selectedItems.add(ratingKey);
+        } else {
+            selectedItems.delete(ratingKey);
+        }
+        updateSelectedCount();
+        updateRowStyles();
+    }
+
+    function selectAll(checked) {
+        selectedItems.clear();
+        if (checked) {
+            watchlistItems.forEach(item => selectedItems.add(item.ratingKey));
+        }
+
+        // Update all checkboxes
+        document.querySelectorAll('#watchlistTableBody input[type="checkbox"]').forEach(cb => {
+            cb.checked = checked;
+        });
+        document.getElementById('selectAllCheckbox').checked = checked;
+
+        updateSelectedCount();
+        updateRowStyles();
+    }
+
+    function updateSelectedCount() {
+        document.getElementById('selectedCount').textContent = selectedItems.size;
+        document.getElementById('importBtn').disabled = selectedItems.size === 0;
+
+        // Update select all checkbox
+        const selectAllCb = document.getElementById('selectAllCheckbox');
+        selectAllCb.checked = selectedItems.size === watchlistItems.length;
+        selectAllCb.indeterminate = selectedItems.size > 0 && selectedItems.size < watchlistItems.length;
+    }
+
+    function updateRowStyles() {
+        document.querySelectorAll('#watchlistTableBody tr').forEach((row, index) => {
+            if (watchlistItems[index]) {
+                const isSelected = selectedItems.has(watchlistItems[index].ratingKey);
+                row.classList.toggle('disabled', !isSelected);
+            }
+        });
+    }
+
+    // Step 3: Import
+    async function importSelected() {
+        if (selectedItems.size === 0) {
+            showToast('Please select at least one item to import', 'error');
+            return;
+        }
+
+        const profileId = document.getElementById('profileSelect').value;
+        if (!profileId) {
+            showToast('Please select a profile', 'error');
+            return;
+        }
+
+        const itemsToImport = watchlistItems.filter(item => selectedItems.has(item.ratingKey));
+
+        document.getElementById('previewSection').style.display = 'none';
+        document.getElementById('importingSection').style.display = 'block';
+        document.getElementById('importProgress').textContent = `0 of ${itemsToImport.length}`;
+
+        try {
+            const response = await fetch('/admin/api/plex/import', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    items: itemsToImport
+                })
+            });
+
+            const result = await response.json();
+
+            document.getElementById('importingSection').style.display = 'none';
+            document.getElementById('completeSection').style.display = 'block';
+
+            let summary = `Successfully imported ${result.imported} item${result.imported !== 1 ? 's' : ''}.`;
+            if (result.failed > 0) {
+                summary += ` ${result.failed} item${result.failed !== 1 ? 's' : ''} failed.`;
+            }
+            document.getElementById('importSummary').textContent = summary;
+
+            if (result.success) {
+                showToast(`Imported ${result.imported} items to watchlist`, 'success');
+            } else {
+                showToast(`Imported ${result.imported} items with ${result.failed} failures`, 'warning');
+            }
+
+        } catch (err) {
+            document.getElementById('importingSection').style.display = 'none';
+            document.getElementById('previewSection').style.display = 'block';
+            showToast('Import failed: ' + err.message, 'error');
+        }
+    }
+
+    function resetImport() {
+        document.getElementById('completeSection').style.display = 'none';
+        document.getElementById('previewSection').style.display = 'block';
+
+        // Re-fetch watchlist to get fresh data
+        fetchWatchlist();
+    }
+
+    // Utility functions
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+{{end}}

@@ -24,6 +24,8 @@ import (
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/history"
+	"novastream/services/plex"
+	"novastream/services/watchlist"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
 )
@@ -301,12 +303,15 @@ type AdminUIHandler struct {
 	settingsTemplate    *template.Template
 	statusTemplate      *template.Template
 	historyTemplate     *template.Template
+	toolsTemplate       *template.Template
 	loginTemplate       *template.Template
 	settingsPath        string
 	hlsManager          *HLSManager
 	usersService        *users.Service
 	userSettingsService *user_settings.Service
 	historyService      *history.Service
+	watchlistService    *watchlist.Service
+	plexClient          *plex.Client
 	configManager       *config.Manager
 	metadataService     MetadataCacheClearer
 	getPIN              func() string
@@ -325,6 +330,11 @@ func (h *AdminUIHandler) SetMetadataService(ms MetadataCacheClearer) {
 // SetHistoryService sets the history service for watch history data
 func (h *AdminUIHandler) SetHistoryService(hs *history.Service) {
 	h.historyService = hs
+}
+
+// SetWatchlistService sets the watchlist service for importing items
+func (h *AdminUIHandler) SetWatchlistService(ws *watchlist.Service) {
+	h.watchlistService = ws
 }
 
 // NewAdminUIHandler creates a new admin UI handler
@@ -440,6 +450,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		settingsTemplate:    createPageTemplate("settings.html"),
 		statusTemplate:      createPageTemplate("status.html"),
 		historyTemplate:     createPageTemplate("history.html"),
+		toolsTemplate:       createPageTemplate("tools.html"),
 		loginTemplate:       loginTmpl,
 		settingsPath:        settingsPath,
 		hlsManager:          hlsManager,
@@ -447,6 +458,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		userSettingsService: userSettingsService,
 		configManager:       configManager,
 		getPIN:              getPIN,
+		plexClient:          plex.NewClient(plex.GenerateClientID()),
 	}
 }
 
@@ -2040,4 +2052,275 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 			"error":   fmt.Sprintf("Unknown provider: %s", req.Provider),
 		})
 	}
+}
+
+// ToolsPage serves the tools page
+func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
+	var usersList []models.User
+	if h.usersService != nil {
+		usersList = h.usersService.List()
+	}
+
+	data := AdminPageData{
+		CurrentPath: "/admin/tools",
+		Users:       usersList,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.toolsTemplate == nil {
+		http.Error(w, "Tools template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.toolsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Tools template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// PlexCreatePIN creates a new Plex OAuth PIN
+func (h *AdminUIHandler) PlexCreatePIN(w http.ResponseWriter, r *http.Request) {
+	if h.plexClient == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Plex client not initialized",
+		})
+		return
+	}
+
+	pin, err := h.plexClient.CreatePIN()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      pin.ID,
+		"code":    pin.Code,
+		"authUrl": h.plexClient.GetAuthURL(pin.Code),
+	})
+}
+
+// PlexCheckPIN checks the status of a Plex OAuth PIN
+func (h *AdminUIHandler) PlexCheckPIN(w http.ResponseWriter, r *http.Request) {
+	if h.plexClient == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Plex client not initialized",
+		})
+		return
+	}
+
+	// Get PIN ID from URL path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "PIN ID required",
+		})
+		return
+	}
+
+	pinIDStr := parts[len(parts)-1]
+	pinID, err := strconv.Atoi(pinIDStr)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid PIN ID",
+		})
+		return
+	}
+
+	pin, err := h.plexClient.CheckPIN(pinID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if pin.AuthToken != "" {
+		// Authentication successful, also get user info
+		userInfo, _ := h.plexClient.GetUserInfo(pin.AuthToken)
+		response := map[string]interface{}{
+			"authenticated": true,
+			"authToken":     pin.AuthToken,
+		}
+		if userInfo != nil {
+			response["username"] = userInfo.Username
+			response["email"] = userInfo.Email
+		}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"authenticated": false,
+			"pending":       true,
+		})
+	}
+}
+
+// PlexGetWatchlist retrieves the user's Plex watchlist
+func (h *AdminUIHandler) PlexGetWatchlist(w http.ResponseWriter, r *http.Request) {
+	if h.plexClient == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Plex client not initialized",
+		})
+		return
+	}
+
+	authToken := r.Header.Get("X-Plex-Token")
+	if authToken == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "X-Plex-Token header required",
+		})
+		return
+	}
+
+	items, err := h.plexClient.GetWatchlist(authToken)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Convert to a normalized format with external IDs
+	normalizedItems := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		// Try to get external IDs from item details
+		externalIDs, _ := h.plexClient.GetItemDetails(authToken, item.RatingKey)
+		if externalIDs == nil {
+			externalIDs = plex.ParseGUID(item.GUID)
+		}
+
+		normalizedItems = append(normalizedItems, map[string]interface{}{
+			"ratingKey":   item.RatingKey,
+			"title":       item.Title,
+			"type":        plex.NormalizeMediaType(item.Type),
+			"year":        item.Year,
+			"posterUrl":   plex.GetPosterURL(item.Thumb, authToken),
+			"backdropUrl": plex.GetPosterURL(item.Art, authToken),
+			"externalIds": externalIDs,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": normalizedItems,
+		"count": len(normalizedItems),
+	})
+}
+
+// PlexImportWatchlist imports selected items to strmr watchlist
+func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Request) {
+	if h.watchlistService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Watchlist service not initialized",
+		})
+		return
+	}
+
+	var req struct {
+		ProfileID string `json:"profileId"`
+		Items     []struct {
+			RatingKey   string            `json:"ratingKey"`
+			Title       string            `json:"title"`
+			MediaType   string            `json:"type"`
+			Year        int               `json:"year"`
+			PosterURL   string            `json:"posterUrl"`
+			BackdropURL string            `json:"backdropUrl"`
+			ExternalIDs map[string]string `json:"externalIds"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if req.ProfileID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Profile ID required",
+		})
+		return
+	}
+
+	if len(req.Items) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "No items to import",
+		})
+		return
+	}
+
+	successCount := 0
+	errorCount := 0
+	var errors []string
+
+	for _, item := range req.Items {
+		// Determine the best ID to use - prefer TMDB, then IMDB, then Plex ratingKey
+		itemID := item.RatingKey
+		if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		input := models.WatchlistUpsert{
+			ID:          itemID,
+			MediaType:   item.MediaType,
+			Name:        item.Title,
+			Year:        item.Year,
+			PosterURL:   item.PosterURL,
+			BackdropURL: item.BackdropURL,
+			ExternalIDs: item.ExternalIDs,
+		}
+
+		_, err := h.watchlistService.AddOrUpdate(req.ProfileID, input)
+		if err != nil {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+		} else {
+			successCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"success":      errorCount == 0,
+		"imported":     successCount,
+		"failed":       errorCount,
+		"totalItems":   len(req.Items),
+	}
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+	json.NewEncoder(w).Encode(response)
 }
