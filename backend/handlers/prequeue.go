@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/config"
 	"novastream/models"
 	"novastream/services/history"
 	"novastream/services/indexer"
@@ -28,6 +29,7 @@ type PrequeueHandler struct {
 	hlsCreator      HLSCreator
 	metadataProber  VideoMetadataProber
 	userSettingsSvc *user_settings.Service
+	configManager   *config.Manager
 	demoMode        bool
 }
 
@@ -122,6 +124,11 @@ func (h *PrequeueHandler) SetMetadataProber(prober VideoMetadataProber) {
 // SetUserSettingsService sets the user settings service for track preferences
 func (h *PrequeueHandler) SetUserSettingsService(svc *user_settings.Service) {
 	h.userSettingsSvc = svc
+}
+
+// SetConfigManager sets the config manager for global settings fallback
+func (h *PrequeueHandler) SetConfigManager(cfgManager *config.Manager) {
+	h.configManager = cfgManager
 }
 
 // Prequeue initiates a prequeue request for a title
@@ -370,8 +377,25 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 	selectedSubtitleTrack := -1
 
 	if h.metadataProber != nil && h.userSettingsSvc != nil {
-		// Get user settings for track preferences
-		userSettings, err := h.userSettingsSvc.Get(userID)
+		// Build defaults from global settings
+		var defaults models.UserSettings
+		if h.configManager != nil {
+			globalSettings, err := h.configManager.Load()
+			if err != nil {
+				log.Printf("[prequeue] Failed to load global settings: %v", err)
+			} else {
+				defaults = models.UserSettings{
+					Playback: models.PlaybackSettings{
+						PreferredAudioLanguage:    globalSettings.Playback.PreferredAudioLanguage,
+						PreferredSubtitleLanguage: globalSettings.Playback.PreferredSubtitleLanguage,
+						PreferredSubtitleMode:     globalSettings.Playback.PreferredSubtitleMode,
+					},
+				}
+			}
+		}
+
+		// Get user settings with global defaults as fallback
+		userSettings, err := h.userSettingsSvc.GetWithDefaults(userID, defaults)
 		if err != nil {
 			log.Printf("[prequeue] Failed to get user settings (non-fatal): %v", err)
 		}
@@ -380,13 +404,28 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		metadata, err := h.metadataProber.ProbeVideoMetadata(ctx, resolution.WebDAVPath)
 		if err != nil {
 			log.Printf("[prequeue] Metadata probe failed (non-fatal): %v", err)
-		} else if metadata != nil && userSettings != nil {
+		} else if metadata != nil {
+			// Debug: log user settings for track preferences
+			log.Printf("[prequeue] User track preferences: audioLang=%q, subLang=%q, subMode=%q",
+				userSettings.Playback.PreferredAudioLanguage,
+				userSettings.Playback.PreferredSubtitleLanguage,
+				userSettings.Playback.PreferredSubtitleMode)
+
+			// Debug: log available audio streams
+			for i, stream := range metadata.AudioStreams {
+				log.Printf("[prequeue] Audio stream[%d]: index=%d lang=%q title=%q", i, stream.Index, stream.Language, stream.Title)
+			}
+
 			// Select audio track based on preferred language
 			if userSettings.Playback.PreferredAudioLanguage != "" {
 				selectedAudioTrack = h.findAudioTrackByLanguage(metadata.AudioStreams, userSettings.Playback.PreferredAudioLanguage)
 				if selectedAudioTrack >= 0 {
 					log.Printf("[prequeue] Selected audio track %d for language %q", selectedAudioTrack, userSettings.Playback.PreferredAudioLanguage)
+				} else {
+					log.Printf("[prequeue] No audio track found matching language %q", userSettings.Playback.PreferredAudioLanguage)
 				}
+			} else {
+				log.Printf("[prequeue] No preferred audio language set in user settings")
 			}
 
 			// Select subtitle track based on preferred language and mode

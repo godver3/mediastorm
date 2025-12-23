@@ -286,14 +286,15 @@ func main() {
 		videoHandler.ConfigureLocalWebDAVAccess(localBaseURL, settings.WebDAV.Prefix, settings.WebDAV.Username, settings.WebDAV.Password)
 	}
 
-	// Wire up prequeue handler with video prober, HLS creator, metadata prober, and user settings
-	// This allows prequeue to detect Dolby Vision/HDR10, create HLS sessions, and select tracks
+	// Wire up prequeue handler with video prober, HLS creator, metadata prober, user settings, and config
+	// This allows prequeue to detect Dolby Vision/HDR10, create HLS sessions, and select tracks with proper defaults
 	if videoHandler != nil {
 		prequeueHandler.SetVideoProber(videoHandler)
 		prequeueHandler.SetHLSCreator(videoHandler)
 		prequeueHandler.SetMetadataProber(videoHandler)
 		prequeueHandler.SetUserSettingsService(userSettingsService)
-		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, metadata prober, and user settings")
+		prequeueHandler.SetConfigManager(cfgManager)
+		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, metadata prober, user settings, and config")
 	}
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours)
