@@ -361,7 +361,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     return (
       <Pressable style={styles.container} onPress={onInteract} tvParallaxProperties={{ enabled: false }}>
-        <View style={styles.videoContainer} pointerEvents="box-none">
+        <View style={styles.videoContainer} pointerEvents="none">
           <Video
             key={`rnv-player-${sourceKey}`}
             ref={videoRef}

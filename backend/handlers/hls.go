@@ -114,6 +114,7 @@ type HLSSession struct {
 	// Segment tracking for cleanup and rate limiting
 	MinSegmentRequested int // Minimum segment number that has been requested (-1 = none yet)
 	MaxSegmentRequested int // Maximum segment number that has been requested (-1 = none yet)
+	MinSegmentAvailable int // Minimum segment number still available on disk (for playlist filtering)
 	Paused              bool // True if FFmpeg is paused (SIGSTOP) waiting for player to catch up
 
 	// Input error recovery (for usenet disconnections)
@@ -160,9 +161,9 @@ const (
 	// Rate limiting: pause FFmpeg when buffer gets too far ahead of player
 	// Note: Players keep buffering even when paused, so we need generous thresholds
 	// Pause when (segmentsOnDisk - maxRequested) exceeds this value
-	hlsBufferPauseThreshold = 15 // ~60 seconds of buffer ahead (15 * 4s segments)
+	hlsBufferPauseThreshold = 30 // ~2 minutes of buffer ahead (30 * 4s segments)
 	// Resume when buffer drops to this level
-	hlsBufferResumeThreshold = 8 // ~32 seconds of buffer ahead
+	hlsBufferResumeThreshold = 20 // ~80 seconds of buffer ahead
 )
 
 // HLSManager manages HLS transcoding sessions
@@ -1661,21 +1662,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					}
 				}
 
-				// Cleanup old segments that are well behind playback position (keep 3 behind)
-				cleanupThreshold := maxRequested - 3
-				if cleanupThreshold > 0 {
-					deletedCount := 0
-					for i := 0; i < cleanupThreshold; i++ {
-						oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d%s", i, segmentExt))
-						if err := os.Remove(oldSegment); err == nil {
-							deletedCount++
-						}
-					}
-					if deletedCount > 0 {
-						log.Printf("[hls] session %s: RATE_LIMIT cleanup deleted %d old segments (keeping from segment %d onwards)",
-							session.ID, deletedCount, cleanupThreshold)
-					}
-				}
+				// NOTE: Segment cleanup disabled during playback.
+				// EVENT playlists require all segments to remain available.
+				// Cleanup happens when the session ends instead.
 
 				// Skip rate limiting if no segments found yet
 				if highestSegment < 0 {
@@ -2457,8 +2446,10 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	log.Printf("[hls] segment served: session=%s segment=%s size=%d bytes serve_time=%v total_time=%v",
 		sessionID, segmentName, segmentSize, serveDuration, totalDuration)
 
-	// Aggressively delete old segments to save memory (keep last 3 segments for buffering)
-	go m.deleteOldSegments(session, segmentName)
+	// NOTE: Segment cleanup disabled during playback.
+	// EVENT playlists require all segments to remain available.
+	// Cleanup happens when the session ends instead.
+	// go m.deleteOldSegments(session, segmentName)
 }
 
 // ServeSubtitles serves the sidecar VTT file for fMP4/HDR sessions
@@ -2773,9 +2764,9 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 		return
 	}
 
-	// Keep last 3 segments for player buffering, delete older ones
+	// Keep last 20 segments for player buffering, delete older ones
 	// But only delete segments that the player has already progressed past
-	cutoff := currentSegNum - 3
+	cutoff := currentSegNum - 20
 	if cutoff < 0 {
 		return
 	}
@@ -2788,19 +2779,28 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 	// Delete segments older than cutoff, but never delete segments at or after minSegmentRequested
 	// This ensures we keep all segments from the earliest point the player has accessed
 	deletedCount := 0
+	newMinAvailable := 0
 	for i := 0; i <= cutoff; i++ {
 		// Don't delete segments that are at or after the minimum segment the player has requested
 		// This preserves the ability to seek back to the beginning
 		if i >= minSegmentRequested {
+			newMinAvailable = i
 			break
 		}
 		oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d%s", i, segmentExt))
 		if err := os.Remove(oldSegment); err == nil {
 			deletedCount++
+			newMinAvailable = i + 1
 		}
 	}
 
 	if deletedCount > 0 {
+		// Update MinSegmentAvailable to track what's still on disk
+		session.mu.Lock()
+		if newMinAvailable > session.MinSegmentAvailable {
+			session.MinSegmentAvailable = newMinAvailable
+		}
+		session.mu.Unlock()
 		log.Printf("[hls] session %s: deleted %d old segments (keeping last 3, current=%d, minRequested=%d)",
 			sessionID, deletedCount, currentSegNum, minSegmentRequested)
 	}
