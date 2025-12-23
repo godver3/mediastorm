@@ -338,6 +338,7 @@ func main() {
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, getPIN)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
+	adminUIHandler.SetWatchlistService(watchlistService)
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
@@ -350,6 +351,7 @@ func main() {
 	r.HandleFunc("/admin/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/status", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
@@ -378,6 +380,12 @@ func main() {
 	// History endpoints (admin session auth, no PIN required)
 	r.HandleFunc("/admin/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/history/continue", adminUIHandler.RequireAuth(adminUIHandler.GetContinueWatching)).Methods(http.MethodGet)
+
+	// Plex import endpoints
+	r.HandleFunc("/admin/api/plex/pin", adminUIHandler.RequireAuth(adminUIHandler.PlexCreatePIN)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/plex/pin/{id}", adminUIHandler.RequireAuth(adminUIHandler.PlexCheckPIN)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/watchlist", adminUIHandler.RequireAuth(adminUIHandler.PlexGetWatchlist)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/import", adminUIHandler.RequireAuth(adminUIHandler.PlexImportWatchlist)).Methods(http.MethodPost)
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 
