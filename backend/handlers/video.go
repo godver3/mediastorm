@@ -226,6 +226,12 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request, cleanPath string) (bool, error) {
+	// Check if this is a pre-resolved external URL (e.g., from AIOStreams)
+	// These URLs should be proxied directly rather than going through the provider
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		return h.proxyExternalURL(w, r, cleanPath)
+	}
+
 	// Create a context with timeout to prevent hanging streams
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
@@ -826,6 +832,17 @@ func (h *VideoHandler) buildWebDAVURL(cleanPath string) string {
 }
 
 func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath string) (*ffprobeOutput, error) {
+	// Check if this is already an external URL (e.g., from AIOStreams pre-resolved streams)
+	// If so, probe it directly without going through the provider
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		log.Printf("[video] ffprobe using external URL directly: %s", cleanPath)
+		meta, err := h.runFFProbe(ctx, cleanPath, nil)
+		if err != nil {
+			return nil, fmt.Errorf("ffprobe external URL failed: %w", err)
+		}
+		return meta, nil
+	}
+
 	if h.streamer == nil {
 		return nil, fmt.Errorf("stream provider not configured")
 	}
@@ -939,6 +956,73 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		fileSize int64
 		notes    []string
 	)
+
+	// Check if this is an external URL (e.g., from AIOStreams)
+	isExternalURL := strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://")
+
+	if isExternalURL {
+		log.Printf("[video] ProbeVideo: detected external URL, probing directly: %s", cleanPath)
+
+		// For external URLs, try to get file size via HEAD request
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, cleanPath, nil)
+		if err == nil {
+			headReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+			headResp, headErr := http.DefaultClient.Do(headReq)
+			if headErr == nil {
+				defer headResp.Body.Close()
+				if headResp.ContentLength > 0 {
+					fileSize = headResp.ContentLength
+				}
+			}
+		}
+
+		// Probe directly with ffprobe
+		var meta *ffprobeOutput
+		if h.ffprobePath != "" {
+			if m, err := h.runFFProbe(r.Context(), cleanPath, nil); err == nil && m != nil {
+				meta = m
+			} else if err != nil {
+				log.Printf("[video] ProbeVideo: ffprobe external URL failed: %v", err)
+				notes = append(notes, "ffprobe could not derive metadata")
+			}
+		}
+
+		var response videoMetadataResponse
+		if meta != nil {
+			plan := determineAudioPlan(meta, false)
+			response = composeMetadataResponse(meta, sanitizedPath, plan)
+			if response.FileSizeBytes == 0 && fileSize > 0 {
+				response.FileSizeBytes = fileSize
+			}
+		} else {
+			response = videoMetadataResponse{
+				Path:                  sanitizedPath,
+				DurationSeconds:       0,
+				FileSizeBytes:         fileSize,
+				AudioStreams:          []audioStreamSummary{},
+				VideoStreams:          []videoStreamSummary{},
+				SubtitleStreams:       []subtitleStreamSummary{},
+				AudioStrategy:         string(audioPlanNone),
+				SelectedAudioIndex:    -1,
+				AudioCopySupported:    false,
+				NeedsAudioTranscode:   false,
+				SelectedSubtitleIndex: -1,
+			}
+		}
+
+		if len(notes) > 0 {
+			response.Notes = append(response.Notes, notes...)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("[video] probe encode error for %q: %v", cleanPath, err)
+		}
+		return
+	}
 
 	if h.streamer != nil {
 		log.Printf("[video] ProbeVideo: attempting HEAD request for path=%q", cleanPath)
@@ -1367,7 +1451,13 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 		return nil, errors.New("ffprobe not configured")
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, ffprobeTimeout)
+	// Use longer timeout for external URLs (need to download data over network)
+	timeout := ffprobeTimeout
+	if strings.HasPrefix(inputSpecifier, "http://") || strings.HasPrefix(inputSpecifier, "https://") {
+		timeout = 60 * time.Second
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	args := []string{"-v", "error", "-print_format", "json", "-show_streams", "-show_format"}
@@ -1389,7 +1479,7 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("ffprobe timeout after %s", ffprobeTimeout)
+			return nil, fmt.Errorf("ffprobe timeout after %s", timeout)
 		}
 		errMsg := strings.TrimSpace(stderr.String())
 		if errMsg != "" {
@@ -2044,6 +2134,7 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 	}
 
 	// Clean the path (same logic as ProbeVideo HTTP handler)
+	// Note: external URLs (http://, https://) are not modified
 	cleanPath := path
 	if strings.HasPrefix(cleanPath, "/webdav/") {
 		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
@@ -2054,7 +2145,19 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 	log.Printf("[video] ProbeVideoPath: probing path=%q for HDR detection", cleanPath)
 
 	var meta *ffprobeOutput
-	if h.streamer != nil {
+
+	// For external URLs, probe directly without requiring a stream provider
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		log.Printf("[video] ProbeVideoPath: external URL detected, probing directly")
+		m, err := h.runFFProbe(ctx, cleanPath, nil)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[video] ProbeVideoPath: ffprobe external URL failed for %q: %v", cleanPath, err)
+			}
+			return nil, err
+		}
+		meta = m
+	} else if h.streamer != nil {
 		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
@@ -2115,6 +2218,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 	}
 
 	// Clean the path (same logic as ProbeVideo HTTP handler)
+	// Note: external URLs (http://, https://) are not modified
 	cleanPath := path
 	if strings.HasPrefix(cleanPath, "/webdav/") {
 		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
@@ -2125,7 +2229,19 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 	log.Printf("[video] ProbeVideoMetadata: probing path=%q for track metadata", cleanPath)
 
 	var meta *ffprobeOutput
-	if h.streamer != nil {
+
+	// For external URLs, probe directly without requiring a stream provider
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		log.Printf("[video] ProbeVideoMetadata: external URL detected, probing directly")
+		m, err := h.runFFProbe(ctx, cleanPath, nil)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[video] ProbeVideoMetadata: ffprobe external URL failed for %q: %v", cleanPath, err)
+			}
+			return nil, err
+		}
+		meta = m
+	} else if h.streamer != nil {
 		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
@@ -2182,6 +2298,237 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 	log.Printf("[video] ProbeVideoMetadata: found %d audio streams, %d subtitle streams", len(result.AudioStreams), len(result.SubtitleStreams))
 
 	return result, nil
+}
+
+// proxyExternalURL proxies a pre-resolved external URL (e.g., from AIOStreams) to the client.
+// It supports range requests for seeking and passes through the response from the remote server.
+func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, externalURL string) (bool, error) {
+	log.Printf("[video] proxying external URL: %s", externalURL)
+
+	// Handle URLs with unencoded query parameters (e.g., "?name=The Devil's Plan")
+	// Split URL into base and query, properly encode the query parameters
+	cleanURL := externalURL
+	if qIdx := strings.Index(externalURL, "?"); qIdx >= 0 {
+		baseURL := externalURL[:qIdx]
+		queryStr := externalURL[qIdx+1:]
+
+		// Parse query params - this handles unencoded values
+		params, err := url.ParseQuery(queryStr)
+		if err != nil {
+			log.Printf("[video] query parse failed, using raw URL: %v", err)
+		} else {
+			// Re-encode query string properly
+			cleanURL = baseURL + "?" + params.Encode()
+			log.Printf("[video] external proxy: re-encoded query: %s -> %s", queryStr, params.Encode())
+		}
+	}
+
+	// Parse the cleaned URL
+	parsedURL, err := url.Parse(cleanURL)
+	if err != nil {
+		log.Printf("[video] URL parse failed: %v", err)
+		http.Error(w, "invalid external URL", http.StatusBadRequest)
+		return true, fmt.Errorf("parse external URL: %w", err)
+	}
+
+	log.Printf("[video] external proxy: final URL: %s (host=%s)", cleanURL, parsedURL.Host)
+
+	// Create HTTP client with reasonable timeout
+	client := &http.Client{
+		Timeout: 30 * time.Minute, // Long timeout for video streaming
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Follow redirects but limit the chain
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			// Copy headers to redirected request
+			for key, values := range via[0].Header {
+				for _, value := range values {
+					req.Header.Add(key, value)
+				}
+			}
+			return nil
+		},
+	}
+
+	// Create request to external URL
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+
+	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, cleanURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create proxy request", http.StatusInternalServerError)
+		return true, fmt.Errorf("create proxy request: %w", err)
+	}
+
+	// Forward range header for seeking support
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		proxyReq.Header.Set("Range", rangeHeader)
+		log.Printf("[video] external proxy: forwarding range header: %s", rangeHeader)
+	}
+
+	// Add minimal headers - some servers are picky about extra headers
+	// Using a simple user agent that looks like a video player
+	proxyReq.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+	proxyReq.Header.Set("Accept", "*/*")
+	proxyReq.Header.Set("Accept-Encoding", "identity") // Don't accept compression for video streaming
+
+	// Log request details for debugging
+	log.Printf("[video] external proxy request: method=%s host=%s path=%s", proxyReq.Method, proxyReq.URL.Host, proxyReq.URL.Path)
+
+	// Make the request
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		log.Printf("[video] external proxy request failed: %v", err)
+		http.Error(w, "failed to fetch external stream", http.StatusBadGateway)
+		return true, fmt.Errorf("external request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Log response details
+	contentLength := resp.Header.Get("Content-Length")
+	contentRange := resp.Header.Get("Content-Range")
+	acceptRanges := resp.Header.Get("Accept-Ranges")
+	location := resp.Header.Get("Location")
+	log.Printf("[video] external proxy response: status=%d content-length=%s content-range=%q accept-ranges=%q location=%q",
+		resp.StatusCode, contentLength, contentRange, acceptRanges, location)
+
+	// Check for error status codes
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		log.Printf("[video] external proxy error response: %d - %s", resp.StatusCode, string(body))
+		// Log all response headers for debugging
+		for key, values := range resp.Header {
+			log.Printf("[video] external proxy error header: %s=%v", key, values)
+		}
+		http.Error(w, fmt.Sprintf("external stream error: %d", resp.StatusCode), resp.StatusCode)
+		return true, fmt.Errorf("external stream returned %d", resp.StatusCode)
+	}
+
+	// Set CORS and common headers
+	h.writeCommonHeaders(w)
+
+	// Forward important headers from the external response
+	forwardHeaders := []string{
+		"Content-Type",
+		"Content-Length",
+		"Content-Range",
+		"Accept-Ranges",
+		"Content-Disposition",
+		"Last-Modified",
+		"ETag",
+	}
+	for _, header := range forwardHeaders {
+		if value := resp.Header.Get(header); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+
+	// Set content type if not provided
+	if w.Header().Get("Content-Type") == "" {
+		// Try to detect from URL extension
+		ext := detectContainerExt(externalURL)
+		switch ext {
+		case ".mkv":
+			w.Header().Set("Content-Type", "video/x-matroska")
+		case ".mp4", ".m4v":
+			w.Header().Set("Content-Type", "video/mp4")
+		case ".avi":
+			w.Header().Set("Content-Type", "video/x-msvideo")
+		case ".webm":
+			w.Header().Set("Content-Type", "video/webm")
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+	}
+
+	// Write status code
+	w.WriteHeader(resp.StatusCode)
+
+	// For HEAD requests, we're done
+	if r.Method == http.MethodHead {
+		return true, nil
+	}
+
+	// Track this stream for admin monitoring
+	tracker := GetStreamTracker()
+	var expectedLength int64
+	if contentLength != "" {
+		if parsed, parseErr := strconv.ParseInt(contentLength, 10, 64); parseErr == nil {
+			expectedLength = parsed
+		}
+	}
+	streamID, bytesCounter := tracker.StartStream(r, externalURL, expectedLength, 0, 0)
+	defer tracker.EndStream(streamID)
+
+	// Stream the response body to the client
+	buf := make([]byte, 512*1024) // 512KB buffer
+	var total int64
+	flusher, _ := w.(http.Flusher)
+	flushCounter := 0
+	const flushInterval = 1
+
+	lastLogBytes := int64(0)
+	const logInterval = 10 * 1024 * 1024 // Log every 10MB
+
+	log.Printf("[video] starting external proxy stream: url=%q streamID=%s", externalURL, streamID)
+
+	for {
+		// Check if context is cancelled (client disconnected)
+		select {
+		case <-ctx.Done():
+			log.Printf("[video] external proxy cancelled: url=%q total=%d reason=%v", externalURL, total, ctx.Err())
+			return true, ctx.Err()
+		default:
+		}
+
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			written, writeErr := w.Write(buf[:n])
+			if writeErr != nil {
+				if isClientGone(writeErr) || ctx.Err() == context.Canceled {
+					log.Printf("[video] external proxy: client disconnected url=%q total=%d", externalURL, total)
+					return true, nil
+				}
+				log.Printf("[video] external proxy write error: url=%q total=%d err=%v", externalURL, total, writeErr)
+				return true, writeErr
+			}
+
+			total += int64(written)
+			// Update stream tracking bytes counter
+			if bytesCounter != nil {
+				atomic.StoreInt64(bytesCounter, total)
+			}
+			flushCounter++
+
+			// Periodic progress logging
+			if total-lastLogBytes >= logInterval {
+				log.Printf("[video] external proxy progress: url=%q total=%d", externalURL, total)
+				lastLogBytes = total
+			}
+
+			// Flush periodically
+			if flusher != nil && flushCounter >= flushInterval {
+				flusher.Flush()
+				flushCounter = 0
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				log.Printf("[video] external proxy read error: url=%q total=%d err=%v", externalURL, total, readErr)
+				return true, readErr
+			}
+			// Final flush on EOF
+			if flusher != nil {
+				flusher.Flush()
+			}
+			log.Printf("[video] external proxy complete: url=%q total=%d", externalURL, total)
+			break
+		}
+	}
+
+	return true, nil
 }
 
 // GetDirectURL returns the direct download URL for a given path.

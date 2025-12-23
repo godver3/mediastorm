@@ -261,9 +261,94 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
+// resolveExternalURL follows HTTP redirects to get the final direct URL.
+// This is important for AIOstreams/Comet URLs which are API endpoints that redirect
+// to the actual debrid CDN URL. By resolving once upfront, we avoid repeated redirect
+// resolution during probing and FFmpeg input, which can cause timeouts.
+func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string) (string, error) {
+	log.Printf("[hls] resolving external URL: %s", externalURL)
+
+	// Create a client that captures the final URL after redirects
+	var finalURL string
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			// Track the URL we're redirecting to
+			finalURL = req.URL.String()
+			log.Printf("[hls] following redirect to: %s", finalURL)
+			return nil
+		},
+	}
+
+	// First try HEAD request (faster, no body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, externalURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("HEAD request failed: %w", err)
+	}
+	resp.Body.Close()
+
+	// If HEAD succeeded, check for redirects
+	if resp.StatusCode < 400 {
+		if finalURL != "" && finalURL != externalURL {
+			log.Printf("[hls] resolved external URL via HEAD: %s -> %s", externalURL, finalURL)
+			return finalURL, nil
+		}
+		log.Printf("[hls] external URL has no redirects (HEAD): %s", externalURL)
+		return externalURL, nil
+	}
+
+	// HEAD failed (e.g., 405 Method Not Allowed), try GET with Range header
+	// This minimizes data transfer while still following redirects
+	log.Printf("[hls] HEAD returned %d, trying GET with Range header", resp.StatusCode)
+	finalURL = "" // Reset for new request
+
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, externalURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create GET request: %w", err)
+	}
+	req.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+	req.Header.Set("Range", "bytes=0-0") // Request only 1 byte
+
+	resp, err = client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("GET request failed: %w", err)
+	}
+	resp.Body.Close() // Close immediately, we only needed the redirect resolution
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("GET request returned status %d", resp.StatusCode)
+	}
+
+	// If we followed redirects, use the final URL
+	if finalURL != "" && finalURL != externalURL {
+		log.Printf("[hls] resolved external URL via GET: %s -> %s", externalURL, finalURL)
+		return finalURL, nil
+	}
+
+	// No redirects, use the original URL
+	log.Printf("[hls] external URL has no redirects (GET): %s", externalURL)
+	return externalURL, nil
+}
+
 // getDirectURL attempts to get a direct HTTP URL for the session source
 // Returns the URL and true if available, empty string and false otherwise
 func (m *HLSManager) getDirectURL(ctx context.Context, session *HLSSession) (string, bool) {
+	// If the path is already an external URL, return it directly
+	// Note: The URL should already be resolved in CreateSession, so we just return it
+	if strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://") {
+		log.Printf("[hls] path is already an external URL: %s", session.Path)
+		return session.Path, true
+	}
+
 	// Check if the streaming provider supports direct URLs
 	directProvider, ok := m.streamer.(streaming.DirectURLProvider)
 	if !ok {
@@ -335,9 +420,27 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// The original ctx is only used for the initial setup
 	bgCtx, cancel := context.WithCancel(context.Background())
 
+	// Check if the path is an external URL (e.g., from AIOStreams pre-resolved streams)
+	isExternalURL := strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+
+	// For external URLs (like Comet/AIOstreams), resolve redirects upfront to get the actual
+	// debrid CDN URL. This is critical because Comet URLs are API endpoints that redirect,
+	// and repeatedly following redirects during probing causes timeouts.
+	if isExternalURL {
+		resolvedURL, err := m.resolveExternalURL(ctx, path)
+		if err != nil {
+			log.Printf("[hls] session %s: failed to resolve external URL, using original: %v", sessionID, err)
+			// Continue with original URL - ffmpeg/ffprobe can follow redirects
+		} else if resolvedURL != path {
+			log.Printf("[hls] session %s: using resolved URL for probing and FFmpeg: %s", sessionID, resolvedURL)
+			path = resolvedURL
+		}
+	}
+
 	// Probe the file for duration before starting transcoding
+	// For external URLs, we can probe directly without needing a streamer
 	var duration float64
-	if m.ffprobePath != "" && m.streamer != nil {
+	if m.ffprobePath != "" && (m.streamer != nil || isExternalURL) {
 		log.Printf("[hls] probing duration for session %s path=%q", sessionID, path)
 		if probedDuration, err := m.probeDuration(ctx, path); err == nil && probedDuration > 0 {
 			duration = probedDuration
@@ -351,7 +454,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// Some re-encodes (e.g., YTS) have DV RPU data but wrong color metadata (bt709 instead of smpte2084)
 	// The DV RPU's color transforms are designed for HDR base layer, causing saturated colors when applied to bt709
 	// In this case, disable DV and use HDR10 fallback which applies correct color space via hevc_metadata filter
-	if hasDV && m.ffprobePath != "" && m.streamer != nil {
+	if hasDV && m.ffprobePath != "" && (m.streamer != nil || isExternalURL) {
 		if colorTransfer, err := m.probeColorMetadata(ctx, path); err == nil {
 			log.Printf("[hls] session %s: probed color_transfer=%q for DV content", sessionID, colorTransfer)
 			// bt709 or empty color_transfer on DV content indicates incorrect tagging
@@ -522,8 +625,17 @@ func (m *HLSManager) fixDVCodecTag(session *HLSSession) error {
 
 // probeAudioStreams inspects audio streams for codec compatibility and exposes their ordering
 func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (streams []audioStreamInfo, hasTrueHD bool, hasCompatibleAudio bool, err error) {
-	if m.ffprobePath == "" || m.streamer == nil {
+	if m.ffprobePath == "" {
 		return nil, false, true, nil // Assume compatible if we can't probe
+	}
+
+	// For external URLs, probe directly instead of going through provider
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return m.probeAudioStreamsFromURL(ctx, path)
+	}
+
+	if m.streamer == nil {
+		return nil, false, true, nil // Assume compatible if no provider
 	}
 
 	// Request first 16MB to probe
@@ -614,10 +726,78 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 	return streams, hasTrueHD, hasCompatibleAudio, nil
 }
 
+// probeAudioStreamsFromURL probes audio streams directly from an external URL
+func (m *HLSManager) probeAudioStreamsFromURL(ctx context.Context, url string) (streams []audioStreamInfo, hasTrueHD bool, hasCompatibleAudio bool, err error) {
+	log.Printf("[hls] probing audio streams from external URL: %s", url)
+
+	// Use 60 second timeout for external URLs (need to download data over network)
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "a",
+		"-show_entries", "stream=index,codec_name",
+		"-of", "json",
+		"-i", url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[hls] ffprobe audio from URL failed: %v", err)
+		return nil, false, true, nil // Assume compatible on error
+	}
+
+	var result struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[hls] failed to parse ffprobe audio output from URL: %v", err)
+		return nil, false, true, nil
+	}
+
+	compatibleCodecs := map[string]bool{
+		"aac":  true,
+		"ac3":  true,
+		"eac3": true,
+		"mp3":  true,
+	}
+
+	streams = make([]audioStreamInfo, 0, len(result.Streams))
+	for _, stream := range result.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		streams = append(streams, audioStreamInfo{Index: stream.Index, Codec: codec})
+		if codec == "truehd" || codec == "mlp" {
+			hasTrueHD = true
+		}
+		if compatibleCodecs[codec] {
+			hasCompatibleAudio = true
+		}
+	}
+
+	log.Printf("[hls] audio probe from URL results: hasTrueHD=%v hasCompatibleAudio=%v codecs=%d",
+		hasTrueHD, hasCompatibleAudio, len(result.Streams))
+
+	return streams, hasTrueHD, hasCompatibleAudio, nil
+}
+
 // probeSubtitleStreams lists subtitle streams and preserves their ordering for FFmpeg mapping
 func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (streams []subtitleStreamInfo, err error) {
-	if m.ffprobePath == "" || m.streamer == nil {
+	if m.ffprobePath == "" {
 		return nil, fmt.Errorf("ffprobe not configured")
+	}
+
+	// For external URLs, probe directly instead of going through provider
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return m.probeSubtitleStreamsFromURL(ctx, path)
+	}
+
+	if m.streamer == nil {
+		return nil, fmt.Errorf("streamer not configured")
 	}
 
 	request := streaming.Request{
@@ -689,6 +869,50 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 	return streams, nil
 }
 
+// probeSubtitleStreamsFromURL probes subtitle streams directly from an external URL
+func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string) (streams []subtitleStreamInfo, err error) {
+	log.Printf("[hls] probing subtitle streams from external URL: %s", url)
+
+	// Use 60 second timeout for external URLs (need to download data over network)
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "s",
+		"-show_entries", "stream=index,codec_name",
+		"-of", "json",
+		"-i", url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[hls] ffprobe subtitle from URL failed: %v", err)
+		return nil, err
+	}
+
+	var result struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[hls] failed to parse ffprobe subtitle output from URL: %v", err)
+		return nil, err
+	}
+
+	streams = make([]subtitleStreamInfo, 0, len(result.Streams))
+	for _, stream := range result.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
+	}
+
+	log.Printf("[hls] subtitle probe from URL results: streams=%d", len(streams))
+	return streams, nil
+}
+
 // startTranscoding begins FFmpeg HLS transcoding
 func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, forceAAC bool) error {
 	startTime := time.Now()
@@ -753,12 +977,15 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	var headerPrefix []byte
 	var requireMatroskaAlign bool
 
-	if hasDirectURL && session.StartOffset > 0 {
-		// Use direct URL for seeking
-		log.Printf("[hls] session %s: using direct URL for seeking: %s", session.ID, directURL)
+	// Check if the path is an external URL (e.g., from AIOStreams pre-resolved streams)
+	isExternalURL := strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://")
+
+	if hasDirectURL && (session.StartOffset > 0 || isExternalURL) {
+		// Use direct URL for seeking, or for external URLs (always, since provider can't handle them)
+		log.Printf("[hls] session %s: using direct URL: %s (startOffset=%.3f, isExternal=%v)", session.ID, directURL, session.StartOffset, isExternalURL)
 		usingPipe = false
 	} else {
-		// Fall back to pipe streaming
+		// Fall back to pipe streaming (only for non-external paths)
 		providerStartTime := time.Now()
 		log.Printf("[hls] session %s: requesting stream from provider", session.ID)
 
@@ -1940,6 +2167,11 @@ func (m *HLSManager) probeDuration(ctx context.Context, cleanPath string) (float
 		return 0, fmt.Errorf("ffprobe not configured")
 	}
 
+	// For external URLs, probe directly
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		return m.probeDurationFromURL(ctx, cleanPath)
+	}
+
 	if m.streamer == nil {
 		return 0, fmt.Errorf("stream provider not configured")
 	}
@@ -2002,11 +2234,47 @@ func (m *HLSManager) probeDuration(ctx context.Context, cleanPath string) (float
 	return duration, nil
 }
 
+// probeDurationFromURL probes duration directly from an external URL
+func (m *HLSManager) probeDurationFromURL(ctx context.Context, url string) (float64, error) {
+	log.Printf("[hls] probing duration from external URL: %s", url)
+
+	// Use 60 second timeout for external URLs (need to download data over network)
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		"-i", url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe execution: %w", err)
+	}
+
+	durationStr := strings.TrimSpace(string(output))
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse duration %q: %w", durationStr, err)
+	}
+
+	log.Printf("[hls] probed duration from URL: %.2f seconds", duration)
+	return duration, nil
+}
+
 // probeColorMetadata checks if the video has correct HDR color tagging
 // Returns color_transfer value (e.g., "smpte2084" for HDR, "bt709" for SDR/incorrect)
 func (m *HLSManager) probeColorMetadata(ctx context.Context, cleanPath string) (string, error) {
 	if m.ffprobePath == "" {
 		return "", fmt.Errorf("ffprobe not configured")
+	}
+
+	// For external URLs, probe directly
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		return m.probeColorMetadataFromURL(ctx, cleanPath)
 	}
 
 	if m.streamer == nil {
@@ -2061,6 +2329,33 @@ func (m *HLSManager) probeColorMetadata(ctx context.Context, cleanPath string) (
 	}
 
 	return strings.TrimSpace(string(output)), nil
+}
+
+// probeColorMetadataFromURL probes color metadata directly from an external URL
+func (m *HLSManager) probeColorMetadataFromURL(ctx context.Context, url string) (string, error) {
+	log.Printf("[hls] probing color metadata from external URL: %s", url)
+
+	// Use 60 second timeout for external URLs (need to download data over network)
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=color_transfer",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		"-i", url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe execution: %w", err)
+	}
+
+	colorTransfer := strings.TrimSpace(string(output))
+	log.Printf("[hls] probed color_transfer from URL: %q", colorTransfer)
+	return colorTransfer, nil
 }
 
 // logProcessCPU attempts to read CPU usage from /proc/{pid}/stat

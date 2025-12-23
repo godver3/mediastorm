@@ -37,6 +37,40 @@ func NewPlaybackService(cfg *config.Manager, healthService *HealthService) *Play
 func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
 	log.Printf("[debrid-playback] resolve start title=%q link=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Link))
 
+	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
+	// Pre-resolved streams already have a direct playback URL, no debrid resolution needed
+	if candidate.Attributes["preresolved"] == "true" {
+		streamURL := strings.TrimSpace(candidate.Attributes["stream_url"])
+		if streamURL == "" {
+			// Fallback: check TorrentURL field (where we stored the stream URL in the scraper)
+			streamURL = strings.TrimSpace(candidate.Attributes["torrentURL"])
+		}
+		if streamURL == "" {
+			return nil, fmt.Errorf("pre-resolved stream missing stream_url")
+		}
+
+		log.Printf("[debrid-playback] using pre-resolved stream URL: %s", streamURL)
+
+		// Extract filename from attributes or URL
+		filename := strings.TrimSpace(candidate.Attributes["raw_title"])
+		if filename == "" {
+			filename = strings.TrimSpace(candidate.Title)
+		}
+
+		// For pre-resolved streams, the WebDAV path is the direct URL
+		// The video handler will detect this and stream directly
+		resolution := &models.PlaybackResolution{
+			QueueID:       0,
+			WebDAVPath:    streamURL, // Direct stream URL
+			HealthStatus:  "cached", // Use "cached" for frontend compatibility
+			FileSize:      candidate.SizeBytes,
+			SourceNZBPath: streamURL,
+		}
+
+		log.Printf("[debrid-playback] pre-resolved resolution: url=%s filename=%s", streamURL, filename)
+		return resolution, nil
+	}
+
 	// Extract info hash from candidate (may be empty if using torrent file upload)
 	infoHash := strings.TrimSpace(candidate.Attributes["infoHash"])
 	if infoHash == "" {

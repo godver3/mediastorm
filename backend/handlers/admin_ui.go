@@ -212,9 +212,9 @@ var SettingsSchema = map[string]interface{}{
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean"}, "description": "Scraper type", "order": 1},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams"}, "description": "Scraper type", "order": 1},
 			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "Torrentio URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (e.g., http://localhost:9117)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}}}, "order": 3},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams: full Stremio addon URL)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}}}, "order": 3},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 5},
 		},
@@ -313,17 +313,19 @@ type AdminUIHandler struct {
 	watchlistService    *watchlist.Service
 	plexClient          *plex.Client
 	configManager       *config.Manager
-	metadataService     MetadataCacheClearer
+	metadataService     MetadataService
 	getPIN              func() string
 }
 
-// MetadataCacheClearer interface for clearing metadata cache
-type MetadataCacheClearer interface {
+// MetadataService interface for metadata operations
+type MetadataService interface {
 	ClearCache() error
+	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
+	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
 }
 
-// SetMetadataService sets the metadata service for cache clearing
-func (h *AdminUIHandler) SetMetadataService(ms MetadataCacheClearer) {
+// SetMetadataService sets the metadata service for cache clearing and overview fetching
+func (h *AdminUIHandler) SetMetadataService(ms MetadataService) {
 	h.metadataService = ms
 }
 
@@ -995,6 +997,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		h.testJackettScraper(w, req)
 	case "zilean":
 		h.testZileanScraper(w, req)
+	case "aiostreams":
+		h.testAIOStreamsScraper(w, req)
 	case "torrentio":
 		fallthrough
 	default:
@@ -1193,6 +1197,112 @@ func (h *AdminUIHandler) testZileanScraper(w http.ResponseWriter, req TestScrape
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Zilean is working",
+	})
+}
+
+// testAIOStreamsScraper tests an AIOStreams instance by fetching its manifest and a test stream
+func (h *AdminUIHandler) testAIOStreamsScraper(w http.ResponseWriter, req TestScraperRequest) {
+	if req.URL == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "AIOStreams URL is required (full URL including config token)",
+		})
+		return
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	baseURL := strings.TrimRight(req.URL, "/")
+	// Strip /manifest.json if user included it
+	baseURL = strings.TrimSuffix(baseURL, "/manifest.json")
+
+	// Test by fetching the manifest
+	manifestURL := fmt.Sprintf("%s/manifest.json", baseURL)
+	manifestReq, err := http.NewRequest(http.MethodGet, manifestURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	addBrowserHeaders(manifestReq)
+
+	resp, err := client.Do(manifestReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("AIOStreams connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("AIOStreams returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Try to parse manifest to get addon name
+	var manifest struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "AIOStreams is reachable",
+		})
+		return
+	}
+
+	// Test a stream query (The Matrix - a known IMDB ID)
+	streamURL := fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL)
+	streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but couldn't test streams", manifest.Name, manifest.Version),
+		})
+		return
+	}
+	addBrowserHeaders(streamReq)
+
+	streamResp, err := client.Do(streamReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but stream test failed: %v", manifest.Name, manifest.Version, err),
+		})
+		return
+	}
+	defer streamResp.Body.Close()
+
+	if streamResp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but stream test returned HTTP %d", manifest.Name, manifest.Version, streamResp.StatusCode),
+		})
+		return
+	}
+
+	// Parse stream response to count results
+	var streamResult struct {
+		Streams []interface{} `json:"streams"`
+	}
+	if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("AIOStreams is working (%s v%s)", manifest.Name, manifest.Version),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("AIOStreams is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
 	})
 }
 
@@ -2284,6 +2394,8 @@ func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Requ
 	errorCount := 0
 	var errors []string
 
+	ctx := r.Context()
+
 	for _, item := range req.Items {
 		// Determine the best ID to use - prefer TMDB, then IMDB, then Plex ratingKey
 		itemID := item.RatingKey
@@ -2293,10 +2405,17 @@ func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Requ
 			itemID = imdbID
 		}
 
+		// Fetch overview from metadata service if available
+		var overview string
+		if h.metadataService != nil {
+			overview = h.fetchOverviewForItem(ctx, item.MediaType, item.Title, item.Year, item.ExternalIDs)
+		}
+
 		input := models.WatchlistUpsert{
 			ID:          itemID,
 			MediaType:   item.MediaType,
 			Name:        item.Title,
+			Overview:    overview,
 			Year:        item.Year,
 			PosterURL:   item.PosterURL,
 			BackdropURL: item.BackdropURL,
@@ -2323,4 +2442,54 @@ func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Requ
 		response["errors"] = errors
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+// fetchOverviewForItem fetches the overview/description for a watchlist item from metadata service
+func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, name string, year int, externalIDs map[string]string) string {
+	if h.metadataService == nil {
+		return ""
+	}
+
+	// Parse external IDs
+	var tmdbID, tvdbID int64
+	var imdbID string
+	if id, ok := externalIDs["tmdb"]; ok && id != "" {
+		if parsed, err := strconv.ParseInt(id, 10, 64); err == nil {
+			tmdbID = parsed
+		}
+	}
+	if id, ok := externalIDs["tvdb"]; ok && id != "" {
+		if parsed, err := strconv.ParseInt(id, 10, 64); err == nil {
+			tvdbID = parsed
+		}
+	}
+	if id, ok := externalIDs["imdb"]; ok && id != "" {
+		imdbID = id
+	}
+
+	switch strings.ToLower(mediaType) {
+	case "movie":
+		query := models.MovieDetailsQuery{
+			Name:   name,
+			Year:   year,
+			IMDBID: imdbID,
+			TMDBID: tmdbID,
+			TVDBID: tvdbID,
+		}
+		if title, err := h.metadataService.MovieDetails(ctx, query); err == nil && title != nil {
+			return title.Overview
+		}
+	case "series", "show", "tv":
+		query := models.SeriesDetailsQuery{
+			Name:   name,
+			Year:   year,
+			TMDBID: tmdbID,
+			TVDBID: tvdbID,
+		}
+		if title, err := h.metadataService.SeriesInfo(ctx, query); err == nil && title != nil {
+			return title.Overview
+		}
+	}
+
+	return ""
 }

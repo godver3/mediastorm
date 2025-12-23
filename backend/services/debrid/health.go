@@ -44,6 +44,18 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		return nil, fmt.Errorf("health service not configured")
 	}
 
+	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
+	// Pre-resolved streams are already direct playback URLs, no health check needed
+	if result.Attributes["preresolved"] == "true" {
+		log.Printf("[debrid-health] skipping health check for pre-resolved stream: %s", result.Title)
+		return &DebridHealthCheck{
+			Healthy:  true,
+			Status:   "cached", // Use "cached" status for frontend compatibility
+			Cached:   true,
+			Provider: result.Attributes["tracker"],
+		}, nil
+	}
+
 	// Extract info hash from result attributes (may be empty for torrent file uploads)
 	infoHash := strings.TrimSpace(result.Attributes["infoHash"])
 	if infoHash == "" {
