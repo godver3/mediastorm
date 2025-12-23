@@ -1028,23 +1028,13 @@ function SettingsScreen() {
     try {
       await setBackendApiKey(backendApiKeyInput);
       await setBackendUrl(backendUrlInput);
-      showToast('Backend connection details saved.', { tone: 'success' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update backend connection details';
-      showToast(message, { tone: 'danger' });
-    }
-  }, [backendApiKeyInput, backendUrlInput, setBackendApiKey, setBackendUrl, showToast]);
-
-  const handleReloadSettings = useCallback(async () => {
-    try {
-      await setBackendApiKey(backendApiKeyInput);
       await refreshSettings();
-      showToast('Settings reloaded from backend.', { tone: 'success' });
+      showToast('Backend connection saved and settings reloaded.', { tone: 'success' });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to reload settings';
+      const message = err instanceof Error ? err.message : 'Failed to update backend connection';
       showToast(message, { tone: 'danger' });
     }
-  }, [backendApiKeyInput, refreshSettings, setBackendApiKey, showToast]);
+  }, [backendApiKeyInput, backendUrlInput, setBackendApiKey, setBackendUrl, refreshSettings, showToast]);
 
   // TV Text Input Modal handlers
   const openTextInputModal = useCallback(
@@ -1997,8 +1987,7 @@ function SettingsScreen() {
         type: 'button-row',
         id: 'connection-buttons',
         buttons: [
-          { label: 'Apply', action: 'connection-apply', disabled: !isReady },
-          { label: 'Reload', action: 'connection-reload', disabled: !isReady || busy },
+          { label: 'Apply', action: 'connection-apply', disabled: !isReady || busy },
         ],
       },
     ],
@@ -2253,9 +2242,6 @@ function SettingsScreen() {
         case 'connection-apply':
           void handleBackendConnectionApply();
           break;
-        case 'connection-reload':
-          void handleReloadSettings();
-          break;
         case 'save-settings':
           void handleSaveSettings();
           break;
@@ -2274,7 +2260,7 @@ function SettingsScreen() {
           break;
       }
     },
-    [handleBackendConnectionApply, handleReloadSettings, handleSaveSettings, clearUnplayableReleases, showToast],
+    [handleBackendConnectionApply, handleSaveSettings, clearUnplayableReleases, showToast],
   );
 
   // TV Grid field update handler
@@ -2822,12 +2808,10 @@ function SettingsScreen() {
                     />
                     <SpatialNavigationNode orientation="horizontal">
                       <View style={styles.buttonRow}>
-                        <FocusablePressable text="Apply" onSelect={handleBackendConnectionApply} disabled={!isReady} />
                         <FocusablePressable
-                          text="Reload"
-                          onSelect={handleReloadSettings}
+                          text="Apply"
+                          onSelect={handleBackendConnectionApply}
                           disabled={!isReady || busy}
-                          style={styles.secondaryButton}
                         />
                       </View>
                     </SpatialNavigationNode>
