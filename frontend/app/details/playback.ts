@@ -276,9 +276,13 @@ export const buildStreamUrl = (
     return `${base}/video/hls/start?${search}`;
   }
 
-  // For all platforms (including web), use direct WebDAV URLs with basic auth (except for debrid paths)
+  // Check if the path is already an external URL (e.g., from AIOStreams pre-resolved streams)
+  // External URLs should be routed through the video proxy endpoint, not constructed as WebDAV URLs
+  const isExternalUrl = webdavPath.startsWith('http://') || webdavPath.startsWith('https://');
+
+  // For all platforms (including web), use direct WebDAV URLs with basic auth (except for debrid paths and external URLs)
   // For web browsers, we'll check if transmuxing is needed after constructing the URL
-  if (settings?.webdav && !isDebridPath) {
+  if (settings?.webdav && !isDebridPath && !isExternalUrl) {
     const webdavConfig = settings.webdav;
 
     let normalizedPath = webdavPath;
@@ -412,6 +416,7 @@ export const buildStreamUrl = (
  * Build a direct stream URL for external players like Infuse.
  * External players don't need our HLS transcoding or proxy - they handle everything natively.
  * - For debrid: use backend proxy URL (to handle IP-locked RD URLs)
+ * - For external URLs (AIOStreams): use backend proxy URL
  * - For usenet: build a direct WebDAV URL with auth
  */
 export const buildDirectUrlForExternalPlayer = async (
@@ -420,10 +425,12 @@ export const buildDirectUrlForExternalPlayer = async (
   backendApiKey?: string | null,
 ): Promise<string | null> => {
   const isDebridPath = playback.webdavPath.includes('/debrid/');
+  const isExternalUrl =
+    playback.webdavPath.startsWith('http://') || playback.webdavPath.startsWith('https://');
 
-  // For debrid content, use backend proxy URL
-  // Real-Debrid URLs are IP-locked, so we proxy through the backend which has access
-  if (isDebridPath) {
+  // For debrid content or external URLs (AIOStreams), use backend proxy URL
+  // Real-Debrid URLs are IP-locked, and external URLs need to be proxied through the backend
+  if (isDebridPath || isExternalUrl) {
     const base = apiService.getBaseUrl().replace(/\/$/, '');
     const params = new URLSearchParams();
     params.set('path', playback.webdavPath);
@@ -433,7 +440,10 @@ export const buildDirectUrlForExternalPlayer = async (
       params.set('apiKey', trimmedApiKey);
     }
     const proxyUrl = `${base}/video/stream?${params.toString()}`;
-    console.log('🎬 [External Player] Using backend proxy URL for debrid:', proxyUrl);
+    console.log(
+      `🎬 [External Player] Using backend proxy URL for ${isExternalUrl ? 'external URL' : 'debrid'}:`,
+      proxyUrl,
+    );
     return proxyUrl;
   }
 
@@ -790,26 +800,34 @@ export const initiatePlayback = async (
   let selectedAudioTrack: number | undefined;
   let selectedSubtitleTrack: number | undefined;
 
+  // For HDR content, always try to select tracks based on user preferences or defaults
+  // This ensures proper audio/subtitle track selection even if settings don't explicitly define preferences
   const playbackSettings = options.userSettings?.playback ?? settings?.playback;
-  if (hasAnyHDR && playbackSettings) {
+  if (hasAnyHDR) {
     try {
-      // We need metadata to select tracks - re-fetch to get full data for track selection
+      // We need metadata to select tracks - fetch to get full data for track selection
+      console.log('🎬 Fetching metadata for track selection...');
       const metadata = await apiService.getVideoMetadata(playback.webdavPath);
 
       if (metadata) {
-        const audioLang = playbackSettings.preferredAudioLanguage || 'eng';
-        const subLang = playbackSettings.preferredSubtitleLanguage || 'eng';
-        const subMode = playbackSettings.preferredSubtitleMode || 'off';
+        // Use preferences if available, otherwise fall back to sensible defaults
+        const audioLang = playbackSettings?.preferredAudioLanguage || 'eng';
+        const subLang = playbackSettings?.preferredSubtitleLanguage || 'eng';
+        const subMode = playbackSettings?.preferredSubtitleMode || 'off';
 
-        if (metadata.audioStreams) {
+        if (metadata.audioStreams && metadata.audioStreams.length > 0) {
           const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
           if (match !== null) {
             selectedAudioTrack = match;
             console.log(`🎬 Selected audio track ${match} for language ${audioLang}`);
+          } else {
+            // Fall back to first audio track if no language match
+            selectedAudioTrack = metadata.audioStreams[0].index;
+            console.log(`🎬 No ${audioLang} audio found, using first track: ${selectedAudioTrack}`);
           }
         }
 
-        if (metadata.subtitleStreams) {
+        if (metadata.subtitleStreams && metadata.subtitleStreams.length > 0) {
           const match = findSubtitleTrackByPreference(metadata.subtitleStreams, subLang, subMode);
           if (match !== null) {
             selectedSubtitleTrack = match;
