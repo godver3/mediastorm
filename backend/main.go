@@ -116,7 +116,10 @@ func main() {
 	indexerHandler := handlers.NewIndexerHandler(indexerService, *demoMode)
 	// Note: user settings service wiring happens later after userSettingsService is created
 	debridProxyService := debrid.NewProxyService(cfgManager)
-	debridPlaybackService := debrid.NewPlaybackService(cfgManager, nil)
+	// Create HealthService with ffprobe path for pre-resolved stream validation
+	debridHealthService := debrid.NewHealthService(cfgManager)
+	debridHealthService.SetFFProbePath(settings.Transmux.FFprobePath)
+	debridPlaybackService := debrid.NewPlaybackService(cfgManager, debridHealthService)
 	debridHandler := handlers.NewDebridHandler(debridProxyService, debridPlaybackService)
 
 	// Initialize pool manager early so usenet service can use it

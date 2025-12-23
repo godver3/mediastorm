@@ -1,12 +1,15 @@
 package debrid
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -18,12 +21,18 @@ import (
 
 // HealthService checks debrid item health by verifying cached status.
 type HealthService struct {
-	cfg *config.Manager
+	cfg         *config.Manager
+	ffprobePath string
 }
 
 // NewHealthService creates a new debrid health check service.
 func NewHealthService(cfg *config.Manager) *HealthService {
 	return &HealthService{cfg: cfg}
+}
+
+// SetFFProbePath sets the ffprobe path for probing pre-resolved streams.
+func (s *HealthService) SetFFProbePath(path string) {
+	s.ffprobePath = path
 }
 
 // DebridHealthCheck represents the health status of a debrid item.
@@ -45,12 +54,46 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 	}
 
 	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
-	// Pre-resolved streams are already direct playback URLs, no health check needed
+	// Pre-resolved streams need to be probed to check if they're actually cached
 	if result.Attributes["preresolved"] == "true" {
-		log.Printf("[debrid-health] skipping health check for pre-resolved stream: %s", result.Title)
+		streamURL := result.Attributes["stream_url"]
+		if streamURL == "" {
+			streamURL = result.Link
+		}
+		log.Printf("[debrid-health] checking pre-resolved stream: %s", result.Title)
+
+		// If we have ffprobe, verify the stream has audio (placeholder videos have 0 audio streams)
+		if s.ffprobePath != "" && streamURL != "" {
+			audioCount, err := s.probeAudioStreamCount(ctx, streamURL)
+			if err != nil {
+				log.Printf("[debrid-health] probe failed for pre-resolved stream %s: %v", result.Title, err)
+				// On probe failure, treat as potentially uncached
+				return &DebridHealthCheck{
+					Healthy:      false,
+					Status:       "not_cached",
+					Cached:       false,
+					Provider:     result.Attributes["tracker"],
+					ErrorMessage: fmt.Sprintf("probe failed: %v", err),
+				}, nil
+			}
+
+			if audioCount == 0 {
+				log.Printf("[debrid-health] pre-resolved stream %s has 0 audio streams - treating as uncached placeholder", result.Title)
+				return &DebridHealthCheck{
+					Healthy:      false,
+					Status:       "not_cached",
+					Cached:       false,
+					Provider:     result.Attributes["tracker"],
+					ErrorMessage: "stream appears to be a placeholder (no audio streams)",
+				}, nil
+			}
+
+			log.Printf("[debrid-health] pre-resolved stream %s verified with %d audio streams", result.Title, audioCount)
+		}
+
 		return &DebridHealthCheck{
 			Healthy:  true,
-			Status:   "cached", // Use "cached" status for frontend compatibility
+			Status:   "cached",
 			Cached:   true,
 			Provider: result.Attributes["tracker"],
 		}, nil
@@ -511,4 +554,49 @@ func (s *HealthService) extractTorrentFilename(resp *http.Response, torrentURL s
 	}
 
 	return "download.torrent"
+}
+
+// probeAudioStreamCount uses ffprobe to count audio streams in a URL.
+// Returns 0 if no audio streams are found (indicating a placeholder video).
+func (s *HealthService) probeAudioStreamCount(ctx context.Context, streamURL string) (int, error) {
+	if s.ffprobePath == "" {
+		return -1, fmt.Errorf("ffprobe not configured")
+	}
+
+	// Use a short timeout - we just need to read the header
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "a", // Only audio streams
+		"-analyzeduration", "5000000", // 5 seconds
+		"-probesize", "5000000", // 5MB
+		streamURL,
+	}
+
+	cmd := exec.CommandContext(probeCtx, s.ffprobePath, args...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	// Parse the JSON output
+	var result struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return 0, fmt.Errorf("parse ffprobe output: %w", err)
+	}
+
+	return len(result.Streams), nil
 }
