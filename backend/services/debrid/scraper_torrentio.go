@@ -27,19 +27,22 @@ const (
 
 // TorrentioScraper queries torrentio for releases using Cinemeta-backed metadata resolution.
 type TorrentioScraper struct {
+	name       string // User-configured name for display
 	baseURL    string
 	options    string // URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
 	httpClient *http.Client
 }
 
 // NewTorrentioScraper constructs a scraper with sane defaults.
+// The name parameter is the user-configured display name (empty falls back to "torrentio").
 // The options parameter is inserted between the base URL and /stream path
 // (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam").
-func NewTorrentioScraper(client *http.Client, options string) *TorrentioScraper {
+func NewTorrentioScraper(client *http.Client, options, name string) *TorrentioScraper {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &TorrentioScraper{
+		name:       strings.TrimSpace(name),
 		baseURL:    torrentioDefaultBaseURL,
 		options:    strings.TrimSpace(options),
 		httpClient: client,
@@ -47,6 +50,9 @@ func NewTorrentioScraper(client *http.Client, options string) *TorrentioScraper 
 }
 
 func (t *TorrentioScraper) Name() string {
+	if t.name != "" {
+		return t.name
+	}
 	return "torrentio"
 }
 
@@ -103,7 +109,7 @@ func (t *TorrentioScraper) Search(ctx context.Context, req SearchRequest) ([]Scr
 				seen[guid] = struct{}{}
 				results = append(results, ScrapeResult{
 					Title:       stream.titleText,
-					Indexer:     "Torrentio",
+					Indexer:     t.Name(),
 					Magnet:      buildMagnet(stream.infoHash, stream.trackers),
 					InfoHash:    stream.infoHash,
 					FileIndex:   stream.fileIdx,
@@ -175,7 +181,7 @@ func (t *TorrentioScraper) searchByIMDBID(ctx context.Context, req SearchRequest
 			seen[guid] = struct{}{}
 			results = append(results, ScrapeResult{
 				Title:       stream.titleText,
-				Indexer:     "Torrentio",
+				Indexer:     t.Name(),
 				Magnet:      buildMagnet(stream.infoHash, stream.trackers),
 				InfoHash:    stream.infoHash,
 				FileIndex:   stream.fileIdx,

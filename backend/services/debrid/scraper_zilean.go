@@ -23,24 +23,30 @@ const (
 
 // ZileanScraper queries Zilean's DMM filtered API for torrent releases.
 type ZileanScraper struct {
+	name       string // User-configured name for display
 	baseURL    string
 	httpClient *http.Client
 }
 
 // NewZileanScraper constructs a Zilean scraper with the given URL.
-func NewZileanScraper(baseURL string, client *http.Client) *ZileanScraper {
+// The name parameter is the user-configured display name (empty falls back to "Zilean").
+func NewZileanScraper(baseURL, name string, client *http.Client) *ZileanScraper {
 	if client == nil {
 		client = &http.Client{Timeout: zileanTimeout}
 	}
 	// Normalize URL - remove trailing slash
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &ZileanScraper{
+		name:       strings.TrimSpace(name),
 		baseURL:    baseURL,
 		httpClient: client,
 	}
 }
 
 func (z *ZileanScraper) Name() string {
+	if z.name != "" {
+		return z.name
+	}
 	return "Zilean"
 }
 
@@ -317,18 +323,18 @@ func (z *ZileanScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 
 		result := ScrapeResult{
 			Title:       item.RawTitle,
-			Indexer:     "Zilean",
+			Indexer:     z.Name(),
 			Magnet:      magnet,
 			InfoHash:    infoHash,
 			FileIndex:   -1, // Zilean doesn't provide file index
 			SizeBytes:   sizeBytes,
 			Seeders:     0, // Zilean doesn't provide seeder info
-			Provider:    "Zilean",
+			Provider:    z.Name(),
 			Languages:   item.Languages,
 			Resolution:  resolution,
 			MetaName:    item.RawTitle,
 			MetaID:      item.IMDBID,
-			Source:      "zilean",
+			Source:      z.Name(),
 			ServiceType: models.ServiceTypeDebrid,
 			Attributes:  attrs,
 		}

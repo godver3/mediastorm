@@ -18,19 +18,22 @@ import (
 
 // JackettScraper queries Jackett's Torznab API for torrent releases.
 type JackettScraper struct {
+	name       string // User-configured name for display
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
 }
 
 // NewJackettScraper constructs a Jackett scraper with the given URL and API key.
-func NewJackettScraper(baseURL, apiKey string, client *http.Client) *JackettScraper {
+// The name parameter is the user-configured display name (empty falls back to "Jackett").
+func NewJackettScraper(baseURL, apiKey, name string, client *http.Client) *JackettScraper {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	// Normalize URL - remove trailing slash
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &JackettScraper{
+		name:       strings.TrimSpace(name),
 		baseURL:    baseURL,
 		apiKey:     apiKey,
 		httpClient: client,
@@ -38,6 +41,9 @@ func NewJackettScraper(baseURL, apiKey string, client *http.Client) *JackettScra
 }
 
 func (j *JackettScraper) Name() string {
+	if j.name != "" {
+		return j.name
+	}
 	return "Jackett"
 }
 
@@ -277,22 +283,22 @@ func (j *JackettScraper) parseResponse(body []byte) ([]ScrapeResult, error) {
 			tracker = attrs["jackettindexer"]
 		}
 		if tracker == "" {
-			tracker = "jackett"
+			tracker = "unknown"
 		}
 
 		result := ScrapeResult{
 			Title:       item.Title,
-			Indexer:     tracker,
+			Indexer:     j.Name(),
 			Magnet:      magnet,
 			InfoHash:    infoHash,
 			TorrentURL:  torrentURL,
 			FileIndex:   -1, // Jackett doesn't provide file index
 			SizeBytes:   size,
 			Seeders:     seeders,
-			Provider:    tracker,
-			Languages:   nil, // Jackett doesn't typically provide language info
+			Provider:    tracker, // Keep the individual tracker/indexer name
+			Languages:   nil,     // Jackett doesn't typically provide language info
 			Resolution:  resolution,
-			Source:      "jackett",
+			Source:      j.Name(),
 			ServiceType: models.ServiceTypeDebrid,
 			Attributes:  attrs,
 		}

@@ -44,7 +44,7 @@ func NewSearchService(cfg *config.Manager, scrapers ...Scraper) *SearchService {
 	}
 	if len(scrapers) == 0 {
 		// Fallback to torrentio if no scrapers configured
-		scrapers = []Scraper{NewTorrentioScraper(nil, "")}
+		scrapers = []Scraper{NewTorrentioScraper(nil, "", "")}
 	}
 	return &SearchService{
 		cfg:      cfg,
@@ -71,21 +71,28 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 		switch strings.ToLower(scraperCfg.Type) {
 		case "torrentio":
 			log.Printf("[debrid] Initializing Torrentio scraper: %s (options: %s)", scraperCfg.Name, scraperCfg.Options)
-			scrapers = append(scrapers, NewTorrentioScraper(nil, scraperCfg.Options))
+			scrapers = append(scrapers, NewTorrentioScraper(nil, scraperCfg.Options, scraperCfg.Name))
 		case "jackett":
 			if scraperCfg.URL == "" || scraperCfg.APIKey == "" {
 				log.Printf("[debrid] Skipping Jackett scraper %s: missing URL or API key", scraperCfg.Name)
 				continue
 			}
 			log.Printf("[debrid] Initializing Jackett scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
-			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, nil))
+			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, scraperCfg.Name, nil))
 		case "zilean":
 			if scraperCfg.URL == "" {
 				log.Printf("[debrid] Skipping Zilean scraper %s: missing URL", scraperCfg.Name)
 				continue
 			}
 			log.Printf("[debrid] Initializing Zilean scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
-			scrapers = append(scrapers, NewZileanScraper(scraperCfg.URL, nil))
+			scrapers = append(scrapers, NewZileanScraper(scraperCfg.URL, scraperCfg.Name, nil))
+		case "aiostreams":
+			if scraperCfg.URL == "" {
+				log.Printf("[debrid] Skipping AIOStreams scraper %s: missing URL", scraperCfg.Name)
+				continue
+			}
+			log.Printf("[debrid] Initializing AIOStreams scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
+			scrapers = append(scrapers, NewAIOStreamsScraper(scraperCfg.URL, scraperCfg.Name, nil))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
@@ -104,7 +111,7 @@ func (s *SearchService) ReloadScrapers() {
 	scrapers := buildScrapersFromConfig(s.cfg)
 	if len(scrapers) == 0 {
 		// Fallback to torrentio if no scrapers configured
-		scrapers = []Scraper{NewTorrentioScraper(nil, "")}
+		scrapers = []Scraper{NewTorrentioScraper(nil, "", "")}
 	}
 	s.scrapers = scrapers
 	log.Printf("[debrid] reloaded %d scraper(s)", len(scrapers))
