@@ -2,7 +2,6 @@ package filter
 
 import (
 	"log"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -195,24 +194,11 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 	log.Printf("[filter] Filtered %d -> %d results (removed %d)",
 		len(results), len(filtered), len(results)-len(filtered))
 
-	// Apply HDR prioritization if enabled and not excluding HDR
+	// Note: HDR prioritization is now handled in the indexer service sorting
+	// which considers resolution BEFORE HDR (so 2160p SDR ranks above 1080p HDR).
+	// We still log that HDR info was processed for debugging.
 	if opts.PrioritizeHdr && !opts.ExcludeHdr {
-		sort.SliceStable(filtered, func(i, j int) bool {
-			// Prioritize HDR content: HDR results come before non-HDR
-			if filtered[i].hasHDR != filtered[j].hasHDR {
-				return filtered[i].hasHDR
-			}
-			// Among HDR results, prioritize DV (Dolby Vision) over other HDR formats
-			if filtered[i].hasHDR && filtered[j].hasHDR {
-				iHasDV := hasDolbyVision(filtered[i].hdrFormats)
-				jHasDV := hasDolbyVision(filtered[j].hdrFormats)
-				if iHasDV != jHasDV {
-					return iHasDV
-				}
-			}
-			return false // maintain original order otherwise
-		})
-		log.Printf("[filter] Applied HDR/DV prioritization to results")
+		log.Printf("[filter] HDR attributes set on results (sorting handled by indexer)")
 	}
 
 	// Extract just the results for return
