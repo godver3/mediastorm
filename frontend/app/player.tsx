@@ -8,6 +8,8 @@ import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
 import SubtitleOverlay from '@/components/player/SubtitleOverlay';
+import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
+import type { SubtitleSearchResult } from '@/services/api';
 import VideoPlayer, {
   VideoPlayerHandle,
   type TrackInfo,
@@ -77,6 +79,7 @@ interface PlayerParams extends Record<string, any> {
   durationHint?: string;
   sourcePath?: string;
   displayName?: string;
+  releaseName?: string;
   dv?: string;
   dvProfile?: string;
   hdr10?: string;
@@ -367,6 +370,7 @@ export default function PlayerScreen() {
     durationHint: durationHintParam,
     sourcePath: sourcePathParam,
     displayName: displayNameParam,
+    releaseName: releaseNameParam,
     dv: dvFlagParam,
     dvProfile: dvProfileParam,
     hdr10: hdr10FlagParam,
@@ -418,6 +422,10 @@ export default function PlayerScreen() {
     const raw = Array.isArray(displayNameParam) ? displayNameParam[0] : displayNameParam;
     return raw || undefined;
   }, [displayNameParam]);
+  const releaseName = useMemo(() => {
+    const raw = Array.isArray(releaseNameParam) ? releaseNameParam[0] : releaseNameParam;
+    return raw || undefined;
+  }, [releaseNameParam]);
   const routeDvProfile = useMemo(() => {
     const raw = Array.isArray(dvProfileParam) ? dvProfileParam[0] : dvProfileParam;
     return raw ? String(raw) : '';
@@ -537,6 +545,15 @@ export default function PlayerScreen() {
   const [subtitleTrackOptions, setSubtitleTrackOptions] = useState<TrackOption[]>([SUBTITLE_OFF_OPTION]);
   const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(SUBTITLE_OFF_OPTION.id);
+  // External subtitle search state
+  const [subtitleSearchModalVisible, setSubtitleSearchModalVisible] = useState<boolean>(false);
+  const [externalSubtitleUrl, setExternalSubtitleUrl] = useState<string | null>(null);
+  const [subtitleSearchResults, setSubtitleSearchResults] = useState<SubtitleSearchResult[]>([]);
+  const [subtitleSearchLoading, setSubtitleSearchLoading] = useState<boolean>(false);
+  const [subtitleSearchError, setSubtitleSearchError] = useState<string | null>(null);
+  const [subtitleSearchLanguage, setSubtitleSearchLanguage] = useState<string>('en');
+  // External subtitle timing offset (positive = subtitles appear later, negative = earlier)
+  const [externalSubtitleOffset, setExternalSubtitleOffset] = useState<number>(0);
   const [debugEntries, setDebugEntries] = useState<DebugLogEntry[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const isModalOpenRef = useRef(isModalOpen);
@@ -545,6 +562,96 @@ export default function PlayerScreen() {
     isModalOpenRef.current = open;
     setIsModalOpen(open);
   }, []);
+
+  // Subtitle search handlers
+  const handleOpenSubtitleSearch = useCallback(() => {
+    console.log('[player] opening subtitle search modal');
+    setSubtitleSearchModalVisible(true);
+    handleModalStateChange(true);
+  }, [handleModalStateChange]);
+
+  const handleCloseSubtitleSearch = useCallback(() => {
+    console.log('[player] closing subtitle search modal');
+    setSubtitleSearchModalVisible(false);
+    handleModalStateChange(false);
+  }, [handleModalStateChange]);
+
+  const handleSubtitleSearch = useCallback(
+    async (language: string) => {
+      setSubtitleSearchLanguage(language);
+      setSubtitleSearchLoading(true);
+      setSubtitleSearchError(null);
+
+      try {
+        const results = await apiService.searchSubtitles({
+          imdbId: imdbId || undefined,
+          title: title || seriesTitle || undefined,
+          year: year || undefined,
+          season: seasonNumber,
+          episode: episodeNumber,
+          language,
+        });
+        console.log('[player] subtitle search results:', results.length);
+        setSubtitleSearchResults(results);
+      } catch (error) {
+        console.error('[player] subtitle search error:', error);
+        setSubtitleSearchError('Failed to search for subtitles');
+        setSubtitleSearchResults([]);
+      } finally {
+        setSubtitleSearchLoading(false);
+      }
+    },
+    [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber],
+  );
+
+  const handleSelectExternalSubtitle = useCallback(
+    (subtitle: SubtitleSearchResult) => {
+      console.log('[player] selected external subtitle:', subtitle);
+      const url = apiService.getSubtitleDownloadUrl({
+        subtitleId: subtitle.id,
+        provider: subtitle.provider,
+        imdbId: imdbId || undefined,
+        title: title || seriesTitle || undefined,
+        year: year || undefined,
+        season: seasonNumber,
+        episode: episodeNumber,
+        language: subtitleSearchLanguage,
+      });
+      console.log('[player] external subtitle URL:', url);
+      setExternalSubtitleUrl(url);
+      // Set subtitle track to a special external ID
+      setSelectedSubtitleTrackId('external');
+      handleCloseSubtitleSearch();
+    },
+    [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, subtitleSearchLanguage, handleCloseSubtitleSearch],
+  );
+
+  // Subtitle timing adjustment handlers (0.25s increments)
+  // Uses refs to access extendControlsVisibility which is defined later in the component
+  const SUBTITLE_OFFSET_STEP = 0.25;
+  const handleSubtitleOffsetEarlier = useCallback(() => {
+    setExternalSubtitleOffset((prev) => {
+      const newOffset = prev - SUBTITLE_OFFSET_STEP;
+      console.log('[player] subtitle offset adjusted earlier:', newOffset);
+      return newOffset;
+    });
+    // Extend the auto-hide timer by 5 seconds when adjusting offset
+    extendControlsVisibilityRef.current?.();
+  }, []);
+
+  const handleSubtitleOffsetLater = useCallback(() => {
+    setExternalSubtitleOffset((prev) => {
+      const newOffset = prev + SUBTITLE_OFFSET_STEP;
+      console.log('[player] subtitle offset adjusted later:', newOffset);
+      return newOffset;
+    });
+    // Extend the auto-hide timer by 5 seconds when adjusting offset
+    extendControlsVisibilityRef.current?.();
+  }, []);
+
+  // Reset subtitle offset when changing subtitle tracks
+  const isUsingExternalSubtitles = selectedSubtitleTrackId === 'external' && externalSubtitleUrl !== null;
+
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hasStartedPlaying, setHasStartedPlaying] = useState<boolean>(false);
   // For HDR content (Dolby Vision/HDR10), we need to use React Native Video player with HLS
@@ -647,6 +754,8 @@ export default function PlayerScreen() {
   const videoRef = useRef<VideoPlayerHandle>(null);
   const hasAutoLaunchedSystemPlayerRef = useRef(false);
   const hideControlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref for extending controls visibility (used by subtitle offset buttons)
+  const extendControlsVisibilityRef = useRef<(() => void) | null>(null);
   // Track the current HLS session ID for keepalive pings when paused
   const hlsSessionIdRef = useRef<string | null>(null);
   const currentTimeRef = useRef<number>(0);
@@ -1007,7 +1116,11 @@ export default function PlayerScreen() {
   const shouldAutoHideControls = !usesSystemManagedControls;
   const autoHideDurationMs = isTvPlatform ? 3000 : 3000;
   // Hide status bar on mobile devices (iOS and Android) when controls are hidden for immersive experience
-  const shouldHideStatusBar = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !usesSystemManagedControls && !controlsVisible;
+  const shouldHideStatusBar =
+    (Platform.OS === 'ios' || Platform.OS === 'android') &&
+    !Platform.isTV &&
+    !usesSystemManagedControls &&
+    !controlsVisible;
   const isTouchOverlayToggleSupported = Platform.OS !== 'web' && !Platform.isTV;
 
   useEffect(() => {
@@ -2235,6 +2348,31 @@ export default function PlayerScreen() {
     showControlsRef.current = showControls;
   }, [showControls]);
 
+  // Extended visibility for subtitle offset adjustments (5 seconds extra = 8 seconds total)
+  const EXTENDED_HIDE_DURATION_MS = autoHideDurationMs + 5000;
+  const extendControlsVisibility = useCallback(() => {
+    if (usesSystemManagedControls) {
+      return;
+    }
+    // Show controls first to ensure they're visible
+    showControls();
+    // Then clear the default timeout and set an extended one
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+      hideControlsTimeoutRef.current = null;
+    }
+    if (shouldAutoHideControls && !isModalOpenRef.current && !isSeekingRef.current && !isFilenameDisplayed) {
+      hideControlsTimeoutRef.current = setTimeout(() => {
+        hideControls();
+      }, EXTENDED_HIDE_DURATION_MS);
+    }
+  }, [showControls, hideControls, usesSystemManagedControls, shouldAutoHideControls, isFilenameDisplayed, EXTENDED_HIDE_DURATION_MS]);
+
+  // Keep extendControlsVisibilityRef updated
+  useEffect(() => {
+    extendControlsVisibilityRef.current = extendControlsVisibility;
+  }, [extendControlsVisibility]);
+
   // Keep controlsVisibleRef in sync for use in event handlers (avoids stale closure)
   useEffect(() => {
     controlsVisibleRef.current = controlsVisible;
@@ -2283,7 +2421,14 @@ export default function PlayerScreen() {
 
     console.log('[player] handleVideoInteract: showing controls');
     showControls();
-  }, [controlsVisible, hideControls, isTouchOverlayToggleSupported, isTvPlatform, showControls, usesSystemManagedControls]);
+  }, [
+    controlsVisible,
+    hideControls,
+    isTouchOverlayToggleSupported,
+    isTvPlatform,
+    showControls,
+    usesSystemManagedControls,
+  ]);
 
   const seek = useCallback(
     (rawTime: number, shouldShowControls: boolean = true) => {
@@ -3457,6 +3602,19 @@ export default function PlayerScreen() {
             />
           )}
 
+          {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
+          {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
+          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && (
+            <SubtitleOverlay
+              vttUrl={externalSubtitleUrl}
+              currentTime={currentTime}
+              timeOffset={-externalSubtitleOffset}
+              enabled={true}
+              videoWidth={videoSize?.width}
+              videoHeight={videoSize?.height}
+            />
+          )}
+
           {(() => {
             const hasDuration = Number.isFinite(duration) && duration > 0;
             const hasPlaybackContext = hasDuration || currentTime > 0 || isVideoBuffering || paused;
@@ -3540,7 +3698,12 @@ export default function PlayerScreen() {
                               onSelectSubtitleTrack={(id) => {
                                 console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
                                 setSelectedSubtitleTrackId(id);
+                                // Clear external subtitle when switching to embedded track
+                                if (id !== 'external') {
+                                  setExternalSubtitleUrl(null);
+                                }
                               }}
+                              onSearchSubtitles={handleOpenSubtitleSearch}
                               onModalStateChange={handleModalStateChange}
                               onScrubStart={handleSeekBarScrubStart}
                               onScrubEnd={handleSeekBarScrubEnd}
@@ -3557,6 +3720,10 @@ export default function PlayerScreen() {
                               hasNextEpisode={hasNextEpisode}
                               onPreviousEpisode={handlePreviousEpisode}
                               onNextEpisode={handleNextEpisode}
+                              showSubtitleOffset={isUsingExternalSubtitles}
+                              subtitleOffset={externalSubtitleOffset}
+                              onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
+                              onSubtitleOffsetLater={handleSubtitleOffsetLater}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -3623,7 +3790,12 @@ export default function PlayerScreen() {
                           onSelectSubtitleTrack={(id) => {
                             console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
                             setSelectedSubtitleTrackId(id);
+                            // Clear external subtitle when switching to embedded track
+                            if (id !== 'external') {
+                              setExternalSubtitleUrl(null);
+                            }
                           }}
+                          onSearchSubtitles={handleOpenSubtitleSearch}
                           onModalStateChange={handleModalStateChange}
                           onScrubStart={handleSeekBarScrubStart}
                           onScrubEnd={handleSeekBarScrubEnd}
@@ -3637,6 +3809,10 @@ export default function PlayerScreen() {
                           hasNextEpisode={hasNextEpisode}
                           onPreviousEpisode={handlePreviousEpisode}
                           onNextEpisode={handleNextEpisode}
+                          showSubtitleOffset={isUsingExternalSubtitles}
+                          subtitleOffset={externalSubtitleOffset}
+                          onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
+                          onSubtitleOffsetLater={handleSubtitleOffsetLater}
                         />
                       </SpatialNavigationNode>
                     </View>
@@ -3654,6 +3830,19 @@ export default function PlayerScreen() {
               onClose={() => setMobileStreamInfoVisible(false)}
             />
           )}
+
+          {/* External subtitle search modal */}
+          <SubtitleSearchModal
+            visible={subtitleSearchModalVisible}
+            onClose={handleCloseSubtitleSearch}
+            onSelectSubtitle={handleSelectExternalSubtitle}
+            searchResults={subtitleSearchResults}
+            isLoading={subtitleSearchLoading}
+            error={subtitleSearchError}
+            onSearch={handleSubtitleSearch}
+            currentLanguage={subtitleSearchLanguage}
+            mediaReleaseName={releaseName}
+          />
 
           {debugOverlayEnabled && (
             <View style={styles.debugOverlay} pointerEvents="box-none">

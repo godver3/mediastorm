@@ -519,6 +519,7 @@ export const launchNativePlayer = (
     durationHint?: number;
     sourcePath?: string;
     displayName?: string; // For demo mode - masks actual filename
+    releaseName?: string; // Original release name for subtitle matching
     dv?: boolean;
     dvProfile?: string;
     forceAAC?: boolean;
@@ -540,6 +541,7 @@ export const launchNativePlayer = (
     durationHint,
     sourcePath,
     displayName,
+    releaseName,
     dv,
     dvProfile,
     forceAAC,
@@ -573,6 +575,7 @@ export const launchNativePlayer = (
       ...(durationHint ? { durationHint: durationHint.toString() } : {}),
       ...(sourcePath ? { sourcePath: encodeURIComponent(sourcePath) } : {}),
       ...(displayName ? { displayName } : {}),
+      ...(releaseName ? { releaseName } : {}),
       ...(dv ? { dv: '1' } : {}),
       ...(dvProfile ? { dvProfile } : {}),
       ...(forceAAC ? { forceAAC: '1' } : {}),
@@ -906,6 +909,7 @@ export const initiatePlayback = async (
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
     sourcePath: playback.webdavPath,
     ...(displayName ? { displayName } : {}),
+    releaseName: result.title,
     ...(hasDolbyVision ? { dv: true } : {}),
     ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
     ...(hasHDR10 ? { hdr10: true } : {}),

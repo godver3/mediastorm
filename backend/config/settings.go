@@ -29,6 +29,7 @@ type Settings struct {
 	HomeShelves     HomeShelvesSettings    `json:"homeShelves"`
 	Filtering       FilterSettings         `json:"filtering"`
 	UI              UISettings             `json:"ui"`
+	Subtitles       SubtitleSettings       `json:"subtitles"`
 }
 
 type ServerSettings struct {
@@ -215,6 +216,12 @@ type UISettings struct {
 	LoadingAnimationEnabled bool `json:"loadingAnimationEnabled"`
 }
 
+// SubtitleSettings defines subtitle provider configuration.
+type SubtitleSettings struct {
+	OpenSubtitlesUsername string `json:"openSubtitlesUsername"`
+	OpenSubtitlesPassword string `json:"openSubtitlesPassword"`
+}
+
 // DefaultSettings returns sane defaults for a fresh install.
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
@@ -254,6 +261,10 @@ func DefaultSettings() Settings {
 		},
 		UI: UISettings{
 			LoadingAnimationEnabled: true,
+		},
+		Subtitles: SubtitleSettings{
+			OpenSubtitlesUsername: "",
+			OpenSubtitlesPassword: "",
 		},
 	}
 }

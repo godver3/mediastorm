@@ -26,6 +26,8 @@ interface TrackSelectionModalProps {
   onSelect: (id: string) => void;
   onClose: () => void;
   focusKeyPrefix?: string;
+  /** Optional callback to open subtitle search modal */
+  onSearchSubtitles?: () => void;
 }
 
 export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
@@ -37,6 +39,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   onSelect,
   onClose,
   focusKeyPrefix = 'track',
+  onSearchSubtitles,
 }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -111,6 +114,13 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   const handleClose = useCallback(() => {
     withSelectGuard(onClose);
   }, [onClose, withSelectGuard]);
+
+  const handleSearchSubtitles = useCallback(() => {
+    withSelectGuard(() => {
+      onClose();
+      onSearchSubtitles?.();
+    });
+  }, [onClose, onSearchSubtitles, withSelectGuard]);
 
   const onCloseRef = useRef(onClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
@@ -217,13 +227,15 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
       <SpatialNavigationFocusableView
         focusKey={focusKey}
         onSelect={() => handleOptionSelect(option.id)}
-        onFocus={() => handleItemFocus(index)}>
+        onFocus={() => handleItemFocus(index)}
+      >
         {({ isFocused }: { isFocused: boolean }) => (
           <View
             onLayout={(event) => {
               const { height } = event.nativeEvent.layout;
               handleItemLayout(index, 0, height);
-            }}>
+            }}
+          >
             <Pressable
               onPress={() => handleOptionSelect(option.id)}
               style={[
@@ -232,7 +244,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                 isSelected && !isFocused && styles.optionItemSelected,
                 isSelected && isFocused && styles.optionItemSelectedFocused,
               ]}
-              tvParallaxProperties={{ enabled: false }}>
+              tvParallaxProperties={{ enabled: false }}
+            >
               <View style={styles.optionTextContainer}>
                 <Text
                   style={[
@@ -242,7 +255,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     isSelected && isFocused && styles.optionLabelSelectedFocused,
                   ]}
                   numberOfLines={1}
-                  ellipsizeMode="tail">
+                  ellipsizeMode="tail"
+                >
                   {option.label}
                 </Text>
                 {option.description ? (
@@ -254,7 +268,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                       isSelected && isFocused && styles.optionDescriptionSelectedFocused,
                     ]}
                     numberOfLines={2}
-                    ellipsizeMode="tail">
+                    ellipsizeMode="tail"
+                  >
                     {option.description}
                   </Text>
                 ) : null}
@@ -284,7 +299,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
       transparent
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
-      hardwareAccelerated>
+      hardwareAccelerated
+    >
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.overlay}>
           {/* Keep backdrop Pressable on TV as native focus anchor for spatial navigation */}
@@ -295,21 +311,45 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
               {resolvedSubtitle ? <Text style={styles.modalSubtitle}>{resolvedSubtitle}</Text> : null}
             </View>
 
-            {hasOptions ? (
-              <SpatialNavigationNode orientation="vertical">
-                <ScrollView
-                  ref={scrollViewRef}
-                  style={styles.optionsScrollView}
-                  contentContainerStyle={styles.optionsList}
-                  scrollEnabled={!Platform.isTV}>
-                  {options.map((option, index) => renderOption(option, index))}
-                </ScrollView>
-              </SpatialNavigationNode>
-            ) : (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>No tracks available</Text>
-              </View>
-            )}
+            <SpatialNavigationNode orientation="vertical">
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.optionsScrollView}
+                contentContainerStyle={styles.optionsList}
+                scrollEnabled={!Platform.isTV}
+              >
+                {hasOptions ? (
+                  options.map((option, index) => renderOption(option, index))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                  </View>
+                )}
+                {onSearchSubtitles && (
+                  <SpatialNavigationFocusableView
+                    focusKey={`${focusKeyPrefix}-search-subtitles`}
+                    onSelect={handleSearchSubtitles}
+                  >
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <Pressable
+                        onPress={handleSearchSubtitles}
+                        style={[styles.optionItem, styles.searchOption, isFocused && styles.optionItemFocused]}
+                        tvParallaxProperties={{ enabled: false }}
+                      >
+                        <View style={styles.optionTextContainer}>
+                          <Text style={[styles.optionLabel, isFocused && styles.optionLabelFocused]}>
+                            Search for Subtitles...
+                          </Text>
+                          <Text style={[styles.optionDescription, isFocused && styles.optionDescriptionFocused]}>
+                            Find subtitles online
+                          </Text>
+                        </View>
+                      </Pressable>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+              </ScrollView>
+            </SpatialNavigationNode>
 
             <View style={styles.modalFooter}>
               <SpatialNavigationFocusableView focusKey={`${focusKeyPrefix}-close`} onSelect={handleClose}>
@@ -317,7 +357,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                   <Pressable
                     onPress={handleClose}
                     style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
-                    tvParallaxProperties={{ enabled: false }}>
+                    tvParallaxProperties={{ enabled: false }}
+                  >
                     <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
                   </Pressable>
                 )}
@@ -388,6 +429,12 @@ const createStyles = (theme: NovaTheme) =>
       gap: theme.spacing.lg,
       marginHorizontal: theme.spacing.xl,
       marginBottom: theme.spacing.md,
+    },
+    searchOption: {
+      marginTop: theme.spacing.lg,
+      borderColor: theme.colors.accent.primary,
+      borderWidth: 1,
+      backgroundColor: 'rgba(255, 255, 255, 0.04)',
     },
     optionItemFocused: {
       backgroundColor: theme.colors.accent.primary,

@@ -52,6 +52,7 @@ func Register(
 	liveHandler *handlers.LiveHandler,
 	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
+	subtitlesHandler *handlers.SubtitlesHandler,
 	pin string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
@@ -122,6 +123,12 @@ func Register(
 	api.HandleFunc("/video/hls/{sessionID}/keepalive", videoHandler.KeepAliveHLSSession).Methods(http.MethodPost, http.MethodOptions)
 	api.HandleFunc("/video/hls/{sessionID}/status", videoHandler.GetHLSSessionStatus).Methods(http.MethodGet, http.MethodOptions)
 	api.HandleFunc("/video/hls/{sessionID}/{segment}", videoHandler.ServeHLSSegment).Methods(http.MethodGet, http.MethodOptions)
+
+	// Subtitle search endpoints (using subliminal)
+	api.HandleFunc("/subtitles/search", subtitlesHandler.Search).Methods(http.MethodGet)
+	api.HandleFunc("/subtitles/search", subtitlesHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/subtitles/download", subtitlesHandler.Download).Methods(http.MethodGet)
+	api.HandleFunc("/subtitles/download", subtitlesHandler.Options).Methods(http.MethodOptions)
 
 	api.HandleFunc("/debug/log", debugHandler.Capture).Methods(http.MethodPost, http.MethodOptions)
 
