@@ -743,7 +743,18 @@ export default function DetailsScreen() {
 
   // Prequeue playback when details page loads
   useEffect(() => {
+    console.log('[prequeue] useEffect triggered', {
+      activeUserId: activeUserId ?? 'null',
+      titleId: titleId ?? 'null',
+      title: title ? title.substring(0, 30) : 'null',
+      isSeries,
+    });
     if (!activeUserId || !titleId || !title) {
+      console.log('[prequeue] Skipping prequeue - missing:', {
+        activeUserId: !activeUserId,
+        titleId: !titleId,
+        title: !title,
+      });
       setPrequeueId(null);
       setPrequeueTargetEpisode(null);
       prequeuePromiseRef.current = null;
@@ -1517,14 +1528,22 @@ export default function DetailsScreen() {
         throw new Error('Prequeue is missing stream path');
       }
 
-      console.log('[prequeue] Launching playback from prequeue:', prequeueStatus.prequeueId);
-
-      // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
-      // so users see it immediately when they click play, not after the prequeue resolves
-
       // Get start offset from pending ref (for resume playback) - get it early as we may use it for HLS session
       const startOffset = pendingStartOffsetRef.current;
       pendingStartOffsetRef.current = null;
+
+      console.log('[prequeue] launchFromPrequeue called', {
+        prequeueId: prequeueStatus.prequeueId,
+        streamPath: prequeueStatus.streamPath ? 'set' : 'null',
+        hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
+        hasDolbyVision: prequeueStatus.hasDolbyVision,
+        hasHdr10: prequeueStatus.hasHdr10,
+        startOffset: startOffset ?? 'null',
+        playbackPreference,
+      });
+
+      // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
+      // so users see it immediately when they click play, not after the prequeue resolves
 
       // Check for external player FIRST - they handle HDR natively and don't need HLS
       const isExternalPlayer = playbackPreference === 'infuse' || playbackPreference === 'outplayer';
@@ -1576,16 +1595,29 @@ export default function DetailsScreen() {
       // Build stream URL
       let streamUrl: string;
       let hlsDuration: number | undefined;
+
+      // Log the decision factors for HLS path
+      console.log('[prequeue] HLS decision factors:', {
+        hasAnyHDR,
+        hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
+        hasStartOffset: typeof startOffset === 'number',
+        startOffset,
+        platformOS: Platform.OS,
+        willUsePrequeueHLS: hasAnyHDR && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number',
+        willCreateNewHLS: hasAnyHDR && (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number'),
+      });
+
       if (hasAnyHDR && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number') {
         // HDR content with HLS session already created by backend (no resume position)
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const apiKey = apiService.getApiKey().trim();
         streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${apiKey ? `?apiKey=${apiKey}` : ''}`;
-        console.log('[prequeue] Using HLS stream URL:', streamUrl);
+        console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl);
       } else if (hasAnyHDR && Platform.OS !== 'web') {
         // HDR content - create HLS session with start offset
         // This happens when: (a) backend didn't create session, or (b) we have a resume position
         // and need to recreate with the correct start offset
+        console.log('[prequeue] ⚠️ Creating NEW HLS session (not using prequeue HLS)');
         const reason = typeof startOffset === 'number' ? `resuming at ${startOffset}s` : 'no HLS URL from backend';
         console.log(`[prequeue] HDR detected, creating HLS session (${reason})...`);
         const hdrType = prequeueStatus.hasDolbyVision ? 'Dolby Vision' : 'HDR10';
@@ -1811,6 +1843,13 @@ export default function DetailsScreen() {
         return;
       }
 
+      console.log('[prequeue] resolveAndPlay called', {
+        query,
+        prequeueIdState: prequeueId ?? 'null',
+        prequeuePromiseExists: !!prequeuePromiseRef.current,
+        prequeueTargetEpisode,
+      });
+
       // Wait for any pending prequeue request to complete first
       let currentPrequeueId = prequeueId;
       let currentTargetEpisode = prequeueTargetEpisode;
@@ -1838,7 +1877,16 @@ export default function DetailsScreen() {
       }
 
       // Check if we can use prequeue
-      if (currentPrequeueId && doesPrequeueMatch(query, currentPrequeueId, currentTargetEpisode)) {
+      const prequeueMatches = currentPrequeueId
+        ? doesPrequeueMatch(query, currentPrequeueId, currentTargetEpisode)
+        : false;
+      console.log('[prequeue] Prequeue check', {
+        currentPrequeueId: currentPrequeueId ?? 'null',
+        prequeueMatches,
+        isSeries,
+      });
+
+      if (currentPrequeueId && prequeueMatches) {
         console.log('[prequeue] Checking prequeue status for:', currentPrequeueId);
 
         // Create abort controller for prequeue flow
@@ -1851,6 +1899,14 @@ export default function DetailsScreen() {
 
         try {
           const status = await apiService.getPrequeueStatus(currentPrequeueId);
+          console.log('[prequeue] Got prequeue status:', {
+            status: status.status,
+            streamPath: status.streamPath ? 'set' : 'null',
+            hlsPlaylistUrl: status.hlsPlaylistUrl ?? 'null',
+            hlsSessionId: status.hlsSessionId ?? 'null',
+            hasDolbyVision: status.hasDolbyVision,
+            hasHdr10: status.hasHdr10,
+          });
 
           if (abortController.signal.aborted) {
             return;
@@ -1896,7 +1952,16 @@ export default function DetailsScreen() {
         // Clear prequeue state since we're falling through
         setPrequeueId(null);
         setPrequeueTargetEpisode(null);
+      } else {
+        // Log why we're not using prequeue
+        console.log('[prequeue] ⚠️ Skipping prequeue path:', {
+          hasPrequeueId: !!currentPrequeueId,
+          prequeueMatches,
+          reason: !currentPrequeueId ? 'no prequeueId' : 'prequeue does not match query',
+        });
       }
+
+      console.log('[prequeue] 📥 Using NORMAL playback flow (not prequeue)');
 
       // Cancel any pending playback
       if (abortControllerRef.current) {
