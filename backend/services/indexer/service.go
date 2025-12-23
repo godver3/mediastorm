@@ -200,14 +200,22 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			}
 		}
 
-		// Within same service priority tier, prioritize HDR/DV content if enabled
+		// Sort by resolution FIRST (2160p > 1080p > 720p > etc.)
+		resI := extractResolutionFromResult(aggregated[i])
+		resJ := extractResolutionFromResult(aggregated[j])
+
+		if resI != resJ {
+			return resI > resJ
+		}
+
+		// Within same resolution, prioritize HDR/DV content if enabled
 		if filterSettings.PrioritizeHdr && !filterSettings.ExcludeHdr {
 			iHasHDR := aggregated[i].Attributes["hdr"] != ""
 			jHasHDR := aggregated[j].Attributes["hdr"] != ""
 			iHasDV := aggregated[i].Attributes["hasDV"] == "true"
 			jHasDV := aggregated[j].Attributes["hasDV"] == "true"
 
-			// DV > HDR > SDR
+			// DV > HDR > SDR (within same resolution)
 			if iHasDV != jHasDV {
 				return iHasDV
 			}
@@ -216,21 +224,13 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			}
 		}
 
-		// Then sort by resolution
-		resI := extractResolution(aggregated[i].Title)
-		resJ := extractResolution(aggregated[j].Title)
-
-		if resI != resJ {
-			return resI > resJ
-		}
-
 		// Finally, tiebreak by size (larger = better quality)
 		return aggregated[i].SizeBytes > aggregated[j].SizeBytes
 	})
 
 	// Debug: log top results after sorting
 	for idx := 0; idx < len(aggregated) && idx < 5; idx++ {
-		res := extractResolution(aggregated[idx].Title)
+		res := extractResolutionFromResult(aggregated[idx])
 		log.Printf("[indexer] Result #%d: ServiceType=%q Resolution=%d Size=%d Title=%q", idx, aggregated[idx].ServiceType, res, aggregated[idx].SizeBytes, aggregated[idx].Title)
 	}
 
@@ -878,6 +878,40 @@ func dedupe(items []string) []string {
 		out = append(out, normalized)
 	}
 	return out
+}
+
+// extractResolutionFromResult extracts resolution from an NZBResult.
+// It first checks the "resolution" attribute (set by scrapers like AIOStreams),
+// then falls back to parsing the title.
+func extractResolutionFromResult(result models.NZBResult) int {
+	// First check the resolution attribute (set by AIOStreams and other scrapers)
+	if resAttr := result.Attributes["resolution"]; resAttr != "" {
+		res := parseResolutionString(resAttr)
+		if res > 0 {
+			return res
+		}
+	}
+	// Fall back to extracting from title
+	return extractResolution(result.Title)
+}
+
+// parseResolutionString converts a resolution string like "2160p", "1080p", "4K" to a numeric value.
+func parseResolutionString(res string) int {
+	res = strings.ToLower(strings.TrimSpace(res))
+	switch {
+	case strings.Contains(res, "2160") || strings.Contains(res, "4k") || strings.Contains(res, "uhd"):
+		return 2160
+	case strings.Contains(res, "1080"):
+		return 1080
+	case strings.Contains(res, "720"):
+		return 720
+	case strings.Contains(res, "576"):
+		return 576
+	case strings.Contains(res, "480"):
+		return 480
+	default:
+		return 0
+	}
 }
 
 // extractResolution extracts resolution from the title using simple regex patterns.
