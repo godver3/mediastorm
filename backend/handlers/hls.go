@@ -1623,7 +1623,6 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			case <-ticker.C:
 				session.mu.RLock()
 				maxRequested := session.MaxSegmentRequested
-				paused := session.Paused
 				completed := session.Completed
 				pid := session.FFmpegPID
 				outputDir := session.OutputDir
@@ -1671,31 +1670,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					continue
 				}
 
-				bufferAhead := highestSegment - maxRequested
-
-				if !paused && bufferAhead > hlsBufferPauseThreshold {
-					// Pause FFmpeg - too far ahead of player
-					if err := syscall.Kill(pid, syscall.SIGSTOP); err == nil {
-						session.mu.Lock()
-						session.Paused = true
-						session.mu.Unlock()
-						log.Printf("[hls] session %s: RATE_LIMIT paused FFmpeg (buffer=%d segments ahead, highestSeg=%d, requested=%d)",
-							session.ID, bufferAhead, highestSegment, maxRequested)
-					} else {
-						log.Printf("[hls] session %s: failed to pause FFmpeg: %v", session.ID, err)
-					}
-				} else if paused && bufferAhead <= hlsBufferResumeThreshold {
-					// Resume FFmpeg - player is catching up
-					if err := syscall.Kill(pid, syscall.SIGCONT); err == nil {
-						session.mu.Lock()
-						session.Paused = false
-						session.mu.Unlock()
-						log.Printf("[hls] session %s: RATE_LIMIT resumed FFmpeg (buffer=%d segments ahead, highestSeg=%d, requested=%d)",
-							session.ID, bufferAhead, highestSegment, maxRequested)
-					} else {
-						log.Printf("[hls] session %s: failed to resume FFmpeg: %v", session.ID, err)
-					}
-				}
+				// NOTE: FFmpeg pause/resume disabled - was causing playback issues
+				// bufferAhead := highestSegment - maxRequested
+				_ = highestSegment // unused now
 
 			case <-rateLimitDone:
 				// Ensure FFmpeg is resumed before exiting
