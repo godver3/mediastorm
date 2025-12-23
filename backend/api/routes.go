@@ -53,13 +53,13 @@ func Register(
 	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
-	pin string,
+	getPIN func() string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 
 	// Add CORS middleware to API subrouter
 	api.Use(corsMiddleware)
-	api.Use(pinMiddleware(pin))
+	api.Use(pinMiddleware(getPIN))
 
 	api.HandleFunc("/settings", settingsHandler.GetSettings).Methods(http.MethodGet)
 	api.HandleFunc("/settings", settingsHandler.PutSettings).Methods(http.MethodPut)
@@ -197,15 +197,18 @@ func Register(
 	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
 }
 
-func pinMiddleware(expectedPIN string) mux.MiddlewareFunc {
-	trimmed := strings.TrimSpace(expectedPIN)
-	if trimmed == "" {
-		return func(next http.Handler) http.Handler { return next }
-	}
-
+func pinMiddleware(getPIN func() string) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Get current PIN (supports hot reload)
+			expectedPIN := strings.TrimSpace(getPIN())
+			if expectedPIN == "" {
+				// No PIN configured, allow access
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -275,7 +278,7 @@ func pinMiddleware(expectedPIN string) mux.MiddlewareFunc {
 				return
 			}
 
-			if subtle.ConstantTimeCompare([]byte(receivedPIN), []byte(trimmed)) != 1 {
+			if subtle.ConstantTimeCompare([]byte(receivedPIN), []byte(expectedPIN)) != 1 {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]string{"error": "invalid PIN"})

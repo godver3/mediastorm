@@ -304,6 +304,15 @@ func main() {
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
 
+	// Create PIN getter function for hot reload support
+	getPIN := func() string {
+		s, err := cfgManager.Load()
+		if err != nil {
+			return settings.Server.PIN // fallback to initial value on error
+		}
+		return s.Server.PIN
+	}
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -322,11 +331,11 @@ func main() {
 		debugVideoHandler,
 		userSettingsHandler,
 		subtitlesHandler,
-		settings.Server.PIN,
+		getPIN,
 	)
 
 	// Register admin UI routes
-	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, settings.Server.PIN)
+	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, getPIN)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 

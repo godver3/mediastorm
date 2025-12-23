@@ -309,7 +309,7 @@ type AdminUIHandler struct {
 	historyService      *history.Service
 	configManager       *config.Manager
 	metadataService     MetadataCacheClearer
-	pin                 string
+	getPIN              func() string
 }
 
 // MetadataCacheClearer interface for clearing metadata cache
@@ -328,7 +328,7 @@ func (h *AdminUIHandler) SetHistoryService(hs *history.Service) {
 }
 
 // NewAdminUIHandler creates a new admin UI handler
-func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager, pin string) *AdminUIHandler {
+func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager, getPIN func() string) *AdminUIHandler {
 	funcMap := template.FuncMap{
 		"json": func(v interface{}) template.JS {
 			b, _ := json.Marshal(v)
@@ -446,7 +446,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		usersService:        usersService,
 		userSettingsService: userSettingsService,
 		configManager:       configManager,
-		pin:                 strings.TrimSpace(pin),
+		getPIN:              getPIN,
 	}
 }
 
@@ -774,7 +774,7 @@ type LoginPageData struct {
 // IsAuthenticated checks if the request has a valid admin session
 func (h *AdminUIHandler) IsAuthenticated(r *http.Request) bool {
 	// If no PIN is configured, allow access
-	if h.pin == "" {
+	if strings.TrimSpace(h.getPIN()) == "" {
 		return true
 	}
 
@@ -799,7 +799,7 @@ func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 // LoginPage serves the login page (GET)
 func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	// If no PIN configured, redirect to dashboard
-	if h.pin == "" {
+	if strings.TrimSpace(h.getPIN()) == "" {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
@@ -819,8 +819,11 @@ func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 
 // LoginSubmit handles login form submission (POST)
 func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
+	// Get current PIN (supports hot reload)
+	expectedPIN := strings.TrimSpace(h.getPIN())
+
 	// If no PIN configured, redirect to dashboard
-	if h.pin == "" {
+	if expectedPIN == "" {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
@@ -837,7 +840,7 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Constant-time comparison to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(submittedPIN), []byte(h.pin)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(submittedPIN), []byte(expectedPIN)) != 1 {
 		h.renderLoginError(w, "Invalid PIN")
 		return
 	}
@@ -885,7 +888,7 @@ func (h *AdminUIHandler) renderLoginError(w http.ResponseWriter, errMsg string) 
 
 // HasPIN returns true if a PIN is configured
 func (h *AdminUIHandler) HasPIN() bool {
-	return h.pin != ""
+	return strings.TrimSpace(h.getPIN()) != ""
 }
 
 // TestIndexerRequest represents a request to test an indexer
