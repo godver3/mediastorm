@@ -75,33 +75,42 @@ type allDebridMagnetUploadData struct {
 
 // allDebridStatus represents magnet status response.
 type allDebridStatus struct {
-	ID             int              `json:"id"`
-	Filename       string           `json:"filename"`
-	Size           int64            `json:"size"`
-	Hash           string           `json:"hash,omitempty"`
-	Status         string           `json:"status"`
-	StatusCode     int              `json:"statusCode"`
-	Downloaded     int64            `json:"downloaded"`
-	Uploaded       int64            `json:"uploaded"`
-	Seeders        int              `json:"seeders"`
-	DownloadSpeed  int              `json:"downloadSpeed"`
-	UploadSpeed    int              `json:"uploadSpeed"`
-	UploadDate     int64            `json:"uploadDate"`
-	CompletionDate int64            `json:"completionDate"`
-	Links          []allDebridLink  `json:"links,omitempty"`
-	Version        int              `json:"version,omitempty"`
+	ID             int                 `json:"id"`
+	Filename       string              `json:"filename"`
+	Size           int64               `json:"size"`
+	Hash           string              `json:"hash,omitempty"`
+	Status         string              `json:"status"`
+	StatusCode     int                 `json:"statusCode"`
+	Downloaded     int64               `json:"downloaded"`
+	Uploaded       int64               `json:"uploaded"`
+	Seeders        int                 `json:"seeders"`
+	DownloadSpeed  int                 `json:"downloadSpeed"`
+	UploadSpeed    int                 `json:"uploadSpeed"`
+	UploadDate     int64               `json:"uploadDate"`
+	CompletionDate int64               `json:"completionDate"`
+	Links          []allDebridLink     `json:"links,omitempty"`
+	Files          []allDebridFileNode `json:"files,omitempty"` // v4.1 nested file tree
+	Version        int                 `json:"version,omitempty"`
 }
 
-// allDebridLink represents a file link in status response.
+// allDebridLink represents a file link in status response (v4 format).
 type allDebridLink struct {
 	Link     string `json:"link"`
 	Filename string `json:"filename"`
 	Size     int64  `json:"size"`
 }
 
-// allDebridStatusData wraps status response.
+// allDebridFileNode represents a file or directory in the v4.1 nested tree structure.
+type allDebridFileNode struct {
+	N string              `json:"n"`           // name
+	S int64               `json:"s,omitempty"` // size (for files)
+	L string              `json:"l,omitempty"` // link (for files)
+	E []allDebridFileNode `json:"e,omitempty"` // entries (for directories)
+}
+
+// allDebridStatusData wraps status response - uses json.RawMessage to handle both object and array.
 type allDebridStatusData struct {
-	Magnets []allDebridStatus `json:"magnets"`
+	Magnets json.RawMessage `json:"magnets"`
 }
 
 // allDebridUnlock represents an unlocked link response.
@@ -357,11 +366,28 @@ func (c *AllDebridClient) GetTorrentInfo(ctx context.Context, torrentID string) 
 		return nil, fmt.Errorf("get torrent info failed: %s", errMsg)
 	}
 
+	// Parse magnets - can be either a single object or an array depending on the request
+	var status allDebridStatus
 	if len(result.Data.Magnets) == 0 {
-		return nil, fmt.Errorf("torrent not found")
+		return nil, fmt.Errorf("torrent not found (empty response)")
 	}
 
-	status := result.Data.Magnets[0]
+	// Try parsing as single object first (when requesting by ID)
+	if result.Data.Magnets[0] == '{' {
+		if err := json.Unmarshal(result.Data.Magnets, &status); err != nil {
+			return nil, fmt.Errorf("decode single magnet: %w", err)
+		}
+	} else {
+		// Parse as array
+		var magnets []allDebridStatus
+		if err := json.Unmarshal(result.Data.Magnets, &magnets); err != nil {
+			return nil, fmt.Errorf("decode magnets array: %w", err)
+		}
+		if len(magnets) == 0 {
+			return nil, fmt.Errorf("torrent not found")
+		}
+		status = magnets[0]
+	}
 
 	// Convert to provider-agnostic TorrentInfo
 	info := &TorrentInfo{
@@ -370,23 +396,51 @@ func (c *AllDebridClient) GetTorrentInfo(ctx context.Context, torrentID string) 
 		Hash:     status.Hash,
 		Bytes:    status.Size,
 		Status:   c.mapStatusCode(status.StatusCode),
-		Files:    make([]File, 0, len(status.Links)),
-		Links:    make([]string, 0, len(status.Links)),
+		Files:    make([]File, 0),
+		Links:    make([]string, 0),
 	}
 
-	// Convert links to files
-	for i, link := range status.Links {
-		info.Files = append(info.Files, File{
-			ID:       i + 1, // AllDebrid uses 1-based indexing
-			Path:     link.Filename,
-			Bytes:    link.Size,
-			Selected: 1, // AllDebrid auto-processes all files
-		})
-		// Store the link directly - AllDebrid provides direct unrestrict-able links
-		info.Links = append(info.Links, link.Link)
+	// Handle v4.1 nested file tree structure
+	if len(status.Files) > 0 {
+		c.flattenFileTree(status.Files, "", info)
+	} else {
+		// Fallback to v4 flat links structure
+		for i, link := range status.Links {
+			info.Files = append(info.Files, File{
+				ID:       i + 1,
+				Path:     link.Filename,
+				Bytes:    link.Size,
+				Selected: 1,
+			})
+			info.Links = append(info.Links, link.Link)
+		}
 	}
 
 	return info, nil
+}
+
+// flattenFileTree recursively flattens the nested v4.1 file tree into Files and Links slices.
+func (c *AllDebridClient) flattenFileTree(nodes []allDebridFileNode, basePath string, info *TorrentInfo) {
+	for _, node := range nodes {
+		path := node.N
+		if basePath != "" {
+			path = basePath + "/" + node.N
+		}
+
+		if len(node.E) > 0 {
+			// This is a directory, recurse into it
+			c.flattenFileTree(node.E, path, info)
+		} else if node.L != "" {
+			// This is a file with a link
+			info.Files = append(info.Files, File{
+				ID:       len(info.Files) + 1,
+				Path:     path,
+				Bytes:    node.S,
+				Selected: 1,
+			})
+			info.Links = append(info.Links, node.L)
+		}
+	}
 }
 
 // mapStatusCode converts AllDebrid status codes to provider-agnostic status.

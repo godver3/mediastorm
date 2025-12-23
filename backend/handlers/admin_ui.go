@@ -1986,9 +1986,11 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		var adResult struct {
 			Status string `json:"status"`
 			Data   struct {
-				Username  string `json:"username"`
-				Email     string `json:"email"`
-				IsPremium bool   `json:"isPremium"`
+				User struct {
+					Username  string `json:"username"`
+					Email     string `json:"email"`
+					IsPremium bool   `json:"isPremium"`
+				} `json:"user"`
 			} `json:"data"`
 			Error *struct {
 				Code    string `json:"code"`
@@ -2018,14 +2020,14 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		}
 
 		accountType := "Free"
-		if adResult.Data.IsPremium {
+		if adResult.Data.User.IsPremium {
 			accountType = "Premium"
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Connected as %s (%s)", adResult.Data.Username, accountType),
+			"message": fmt.Sprintf("Connected as %s (%s)", adResult.Data.User.Username, accountType),
 		})
 
 	default:
