@@ -62,6 +62,43 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		}
 		log.Printf("[debrid-health] checking pre-resolved stream: %s", result.Title)
 
+		// First, do a quick HEAD request to check if the URL is accessible
+		// This catches 404s and other HTTP errors quickly without waiting for ffprobe
+		if streamURL != "" {
+			headCtx, headCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer headCancel()
+
+			headReq, err := http.NewRequestWithContext(headCtx, http.MethodHead, streamURL, nil)
+			if err == nil {
+				headReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+				if resp, err := http.DefaultClient.Do(headReq); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == http.StatusNotFound {
+						log.Printf("[debrid-health] pre-resolved stream %s returned 404 - treating as uncached", result.Title)
+						return &DebridHealthCheck{
+							Healthy:      false,
+							Status:       "not_cached",
+							Cached:       false,
+							Provider:     result.Attributes["tracker"],
+							ErrorMessage: "stream returned 404 (not found)",
+						}, nil
+					}
+					if resp.StatusCode >= 400 {
+						log.Printf("[debrid-health] pre-resolved stream %s returned HTTP %d - treating as uncached", result.Title, resp.StatusCode)
+						return &DebridHealthCheck{
+							Healthy:      false,
+							Status:       "not_cached",
+							Cached:       false,
+							Provider:     result.Attributes["tracker"],
+							ErrorMessage: fmt.Sprintf("stream returned HTTP %d", resp.StatusCode),
+						}, nil
+					}
+				} else {
+					log.Printf("[debrid-health] HEAD request failed for pre-resolved stream %s: %v", result.Title, err)
+				}
+			}
+		}
+
 		// If we have ffprobe, verify the stream has audio (placeholder videos have 0 audio streams)
 		if s.ffprobePath != "" && streamURL != "" {
 			audioCount, err := s.probeAudioStreamCount(ctx, streamURL)
