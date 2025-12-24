@@ -150,6 +150,19 @@ const Controls: React.FC<ControlsProps> = ({
   const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack);
   const showFullscreenButton = Boolean(onToggleFullscreen) && !isMobile && !isLiveTV && !isTvPlatform;
 
+  // Compute a key for the secondary row that changes when buttons change,
+  // forcing the spatial navigation tree to be regenerated
+  const secondaryRowKey = useMemo(() => {
+    const parts: string[] = [];
+    if (hasAudioSelection) parts.push('audio');
+    if (hasSubtitleSelection) parts.push('sub');
+    if (isTvPlatform && hasPreviousEpisode) parts.push('prev');
+    if (isTvPlatform && hasNextEpisode) parts.push('next');
+    if (isTvPlatform && showSubtitleOffset) parts.push('offset');
+    if (isTvPlatform && streamInfo) parts.push('info');
+    return `secondary-${parts.join('-')}`;
+  }, [hasAudioSelection, hasSubtitleSelection, isTvPlatform, hasPreviousEpisode, hasNextEpisode, showSubtitleOffset, streamInfo]);
+
   const activeMenuRef = useRef<ActiveMenu>(null);
 
   useEffect(() => {
@@ -168,6 +181,16 @@ const Controls: React.FC<ControlsProps> = ({
     setActiveMenu(null);
     onModalStateChange?.(false);
   }, [onModalStateChange]);
+
+  // Wrapped callback for transitioning to subtitle search modal.
+  // On tvOS, we need careful timing to transition focus between modals.
+  const handleOpenSubtitleSearch = useCallback(() => {
+    // Close this modal first
+    setActiveMenu(null);
+    // Open the SubtitleSearchModal immediately (no delay needed since both
+    // state updates will be batched by React and rendered together)
+    onSearchSubtitles?.();
+  }, [onSearchSubtitles]);
 
   useEffect(
     () => () => {
@@ -359,7 +382,7 @@ const Controls: React.FC<ControlsProps> = ({
             </View>
           )}
           {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (hasPreviousEpisode || hasNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
-            <SpatialNavigationNode orientation="horizontal">
+            <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
                   <View style={styles.trackButtonGroup} pointerEvents="box-none">
@@ -465,54 +488,39 @@ const Controls: React.FC<ControlsProps> = ({
                 )}
                 {/* Subtitle offset controls for TV platforms */}
                 {isTvPlatform && showSubtitleOffset && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
-                  <>
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
-                        icon="remove-circle-outline"
-                        focusKey="subtitle-offset-earlier"
-                        onSelect={onSubtitleOffsetEarlier}
-                        onFocus={() => onFocusChange?.('subtitle-offset-earlier')}
-                        style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null}
-                      />
-                      <Text style={styles.trackLabel} numberOfLines={1}>
-                        Sub-
-                      </Text>
-                    </View>
+                  <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
+                    <FocusablePressable
+                      icon="remove-circle-outline"
+                      focusKey="subtitle-offset-earlier"
+                      onSelect={onSubtitleOffsetEarlier}
+                      onFocus={() => onFocusChange?.('subtitle-offset-earlier')}
+                      style={[styles.controlButton, styles.trackButton]}
+                      disabled={isSeeking || activeMenu !== null}
+                    />
                     <View style={styles.subtitleOffsetTvDisplay} pointerEvents="box-none">
                       <Text style={styles.subtitleOffsetTvLabel}>Subtitle</Text>
                       <Text style={styles.subtitleOffsetTvValue}>{formattedSubtitleOffset}</Text>
                     </View>
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
-                        icon="add-circle-outline"
-                        focusKey="subtitle-offset-later"
-                        onSelect={onSubtitleOffsetLater}
-                        onFocus={() => onFocusChange?.('subtitle-offset-later')}
-                        style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null}
-                      />
-                      <Text style={styles.trackLabel} numberOfLines={1}>
-                        Sub+
-                      </Text>
-                    </View>
-                  </>
-                )}
-                {/* Info button for TV platforms */}
-                {isTvPlatform && streamInfo && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
                     <FocusablePressable
-                      icon="information-circle"
-                      focusKey="info-button"
-                      onSelect={() => openMenu('info')}
-                      onFocus={() => onFocusChange?.('info-button')}
+                      icon="add-circle-outline"
+                      focusKey="subtitle-offset-later"
+                      onSelect={onSubtitleOffsetLater}
+                      onFocus={() => onFocusChange?.('subtitle-offset-later')}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
-                    <Text style={styles.trackLabel} numberOfLines={1}>
-                      Info
-                    </Text>
                   </View>
+                )}
+                {/* Info button for TV platforms */}
+                {isTvPlatform && streamInfo && (
+                  <FocusablePressable
+                    icon="information-circle"
+                    focusKey="info-button"
+                    onSelect={() => openMenu('info')}
+                    onFocus={() => onFocusChange?.('info-button')}
+                    style={[styles.controlButton, styles.trackButton]}
+                    disabled={isSeeking || activeMenu !== null}
+                  />
                 )}
               </View>
             </SpatialNavigationNode>
@@ -529,7 +537,7 @@ const Controls: React.FC<ControlsProps> = ({
           onSelect={handleSelectTrack}
           onClose={closeMenu}
           focusKeyPrefix={activeMenu}
-          onSearchSubtitles={activeMenu === 'subtitles' ? onSearchSubtitles : undefined}
+          onSearchSubtitles={activeMenu === 'subtitles' ? handleOpenSubtitleSearch : undefined}
         />
       ) : null}
       {activeMenu === 'info' && streamInfo ? (
@@ -729,10 +737,16 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       fontSize: 14,
     },
     // TV subtitle offset styles
+    subtitleOffsetTvGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: theme.spacing.xl,
+      marginBottom: theme.spacing.xs,
+    },
     subtitleOffsetTvDisplay: {
       alignItems: 'center',
-      marginRight: theme.spacing.lg,
-      marginBottom: theme.spacing.xs,
+      marginHorizontal: theme.spacing.sm,
+      minWidth: 60,
     },
     subtitleOffsetTvLabel: {
       ...theme.typography.body.sm,
