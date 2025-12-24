@@ -1,0 +1,687 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"novastream/services/streaming"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+)
+
+// SubtitleExtractSession represents an active subtitle extraction session
+type SubtitleExtractSession struct {
+	ID             string
+	Path           string
+	SubtitleTrack  int
+	OutputDir      string
+	VTTPath        string
+	CreatedAt      time.Time
+	LastAccess     time.Time
+	cmd            *exec.Cmd
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	extractionDone bool
+	extractionErr  error
+}
+
+// SubtitleExtractManager manages subtitle extraction sessions
+type SubtitleExtractManager struct {
+	sessions    map[string]*SubtitleExtractSession
+	mu          sync.RWMutex
+	ffmpegPath  string
+	ffprobePath string
+	streamer    streaming.Provider
+	cleanupDone chan struct{}
+}
+
+// NewSubtitleExtractManager creates a new subtitle extraction manager
+func NewSubtitleExtractManager(ffmpegPath, ffprobePath string, streamer streaming.Provider) *SubtitleExtractManager {
+	m := &SubtitleExtractManager{
+		sessions:    make(map[string]*SubtitleExtractSession),
+		ffmpegPath:  ffmpegPath,
+		ffprobePath: ffprobePath,
+		streamer:    streamer,
+		cleanupDone: make(chan struct{}),
+	}
+	go m.cleanupLoop()
+	return m
+}
+
+// cleanupLoop periodically removes stale sessions
+func (m *SubtitleExtractManager) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanupStaleSessions()
+		case <-m.cleanupDone:
+			return
+		}
+	}
+}
+
+// cleanupStaleSessions removes sessions that haven't been accessed recently
+func (m *SubtitleExtractManager) cleanupStaleSessions() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	staleThreshold := 5 * time.Minute
+	now := time.Now()
+
+	for id, session := range m.sessions {
+		session.mu.Lock()
+		lastAccess := session.LastAccess
+		session.mu.Unlock()
+
+		if now.Sub(lastAccess) > staleThreshold {
+			log.Printf("[subtitle-extract] cleaning up stale session %s (path=%s)", id, session.Path)
+			m.cleanupSessionLocked(session)
+			delete(m.sessions, id)
+		}
+	}
+}
+
+// cleanupSessionLocked cleans up a session (caller must hold m.mu)
+func (m *SubtitleExtractManager) cleanupSessionLocked(session *SubtitleExtractSession) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if session.cancel != nil {
+		session.cancel()
+	}
+	if session.OutputDir != "" {
+		os.RemoveAll(session.OutputDir)
+	}
+}
+
+// getOrCreateSession gets an existing session or creates a new one
+func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path string, subtitleTrack int) (*SubtitleExtractSession, error) {
+	// Create a session key based on path and track
+	sessionKey := fmt.Sprintf("%s:%d", path, subtitleTrack)
+
+	m.mu.Lock()
+
+	// Check for existing session
+	for _, session := range m.sessions {
+		if session.Path == path && session.SubtitleTrack == subtitleTrack {
+			session.mu.Lock()
+			session.LastAccess = time.Now()
+			session.mu.Unlock()
+			m.mu.Unlock()
+			return session, nil
+		}
+	}
+
+	// Create new session
+	sessionID := uuid.New().String()
+	outputDir, err := os.MkdirTemp("", "subtitle-extract-"+sessionID)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	vttPath := filepath.Join(outputDir, "subtitles.vtt")
+
+	session := &SubtitleExtractSession{
+		ID:            sessionID,
+		Path:          path,
+		SubtitleTrack: subtitleTrack,
+		OutputDir:     outputDir,
+		VTTPath:       vttPath,
+		CreatedAt:     time.Now(),
+		LastAccess:    time.Now(),
+	}
+
+	m.sessions[sessionID] = session
+	m.mu.Unlock()
+
+	// Start extraction in background
+	go m.startExtraction(session)
+
+	log.Printf("[subtitle-extract] created session %s for path=%s track=%d key=%s", sessionID, path, subtitleTrack, sessionKey)
+	return session, nil
+}
+
+// probeSubtitleStreams gets the list of subtitle streams from a URL
+// Uses subtitleStreamInfo type defined in hls.go
+func (m *SubtitleExtractManager) probeSubtitleStreams(ctx context.Context, streamURL string) ([]subtitleStreamInfo, error) {
+	if m.ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not configured")
+	}
+
+	log.Printf("[subtitle-extract] probing subtitle streams from: %s", streamURL)
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "s",
+		"-show_entries", "stream=index,codec_name",
+		"-of", "json",
+		"-i", streamURL,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[subtitle-extract] ffprobe failed: %v", err)
+		return nil, err
+	}
+
+	var result struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[subtitle-extract] failed to parse ffprobe output: %v", err)
+		return nil, err
+	}
+
+	streams := make([]subtitleStreamInfo, 0, len(result.Streams))
+	for _, stream := range result.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
+	}
+
+	log.Printf("[subtitle-extract] probe results: %d subtitle streams", len(streams))
+	return streams, nil
+}
+
+// probeSubtitleStreamsFromProvider probes subtitle streams via the streaming provider
+func (m *SubtitleExtractManager) probeSubtitleStreamsFromProvider(ctx context.Context, path string) ([]subtitleStreamInfo, error) {
+	if m.ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not configured")
+	}
+	if m.streamer == nil {
+		return nil, fmt.Errorf("streamer not configured")
+	}
+
+	log.Printf("[subtitle-extract] probing subtitle streams from provider path: %s", path)
+
+	request := streaming.Request{
+		Path:        path,
+		Method:      http.MethodGet,
+		RangeHeader: "bytes=0-16777215", // First 16MB should contain stream info
+	}
+
+	resp, err := m.streamer.Stream(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stream for probe: %w", err)
+	}
+	if resp.Body == nil {
+		resp.Close()
+		return nil, fmt.Errorf("probe returned empty body")
+	}
+	defer resp.Close()
+
+	pr, pw := io.Pipe()
+	copyDone := make(chan error, 1)
+
+	go func() {
+		defer pw.Close()
+		buf := make([]byte, 128*1024)
+		_, copyErr := io.CopyBuffer(pw, resp.Body, buf)
+		copyDone <- copyErr
+	}()
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "s",
+		"-show_entries", "stream=index,codec_name",
+		"-of", "json",
+		"-i", "pipe:0",
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	cmd.Stdin = pr
+
+	output, err := cmd.Output()
+	if err != nil {
+		pw.CloseWithError(err)
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var result struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	streams := make([]subtitleStreamInfo, 0, len(result.Streams))
+	for _, stream := range result.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
+	}
+
+	log.Printf("[subtitle-extract] probe results: %d subtitle streams", len(streams))
+	return streams, nil
+}
+
+// startExtraction starts the ffmpeg extraction process
+func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession) {
+	session.mu.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	session.cancel = cancel
+	session.mu.Unlock()
+
+	defer func() {
+		session.mu.Lock()
+		session.extractionDone = true
+		session.mu.Unlock()
+	}()
+
+	// Get the stream URL from provider
+	var streamURL string
+	var useDirectProbe bool
+	if strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://") {
+		streamURL = session.Path
+		useDirectProbe = true
+	} else if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+		url, err := directProvider.GetDirectURL(ctx, session.Path)
+		if err != nil {
+			log.Printf("[subtitle-extract] failed to get direct URL for session %s: %v", session.ID, err)
+			session.mu.Lock()
+			session.extractionErr = err
+			session.mu.Unlock()
+			return
+		}
+		streamURL = url
+		useDirectProbe = true
+	} else {
+		session.mu.Lock()
+		session.extractionErr = fmt.Errorf("no direct URL provider available")
+		session.mu.Unlock()
+		return
+	}
+
+	// Probe subtitle streams to get actual stream indices
+	var subtitleStreams []subtitleStreamInfo
+	var err error
+	if useDirectProbe {
+		subtitleStreams, err = m.probeSubtitleStreams(ctx, streamURL)
+	} else {
+		subtitleStreams, err = m.probeSubtitleStreamsFromProvider(ctx, session.Path)
+	}
+	if err != nil {
+		log.Printf("[subtitle-extract] session %s: failed to probe subtitles: %v", session.ID, err)
+		session.mu.Lock()
+		session.extractionErr = fmt.Errorf("failed to probe subtitle streams: %w", err)
+		session.mu.Unlock()
+		return
+	}
+
+	// Validate track index
+	if len(subtitleStreams) == 0 {
+		log.Printf("[subtitle-extract] session %s: no subtitle streams found in file", session.ID)
+		// Create an empty VTT file so frontend doesn't get errors
+		if err := os.WriteFile(session.VTTPath, []byte("WEBVTT\n\n"), 0644); err != nil {
+			log.Printf("[subtitle-extract] session %s: failed to create empty VTT: %v", session.ID, err)
+		}
+		return
+	}
+
+	if session.SubtitleTrack < 0 || session.SubtitleTrack >= len(subtitleStreams) {
+		log.Printf("[subtitle-extract] session %s: subtitle track %d out of range (file has %d subtitle streams), using track 0",
+			session.ID, session.SubtitleTrack, len(subtitleStreams))
+		// Fall back to track 0 instead of erroring
+		session.SubtitleTrack = 0
+	}
+
+	// Get the actual stream index for the selected track
+	actualStreamIndex := subtitleStreams[session.SubtitleTrack].Index
+	log.Printf("[subtitle-extract] session %s: track %d maps to stream index %d (codec: %s)",
+		session.ID, session.SubtitleTrack, actualStreamIndex, subtitleStreams[session.SubtitleTrack].Codec)
+
+	log.Printf("[subtitle-extract] session %s: starting extraction from %s", session.ID, streamURL)
+
+	// Build ffmpeg command to extract subtitle track to VTT
+	// Use the absolute stream index, not the relative subtitle index
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "warning",
+		"-i", streamURL,
+		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
+		"-c", "webvtt",
+		"-f", "webvtt",
+		"-flush_packets", "1",
+		session.VTTPath,
+	}
+
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
+
+	// Capture stderr for logging
+	stderr, _ := cmd.StderrPipe()
+
+	session.mu.Lock()
+	session.cmd = cmd
+	session.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("[subtitle-extract] session %s: failed to start ffmpeg: %v", session.ID, err)
+		session.mu.Lock()
+		session.extractionErr = err
+		session.mu.Unlock()
+		return
+	}
+
+	// Log stderr in background
+	go func() {
+		if stderr != nil {
+			buf := make([]byte, 4096)
+			for {
+				n, err := stderr.Read(buf)
+				if n > 0 {
+					log.Printf("[subtitle-extract] session %s ffmpeg: %s", session.ID, string(buf[:n]))
+				}
+				if err != nil {
+					break
+				}
+			}
+		}
+	}()
+
+	// Wait for completion
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			log.Printf("[subtitle-extract] session %s: extraction cancelled", session.ID)
+		} else {
+			log.Printf("[subtitle-extract] session %s: ffmpeg error: %v", session.ID, err)
+			session.mu.Lock()
+			session.extractionErr = err
+			session.mu.Unlock()
+		}
+		return
+	}
+
+	log.Printf("[subtitle-extract] session %s: extraction complete", session.ID)
+}
+
+// ProbeSubtitleTracks probes a file and returns available subtitle tracks
+func (h *VideoHandler) ProbeSubtitleTracks(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		h.HandleOptions(w, r)
+		return
+	}
+
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		http.Error(w, "missing path parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Clean the path
+	cleanPath := path
+	if strings.HasPrefix(cleanPath, "/webdav/") {
+		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
+	} else if strings.HasPrefix(cleanPath, "webdav/") {
+		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+	}
+
+	if h.subtitleExtractManager == nil {
+		http.Error(w, "subtitle extraction not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Get the stream URL
+	var streamURL string
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		streamURL = cleanPath
+	} else if directProvider, ok := h.subtitleExtractManager.streamer.(streaming.DirectURLProvider); ok {
+		url, err := directProvider.GetDirectURL(r.Context(), cleanPath)
+		if err != nil {
+			log.Printf("[subtitle-extract] failed to get direct URL for probe: %v", err)
+			http.Error(w, "failed to get stream URL", http.StatusInternalServerError)
+			return
+		}
+		streamURL = url
+	} else {
+		http.Error(w, "no direct URL provider available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Probe subtitle streams
+	streams, err := h.subtitleExtractManager.probeSubtitleStreamsWithMetadata(r.Context(), streamURL)
+	if err != nil {
+		log.Printf("[subtitle-extract] failed to probe subtitles: %v", err)
+		http.Error(w, "failed to probe subtitle tracks", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tracks": streams,
+	})
+}
+
+// SubtitleTrackInfo represents a subtitle track with metadata for the frontend
+type SubtitleTrackInfo struct {
+	Index    int    `json:"index"`    // Track index (0-based, for selection)
+	Language string `json:"language"` // Language code (e.g., "eng", "spa")
+	Title    string `json:"title"`    // Track title/name
+	Codec    string `json:"codec"`    // Codec name
+	Forced   bool   `json:"forced"`   // Whether this is a forced subtitle track
+}
+
+// probeSubtitleStreamsWithMetadata probes subtitle streams and returns detailed metadata
+func (m *SubtitleExtractManager) probeSubtitleStreamsWithMetadata(ctx context.Context, streamURL string) ([]SubtitleTrackInfo, error) {
+	if m.ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not configured")
+	}
+
+	log.Printf("[subtitle-extract] probing subtitle tracks with metadata from: %s", streamURL)
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-select_streams", "s",
+		"-show_entries", "stream=index,codec_name:stream_tags=language,title,forced",
+		"-of", "json",
+		"-i", streamURL,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[subtitle-extract] ffprobe failed: %v", err)
+		return nil, err
+	}
+
+	var result struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecName string `json:"codec_name"`
+			Tags      struct {
+				Language string `json:"language"`
+				Title    string `json:"title"`
+				Forced   string `json:"forced"`
+			} `json:"tags"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[subtitle-extract] failed to parse ffprobe output: %v", err)
+		return nil, err
+	}
+
+	tracks := make([]SubtitleTrackInfo, 0, len(result.Streams))
+	for i, stream := range result.Streams {
+		forced := strings.ToLower(stream.Tags.Forced) == "1" || strings.ToLower(stream.Tags.Forced) == "true"
+		tracks = append(tracks, SubtitleTrackInfo{
+			Index:    i, // Use 0-based index for track selection
+			Language: stream.Tags.Language,
+			Title:    stream.Tags.Title,
+			Codec:    strings.ToLower(strings.TrimSpace(stream.CodecName)),
+			Forced:   forced,
+		})
+	}
+
+	log.Printf("[subtitle-extract] probe found %d subtitle tracks", len(tracks))
+	return tracks, nil
+}
+
+// ServeSubtitles serves the VTT file for a session
+func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, session *SubtitleExtractSession) {
+	session.mu.Lock()
+	session.LastAccess = time.Now()
+	vttPath := session.VTTPath
+	extractionErr := session.extractionErr
+	session.mu.Unlock()
+
+	// Check for extraction error
+	if extractionErr != nil {
+		http.Error(w, fmt.Sprintf("subtitle extraction failed: %v", extractionErr), http.StatusInternalServerError)
+		return
+	}
+
+	// Check if file exists (might not be ready yet)
+	stat, err := os.Stat(vttPath)
+	if os.IsNotExist(err) {
+		// Return empty VTT header if file doesn't exist yet
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write([]byte("WEBVTT\n\n"))
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to stat subtitle file", http.StatusInternalServerError)
+		return
+	}
+
+	// Read and serve the current contents
+	content, err := os.ReadFile(vttPath)
+	if err != nil {
+		http.Error(w, "failed to read subtitle file", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+	w.Write(content)
+}
+
+// StartSubtitleExtract is the HTTP handler to start/get a subtitle extraction session
+func (h *VideoHandler) StartSubtitleExtract(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		h.HandleOptions(w, r)
+		return
+	}
+
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		http.Error(w, "missing path parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Clean the path
+	cleanPath := path
+	if strings.HasPrefix(cleanPath, "/webdav/") {
+		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
+	} else if strings.HasPrefix(cleanPath, "webdav/") {
+		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+	}
+
+	subtitleTrackStr := strings.TrimSpace(r.URL.Query().Get("subtitleTrack"))
+	if subtitleTrackStr == "" {
+		http.Error(w, "missing subtitleTrack parameter", http.StatusBadRequest)
+		return
+	}
+
+	subtitleTrack, err := strconv.Atoi(subtitleTrackStr)
+	if err != nil || subtitleTrack < 0 {
+		http.Error(w, "invalid subtitleTrack parameter", http.StatusBadRequest)
+		return
+	}
+
+	if h.subtitleExtractManager == nil {
+		http.Error(w, "subtitle extraction not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	session, err := h.subtitleExtractManager.getOrCreateSession(r.Context(), cleanPath, subtitleTrack)
+	if err != nil {
+		log.Printf("[subtitle-extract] failed to create session: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return session info
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"sessionId":   session.ID,
+		"subtitleUrl": fmt.Sprintf("/api/video/subtitles/%s/subtitles.vtt", session.ID),
+	})
+}
+
+// ServeExtractedSubtitles serves the VTT file for a subtitle extraction session
+func (h *VideoHandler) ServeExtractedSubtitles(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		h.HandleOptions(w, r)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["sessionID"]
+	if sessionID == "" {
+		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+
+	if h.subtitleExtractManager == nil {
+		http.Error(w, "subtitle extraction not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	h.subtitleExtractManager.mu.RLock()
+	session, exists := h.subtitleExtractManager.sessions[sessionID]
+	h.subtitleExtractManager.mu.RUnlock()
+
+	if !exists {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	h.subtitleExtractManager.ServeSubtitles(w, r, session)
+}
+
+// Shutdown cleans up all subtitle extraction sessions
+func (m *SubtitleExtractManager) Shutdown() {
+	close(m.cleanupDone)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, session := range m.sessions {
+		log.Printf("[subtitle-extract] shutting down session %s", id)
+		m.cleanupSessionLocked(session)
+	}
+	m.sessions = make(map[string]*SubtitleExtractSession)
+}

@@ -124,6 +124,11 @@ func Register(
 	api.HandleFunc("/video/hls/{sessionID}/status", videoHandler.GetHLSSessionStatus).Methods(http.MethodGet, http.MethodOptions)
 	api.HandleFunc("/video/hls/{sessionID}/{segment}", videoHandler.ServeHLSSegment).Methods(http.MethodGet, http.MethodOptions)
 
+	// Standalone subtitle extraction endpoints (for non-HLS streams)
+	api.HandleFunc("/video/subtitles/tracks", videoHandler.ProbeSubtitleTracks).Methods(http.MethodGet, http.MethodOptions)
+	api.HandleFunc("/video/subtitles/start", videoHandler.StartSubtitleExtract).Methods(http.MethodGet, http.MethodOptions)
+	api.HandleFunc("/video/subtitles/{sessionID}/subtitles.vtt", videoHandler.ServeExtractedSubtitles).Methods(http.MethodGet, http.MethodOptions)
+
 	// Subtitle search endpoints (using subliminal)
 	api.HandleFunc("/subtitles/search", subtitlesHandler.Search).Methods(http.MethodGet)
 	api.HandleFunc("/subtitles/search", subtitlesHandler.Options).Methods(http.MethodOptions)
