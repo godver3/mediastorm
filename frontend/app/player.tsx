@@ -3125,6 +3125,17 @@ export default function PlayerScreen() {
       return;
     }
 
+    // Validate track index is within range of backend-probed tracks
+    // This prevents race condition where VLC reports absolute stream indices (e.g., 14)
+    // before the backend probe completes and sets correct relative indices (0-4)
+    if (selectedSubtitleTrackIndex >= backendSubtitleTracks.length) {
+      console.log('[player] subtitle extraction skipped - track index out of range', {
+        selectedSubtitleTrackIndex,
+        backendTracksCount: backendSubtitleTracks.length,
+      });
+      return;
+    }
+
     // Need source path to start extraction
     if (!sourcePath) {
       console.log('[player] subtitle extraction skipped - no sourcePath');
@@ -3554,58 +3565,68 @@ export default function PlayerScreen() {
         });
         setSelectedAudioTrackId(resolvedAudioSelection);
 
-        const subtitleOptions = buildSubtitleTrackOptions(
-          metadata.subtitleStreams ?? [],
-          metadata.selectedSubtitleIndex,
-        );
-        console.log('[player] built subtitle track options from metadata', {
-          subtitleStreamsCount: metadata.subtitleStreams?.length ?? 0,
-          subtitleOptionsCount: subtitleOptions.length,
-          subtitleOptions,
-        });
-        setSubtitleTrackOptions(subtitleOptions);
+        // For non-HLS/SDR streams, skip setting subtitle options here - the backend probe effect
+        // will set them with correct relative indices (0, 1, 2, ...) instead of absolute ffprobe
+        // stream indices (11, 12, 13, ...). This prevents a race condition where metadata preload
+        // overwrites the backend probe's correct indices.
+        const shouldSetSubtitleOptions = isHlsStream || routeHasAnyHDR;
 
-        // Check for user preference first, then fall back to metadata selection
-        let selectedSubtitleIndex = metadata.selectedSubtitleIndex;
-        const preferredSubtitleLanguage =
-          userSettings?.playback?.preferredSubtitleLanguage ?? settings?.playback?.preferredSubtitleLanguage;
-        const preferredSubtitleModeRaw =
-          userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode;
-        const preferredSubtitleMode =
-          preferredSubtitleModeRaw === 'on' ||
-          preferredSubtitleModeRaw === 'off' ||
-          preferredSubtitleModeRaw === 'forced-only'
-            ? preferredSubtitleModeRaw
-            : undefined;
-
-        if (preferredSubtitleMode !== undefined) {
-          const preferredSubtitleIndex = findSubtitleTrackByPreference(
+        if (shouldSetSubtitleOptions) {
+          const subtitleOptions = buildSubtitleTrackOptions(
             metadata.subtitleStreams ?? [],
-            preferredSubtitleLanguage,
-            preferredSubtitleMode,
+            metadata.selectedSubtitleIndex,
           );
-          if (preferredSubtitleIndex !== null || preferredSubtitleMode === 'off') {
-            selectedSubtitleIndex = preferredSubtitleIndex ?? undefined;
-            console.log('[player] using preferred subtitle settings', {
-              preferredLanguage: preferredSubtitleLanguage,
-              preferredMode: preferredSubtitleMode,
-              selectedSubtitleIndex,
-            });
-          }
-        }
+          console.log('[player] built subtitle track options from metadata', {
+            subtitleStreamsCount: metadata.subtitleStreams?.length ?? 0,
+            subtitleOptionsCount: subtitleOptions.length,
+            subtitleOptions,
+          });
+          setSubtitleTrackOptions(subtitleOptions);
 
-        const resolvedSubtitleSelection = resolveSelectedTrackId(
-          subtitleOptions,
-          selectedSubtitleIndex,
-          SUBTITLE_OFF_OPTION.id,
-        );
-        console.log('[player] setting initial subtitle track selection', {
-          resolvedSubtitleSelection,
-          metadataSelectedIndex: metadata.selectedSubtitleIndex,
-          preferredSubtitleIndex:
-            selectedSubtitleIndex !== metadata.selectedSubtitleIndex ? selectedSubtitleIndex : undefined,
-        });
-        setSelectedSubtitleTrackId(resolvedSubtitleSelection);
+          // Check for user preference first, then fall back to metadata selection
+          let selectedSubtitleIndex = metadata.selectedSubtitleIndex;
+          const preferredSubtitleLanguage =
+            userSettings?.playback?.preferredSubtitleLanguage ?? settings?.playback?.preferredSubtitleLanguage;
+          const preferredSubtitleModeRaw =
+            userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode;
+          const preferredSubtitleMode =
+            preferredSubtitleModeRaw === 'on' ||
+            preferredSubtitleModeRaw === 'off' ||
+            preferredSubtitleModeRaw === 'forced-only'
+              ? preferredSubtitleModeRaw
+              : undefined;
+
+          if (preferredSubtitleMode !== undefined) {
+            const preferredSubtitleIndex = findSubtitleTrackByPreference(
+              metadata.subtitleStreams ?? [],
+              preferredSubtitleLanguage,
+              preferredSubtitleMode,
+            );
+            if (preferredSubtitleIndex !== null || preferredSubtitleMode === 'off') {
+              selectedSubtitleIndex = preferredSubtitleIndex ?? undefined;
+              console.log('[player] using preferred subtitle settings', {
+                preferredLanguage: preferredSubtitleLanguage,
+                preferredMode: preferredSubtitleMode,
+                selectedSubtitleIndex,
+              });
+            }
+          }
+
+          const resolvedSubtitleSelection = resolveSelectedTrackId(
+            subtitleOptions,
+            selectedSubtitleIndex,
+            SUBTITLE_OFF_OPTION.id,
+          );
+          console.log('[player] setting initial subtitle track selection', {
+            resolvedSubtitleSelection,
+            metadataSelectedIndex: metadata.selectedSubtitleIndex,
+            preferredSubtitleIndex:
+              selectedSubtitleIndex !== metadata.selectedSubtitleIndex ? selectedSubtitleIndex : undefined,
+          });
+          setSelectedSubtitleTrackId(resolvedSubtitleSelection);
+        } else {
+          console.log('[player] skipping subtitle options from metadata - backend probe will set correct indices');
+        }
       } catch (error) {
         console.warn('[player] failed to preload video metadata', error);
       }
@@ -3615,7 +3636,7 @@ export default function PlayerScreen() {
     return () => {
       isMounted = false;
     };
-  }, [resolvedMovie, updateDuration, sourcePath, settings]);
+  }, [resolvedMovie, updateDuration, sourcePath, settings, isHlsStream, routeHasAnyHDR]);
 
   // Fetch series details for episode navigation (only for series content)
   useEffect(() => {
