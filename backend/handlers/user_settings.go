@@ -114,6 +114,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			PreferredSubtitleLanguage: globalSettings.Playback.PreferredSubtitleLanguage,
 			PreferredSubtitleMode:     globalSettings.Playback.PreferredSubtitleMode,
 			UseLoadingScreen:          globalSettings.Playback.UseLoadingScreen,
+			SubtitleSize:              globalSettings.Playback.SubtitleSize,
 		},
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),

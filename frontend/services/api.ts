@@ -1448,6 +1448,8 @@ class ApiService {
     audioTrack?: number;
     subtitleTrack?: number;
     apiKey?: string;
+    profileId?: string;
+    profileName?: string;
   }): Promise<HlsSessionStartResponse> {
     const trimmedPath = params.path?.trim();
     if (!trimmedPath) {
@@ -1486,6 +1488,14 @@ class ApiService {
       params.subtitleTrack >= 0
     ) {
       search.set('subtitleTrack', params.subtitleTrack.toString());
+    }
+
+    // Add profile info for stream tracking
+    if (params.profileId) {
+      search.set('profileId', params.profileId);
+    }
+    if (params.profileName) {
+      search.set('profileName', params.profileName);
     }
 
     return this.request<HlsSessionStartResponse>(`/video/hls/start?${search.toString()}`);

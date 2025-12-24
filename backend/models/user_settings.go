@@ -18,11 +18,12 @@ type LiveTVSettings struct {
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
-	PreferredPlayer           string `json:"preferredPlayer"`
-	PreferredAudioLanguage    string `json:"preferredAudioLanguage,omitempty"`
-	PreferredSubtitleLanguage string `json:"preferredSubtitleLanguage,omitempty"`
-	PreferredSubtitleMode     string `json:"preferredSubtitleMode,omitempty"`
-	UseLoadingScreen          bool   `json:"useLoadingScreen,omitempty"`
+	PreferredPlayer           string  `json:"preferredPlayer"`
+	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
+	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
+	SubtitleSize              float64 `json:"subtitleSize,omitempty"` // Scaling factor for subtitle size (1.0 = default)
 }
 
 // ShelfConfig represents a configurable home screen shelf.
@@ -62,6 +63,7 @@ func DefaultUserSettings() UserSettings {
 		Playback: PlaybackSettings{
 			PreferredPlayer:  "native",
 			UseLoadingScreen: false,
+			SubtitleSize:     1.0,
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{

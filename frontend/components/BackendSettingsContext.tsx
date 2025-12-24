@@ -93,6 +93,7 @@ export interface BackendPlaybackSettings {
   preferredSubtitleLanguage?: string;
   preferredSubtitleMode?: 'off' | 'on' | 'forced-only';
   useLoadingScreen?: boolean;
+  subtitleSize?: number; // Scaling factor for subtitle size (1.0 = default)
 }
 
 export interface BackendLiveSettings {
