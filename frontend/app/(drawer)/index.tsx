@@ -346,23 +346,8 @@ function IndexScreen() {
 
       const shouldAnimate = !skipAnimation && !isInitialLoadRef.current;
 
-      // Helper to perform the scroll with fast custom animation on Android TV
       const performScroll = (targetY: number) => {
-        if (isAndroidTV) {
-          // Use shared value with withTiming for fast, controllable animation
-          if (shouldAnimate) {
-            shelfScrollTargetY.value = withTiming(targetY, {
-              duration: TV_SCROLL_DURATION_MS,
-              easing: Easing.out(Easing.cubic),
-            });
-          } else {
-            // Instant scroll (no animation)
-            shelfScrollTargetY.value = targetY;
-          }
-        } else {
-          // Apple TV uses native scrollTo (already fast)
-          scrollViewRef.current?.scrollTo({ y: targetY, animated: shouldAnimate });
-        }
+        scrollViewRef.current?.scrollTo({ y: targetY, animated: shouldAnimate });
       };
 
       // Check cache first (avoids expensive measureLayout on Android)
@@ -507,6 +492,11 @@ function IndexScreen() {
     // Mark that we've been focused at least once
     if (!hasBeenFocusedRef.current) {
       hasBeenFocusedRef.current = true;
+    }
+
+    // Clear cached shelf positions on every focus - layout may not be ready yet or may have changed
+    if (Platform.isTV) {
+      shelfPositionsRef.current = {};
     }
 
     // Only reset shelf focus when RETURNING from navigation (e.g., details page)
@@ -1230,6 +1220,10 @@ function IndexScreen() {
   const handleDesktopContentSizeChange = useCallback((width: number, height: number) => {
     if (__DEV__ && Platform.OS === 'ios') {
       console.log('[SafeArea] Home desktop ScrollView content size', { width, height });
+    }
+    // Clear cached shelf positions when content size changes - positions are now stale
+    if (Platform.isTV) {
+      shelfPositionsRef.current = {};
     }
   }, []);
 
