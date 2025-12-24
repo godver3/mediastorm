@@ -183,6 +183,12 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			}
 		}
 
+		// Use parsed resolution from parsett (more accurate than scraper detection)
+		// This fixes issues like "wolfmax4k" provider name triggering false 4K detection
+		if parsed.Resolution != "" {
+			result.Attributes["resolution"] = parsed.Resolution
+		}
+
 		// Result passed all filters
 		filtered = append(filtered, filteredResult{
 			result:     result,
