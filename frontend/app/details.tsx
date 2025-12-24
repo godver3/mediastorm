@@ -507,7 +507,7 @@ export default function DetailsScreen() {
   } = useWatchStatus();
   const { showToast, hideToast } = useToast();
   const { recordEpisodeWatch } = useContinueWatching();
-  const { activeUserId } = useUserProfiles();
+  const { activeUserId, activeUser } = useUserProfiles();
   const { showLoadingScreen, hideLoadingScreen, setOnCancel } = useLoadingScreen();
 
   const [isResolving, setIsResolving] = useState(false);
@@ -1444,6 +1444,9 @@ export default function DetailsScreen() {
           onExternalPlayerLaunch: hideLoadingScreen,
           // Per-user settings override for track selection
           userSettings,
+          // Profile info for stream tracking
+          profileId: activeUserId ?? undefined,
+          profileName: activeUser?.name,
         },
       );
     },
@@ -1454,6 +1457,8 @@ export default function DetailsScreen() {
       backendApiKey,
       settings,
       userSettings,
+      activeUserId,
+      activeUser,
       headerImage,
       title,
       router,
@@ -1559,6 +1564,13 @@ export default function DetailsScreen() {
         params.set('transmux', '0'); // No transmuxing needed for external players
         if (apiKey) {
           params.set('apiKey', apiKey);
+        }
+        // Add profile info for stream tracking
+        if (activeUserId) {
+          params.set('profileId', activeUserId);
+        }
+        if (activeUser?.name) {
+          params.set('profileName', activeUser.name);
         }
         const directUrl = `${baseUrl}/video/stream?${params.toString()}`;
         console.log('[prequeue] Using backend proxy URL for external player:', directUrl);
@@ -1696,6 +1708,8 @@ export default function DetailsScreen() {
             start: typeof startOffset === 'number' ? startOffset : undefined,
             audioTrack: selectedAudioTrack,
             subtitleTrack: selectedSubtitleTrack,
+            profileId: activeUserId ?? undefined,
+            profileName: activeUser?.name,
           });
 
           const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
@@ -1717,6 +1731,13 @@ export default function DetailsScreen() {
           params.set('apiKey', apiKey);
         }
         params.set('transmux', '0'); // Let native player handle it
+        // Add profile info for stream tracking
+        if (activeUserId) {
+          params.set('profileId', activeUserId);
+        }
+        if (activeUser?.name) {
+          params.set('profileName', activeUser.name);
+        }
         streamUrl = `${baseUrl}/video/stream?${params.toString()}`;
         console.log('[prequeue] Using direct stream URL:', streamUrl);
       }

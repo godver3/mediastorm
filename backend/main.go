@@ -250,6 +250,7 @@ func main() {
 
 	// Wire up user settings to services for per-user settings
 	debridSearchService.SetUserSettingsProvider(userSettingsService)
+	debridSearchService.SetIMDBResolver(metadataService) // Fallback IMDB ID resolution via TVDB
 	indexerService.SetUserSettingsProvider(userSettingsService)
 	metadataHandler.SetUserSettingsProvider(userSettingsService)
 
@@ -359,6 +360,7 @@ func main() {
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 

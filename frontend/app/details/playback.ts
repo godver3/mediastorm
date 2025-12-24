@@ -216,6 +216,8 @@ export const buildStreamUrl = (
     startOffset?: number;
     audioTrack?: number;
     subtitleTrack?: number;
+    profileId?: string;
+    profileName?: string;
   } = {},
 ) => {
   // Check if this is a debrid path - these always need to go through the API endpoint
@@ -266,6 +268,14 @@ export const buildStreamUrl = (
     }
     if (typeof options.subtitleTrack === 'number') {
       queryParams.subtitleTrack = options.subtitleTrack.toString();
+    }
+
+    // Add profile info for stream tracking
+    if (options.profileId) {
+      queryParams.profileId = options.profileId;
+    }
+    if (options.profileName) {
+      queryParams.profileName = options.profileName;
     }
 
     const search = Object.entries(queryParams)
@@ -404,6 +414,14 @@ export const buildStreamUrl = (
     }
   }
 
+  // Add profile info for stream tracking
+  if (options.profileId) {
+    queryParams.profileId = options.profileId;
+  }
+  if (options.profileName) {
+    queryParams.profileName = options.profileName;
+  }
+
   const search = Object.entries(queryParams)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
     .join('&');
@@ -423,6 +441,7 @@ export const buildDirectUrlForExternalPlayer = async (
   playback: { webdavPath: string; sourceNzbPath?: string },
   settings: any,
   backendApiKey?: string | null,
+  options?: { profileId?: string; profileName?: string },
 ): Promise<string | null> => {
   const isDebridPath = playback.webdavPath.includes('/debrid/');
   const isExternalUrl =
@@ -438,6 +457,13 @@ export const buildDirectUrlForExternalPlayer = async (
     const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
     if (trimmedApiKey) {
       params.set('apiKey', trimmedApiKey);
+    }
+    // Add profile info for stream tracking
+    if (options?.profileId) {
+      params.set('profileId', options.profileId);
+    }
+    if (options?.profileName) {
+      params.set('profileName', options.profileName);
     }
     const proxyUrl = `${base}/video/stream?${params.toString()}`;
     console.log(
@@ -623,6 +649,8 @@ export const initiatePlayback = async (
     debugPlayer?: boolean;
     onExternalPlayerLaunch?: () => void; // Callback to hide loading screen when launching external player
     userSettings?: any; // Per-user settings override
+    profileId?: string;
+    profileName?: string;
   } = {},
 ) => {
   setSelectionError(null);
@@ -665,7 +693,10 @@ export const initiatePlayback = async (
 
     // Build direct URL for external player
     setSelectionInfo(`Preparing stream for ${label}…`);
-    const directExternalUrl = await buildDirectUrlForExternalPlayer(playback, settings, backendApiKey);
+    const directExternalUrl = await buildDirectUrlForExternalPlayer(playback, settings, backendApiKey, {
+      profileId: options.profileId,
+      profileName: options.profileName,
+    });
     if (!directExternalUrl) {
       setSelectionError(`Unable to build direct URL for ${label}. Launching native player instead.`);
       // Fall back to native player - continue with rest of function
@@ -854,14 +885,20 @@ export const initiatePlayback = async (
         startOffset: options.startOffset,
         audioTrack: selectedAudioTrack,
         subtitleTrack: selectedSubtitleTrack,
+        profileId: options.profileId,
+        profileName: options.profileName,
       })
     : shouldDisableTransmux
       ? buildStreamUrl(playback.webdavPath, backendApiKey, settings, {
           disableTransmux: true,
           startOffset: options.startOffset,
+          profileId: options.profileId,
+          profileName: options.profileName,
         })
       : buildStreamUrl(playback.webdavPath, backendApiKey, settings, {
           startOffset: options.startOffset,
+          profileId: options.profileId,
+          profileName: options.profileName,
         });
 
   // If HLS session URL, fetch the actual playlist URL

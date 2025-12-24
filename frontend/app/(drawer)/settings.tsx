@@ -240,6 +240,7 @@ interface EditableBackendSettings {
     preferredSubtitleLanguage?: string;
     preferredSubtitleMode?: 'off' | 'on' | 'forced-only';
     useLoadingScreen?: boolean;
+    subtitleSize?: number | string; // string during editing, parsed to number on save
   };
   live: {
     playlistUrl: string;
@@ -569,6 +570,7 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
       preferredSubtitleLanguage: settings.playback?.preferredSubtitleLanguage ?? '',
       preferredSubtitleMode: settings.playback?.preferredSubtitleMode ?? 'off',
       useLoadingScreen: settings.playback?.useLoadingScreen ?? false,
+      subtitleSize: settings.playback?.subtitleSize ?? 1.0,
     },
     live: {
       playlistUrl: settings.live?.playlistUrl ?? '',
@@ -705,6 +707,15 @@ const toBackendPayload = (editable: EditableBackendSettings, baseline: BackendSe
       preferredSubtitleMode:
         editable.playback?.preferredSubtitleMode || baseline.playback?.preferredSubtitleMode || undefined,
       useLoadingScreen: editable.playback?.useLoadingScreen ?? baseline.playback?.useLoadingScreen ?? false,
+      subtitleSize: (() => {
+        const val = editable.playback?.subtitleSize;
+        if (typeof val === 'number') return val;
+        if (typeof val === 'string') {
+          const parsed = parseFloat(val);
+          return isNaN(parsed) ? (baseline.playback?.subtitleSize ?? 1.0) : Math.round(parsed * 100) / 100;
+        }
+        return baseline.playback?.subtitleSize ?? 1.0;
+      })(),
     },
     live: {
       playlistUrl: editable.live?.playlistUrl?.trim() || baseline.live?.playlistUrl || '',
@@ -991,6 +1002,7 @@ function SettingsScreen() {
             (userSettings.playback?.preferredSubtitleMode as 'off' | 'on' | 'forced-only' | undefined) ??
             merged.playback.preferredSubtitleMode,
           useLoadingScreen: userSettings.playback?.useLoadingScreen ?? merged.playback.useLoadingScreen,
+          subtitleSize: userSettings.playback?.subtitleSize ?? merged.playback.subtitleSize,
         };
         merged.homeShelves = {
           shelves:
@@ -1130,6 +1142,15 @@ function SettingsScreen() {
             preferredSubtitleLanguage: editableSettings.playback?.preferredSubtitleLanguage?.trim() || undefined,
             preferredSubtitleMode: editableSettings.playback?.preferredSubtitleMode || undefined,
             useLoadingScreen: editableSettings.playback?.useLoadingScreen ?? false,
+            subtitleSize: (() => {
+              const val = editableSettings.playback?.subtitleSize;
+              if (typeof val === 'number') return val;
+              if (typeof val === 'string') {
+                const parsed = parseFloat(val);
+                return isNaN(parsed) ? 1.0 : Math.round(parsed * 100) / 100;
+              }
+              return 1.0;
+            })(),
           },
           homeShelves: {
             shelves:
@@ -2053,6 +2074,14 @@ function SettingsScreen() {
         fieldKey: 'playback.preferredSubtitleMode',
       },
       {
+        type: 'text-field',
+        id: 'playback-subtitle-size',
+        label: 'Subtitle Size',
+        value: String(editableSettings.playback.subtitleSize ?? 1.0),
+        fieldKey: 'playback.subtitleSize',
+        options: { placeholder: '1.0', keyboardType: 'numeric' as const },
+      },
+      {
         type: 'header',
         id: 'playback-loading-header',
         title: 'Loading Screen',
@@ -2265,11 +2294,12 @@ function SettingsScreen() {
 
   // TV Grid field update handler
   const handleGridFieldUpdate = useCallback(
-    (fieldKey: string, value: string | boolean) => {
+    (fieldKey: string, value: string | boolean | number) => {
       if (!editableSettings) return;
 
       if (fieldKey.startsWith('playback.')) {
         const subKey = fieldKey.replace('playback.', '') as keyof EditableBackendSettings['playback'];
+        // Store raw value - subtitleSize will be parsed to number on save
         setEditableSettings({
           ...editableSettings,
           playback: { ...editableSettings.playback, [subKey]: value },
@@ -2960,6 +2990,17 @@ function SettingsScreen() {
                           { label: 'Forced Only', value: 'forced-only' },
                         ]}
                         onChange={(value) => updatePlaybackField('preferredSubtitleMode')(value)}
+                        styles={styles}
+                      />
+                      <TextInputField
+                        label="Subtitle Size"
+                        value={String(editableSettings.playback?.subtitleSize ?? 1.0)}
+                        onChange={(value) => {
+                          // Store raw string value to allow typing decimals like "0.5"
+                          // Will be parsed to number on save
+                          updatePlaybackField('subtitleSize')(value);
+                        }}
+                        options={{ placeholder: '1.0', keyboardType: 'numeric' }}
                         styles={styles}
                       />
                     </View>

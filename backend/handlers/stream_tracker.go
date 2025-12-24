@@ -22,6 +22,8 @@ type TrackedStream struct {
 	Path          string
 	Filename      string
 	ClientIP      string
+	ProfileID     string
+	ProfileName   string
 	StartTime     time.Time
 	LastActivity  time.Time
 	BytesStreamed int64
@@ -57,6 +59,13 @@ func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength 
 	// Extract filename
 	filename := filepath.Base(path)
 
+	// Extract profile info from query params
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+	profileName := r.URL.Query().Get("profileName")
+
 	bytesCounter := new(int64)
 
 	stream := &TrackedStream{
@@ -64,6 +73,8 @@ func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength 
 		Path:          path,
 		Filename:      filename,
 		ClientIP:      clientIP,
+		ProfileID:     profileID,
+		ProfileName:   profileName,
 		StartTime:     time.Now(),
 		LastActivity:  time.Now(),
 		ContentLength: contentLength,
@@ -115,6 +126,8 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 			Path:          s.Path,
 			Filename:      s.Filename,
 			ClientIP:      s.ClientIP,
+			ProfileID:     s.ProfileID,
+			ProfileName:   s.ProfileName,
 			StartTime:     s.StartTime,
 			LastActivity:  s.LastActivity,
 			BytesStreamed: atomic.LoadInt64(s.bytesCounter),

@@ -2649,3 +2649,60 @@ func extractYearCandidate(value string) int {
 	}
 	return 0
 }
+
+// ResolveIMDBID attempts to find an IMDB ID for a title by searching TVDB.
+// This is useful as a fallback when Cinemeta doesn't have a match.
+// Returns empty string if no IMDB ID can be found.
+func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType string, year int) string {
+	if s == nil || s.client == nil {
+		return ""
+	}
+
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
+	log.Printf("[metadata] ResolveIMDBID called: title=%q, mediaType=%q, year=%d", title, mediaType, year)
+
+	var results []tvdbSearchResult
+	var err error
+
+	// Search based on media type
+	if mediaType == "movie" {
+		results, err = s.searchTVDBMovie(title, year, "")
+	} else {
+		// Default to series search (covers "series", "tv", "" and other values)
+		results, err = s.searchTVDBSeries(title, year, "")
+	}
+
+	if err != nil {
+		log.Printf("[metadata] ResolveIMDBID TVDB search failed: %v", err)
+		return ""
+	}
+
+	if len(results) == 0 {
+		log.Printf("[metadata] ResolveIMDBID no TVDB results for %q", title)
+		return ""
+	}
+
+	// Look for IMDB ID in the first result's RemoteIDs
+	for _, result := range results {
+		for _, remote := range result.RemoteIDs {
+			id := strings.TrimSpace(remote.ID)
+			if id == "" {
+				continue
+			}
+			sourceName := strings.ToLower(strings.TrimSpace(remote.SourceName))
+			if strings.Contains(sourceName, "imdb") {
+				log.Printf("[metadata] ResolveIMDBID found IMDB ID=%s for %q via TVDB result %q", id, title, result.Name)
+				return id
+			}
+		}
+	}
+
+	log.Printf("[metadata] ResolveIMDBID no IMDB ID found in %d TVDB results for %q", len(results), title)
+	return ""
+}

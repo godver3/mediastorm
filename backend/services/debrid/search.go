@@ -17,6 +17,11 @@ type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
 }
 
+// imdbResolver resolves IMDB IDs from title metadata when not available from primary sources.
+type imdbResolver interface {
+	ResolveIMDBID(ctx context.Context, title string, mediaType string, year int) string
+}
+
 // SearchOptions mirrors the indexer search contract but is scoped for debrid providers.
 type SearchOptions struct {
 	Query           string
@@ -34,6 +39,7 @@ type SearchService struct {
 	cfg          *config.Manager
 	scrapers     []Scraper
 	userSettings userSettingsProvider
+	imdbResolver imdbResolver
 }
 
 // NewSearchService constructs a new debrid search service.
@@ -105,6 +111,11 @@ func (s *SearchService) SetUserSettingsProvider(provider userSettingsProvider) {
 	s.userSettings = provider
 }
 
+// SetIMDBResolver sets the IMDB resolver for fallback ID resolution.
+func (s *SearchService) SetIMDBResolver(resolver imdbResolver) {
+	s.imdbResolver = resolver
+}
+
 // ReloadScrapers rebuilds the scraper list from current config.
 // This allows hot reloading when torrent scraper settings change.
 func (s *SearchService) ReloadScrapers() {
@@ -173,15 +184,26 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	}
 
 	log.Printf("[debrid] Search called with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID)
+
+	// If no IMDB ID provided, try to resolve it via metadata service (TVDB fallback)
+	imdbID := opts.IMDBID
+	if imdbID == "" && s.imdbResolver != nil && parsed.Title != "" {
+		resolvedID := s.imdbResolver.ResolveIMDBID(ctx, parsed.Title, string(parsed.MediaType), parsed.Year)
+		if resolvedID != "" {
+			log.Printf("[debrid] Resolved IMDB ID via fallback: %s for %q", resolvedID, parsed.Title)
+			imdbID = resolvedID
+		}
+	}
+
 	req := SearchRequest{
 		Query:      opts.Query,
 		Categories: append([]string(nil), opts.Categories...),
 		MaxResults: opts.MaxResults,
 		Parsed:     parsed,
-		IMDBID:     opts.IMDBID,
+		IMDBID:     imdbID,
 	}
-	log.Printf("[debrid] Using metadata: Title=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s",
-		parsed.Title, parsed.Season, parsed.Episode, parsed.Year, parsed.MediaType)
+	log.Printf("[debrid] Using metadata: Title=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IMDBID=%s",
+		parsed.Title, parsed.Season, parsed.Episode, parsed.Year, parsed.MediaType, imdbID)
 
 	var (
 		aggregate []models.NZBResult

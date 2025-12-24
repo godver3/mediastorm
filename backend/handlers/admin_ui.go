@@ -23,6 +23,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/plex"
 	"novastream/services/watchlist"
@@ -229,6 +230,7 @@ var SettingsSchema = map[string]interface{}{
 			"preferredAudioLanguage":    map[string]interface{}{"type": "text", "label": "Audio Language", "description": "Preferred audio language code"},
 			"preferredSubtitleLanguage": map[string]interface{}{"type": "text", "label": "Subtitle Language", "description": "Preferred subtitle language code"},
 			"preferredSubtitleMode":     map[string]interface{}{"type": "select", "label": "Subtitle Mode", "options": []string{"off", "on", "auto"}, "description": "Default subtitle behavior"},
+			"subtitleSize":              map[string]interface{}{"type": "number", "label": "Subtitle Size", "description": "Subtitle size scaling factor (1.0 = default, 0.5 = half, 2.0 = double)", "step": 0.05, "min": 0.25, "max": 3.0},
 			"useLoadingScreen":          map[string]interface{}{"type": "boolean", "label": "Loading Screen", "description": "Show loading screen during playback init"},
 		},
 	},
@@ -619,6 +621,8 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				"path":           session.Path,
 				"original_path":  session.OriginalPath,
 				"filename":       filename,
+				"profile_id":     session.ProfileID,
+				"profile_name":   session.ProfileName,
 				"created_at":     session.CreatedAt,
 				"last_access":    session.LastAccess,
 				"duration":       session.Duration,
@@ -641,6 +645,8 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			"type":           "direct",
 			"path":           stream.Path,
 			"filename":       stream.Filename,
+			"profile_id":     stream.ProfileID,
+			"profile_name":   stream.ProfileName,
 			"client_ip":      stream.ClientIP,
 			"created_at":     stream.StartTime,
 			"last_access":    stream.LastActivity,
@@ -694,6 +700,99 @@ func (h *AdminUIHandler) getStatus(settings config.Settings) AdminStatus {
 	}
 
 	return status
+}
+
+// GetDebridStatus returns account/subscription info for all configured debrid providers
+func (h *AdminUIHandler) GetDebridStatus(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings",
+		})
+		return
+	}
+
+	type ProviderStatus struct {
+		Name          string `json:"name"`
+		Provider      string `json:"provider"`
+		Enabled       bool   `json:"enabled"`
+		HasAPIKey     bool   `json:"has_api_key"`
+		Username      string `json:"username,omitempty"`
+		Email         string `json:"email,omitempty"`
+		PremiumActive bool   `json:"premium_active"`
+		ExpiresAt     string `json:"expires_at,omitempty"`
+		DaysRemaining int    `json:"days_remaining,omitempty"`
+		IsLifetime    bool   `json:"is_lifetime,omitempty"`
+		Error         string `json:"error,omitempty"`
+	}
+
+	providers := make([]ProviderStatus, 0, len(settings.Streaming.DebridProviders))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	for _, p := range settings.Streaming.DebridProviders {
+		status := ProviderStatus{
+			Name:      p.Name,
+			Provider:  p.Provider,
+			Enabled:   p.Enabled,
+			HasAPIKey: p.APIKey != "",
+		}
+
+		if p.APIKey != "" {
+			// Fetch account info from each provider (even if disabled, to show premium status)
+			switch p.Provider {
+			case "realdebrid":
+				client := debrid.NewRealDebridClient(p.APIKey)
+				if info, err := client.GetAccountInfo(ctx); err == nil {
+					status.Username = info.Username
+					status.Email = info.Email
+					status.PremiumActive = info.PremiumActive
+					status.IsLifetime = info.IsLifetime
+					if info.ExpiresAt != nil {
+						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
+						status.DaysRemaining = info.DaysRemaining
+					}
+				} else {
+					status.Error = err.Error()
+				}
+			case "torbox":
+				client := debrid.NewTorboxClient(p.APIKey)
+				if info, err := client.GetAccountInfo(ctx); err == nil {
+					status.Username = info.Username
+					status.Email = info.Email
+					status.PremiumActive = info.PremiumActive
+					if info.ExpiresAt != nil {
+						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
+						status.DaysRemaining = info.DaysRemaining
+					}
+				} else {
+					status.Error = err.Error()
+				}
+			case "alldebrid":
+				client := debrid.NewAllDebridClient(p.APIKey)
+				if info, err := client.GetAccountInfo(ctx); err == nil {
+					status.Username = info.Username
+					status.Email = info.Email
+					status.PremiumActive = info.PremiumActive
+					if info.ExpiresAt != nil {
+						status.ExpiresAt = info.ExpiresAt.Format("2006-01-02")
+						status.DaysRemaining = info.DaysRemaining
+					}
+				} else {
+					status.Error = err.Error()
+				}
+			}
+		}
+
+		providers = append(providers, status)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"providers": providers,
+	})
 }
 
 // GetUserSettings returns user-specific settings as JSON

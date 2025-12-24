@@ -53,4 +53,6 @@ export interface VideoPlayerProps {
   onNativeFullscreenExit?: () => void;
   mediaType?: string;
   nowPlaying?: NowPlayingMetadata;
+  /** Subtitle size scale factor (1.0 = default, used for VLC built-in subtitles) */
+  subtitleSize?: number;
 }

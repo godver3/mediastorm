@@ -166,11 +166,12 @@ type AltMountSettings struct {
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
-	PreferredPlayer           string `json:"preferredPlayer"`
-	PreferredAudioLanguage    string `json:"preferredAudioLanguage,omitempty"`
-	PreferredSubtitleLanguage string `json:"preferredSubtitleLanguage,omitempty"`
-	PreferredSubtitleMode     string `json:"preferredSubtitleMode,omitempty"`
-	UseLoadingScreen          bool   `json:"useLoadingScreen,omitempty"`
+	PreferredPlayer           string  `json:"preferredPlayer"`
+	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
+	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
+	SubtitleSize              float64 `json:"subtitleSize,omitempty"` // Scaling factor for subtitle size (1.0 = default)
 }
 
 // LiveSettings controls Live TV playlist caching behavior.
@@ -241,7 +242,7 @@ func DefaultSettings() Settings {
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false},
+		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0},
 		Live:      LiveSettings{PlaylistURL: "", PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{
@@ -413,6 +414,11 @@ func (m *Manager) Load() (Settings, error) {
 
 	if strings.TrimSpace(s.Playback.PreferredPlayer) == "" {
 		s.Playback.PreferredPlayer = "native"
+	}
+
+	// Backfill SubtitleSize if not set (0 means unset since it's omitempty)
+	if s.Playback.SubtitleSize == 0 {
+		s.Playback.SubtitleSize = 1.0
 	}
 
 	// Backfill WebDAV settings
