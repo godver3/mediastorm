@@ -116,11 +116,21 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   }, [onClose, withSelectGuard]);
 
   const handleSearchSubtitles = useCallback(() => {
-    withSelectGuard(() => {
-      onClose();
+    if (selectGuardRef.current) {
+      return;
+    }
+    selectGuardRef.current = true;
+    try {
+      // Don't call onClose() here - just trigger the search callback.
+      // The parent (Controls) will handle closing this modal without
+      // briefly setting isModalOpen=false, which would cause double focus.
       onSearchSubtitles?.();
-    });
-  }, [onClose, onSearchSubtitles, withSelectGuard]);
+    } finally {
+      setTimeout(() => {
+        selectGuardRef.current = false;
+      }, 250);
+    }
+  }, [onSearchSubtitles]);
 
   const onCloseRef = useRef(onClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
@@ -325,6 +335,11 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     <Text style={styles.emptyStateText}>No embedded subtitles</Text>
                   </View>
                 )}
+              </ScrollView>
+            </SpatialNavigationNode>
+
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={styles.modalFooter}>
                 {onSearchSubtitles && (
                   <SpatialNavigationFocusableView
                     focusKey={`${focusKeyPrefix}-search-subtitles`}
@@ -333,37 +348,29 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     {({ isFocused }: { isFocused: boolean }) => (
                       <Pressable
                         onPress={handleSearchSubtitles}
-                        style={[styles.optionItem, styles.searchOption, isFocused && styles.optionItemFocused]}
+                        style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}
                         tvParallaxProperties={{ enabled: false }}
                       >
-                        <View style={styles.optionTextContainer}>
-                          <Text style={[styles.optionLabel, isFocused && styles.optionLabelFocused]}>
-                            Search for Subtitles...
-                          </Text>
-                          <Text style={[styles.optionDescription, isFocused && styles.optionDescriptionFocused]}>
-                            Find subtitles online
-                          </Text>
-                        </View>
+                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
+                          Search Online
+                        </Text>
                       </Pressable>
                     )}
                   </SpatialNavigationFocusableView>
                 )}
-              </ScrollView>
+                <SpatialNavigationFocusableView focusKey={`${focusKeyPrefix}-close`} onSelect={handleClose}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <Pressable
+                      onPress={handleClose}
+                      style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
+                      tvParallaxProperties={{ enabled: false }}
+                    >
+                      <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                    </Pressable>
+                  )}
+                </SpatialNavigationFocusableView>
+              </View>
             </SpatialNavigationNode>
-
-            <View style={styles.modalFooter}>
-              <SpatialNavigationFocusableView focusKey={`${focusKeyPrefix}-close`} onSelect={handleClose}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <Pressable
-                    onPress={handleClose}
-                    style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
-                    tvParallaxProperties={{ enabled: false }}
-                  >
-                    <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                  </Pressable>
-                )}
-              </SpatialNavigationFocusableView>
-            </View>
           </View>
         </View>
       </SpatialNavigationRoot>
@@ -429,12 +436,6 @@ const createStyles = (theme: NovaTheme) =>
       gap: theme.spacing.lg,
       marginHorizontal: theme.spacing.xl,
       marginBottom: theme.spacing.md,
-    },
-    searchOption: {
-      marginTop: theme.spacing.lg,
-      borderColor: theme.colors.accent.primary,
-      borderWidth: 1,
-      backgroundColor: 'rgba(255, 255, 255, 0.04)',
     },
     optionItemFocused: {
       backgroundColor: theme.colors.accent.primary,
@@ -510,21 +511,27 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.secondary,
     },
     modalFooter: {
+      flexDirection: 'row',
       paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.lg,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.spacing.md,
     },
     closeButton: {
-      minWidth: 200,
-      paddingHorizontal: theme.spacing['2xl'],
+      minWidth: 150,
+      paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.md,
       borderRadius: theme.radius.md,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.surface,
       alignItems: 'center',
+    },
+    searchButton: {
+      borderColor: theme.colors.accent.primary,
     },
     closeButtonFocused: {
       backgroundColor: theme.colors.accent.primary,

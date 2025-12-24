@@ -470,6 +470,10 @@ export default function SearchScreen() {
         automaticallyAdjustContentInsets={false}
         removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
         scrollEventThrottle={16}
+        // Android TV: prevent native focus-based scrolling
+        focusable={false}
+        // @ts-ignore - TV-specific prop
+        isTVSelectable={false}
       >
         <View style={styles.gridContent}>
           {!Platform.isTV && <Text style={styles.resultsTitle}>Search Results</Text>}

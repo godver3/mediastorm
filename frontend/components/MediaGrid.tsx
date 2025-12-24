@@ -424,7 +424,11 @@ const MediaGrid = React.memo(
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
           removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
-          scrollEventThrottle={16}>
+          scrollEventThrottle={16}
+          // Android TV: prevent native focus-based scrolling
+          focusable={false}
+          // @ts-ignore - TV-specific prop
+          isTVSelectable={false}>
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;

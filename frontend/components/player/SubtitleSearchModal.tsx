@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
   SpatialNavigationNode,
   SpatialNavigationRoot,
+  SpatialNavigationScrollView,
+  SpatialNavigationVirtualizedList,
 } from '@/services/tv-navigation';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
@@ -194,12 +196,21 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
       return;
     }
 
+    // Use both BackHandler (for tvOS menu button) and RemoteControlManager
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      onCloseRef.current();
+      return true;
+    });
+
     const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
       onCloseRef.current();
       return true;
     });
 
-    removeInterceptorRef.current = removeInterceptor;
+    removeInterceptorRef.current = () => {
+      backHandler.remove();
+      removeInterceptor();
+    };
 
     return () => {
       if (removeInterceptorRef.current) {
@@ -214,6 +225,48 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     [selectedLanguage],
   );
 
+  // Language chip dimensions for virtualized list
+  const LANGUAGE_CHIP_WIDTH = 100;
+  const LANGUAGE_CHIP_MARGIN = 8;
+  const LANGUAGE_ITEM_SIZE = LANGUAGE_CHIP_WIDTH + LANGUAGE_CHIP_MARGIN;
+
+  const renderLanguageItem = useCallback(
+    ({ item: lang }: { item: { code: string; name: string } }) => {
+      const isSelected = lang.code === selectedLanguage;
+      return (
+        <SpatialNavigationFocusableView
+          focusKey={`lang-${lang.code}`}
+          onSelect={() => handleLanguageChange(lang.code)}
+        >
+          {({ isFocused }: { isFocused: boolean }) => (
+            <Pressable
+              onPress={() => handleLanguageChange(lang.code)}
+              style={[
+                styles.languageChip,
+                { width: LANGUAGE_CHIP_WIDTH },
+                isSelected && styles.languageChipSelected,
+                isFocused && styles.languageChipFocused,
+              ]}
+              tvParallaxProperties={{ enabled: false }}
+            >
+              <Text
+                style={[
+                  styles.languageChipText,
+                  isSelected && styles.languageChipTextSelected,
+                  isFocused && styles.languageChipTextFocused,
+                ]}
+                numberOfLines={1}
+              >
+                {lang.name}
+              </Text>
+            </Pressable>
+          )}
+        </SpatialNavigationFocusableView>
+      );
+    },
+    [selectedLanguage, handleLanguageChange, styles],
+  );
+
   if (!visible) {
     return null;
   }
@@ -221,42 +274,18 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   const renderLanguageSelector = () => (
     <View style={styles.languageSelector}>
       <Text style={styles.languageLabel}>Language:</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.languageScrollView}>
+      <View style={styles.languageScrollView}>
         <SpatialNavigationNode orientation="horizontal">
-          {LANGUAGES.map((lang) => {
-            const isSelected = lang.code === selectedLanguage;
-            return (
-              <SpatialNavigationFocusableView
-                key={lang.code}
-                focusKey={`lang-${lang.code}`}
-                onSelect={() => handleLanguageChange(lang.code)}
-              >
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <Pressable
-                    onPress={() => handleLanguageChange(lang.code)}
-                    style={[
-                      styles.languageChip,
-                      isSelected && styles.languageChipSelected,
-                      isFocused && styles.languageChipFocused,
-                    ]}
-                    tvParallaxProperties={{ enabled: false }}
-                  >
-                    <Text
-                      style={[
-                        styles.languageChipText,
-                        isSelected && styles.languageChipTextSelected,
-                        isFocused && styles.languageChipTextFocused,
-                      ]}
-                    >
-                      {lang.name}
-                    </Text>
-                  </Pressable>
-                )}
-              </SpatialNavigationFocusableView>
-            );
-          })}
+          <SpatialNavigationVirtualizedList
+            data={LANGUAGES}
+            renderItem={renderLanguageItem}
+            itemSize={LANGUAGE_ITEM_SIZE}
+            orientation="horizontal"
+            numberOfRenderedItems={10}
+            numberOfItemsVisibleOnScreen={5}
+          />
         </SpatialNavigationNode>
-      </ScrollView>
+      </View>
     </View>
   );
 
@@ -311,6 +340,72 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     return <React.Fragment key={uniqueKey}>{content}</React.Fragment>;
   };
 
+  // On TV, render as a View (to be placed inside TVControlsModal)
+  // On mobile, use Modal for proper presentation
+  if (Platform.isTV) {
+    return (
+      <View style={styles.overlay}>
+        {/* Use View instead of Pressable on TV to prevent accidental closes - use Menu button to close */}
+        <View style={styles.backdrop} />
+        <SpatialNavigationRoot isActive={visible}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Search Subtitles</Text>
+              {!isLoading && (
+                <Text style={styles.modalSubtitle}>
+                  {error ? error : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
+                </Text>
+              )}
+            </View>
+
+            {renderLanguageSelector()}
+
+            <SpatialNavigationNode orientation="vertical">
+              <SpatialNavigationScrollView
+                ref={scrollViewRef}
+                style={styles.resultsScrollView}
+                contentContainerStyle={styles.resultsList}
+              >
+                {isLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+                  </View>
+                ) : error ? (
+                  <View style={styles.errorContainer}>
+                    <Ionicons name="alert-circle-outline" size={48} color={theme.colors.status.danger} />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                ) : sortedResults.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Ionicons name="search-outline" size={48} color={theme.colors.text.secondary} />
+                    <Text style={styles.emptyText}>No subtitles found</Text>
+                    <Text style={styles.emptySubtext}>Try a different language</Text>
+                  </View>
+                ) : (
+                  sortedResults.map((result, index) => renderResult(result, index))
+                )}
+              </SpatialNavigationScrollView>
+            </SpatialNavigationNode>
+
+            <View style={styles.modalFooter}>
+              <SpatialNavigationFocusableView focusKey="subtitle-search-close" onSelect={handleClose}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <Pressable
+                    onPress={handleClose}
+                    style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
+                    tvParallaxProperties={{ enabled: false }}
+                  >
+                    <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                  </Pressable>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
+          </View>
+        </SpatialNavigationRoot>
+      </View>
+    );
+  }
+
   return (
     <Modal
       visible={visible}
@@ -326,13 +421,11 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Search Subtitles</Text>
-              <Text style={styles.modalSubtitle}>
-                {isLoading
-                  ? 'Searching for subtitles...'
-                  : error
-                    ? error
-                    : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
-              </Text>
+              {!isLoading && (
+                <Text style={styles.modalSubtitle}>
+                  {error ? error : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
+                </Text>
+              )}
             </View>
 
             {renderLanguageSelector()}
@@ -347,7 +440,6 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
                 {isLoading ? (
                   <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-                    <Text style={styles.loadingText}>Searching for subtitles...</Text>
                   </View>
                 ) : error ? (
                   <View style={styles.errorContainer}>
@@ -436,13 +528,20 @@ const createStyles = (theme: NovaTheme) =>
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
       fontWeight: '600',
+      backgroundColor: theme.colors.background.secondary,
+      paddingRight: theme.spacing.md,
+      zIndex: 1,
     },
     languageScrollView: {
       flex: 1,
+      height: 36,
+      overflow: 'hidden',
     },
     languageChip: {
       paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.xs,
+      height: 32,
+      justifyContent: 'center',
+      alignItems: 'center',
       borderRadius: theme.radius.sm,
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
       marginRight: theme.spacing.sm,
@@ -477,6 +576,7 @@ const createStyles = (theme: NovaTheme) =>
     },
     resultItem: {
       padding: theme.spacing.md,
+      margin: theme.spacing.sm,
       borderRadius: theme.radius.md,
       backgroundColor: 'rgba(255, 255, 255, 0.06)',
       borderWidth: 1,

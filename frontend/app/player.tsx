@@ -563,17 +563,27 @@ export default function PlayerScreen() {
     setIsModalOpen(open);
   }, []);
 
+  // Track if video was paused before opening subtitle search (to avoid resuming if user had paused)
+  const wasPlayingBeforeSubtitleSearchRef = useRef(false);
+
   // Subtitle search handlers
   const handleOpenSubtitleSearch = useCallback(() => {
-    console.log('[player] opening subtitle search modal');
+    // Pause playback while searching for subtitles
+    wasPlayingBeforeSubtitleSearchRef.current = !paused;
+    if (!paused) {
+      setPaused(true);
+    }
     setSubtitleSearchModalVisible(true);
     handleModalStateChange(true);
-  }, [handleModalStateChange]);
+  }, [handleModalStateChange, paused]);
 
   const handleCloseSubtitleSearch = useCallback(() => {
-    console.log('[player] closing subtitle search modal');
     setSubtitleSearchModalVisible(false);
     handleModalStateChange(false);
+    // Resume playback if it was playing before opening the modal
+    if (wasPlayingBeforeSubtitleSearchRef.current) {
+      setPaused(false);
+    }
   }, [handleModalStateChange]);
 
   const handleSubtitleSearch = useCallback(
@@ -2201,6 +2211,11 @@ export default function PlayerScreen() {
     }
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      // If subtitle search modal is open, close it
+      if (subtitleSearchModalVisible) {
+        handleCloseSubtitleSearch();
+        return true;
+      }
       if (controlsVisible && !isModalOpen) {
         hideControls();
         return true;
@@ -2211,7 +2226,7 @@ export default function PlayerScreen() {
     return () => {
       subscription.remove();
     };
-  }, [controlsVisible, hideControls, isModalOpen, isTvPlatform, usesSystemManagedControls]);
+  }, [controlsVisible, hideControls, isModalOpen, isTvPlatform, usesSystemManagedControls, subtitleSearchModalVisible, handleCloseSubtitleSearch]);
 
   // Cleanup seek indicator timeout on unmount
   useEffect(() => {
@@ -2378,11 +2393,20 @@ export default function PlayerScreen() {
     controlsVisibleRef.current = controlsVisible;
   }, [controlsVisible]);
 
+  // Track previous modal state to detect modal close
+  const prevIsModalOpenRef = useRef(isModalOpen);
   useEffect(() => {
+    const wasModalOpen = prevIsModalOpenRef.current;
+    prevIsModalOpenRef.current = isModalOpen;
+
     if (isModalOpen) {
+      // Modal just opened - show controls (auto-hide timer won't be set since modal is open)
+      showControls();
+    } else if (wasModalOpen && controlsVisible) {
+      // Modal just closed but controls are still visible - restart auto-hide timer
       showControls();
     }
-  }, [isModalOpen, showControls]);
+  }, [isModalOpen, showControls, controlsVisible]);
 
   const handleSeekBarScrubStart = useCallback(() => {
     if (usesSystemManagedControls) {
@@ -3628,7 +3652,14 @@ export default function PlayerScreen() {
               isTvPlatform ? (
                 <TVControlsModal
                   visible={controlsVisible || isTVSeeking}
-                  onRequestClose={() => hideControls({ immediate: true })}
+                  onRequestClose={() => {
+                    // Close subtitle search modal first if open, otherwise hide controls
+                    if (subtitleSearchModalVisible) {
+                      handleCloseSubtitleSearch();
+                    } else {
+                      hideControls({ immediate: true });
+                    }
+                  }}
                   isChildModalOpen={isModalOpen}
                   isSeeking={isTVSeeking}
                 >
@@ -3730,6 +3761,20 @@ export default function PlayerScreen() {
                       </View>
                     </Animated.View>
                   </ControlsContainerComponent>
+                  {/* Render SubtitleSearchModal inside TVControlsModal on TV for proper modal stacking */}
+                  {subtitleSearchModalVisible && (
+                    <SubtitleSearchModal
+                      visible={subtitleSearchModalVisible}
+                      onClose={handleCloseSubtitleSearch}
+                      onSelectSubtitle={handleSelectExternalSubtitle}
+                      searchResults={subtitleSearchResults}
+                      isLoading={subtitleSearchLoading}
+                      error={subtitleSearchError}
+                      onSearch={handleSubtitleSearch}
+                      currentLanguage={subtitleSearchLanguage}
+                      mediaReleaseName={releaseName}
+                    />
+                  )}
                 </TVControlsModal>
               ) : (
                 <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
@@ -3831,18 +3876,20 @@ export default function PlayerScreen() {
             />
           )}
 
-          {/* External subtitle search modal */}
-          <SubtitleSearchModal
-            visible={subtitleSearchModalVisible}
-            onClose={handleCloseSubtitleSearch}
-            onSelectSubtitle={handleSelectExternalSubtitle}
-            searchResults={subtitleSearchResults}
-            isLoading={subtitleSearchLoading}
-            error={subtitleSearchError}
-            onSearch={handleSubtitleSearch}
-            currentLanguage={subtitleSearchLanguage}
-            mediaReleaseName={releaseName}
-          />
+          {/* External subtitle search modal - only render here on non-TV (TV renders inside TVControlsModal) */}
+          {!isTvPlatform && (
+            <SubtitleSearchModal
+              visible={subtitleSearchModalVisible}
+              onClose={handleCloseSubtitleSearch}
+              onSelectSubtitle={handleSelectExternalSubtitle}
+              searchResults={subtitleSearchResults}
+              isLoading={subtitleSearchLoading}
+              error={subtitleSearchError}
+              onSearch={handleSubtitleSearch}
+              currentLanguage={subtitleSearchLanguage}
+              mediaReleaseName={releaseName}
+            />
+          )}
 
           {debugOverlayEnabled && (
             <View style={styles.debugOverlay} pointerEvents="box-none">
