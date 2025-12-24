@@ -872,6 +872,11 @@ class ApiService {
     return this.request('/settings');
   }
 
+  // Get backend version
+  async getBackendVersion(): Promise<{ version: string }> {
+    return this.request('/version');
+  }
+
   // Update settings
   async updateSettings(settings: any): Promise<any> {
     return this.request('/settings', {

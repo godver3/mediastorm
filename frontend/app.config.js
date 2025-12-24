@@ -1,5 +1,19 @@
+const fs = require('fs');
+const path = require('path');
+
+// Read version from frontend/version.txt
+const getVersion = () => {
+  try {
+    const versionPath = path.join(__dirname, 'version.txt');
+    return fs.readFileSync(versionPath, 'utf8').trim();
+  } catch {
+    return '1.0.0'; // fallback
+  }
+};
+
 module.exports = ({ config }) => {
   const isTV = process.env.EXPO_TV === '1';
+  const appVersion = getVersion();
 
   const plugins = [
     'expo-router',
@@ -71,6 +85,7 @@ module.exports = ({ config }) => {
       experiments: {
         typedRoutes: true,
       },
+      version: appVersion,
       name: 'strmr',
       slug: 'strmr',
       scheme: 'com.strmr.app',

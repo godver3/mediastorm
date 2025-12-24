@@ -58,6 +58,9 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/strmr .
 
+# Copy version file
+COPY backend/version.txt /app/version.txt
+
 # Copy Python scripts to root (title parsing and subtitle search)
 COPY backend/parse_title.py backend/parse_title_batch.py backend/search_subtitles.py backend/download_subtitle.py /
 
