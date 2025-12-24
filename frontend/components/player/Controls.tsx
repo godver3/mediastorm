@@ -156,12 +156,12 @@ const Controls: React.FC<ControlsProps> = ({
     const parts: string[] = [];
     if (hasAudioSelection) parts.push('audio');
     if (hasSubtitleSelection) parts.push('sub');
-    if (isTvPlatform && hasPreviousEpisode) parts.push('prev');
-    if (isTvPlatform && hasNextEpisode) parts.push('next');
+    if (isTvPlatform && onPreviousEpisode) parts.push('prev');
+    if (isTvPlatform && onNextEpisode) parts.push('next');
     if (isTvPlatform && showSubtitleOffset) parts.push('offset');
     if (isTvPlatform && streamInfo) parts.push('info');
     return `secondary-${parts.join('-')}`;
-  }, [hasAudioSelection, hasSubtitleSelection, isTvPlatform, hasPreviousEpisode, hasNextEpisode, showSubtitleOffset, streamInfo]);
+  }, [hasAudioSelection, hasSubtitleSelection, isTvPlatform, onPreviousEpisode, onNextEpisode, showSubtitleOffset, streamInfo]);
 
   const activeMenuRef = useRef<ActiveMenu>(null);
 
@@ -239,10 +239,17 @@ const Controls: React.FC<ControlsProps> = ({
       {/* Mobile center controls */}
       {isMobile && !isLiveTV && (
         <View style={styles.centerControls} pointerEvents="box-none">
-          {hasPreviousEpisode && onPreviousEpisode && (
+          {onPreviousEpisode && (
             <View style={styles.skipButtonContainer}>
-              <Pressable onPress={onPreviousEpisode} style={styles.episodeButton}>
-                <Ionicons name="play-skip-back" size={24} color={theme.colors.text.primary} />
+              <Pressable
+                onPress={hasPreviousEpisode ? onPreviousEpisode : undefined}
+                style={[styles.episodeButton, !hasPreviousEpisode && styles.episodeButtonDisabled]}
+                disabled={!hasPreviousEpisode}>
+                <Ionicons
+                  name="play-skip-back"
+                  size={24}
+                  color={hasPreviousEpisode ? theme.colors.text.primary : theme.colors.text.disabled}
+                />
               </Pressable>
             </View>
           )}
@@ -271,10 +278,17 @@ const Controls: React.FC<ControlsProps> = ({
               </Pressable>
             </View>
           )}
-          {hasNextEpisode && onNextEpisode && (
+          {onNextEpisode && (
             <View style={styles.skipButtonContainer}>
-              <Pressable onPress={onNextEpisode} style={styles.episodeButton}>
-                <Ionicons name="play-skip-forward" size={24} color={theme.colors.text.primary} />
+              <Pressable
+                onPress={hasNextEpisode ? onNextEpisode : undefined}
+                style={[styles.episodeButton, !hasNextEpisode && styles.episodeButtonDisabled]}
+                disabled={!hasNextEpisode}>
+                <Ionicons
+                  name="play-skip-forward"
+                  size={24}
+                  color={hasNextEpisode ? theme.colors.text.primary : theme.colors.text.disabled}
+                />
               </Pressable>
             </View>
           )}
@@ -381,7 +395,7 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </View>
           )}
-          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (hasPreviousEpisode || hasNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
+          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
             <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
@@ -456,32 +470,32 @@ const Controls: React.FC<ControlsProps> = ({
                   </View>
                 )}
                 {/* Episode navigation buttons for TV platforms */}
-                {isTvPlatform && hasPreviousEpisode && onPreviousEpisode && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                {isTvPlatform && onPreviousEpisode && (
+                  <View style={[styles.trackButtonGroup, !hasPreviousEpisode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <FocusablePressable
                       icon="play-skip-back"
                       focusKey="previous-episode-button"
                       onSelect={onPreviousEpisode}
                       onFocus={() => onFocusChange?.('previous-episode-button')}
                       style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null}
+                      disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode}
                     />
-                    <Text style={styles.trackLabel} numberOfLines={1}>
+                    <Text style={[styles.trackLabel, !hasPreviousEpisode && styles.trackLabelDisabled]} numberOfLines={1}>
                       Prev
                     </Text>
                   </View>
                 )}
-                {isTvPlatform && hasNextEpisode && onNextEpisode && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                {isTvPlatform && onNextEpisode && (
+                  <View style={[styles.trackButtonGroup, !hasNextEpisode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <FocusablePressable
                       icon="play-skip-forward"
                       focusKey="next-episode-button"
                       onSelect={onNextEpisode}
                       onFocus={() => onFocusChange?.('next-episode-button')}
                       style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null}
+                      disabled={isSeeking || activeMenu !== null || !hasNextEpisode}
                     />
-                    <Text style={styles.trackLabel} numberOfLines={1}>
+                    <Text style={[styles.trackLabel, !hasNextEpisode && styles.trackLabelDisabled]} numberOfLines={1}>
                       Next
                     </Text>
                   </View>
@@ -588,6 +602,10 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       borderWidth: 2,
       borderColor: 'rgba(255, 255, 255, 0.3)',
     },
+    episodeButtonDisabled: {
+      opacity: 0.4,
+      borderColor: 'rgba(255, 255, 255, 0.15)',
+    },
     skipButtonContent: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -684,6 +702,12 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.primary,
       marginLeft: theme.spacing.sm,
       maxWidth: 200,
+    },
+    trackLabelDisabled: {
+      color: theme.colors.text.disabled,
+    },
+    episodeButtonGroupDisabled: {
+      opacity: 0.5,
     },
     seekingDisabled: {
       opacity: 0.3,

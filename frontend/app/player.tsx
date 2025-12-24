@@ -3635,10 +3635,11 @@ export default function PlayerScreen() {
 
     const fetchSeriesEpisodes = async () => {
       try {
-        console.log('[player] fetching series details for episode navigation', { titleId, tvdbId, imdbId });
+        console.log('[player] fetching series details for episode navigation', { titleId, tvdbId, imdbId, name: cleanSeriesTitle });
         const details = await apiService.getSeriesDetails({
           titleId: titleId || undefined,
           tvdbId: tvdbId || undefined,
+          name: cleanSeriesTitle || undefined,
           // imdbId is not supported by getSeriesDetails, but titleId should cover most cases
         });
 
@@ -3672,7 +3673,7 @@ export default function PlayerScreen() {
     return () => {
       isMounted = false;
     };
-  }, [mediaType, titleId, tvdbId, imdbId]);
+  }, [mediaType, titleId, tvdbId, imdbId, cleanSeriesTitle]);
 
   // Find current episode index and determine if prev/next exist
   const currentEpisodeIndex = useMemo(() => {
