@@ -137,6 +137,10 @@ func Register(
 
 	api.HandleFunc("/debug/log", debugHandler.Capture).Methods(http.MethodPost, http.MethodOptions)
 
+	// Version endpoint
+	versionHandler := handlers.NewVersionHandler()
+	api.HandleFunc("/version", versionHandler.GetVersion).Methods(http.MethodGet, http.MethodOptions)
+
 	// Admin endpoints for monitoring
 	adminHandler := handlers.NewAdminHandler(videoHandler.GetHLSManager())
 	api.HandleFunc("/admin/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)

@@ -474,6 +474,7 @@ type AdminPageData struct {
 	Groups      []map[string]string
 	Status      AdminStatus
 	Users       []models.User
+	Version     string
 }
 
 // AdminStatus holds backend status information
@@ -500,6 +501,7 @@ func (h *AdminUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		Settings:    settings,
 		Schema:      SettingsSchema,
 		Status:      status,
+		Version:     GetBackendVersion(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -529,6 +531,7 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 		Schema:      SettingsSchema,
 		Groups:      SettingsGroups,
 		Users:       usersList,
+		Version:     GetBackendVersion(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -554,6 +557,7 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 		Settings:    settings,
 		Schema:      SettingsSchema,
 		Status:      status,
+		Version:     GetBackendVersion(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -573,6 +577,7 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	data := AdminPageData{
 		CurrentPath: "/admin/history",
 		Users:       usersList,
+		Version:     GetBackendVersion(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2273,6 +2278,7 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	data := AdminPageData{
 		CurrentPath: "/admin/tools",
 		Users:       usersList,
+		Version:     GetBackendVersion(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
