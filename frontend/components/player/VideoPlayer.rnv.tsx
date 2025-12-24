@@ -56,6 +56,10 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const STUCK_THRESHOLD_MS = 4000; // 4 seconds before considering stuck (time at 0)
     const NO_RENDER_THRESHOLD_MS = 3000; // 3 seconds of playback without video frame
 
+    // Track last valid seekable duration - AVPlayer sometimes incorrectly reports 0
+    // We use durationHint from API as authoritative, with last valid seekable as fallback
+    const lastValidSeekableRef = useRef<number>(0);
+
     const resolvedVolume = useMemo(() => {
       const numericVolume = Number(volume);
       if (!Number.isFinite(numericVolume)) return 1;
@@ -81,6 +85,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       progressEventCountRef.current = 0;
       firstProgressTimeRef.current = null;
       reloadAttemptRef.current = 0; // Reset reload attempts for new source
+      lastValidSeekableRef.current = 0;
       setSourceKey(0); // Reset source key for new source
     }, [movie]);
 
@@ -229,9 +234,20 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
         }
 
+        // Track last valid seekable duration - AVPlayer sometimes incorrectly reports 0
+        if (data.seekableDuration > 0) {
+          lastValidSeekableRef.current = data.seekableDuration;
+        }
+
+        // For seekable, use actual player value (or last valid) - NOT durationHint
+        // durationHint is for duration display; seekable controls buffer/seek decisions
+        const effectiveSeekable = data.seekableDuration > 0
+          ? data.seekableDuration
+          : lastValidSeekableRef.current;
+
         const meta: VideoProgressMeta = {
           playable: data.playableDuration,
-          seekable: data.seekableDuration,
+          seekable: effectiveSeekable,
         };
         onProgress(data.currentTime, meta);
       },
@@ -394,7 +410,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             // HDR-related props
             allowsExternalPlayback={true}
             automaticallyWaitsToMinimizeStalling={true}
-            preferredForwardBufferDuration={30}
+            preferredForwardBufferDuration={600} // Buffer up to 10 minutes ahead
             // Now Playing / Control Center integration
             showNotificationControls={true}
             playInBackground={true}
