@@ -37,6 +37,7 @@ import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
 import { useLiveChannels } from '@/hooks/useLiveChannels';
 import useUnplayableReleases from '@/hooks/useUnplayableReleases';
+import { apiService } from '@/services/api';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import {
   DefaultFocus,
@@ -51,6 +52,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
+import Constants from 'expo-constants';
 import { router, Stack } from 'expo-router';
 
 type SettingsTab = 'connection' | 'content' | 'playback' | 'home' | 'advanced' | 'live' | 'filtering';
@@ -300,7 +302,8 @@ type SettingsGridItem =
       buttons: Array<{ label: string; action: string; disabled?: boolean }>;
       key?: string;
     }
-  | { type: 'shelf-item'; id: string; shelf: BackendShelfConfig; index: number; total: number; key?: string };
+  | { type: 'shelf-item'; id: string; shelf: BackendShelfConfig; index: number; total: number; key?: string }
+  | { type: 'version-info'; id: string; key?: string };
 
 // TextInputModal Props for TV text editing
 interface TextInputModalProps {
@@ -805,6 +808,15 @@ function SettingsScreen() {
   const isActive =
     isFocused && !isMenuOpen && !isHiddenChannelsModalOpen && !isUnplayableReleasesModalOpen && !textInputModal.visible && !pendingPinUserId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
+
+  // Fetch backend version on mount
+  useEffect(() => {
+    apiService
+      .getBackendVersion()
+      .then((res) => setBackendVersion(res.version))
+      .catch(() => setBackendVersion(null));
+  }, []);
 
   const tabs = useMemo<TabOption[]>(
     () => [
@@ -2011,6 +2023,15 @@ function SettingsScreen() {
           { label: 'Apply', action: 'connection-apply', disabled: !isReady || busy },
         ],
       },
+      {
+        type: 'header',
+        id: 'about-header',
+        title: 'About',
+      },
+      {
+        type: 'version-info',
+        id: 'version-info',
+      },
     ],
     [backendUrlInput, backendApiKeyInput, isReady, busy],
   );
@@ -2701,6 +2722,23 @@ function SettingsScreen() {
           );
         }
 
+        case 'version-info': {
+          const versionString = Constants.expoConfig?.version ?? 'Unknown';
+
+          return (
+            <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing, styles.versionInfoContainer]}>
+              <View style={styles.versionInfoRow}>
+                <Text style={styles.versionInfoLabel}>Frontend</Text>
+                <Text style={styles.versionInfoValue}>{versionString}</Text>
+              </View>
+              <View style={styles.versionInfoRow}>
+                <Text style={styles.versionInfoLabel}>Backend</Text>
+                <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
+              </View>
+            </View>
+          );
+        }
+
         default:
           return null;
       }
@@ -2723,6 +2761,7 @@ function SettingsScreen() {
       editableSettings,
       setDirty,
       shelfPulses,
+      backendVersion,
     ],
   );
 
@@ -2846,6 +2885,25 @@ function SettingsScreen() {
                       </View>
                     </SpatialNavigationNode>
                     {error && <Text style={[styles.statusText, styles.statusError]}>{error}</Text>}
+                  </View>
+                )}
+
+                {/* App Version Info - shown on Connection tab */}
+                {!Platform.isTV && activeTab === 'connection' && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>About</Text>
+                    <View style={styles.versionInfoContainer}>
+                      <View style={styles.versionInfoRow}>
+                        <Text style={styles.versionInfoLabel}>Frontend</Text>
+                        <Text style={styles.versionInfoValue}>
+                          {Constants.expoConfig?.version ?? 'Unknown'}
+                        </Text>
+                      </View>
+                      <View style={styles.versionInfoRow}>
+                        <Text style={styles.versionInfoLabel}>Backend</Text>
+                        <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
+                      </View>
+                    </View>
                   </View>
                 )}
 
@@ -3767,6 +3825,26 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     statusSuccess: {
       color: theme.colors.status.success,
+    },
+    versionInfoContainer: {
+      gap: theme.spacing.xs * atvScale,
+    },
+    versionInfoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: theme.spacing.xs * atvScale,
+    },
+    versionInfoLabel: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.secondary,
+      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
+    },
+    versionInfoValue: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
     },
     loadingRow: {
       flexDirection: 'row',
