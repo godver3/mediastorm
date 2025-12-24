@@ -5,6 +5,8 @@ import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
+import { TvModal } from '@/components/TvModal';
+import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
@@ -29,7 +31,7 @@ import { Stack, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, {
   useAnimatedRef,
   scrollTo as reanimatedScrollTo,
@@ -780,6 +782,10 @@ function IndexScreen() {
   const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [shelfResetCounter, setShelfResetCounter] = useState(0);
 
+  // Remove from Continue Watching confirmation modal state
+  const [isRemoveConfirmVisible, setIsRemoveConfirmVisible] = useState(false);
+  const [pendingRemoveItem, setPendingRemoveItem] = useState<{ id: string; name: string } | null>(null);
+
   // Detect image orientation from URL pattern (avoids expensive Image.getSize network call)
   // backdropUrl = landscape, posterUrl = portrait, headerImage = check for poster patterns
   useEffect(() => {
@@ -1104,22 +1110,40 @@ function IndexScreen() {
       // or "seriesId:S01E02" format (for series with next episode)
       const seriesId = String(item.id).split(':S')[0];
 
-      hideFromContinueWatching(seriesId)
-        .then(() => {
-          showToast('Removed from Continue Watching', {
-            tone: 'success',
-            duration: 3000,
-          });
-        })
-        .catch(() => {
-          showToast('Failed to remove from Continue Watching', {
-            tone: 'danger',
-            duration: 3000,
-          });
-        });
+      // Show confirmation modal instead of immediately removing
+      setPendingRemoveItem({ id: seriesId, name: item.name });
+      setIsRemoveConfirmVisible(true);
     },
-    [hideFromContinueWatching, showToast],
+    [],
   );
+
+  // Handle confirmation of removal from Continue Watching
+  const handleConfirmRemove = useCallback(() => {
+    if (!pendingRemoveItem) return;
+
+    hideFromContinueWatching(pendingRemoveItem.id)
+      .then(() => {
+        showToast('Removed from Continue Watching', {
+          tone: 'success',
+          duration: 3000,
+        });
+      })
+      .catch(() => {
+        showToast('Failed to remove from Continue Watching', {
+          tone: 'danger',
+          duration: 3000,
+        });
+      });
+
+    setIsRemoveConfirmVisible(false);
+    setPendingRemoveItem(null);
+  }, [pendingRemoveItem, hideFromContinueWatching, showToast]);
+
+  // Handle cancellation of removal
+  const handleCancelRemove = useCallback(() => {
+    setIsRemoveConfirmVisible(false);
+    setPendingRemoveItem(null);
+  }, []);
 
   // TV: Listen for LongEnter to remove items from Continue Watching
   useEffect(() => {
@@ -1146,19 +1170,9 @@ function IndexScreen() {
       const cardId = String(focusedDesktopCard.id);
       const seriesId = cardId.includes(':S') ? cardId.split(':S')[0] : cardId;
 
-      hideFromContinueWatching(seriesId)
-        .then(() => {
-          showToast('Removed from Continue Watching', {
-            tone: 'success',
-            duration: 3000,
-          });
-        })
-        .catch(() => {
-          showToast('Failed to remove from Continue Watching', {
-            tone: 'danger',
-            duration: 3000,
-          });
-        });
+      // Show confirmation modal instead of immediately removing
+      setPendingRemoveItem({ id: seriesId, name: focusedDesktopCard.title });
+      setIsRemoveConfirmVisible(true);
     };
 
     RemoteControlManager.addKeydownListener(handleLongEnter);
@@ -1166,7 +1180,7 @@ function IndexScreen() {
     return () => {
       RemoteControlManager.removeKeydownListener(handleLongEnter);
     };
-  }, [isFocused, focusedShelfKey, focusedDesktopCard, hideFromContinueWatching, showToast]);
+  }, [isFocused, focusedShelfKey, focusedDesktopCard]);
 
   // Optimized: Direct shelf scrolling without title parameter
   // Track last focused shelf to avoid unnecessary state updates
@@ -1450,6 +1464,26 @@ function IndexScreen() {
               })}
           </ScrollView>
         </FixedSafeAreaView>
+
+        {/* Remove from Continue Watching Confirmation Modal (Mobile) */}
+        <Modal visible={isRemoveConfirmVisible} transparent={true} animationType="fade" onRequestClose={handleCancelRemove}>
+          <View style={mobileStyles.modalOverlay}>
+            <View style={mobileStyles.modalContainer}>
+              <Text style={mobileStyles.modalTitle}>Remove from Continue Watching?</Text>
+              <Text style={mobileStyles.modalSubtitle}>
+                Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
+              </Text>
+              <View style={mobileStyles.modalActions}>
+                <Pressable onPress={handleCancelRemove} style={mobileStyles.modalButton}>
+                  <Text style={mobileStyles.modalButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable onPress={handleConfirmRemove} style={[mobileStyles.modalButton, mobileStyles.modalButtonDanger]}>
+                  <Text style={[mobileStyles.modalButtonText, mobileStyles.modalButtonDangerText]}>Remove</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </>
     );
   }
@@ -1460,7 +1494,7 @@ function IndexScreen() {
 
   return (
     <SpatialNavigationRoot
-      isActive={isFocused && !isMenuOpen && !pendingPinUserId}
+      isActive={isFocused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible}
       onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
     >
       {/* Android TV focus anchor - captures initial native focus and transfers to spatial navigation */}
@@ -1651,6 +1685,40 @@ function IndexScreen() {
             }
           />
         )}
+
+        {/* Remove from Continue Watching Confirmation Modal (TV) */}
+        <TvModal visible={isRemoveConfirmVisible} onRequestClose={handleCancelRemove}>
+          <View style={desktopStyles.styles.tvModalContainer}>
+            <Text style={desktopStyles.styles.tvModalTitle}>Remove from Continue Watching?</Text>
+            <Text style={desktopStyles.styles.tvModalSubtitle}>
+              Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
+            </Text>
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={desktopStyles.styles.tvModalActions}>
+                <DefaultFocus>
+                  <FocusablePressable
+                    focusKey="remove-confirm-cancel"
+                    text="Cancel"
+                    onSelect={handleCancelRemove}
+                    style={desktopStyles.styles.tvModalButton}
+                    focusedStyle={desktopStyles.styles.tvModalButtonFocused}
+                    textStyle={desktopStyles.styles.tvModalButtonText}
+                    focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+                  />
+                </DefaultFocus>
+                <FocusablePressable
+                  focusKey="remove-confirm-remove"
+                  text="Remove"
+                  onSelect={handleConfirmRemove}
+                  style={[desktopStyles.styles.tvModalButton, desktopStyles.styles.tvModalButtonDanger]}
+                  focusedStyle={[desktopStyles.styles.tvModalButtonFocused, desktopStyles.styles.tvModalButtonDangerFocused]}
+                  textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
+                  focusedTextStyle={[desktopStyles.styles.tvModalButtonTextFocused, desktopStyles.styles.tvModalButtonDangerTextFocused]}
+                />
+              </View>
+            </SpatialNavigationNode>
+          </View>
+        </TvModal>
       </View>
     </SpatialNavigationRoot>
   );
@@ -2216,6 +2284,68 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
+    // TV Modal styles
+    tvModalContainer: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing['2xl'],
+      minWidth: 400,
+      maxWidth: 600,
+      gap: theme.spacing.xl,
+      alignItems: 'center',
+    },
+    tvModalTitle: {
+      ...theme.typography.title.lg,
+      fontSize: Math.round(theme.typography.title.lg.fontSize * 1.5 * tvScale),
+      lineHeight: Math.round(theme.typography.title.lg.lineHeight * 1.5 * tvScale),
+      color: theme.colors.text.primary,
+      textAlign: 'center',
+    },
+    tvModalSubtitle: {
+      ...theme.typography.body.md,
+      fontSize: Math.round(theme.typography.body.md.fontSize * 1.25 * tvScale),
+      lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.25 * tvScale),
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+    },
+    tvModalActions: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: theme.spacing.xl,
+    },
+    tvModalButton: {
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing['2xl'],
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 3,
+      borderColor: 'transparent',
+    },
+    tvModalButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+    },
+    tvModalButtonDanger: {
+      backgroundColor: theme.colors.status.danger,
+    },
+    tvModalButtonDangerFocused: {
+      borderColor: theme.colors.text.primary,
+    },
+    tvModalButtonText: {
+      ...theme.typography.body.md,
+      fontSize: Math.round(theme.typography.body.md.fontSize * 1.25 * tvScale),
+      lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.25 * tvScale),
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
+    tvModalButtonTextFocused: {
+      color: theme.colors.text.primary,
+    },
+    tvModalButtonDangerText: {
+      color: theme.colors.text.primary,
+    },
+    tvModalButtonDangerTextFocused: {
+      color: theme.colors.text.primary,
+    },
   });
 
   return {
@@ -2269,6 +2399,56 @@ function createMobileStyles(theme: NovaTheme) {
     },
     section: {
       gap: theme.spacing.md,
+    },
+    // Modal styles for mobile
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.85)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.spacing.xl,
+    },
+    modalContainer: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing.xl,
+      width: '100%',
+      maxWidth: 400,
+      gap: theme.spacing.lg,
+    },
+    modalTitle: {
+      ...theme.typography.title.lg,
+      color: theme.colors.text.primary,
+      textAlign: 'center',
+    },
+    modalSubtitle: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+    },
+    modalActions: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: theme.spacing.md,
+    },
+    modalButton: {
+      flex: 1,
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.surface,
+      alignItems: 'center',
+    },
+    modalButtonDanger: {
+      backgroundColor: theme.colors.status.danger,
+    },
+    modalButtonText: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
+    modalButtonDangerText: {
+      color: theme.colors.text.primary,
     },
   });
 }
