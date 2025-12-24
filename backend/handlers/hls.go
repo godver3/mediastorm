@@ -1421,7 +1421,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				"-f", "hls",
 				"-hls_time", "4",
 				"-hls_list_size", "0",
-				"-hls_playlist_type", "event", // Tells iOS to start from beginning, not live edge
+				"-hls_playlist_type", "event",
 				"-hls_flags", "independent_segments+temp_file",
 				"-hls_segment_type", "fmp4",
 				"-hls_fmp4_init_filename", "init.mp4",
@@ -1449,7 +1449,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				"-f", "hls",
 				"-hls_time", "4",
 				"-hls_list_size", "0",
-				"-hls_playlist_type", "event", // Tells iOS to start from beginning, not live edge
+				"-hls_playlist_type", "event",
 				"-hls_flags", "independent_segments+temp_file",
 				"-hls_segment_type", "fmp4",
 				"-hls_fmp4_init_filename", "init.mp4",
@@ -1463,9 +1463,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// Use MPEG-TS segments for non-HDR content
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "4", // 4 second segments
-			"-hls_list_size", "0", // Keep all segments in playlist
-			"-hls_playlist_type", "event", // Tells iOS to start from beginning, not live edge
+			"-hls_time", "4",
+			"-hls_list_size", "0",
+			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments+temp_file",
 			"-hls_segment_type", "mpegts",
 			"-hls_segment_filename", segmentPattern,

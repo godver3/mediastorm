@@ -220,10 +220,12 @@ func (m *MP4BoxHLSManager) startMP4BoxHLS(ctx context.Context, session *MP4BoxSe
 		"-strict", "unofficial", // Enable DV metadata writing
 		"-f", "hls",
 		"-hls_time", "4",
+		"-hls_list_size", "0",
+		"-hls_playlist_type", "event",
+		"-hls_flags", "independent_segments+temp_file",
 		"-hls_segment_type", "fmp4",
 		"-hls_fmp4_init_filename", filepath.Base(initPath),
 		"-hls_segment_filename", segmentPattern,
-		"-hls_playlist_type", "event", // Allow seeking during generation
 	}
 
 	// For Dolby Vision content, add proper codec tags and fix color VUI
