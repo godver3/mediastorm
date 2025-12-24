@@ -67,6 +67,9 @@ type VideoHandler struct {
 	streamer    streaming.Provider
 	hlsManager  *HLSManager
 
+	// Subtitle extraction for non-HLS streams
+	subtitleExtractManager *SubtitleExtractManager
+
 	// Local WebDAV access for ffprobe seeking (usenet paths)
 	webdavMu       sync.RWMutex
 	webdavBaseURL  string
@@ -123,12 +126,20 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath string, provi
 		log.Printf("[video] initialized HLS manager for Dolby Vision streaming")
 	}
 
+	// Initialize subtitle extraction manager
+	var subtitleMgr *SubtitleExtractManager
+	if resolvedFFmpeg != "" && resolvedFFprobe != "" && provider != nil {
+		subtitleMgr = NewSubtitleExtractManager(resolvedFFmpeg, resolvedFFprobe, provider)
+		log.Printf("[video] initialized subtitle extraction manager")
+	}
+
 	return &VideoHandler{
-		transmux:    transmuxEnabled,
-		ffmpegPath:  resolvedFFmpeg,
-		ffprobePath: resolvedFFprobe,
-		streamer:    provider,
-		hlsManager:  hlsMgr,
+		transmux:               transmuxEnabled,
+		ffmpegPath:             resolvedFFmpeg,
+		ffprobePath:            resolvedFFprobe,
+		streamer:               provider,
+		hlsManager:             hlsMgr,
+		subtitleExtractManager: subtitleMgr,
 	}
 }
 
@@ -1918,10 +1929,17 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Extract profile info from query params
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+	profileName := r.URL.Query().Get("profileName")
+
 	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, audioTrackIndex, subtitleTrackIndex)
 
-	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, audioTrackIndex, subtitleTrackIndex)
+	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, audioTrackIndex, subtitleTrackIndex, profileID, profileName)
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
@@ -2112,7 +2130,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 
 	log.Printf("[video] CreateHLSSession: creating session for path=%q hasDV=%v dvProfile=%s hasHDR=%v audioTrack=%d subtitleTrack=%d", path, hasDV, dvProfile, hasHDR, audioTrackIndex, subtitleTrackIndex)
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex)
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}

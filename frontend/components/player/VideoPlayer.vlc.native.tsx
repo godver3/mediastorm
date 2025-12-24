@@ -28,6 +28,7 @@ const VlcVideoPlayerInner = (
     onVideoSize,
     mediaType,
     nowPlaying,
+    subtitleSize = 1.0,
   }: VideoPlayerProps,
   ref: React.ForwardedRef<VideoPlayerHandle>,
 ) => {
@@ -63,7 +64,8 @@ const VlcVideoPlayerInner = (
   const [isVideoLandscape, setIsVideoLandscape] = useState<boolean | null>(null);
   const [tracksLoaded, setTracksLoaded] = useState(false);
   const [appliedAudioTrack, setAppliedAudioTrack] = useState<number | undefined>(undefined);
-  const [appliedSubtitleTrack, setAppliedSubtitleTrack] = useState<number | undefined>(undefined);
+  // Initialize to -1 to disable VLC built-in subtitles - we use SubtitleOverlay for consistent sizing
+  const [appliedSubtitleTrack, setAppliedSubtitleTrack] = useState<number | undefined>(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const resolvedVolume = useMemo(() => {
     const numericVolume = Number(volume);
@@ -95,20 +97,35 @@ const VlcVideoPlayerInner = (
     const cachingValue = Platform.isTV ? '4000' : '2000';
     const initOptions = ['--http-reconnect', `--network-caching=${cachingValue}`, `--file-caching=${cachingValue}`];
 
-    // Configure subtitle size for Apple TV (subtitles appear too large)
+    // Configure subtitle size with user scaling
+    // Platform base values: tvOS = 60, others = 100 (VLC default)
+    const baseScale = Platform.isTV && Platform.OS === 'ios' ? 60 : 100;
+    const scaledValue = Math.round(baseScale * subtitleSize);
+    initOptions.push(`--sub-text-scale=${scaledValue}`);
+
+    // For tvOS, also set relative font size (scales with subtitleSize from base of 10)
     if (Platform.isTV && Platform.OS === 'ios') {
-      // Reduce subtitle size to 60% of default on Apple TV
-      initOptions.push('--sub-text-scale=60');
-      // Also set a smaller relative font size (default is ~16, use 10)
-      initOptions.push('--freetype-rel-fontsize=10');
+      const baseFreetypeSize = 10;
+      const scaledFreetypeSize = Math.round(baseFreetypeSize * subtitleSize);
+      initOptions.push(`--freetype-rel-fontsize=${scaledFreetypeSize}`);
     }
+
+    // Note: VLC cannot override ASS/SSA embedded font sizes - only SRT and plain text formats
+    // are affected by sub-text-scale and freetype-rel-fontsize options
+
+    console.log('[VLC] Subtitle init options:', {
+      subtitleSize,
+      baseScale,
+      scaledValue,
+      initOptions: initOptions.filter((o) => o.includes('sub') || o.includes('freetype')),
+    });
 
     return {
       uri: resolvedMovie ?? '',
       initType: 1 as 1, // Network stream (literal type required)
       initOptions,
     };
-  }, [resolvedMovie]);
+  }, [resolvedMovie, subtitleSize]);
 
   // Update mutable source ref synchronously so the latest URI is used during render
   videoSourceRef.current = nextVideoSource;

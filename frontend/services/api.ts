@@ -443,6 +443,7 @@ export interface UserPlaybackSettings {
   preferredSubtitleLanguage?: string;
   preferredSubtitleMode?: string;
   useLoadingScreen?: boolean;
+  subtitleSize?: number;
 }
 
 export interface UserShelfConfig {
@@ -555,6 +556,23 @@ class ApiService {
   setApiKey(nextKey?: string | null) {
     const trimmed = nextKey?.trim() ?? '';
     this.apiKey = trimmed ? trimmed : null;
+  }
+
+  /**
+   * Get the full URL for a relative API path
+   * @param relativePath - Relative path starting with /
+   * @returns Full URL with base URL and API key
+   */
+  getFullUrl(relativePath: string): string {
+    // Remove /api prefix from baseUrl if present, since relativePath already includes /api
+    const baseWithoutApi = this.baseUrl.replace(/\/api\/?$/, '');
+    const url = `${baseWithoutApi}${relativePath}`;
+    // Add API key if present
+    if (this.apiKey) {
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}apiKey=${encodeURIComponent(this.apiKey)}`;
+    }
+    return url;
   }
 
   private configure(baseUrl?: string) {
@@ -1497,6 +1515,43 @@ class ApiService {
       throw new Error('Session ID is required for status');
     }
     return this.request<HlsSessionStatus>(`/video/hls/${encodeURIComponent(sessionId)}/status`);
+  }
+
+  /**
+   * Probe subtitle tracks for a video file
+   * @param path - The source path of the video file
+   * @returns Available subtitle tracks with metadata
+   */
+  async probeSubtitleTracks(path: string): Promise<{
+    tracks: Array<{
+      index: number;
+      language: string;
+      title: string;
+      codec: string;
+      forced: boolean;
+    }>;
+  }> {
+    const search = new URLSearchParams();
+    search.set('path', path);
+    return this.request(`/video/subtitles/tracks?${search.toString()}`);
+  }
+
+  /**
+   * Start a subtitle extraction session for non-HLS streams
+   * @param path - The source path of the video file
+   * @param subtitleTrack - The subtitle track index to extract
+   * @returns Session info with the VTT URL
+   */
+  async startSubtitleExtract(
+    path: string,
+    subtitleTrack: number,
+  ): Promise<{ sessionId: string; subtitleUrl: string }> {
+    const search = new URLSearchParams();
+    search.set('path', path);
+    search.set('subtitleTrack', subtitleTrack.toString());
+    return this.request<{ sessionId: string; subtitleUrl: string }>(
+      `/video/subtitles/start?${search.toString()}`,
+    );
   }
 
   // Watch Status API methods (now using History API)

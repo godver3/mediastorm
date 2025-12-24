@@ -124,7 +124,7 @@ const Controls: React.FC<ControlsProps> = ({
 
   const subtitleSummary = useMemo(() => {
     // Show "External" when using external/searched subtitles
-    if (showSubtitleOffset) {
+    if (selectedSubtitleTrackId === 'external') {
       return 'External';
     }
     // Always show something - "Search" if no embedded tracks, otherwise the selected track
@@ -136,7 +136,7 @@ const Controls: React.FC<ControlsProps> = ({
       return fallback;
     }
     return subtitleTracks.find((track) => track.id === selectedSubtitleTrackId)?.label ?? fallback;
-  }, [selectedSubtitleTrackId, subtitleTracks, showSubtitleOffset]);
+  }, [selectedSubtitleTrackId, subtitleTracks]);
 
   // Format subtitle offset for display (e.g., "-0.25s", "+0.50s", "0s")
   const formattedSubtitleOffset = useMemo(() => {

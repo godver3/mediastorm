@@ -552,8 +552,16 @@ export default function PlayerScreen() {
   const [subtitleSearchLoading, setSubtitleSearchLoading] = useState<boolean>(false);
   const [subtitleSearchError, setSubtitleSearchError] = useState<string | null>(null);
   const [subtitleSearchLanguage, setSubtitleSearchLanguage] = useState<string>('en');
-  // External subtitle timing offset (positive = subtitles appear later, negative = earlier)
-  const [externalSubtitleOffset, setExternalSubtitleOffset] = useState<number>(0);
+  // Subtitle timing offset (positive = subtitles appear later, negative = earlier)
+  // Applies to all sidecar subtitles (HLS, extracted, and external)
+  const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
+  // Extracted subtitle VTT URL for non-HLS streams (using standalone subtitle extraction endpoint)
+  const [extractedSubtitleUrl, setExtractedSubtitleUrl] = useState<string | null>(null);
+  const [extractedSubtitleSessionId, setExtractedSubtitleSessionId] = useState<string | null>(null);
+  // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
+  const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<
+    Array<{ index: number; language: string; title: string; codec: string; forced: boolean }> | null
+  >(null);
   const [debugEntries, setDebugEntries] = useState<DebugLogEntry[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const isModalOpenRef = useRef(isModalOpen);
@@ -640,7 +648,7 @@ export default function PlayerScreen() {
   // Uses refs to access extendControlsVisibility which is defined later in the component
   const SUBTITLE_OFFSET_STEP = 0.25;
   const handleSubtitleOffsetEarlier = useCallback(() => {
-    setExternalSubtitleOffset((prev) => {
+    setSubtitleOffset((prev) => {
       const newOffset = prev - SUBTITLE_OFFSET_STEP;
       console.log('[player] subtitle offset adjusted earlier:', newOffset);
       return newOffset;
@@ -650,7 +658,7 @@ export default function PlayerScreen() {
   }, []);
 
   const handleSubtitleOffsetLater = useCallback(() => {
-    setExternalSubtitleOffset((prev) => {
+    setSubtitleOffset((prev) => {
       const newOffset = prev + SUBTITLE_OFFSET_STEP;
       console.log('[player] subtitle offset adjusted later:', newOffset);
       return newOffset;
@@ -659,7 +667,7 @@ export default function PlayerScreen() {
     extendControlsVisibilityRef.current?.();
   }, []);
 
-  // Reset subtitle offset when changing subtitle tracks
+  // Check if external subtitles are active
   const isUsingExternalSubtitles = selectedSubtitleTrackId === 'external' && externalSubtitleUrl !== null;
 
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
@@ -2915,7 +2923,9 @@ export default function PlayerScreen() {
         setSelectedAudioTrackId(playerAudioOptions[0]?.id ?? null);
       }
 
-      if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0) {
+      // Only use VLC's subtitle tracks if we don't have backend-probed tracks
+      // For non-HLS streams, backend tracks are more reliable (correct indices)
+      if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && !backendSubtitleTracks) {
         const mergedSubtitles = [SUBTITLE_OFF_OPTION, ...playerSubtitleOptions];
         setSubtitleTrackOptions(mergedSubtitles);
         // TODO: Add settings for default language selection
@@ -2924,7 +2934,7 @@ export default function PlayerScreen() {
         setSelectedSubtitleTrackId(firstSubtitleId);
       }
     },
-    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length],
+    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks],
   );
 
   const selectedAudioTrackIndex = useMemo(() => {
@@ -2974,6 +2984,182 @@ export default function PlayerScreen() {
   useEffect(() => {
     selectedSubtitleTrackIndexRef.current = selectedSubtitleTrackIndex;
   }, [selectedSubtitleTrackIndex]);
+
+  // Check if any sidecar subtitles are active (for showing offset controls)
+  const isUsingSidecarSubtitles = useMemo(() => {
+    const hasActiveTrack = selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0;
+    if (isUsingExternalSubtitles) return true;
+    if (isHlsStream && sidecarSubtitleUrl && hasActiveTrack) return true;
+    if (!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasActiveTrack) return true;
+    return false;
+  }, [isUsingExternalSubtitles, isHlsStream, sidecarSubtitleUrl, extractedSubtitleUrl, selectedSubtitleTrackId, selectedSubtitleTrackIndex]);
+
+  // Probe subtitle tracks from backend for non-HLS streams
+  // This gives us accurate track indices and metadata for subtitle selection
+  useEffect(() => {
+    // Skip for HLS/HDR streams - they handle subtitles through the HLS session
+    if (isHlsStream || routeHasAnyHDR) {
+      setBackendSubtitleTracks(null);
+      return;
+    }
+
+    // Need source path to probe
+    if (!sourcePath) {
+      return;
+    }
+
+    console.log('[player] probing subtitle tracks from backend', { sourcePath });
+
+    let cancelled = false;
+    apiService
+      .probeSubtitleTracks(sourcePath)
+      .then((response) => {
+        if (cancelled) return;
+        console.log('[player] backend subtitle tracks:', response.tracks);
+        setBackendSubtitleTracks(response.tracks);
+
+        // Build track options from backend response
+        if (response.tracks.length > 0) {
+          const backendSubtitleOptions: TrackOption[] = response.tracks.map((track) => {
+            // Build a descriptive label
+            let label = track.title || track.language || `Track ${track.index + 1}`;
+            if (track.language && track.title && !track.title.toLowerCase().includes(track.language.toLowerCase())) {
+              label = `${track.language.toUpperCase()} - ${track.title}`;
+            }
+            if (track.forced) {
+              label += ' (Forced)';
+            }
+            return {
+              id: String(track.index),
+              label,
+            };
+          });
+
+          // Merge with existing options (keep Off option, add backend tracks)
+          const newTrackOptions = [SUBTITLE_OFF_OPTION, ...backendSubtitleOptions];
+          setSubtitleTrackOptions(newTrackOptions);
+
+          // Get valid track ids from backend response
+          const validTrackIds = new Set(['off', ...response.tracks.map((t) => String(t.index))]);
+
+          // Auto-select based on user preference
+          const preferredLang = (
+            userSettings?.playback?.preferredSubtitleLanguage ||
+            settings?.playback?.preferredSubtitleLanguage ||
+            ''
+          ).toLowerCase();
+          const preferredMode = userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
+
+          if (preferredMode === 'off') {
+            setSelectedSubtitleTrackId('off');
+          } else if (preferredLang) {
+            // Find a track matching the preferred language (prefer non-forced)
+            const matchingTrack = response.tracks.find(
+              (t) => t.language?.toLowerCase() === preferredLang && !t.forced,
+            );
+            const forcedMatch = response.tracks.find(
+              (t) => t.language?.toLowerCase() === preferredLang && t.forced,
+            );
+            const selected = matchingTrack || forcedMatch;
+            if (selected) {
+              console.log('[player] auto-selecting subtitle track based on preference:', selected);
+              setSelectedSubtitleTrackId(String(selected.index));
+            } else {
+              // No matching preference found - default to first track or off
+              const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
+              console.log('[player] no preference match, defaulting to:', firstTrackId);
+              setSelectedSubtitleTrackId(firstTrackId);
+            }
+          } else {
+            // No preferred language set - check if current selection is valid
+            // This handles the race condition where VLC set an invalid track id
+            setSelectedSubtitleTrackId((current) => {
+              if (current && validTrackIds.has(current)) {
+                return current; // Current selection is valid, keep it
+              }
+              // Current selection is invalid (from VLC), default to first track or off
+              const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
+              console.log('[player] current selection invalid, resetting to:', firstTrackId);
+              return firstTrackId;
+            });
+          }
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('[player] failed to probe subtitle tracks:', error);
+        setBackendSubtitleTracks(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHlsStream, routeHasAnyHDR, sourcePath, userSettings, settings]);
+
+  // Start subtitle extraction for non-HLS streams when a subtitle track is selected
+  // This uses the standalone subtitle extraction endpoint to generate VTT
+  useEffect(() => {
+    // Only for non-HLS streams with an embedded subtitle track selected
+    // Skip for HLS streams (they use sidecar subtitles from the HLS session)
+    // Also skip for DV/HDR content which will become HLS streams
+    if (isHlsStream || routeHasAnyHDR) {
+      // HLS/DV/HDR streams use sidecar subtitles from the HLS session
+      return;
+    }
+
+    // Wait for backend probe to complete before starting extraction
+    // This prevents race condition where VLC reports incorrect track indices
+    if (backendSubtitleTracks === null) {
+      console.log('[player] subtitle extraction waiting for backend probe');
+      return;
+    }
+
+    // If no subtitle track selected or external subtitles are in use, clear extracted URL
+    if (
+      selectedSubtitleTrackIndex === null ||
+      selectedSubtitleTrackIndex < 0 ||
+      selectedSubtitleTrackId === 'external'
+    ) {
+      setExtractedSubtitleUrl(null);
+      setExtractedSubtitleSessionId(null);
+      return;
+    }
+
+    // Need source path to start extraction
+    if (!sourcePath) {
+      console.log('[player] subtitle extraction skipped - no sourcePath');
+      return;
+    }
+
+    // Start subtitle extraction
+    console.log('[player] starting subtitle extraction', {
+      sourcePath,
+      subtitleTrack: selectedSubtitleTrackIndex,
+      backendTracks: backendSubtitleTracks?.length,
+    });
+
+    let cancelled = false;
+    apiService
+      .startSubtitleExtract(sourcePath, selectedSubtitleTrackIndex)
+      .then((response) => {
+        if (cancelled) return;
+        console.log('[player] subtitle extraction started', response);
+        // Build full URL from relative path
+        const fullUrl = apiService.getFullUrl(response.subtitleUrl);
+        setExtractedSubtitleUrl(fullUrl);
+        setExtractedSubtitleSessionId(response.sessionId);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('[player] subtitle extraction failed', error);
+        setExtractedSubtitleUrl(null);
+        setExtractedSubtitleSessionId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHlsStream, routeHasAnyHDR, selectedSubtitleTrackIndex, selectedSubtitleTrackId, sourcePath, backendSubtitleTracks]);
 
   // Recreate HLS session when audio/subtitle tracks change for HLS streams
   const lastHlsTrackSelectionRef = useRef<{ audio: number | null; subtitle: number | null }>({
@@ -3586,7 +3772,8 @@ export default function PlayerScreen() {
               onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
               onImplementationResolved={handleImplementationResolved}
               selectedAudioTrackIndex={isHlsStream ? undefined : selectedAudioTrackIndex}
-              selectedSubtitleTrackIndex={isHlsStream ? undefined : selectedSubtitleTrackIndex}
+              // Always disable VLC's built-in subtitles - we use SubtitleOverlay for consistent sizing
+              selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
               forceRnvPlayer={routeHasAnyHDR}
               forceNativeFullscreen={Platform.OS !== 'web' && (isHlsStream || routeHasAnyHDR)}
@@ -3596,6 +3783,7 @@ export default function PlayerScreen() {
                 subtitle: seriesTitle || undefined,
                 imageUri: headerImage || undefined,
               }}
+              subtitleSize={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
             />
           </View>
 
@@ -3615,14 +3803,31 @@ export default function PlayerScreen() {
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
           {/* VTT cues are relative to session start, so we need to offset by -playbackOffset */}
           {/* to convert absolute currentTime to session-relative time for cue matching */}
+          {/* User offset is also applied (negated: positive = later subtitles = decrease adjustedTime) */}
           {isHlsStream && sidecarSubtitleUrl && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
-              timeOffset={-playbackOffsetRef.current}
+              timeOffset={-playbackOffsetRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
+              sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+            />
+          )}
+
+          {/* Extracted subtitle overlay for non-HLS streams (VLC direct playback) */}
+          {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
+          {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
+          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && (
+            <SubtitleOverlay
+              vttUrl={extractedSubtitleUrl}
+              currentTime={currentTime}
+              timeOffset={-subtitleOffset}
+              enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
+              videoWidth={videoSize?.width}
+              videoHeight={videoSize?.height}
+              sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
             />
           )}
 
@@ -3632,10 +3837,11 @@ export default function PlayerScreen() {
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}
-              timeOffset={-externalSubtitleOffset}
+              timeOffset={-subtitleOffset}
               enabled={true}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
+              sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
             />
           )}
 
@@ -3751,8 +3957,8 @@ export default function PlayerScreen() {
                               hasNextEpisode={hasNextEpisode}
                               onPreviousEpisode={handlePreviousEpisode}
                               onNextEpisode={handleNextEpisode}
-                              showSubtitleOffset={isUsingExternalSubtitles}
-                              subtitleOffset={externalSubtitleOffset}
+                              showSubtitleOffset={isUsingSidecarSubtitles}
+                              subtitleOffset={subtitleOffset}
                               onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
                               onSubtitleOffsetLater={handleSubtitleOffsetLater}
                             />
@@ -3854,8 +4060,8 @@ export default function PlayerScreen() {
                           hasNextEpisode={hasNextEpisode}
                           onPreviousEpisode={handlePreviousEpisode}
                           onNextEpisode={handleNextEpisode}
-                          showSubtitleOffset={isUsingExternalSubtitles}
-                          subtitleOffset={externalSubtitleOffset}
+                          showSubtitleOffset={isUsingSidecarSubtitles}
+                          subtitleOffset={subtitleOffset}
                           onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
                           onSubtitleOffsetLater={handleSubtitleOffsetLater}
                         />

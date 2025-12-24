@@ -24,6 +24,8 @@ interface SubtitleOverlayProps {
   videoWidth?: number;
   /** Video natural height (for positioning subtitles at video content boundary) */
   videoHeight?: number;
+  /** Size scale factor for subtitles (1.0 = default) */
+  sizeScale?: number;
 }
 
 /**
@@ -125,6 +127,9 @@ function findActiveCues(cues: VTTCue[], currentTime: number): VTTCue[] {
   return active;
 }
 
+// Platform detection for styling - defined before component for use in useMemo
+const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+
 const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   vttUrl,
   currentTime,
@@ -132,6 +137,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   timeOffset = 0,
   videoWidth,
   videoHeight,
+  sizeScale = 1.0,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -305,7 +311,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Find active cues for current time
   // syncTick is included to force re-evaluation on drift detection
   // SUBTITLE_DELAY_SECONDS: positive = subtitles appear later (fixes ahead-of-audio)
-  const SUBTITLE_DELAY_SECONDS = 1.0;
+  const SUBTITLE_DELAY_SECONDS = 0;
   const activeCues = useMemo(() => {
     if (!enabled || cues.length === 0) return [];
     const adjustedTime = currentTime + timeOffset - SUBTITLE_DELAY_SECONDS;
@@ -332,6 +338,22 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
   const shouldShowSubtitles = enabled && activeCues.length > 0;
 
+  // Calculate scaled text styles based on sizeScale prop
+  const scaledTextStyles = useMemo(() => {
+    // Base font sizes per platform (these are the "1.0" scale values)
+    const baseFontSize = isAndroidTV ? 26 : Platform.isTV ? 52 : 24;
+    const baseLineHeight = isAndroidTV ? 36 : Platform.isTV ? 72 : 34;
+
+    // Apply scale factor
+    const scaledFontSize = Math.round(baseFontSize * sizeScale);
+    const scaledLineHeight = Math.round(baseLineHeight * sizeScale);
+
+    return {
+      fontSize: scaledFontSize,
+      lineHeight: scaledLineHeight,
+    };
+  }, [sizeScale]);
+
   // Always render container to capture dimensions via onLayout
   // Only render subtitle content when enabled and we have active cues
   return (
@@ -346,13 +368,14 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
                   key={`outline-${i}`}
                   style={[
                     styles.subtitleTextOutline,
+                    scaledTextStyles,
                     { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
                   ]}>
                   {cue.text}
                 </Text>
               ))}
               {/* White text on top */}
-              <Text style={styles.subtitleText}>{cue.text}</Text>
+              <Text style={[styles.subtitleText, scaledTextStyles]}>{cue.text}</Text>
             </View>
           ))}
         </View>
@@ -366,7 +389,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 // - VLC uses freetype renderer with outline for visibility
 // - tvOS: --sub-text-scale=60, --freetype-rel-fontsize=10
 // - Android TV: half size of tvOS for better readability
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+// Note: isAndroidTV is defined above the component for use in useMemo
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
