@@ -128,6 +128,12 @@ var SettingsSchema = map[string]interface{}{
 			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers"},
 			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes"},
 			"serviceMode":        map[string]interface{}{"type": "select", "label": "Service Mode", "options": []string{"usenet", "debrid", "hybrid"}, "description": "Streaming service mode"},
+			"servicePriority": map[string]interface{}{
+				"type":        "select",
+				"label":       "Service Priority",
+				"description": "Prioritize results from a specific service type",
+				"options":     []string{"none", "usenet", "debrid"},
+			},
 		},
 	},
 	"debridProviders": map[string]interface{}{
@@ -168,12 +174,6 @@ var SettingsSchema = map[string]interface{}{
 		"group": "sources",
 		"order": 0,
 		"fields": map[string]interface{}{
-			"servicePriority": map[string]interface{}{
-				"type":        "select",
-				"label":       "Service Priority",
-				"description": "Prioritize results from a specific service type",
-				"options":     []string{"none", "usenet", "debrid"},
-			},
 			"maxSizeMovieGb":   map[string]interface{}{"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
 			"maxSizeEpisodeGb": map[string]interface{}{"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
 			"excludeHdr":       map[string]interface{}{"type": "boolean", "label": "Exclude HDR", "description": "Exclude HDR content from results"},
@@ -483,32 +483,6 @@ type AdminStatus struct {
 	Timestamp        time.Time `json:"timestamp"`
 	UsenetTotal      int       `json:"usenet_total"`
 	DebridStatus     string    `json:"debrid_status"`
-}
-
-// Dashboard serves the main admin dashboard
-func (h *AdminUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	mgr := config.NewManager(h.settingsPath)
-	settings, err := mgr.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	status := h.getStatus(settings)
-
-	data := AdminPageData{
-		CurrentPath: "/admin",
-		Settings:    settings,
-		Schema:      SettingsSchema,
-		Status:      status,
-		Version:     GetBackendVersion(),
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.indexTemplate.ExecuteTemplate(w, "base", data); err != nil {
-		fmt.Printf("Template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
-	}
 }
 
 // SettingsPage serves the settings management page
