@@ -2130,6 +2130,15 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 
 	log.Printf("[video] CreateHLSSession: creating session for path=%q hasDV=%v dvProfile=%s hasHDR=%v audioTrack=%d subtitleTrack=%d", path, hasDV, dvProfile, hasHDR, audioTrackIndex, subtitleTrackIndex)
 
+	// DV Profile 7 has enhancement layers that many devices can't decode
+	// Fall back to HDR10 base layer for better compatibility
+	if hasDV && isDolbyVisionProfile7(dvProfile) {
+		log.Printf("[video] CreateHLSSession: Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", path)
+		hasDV = false
+		dvProfile = ""
+		hasHDR = true // DV Profile 7 has HDR10 base layer
+	}
+
 	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
