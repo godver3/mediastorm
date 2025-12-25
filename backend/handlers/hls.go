@@ -646,7 +646,19 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 		return nil, false, true, nil // Assume compatible if no provider
 	}
 
-	// Request first 16MB to probe
+	// Try to get a direct URL for probing (needed for files with moov atom at end)
+	// This allows ffprobe to seek instead of relying on the first 16MB containing metadata
+	if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+		if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
+			log.Printf("[hls] probing audio using direct URL for path: %s", path)
+			return m.probeAudioStreamsFromURL(ctx, directURL)
+		} else if err != nil {
+			log.Printf("[hls] failed to get direct URL for audio probe, falling back to pipe: %v", err)
+		}
+	}
+
+	// Fall back to pipe-based probe with first 16MB
+	log.Printf("[hls] probing audio using pipe method for path: %s", path)
 	request := streaming.Request{
 		Path:        path,
 		Method:      http.MethodGet,
@@ -808,6 +820,19 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 		return nil, fmt.Errorf("streamer not configured")
 	}
 
+	// Try to get a direct URL for probing (needed for files with moov atom at end)
+	// This allows ffprobe to seek instead of relying on the first 16MB containing metadata
+	if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+		if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
+			log.Printf("[hls] probing subtitles using direct URL for path: %s", path)
+			return m.probeSubtitleStreamsFromURL(ctx, directURL)
+		} else if err != nil {
+			log.Printf("[hls] failed to get direct URL for subtitle probe, falling back to pipe: %v", err)
+		}
+	}
+
+	// Fall back to pipe-based probe with first 16MB
+	log.Printf("[hls] probing subtitles using pipe method for path: %s", path)
 	request := streaming.Request{
 		Path:        path,
 		Method:      http.MethodGet,
@@ -995,12 +1020,13 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// Check if the path is an external URL (e.g., from AIOStreams pre-resolved streams)
 	isExternalURL := strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://")
 
-	if hasDirectURL && (session.StartOffset > 0 || isExternalURL) {
-		// Use direct URL for seeking, or for external URLs (always, since provider can't handle them)
+	// Always prefer direct URL when available - this allows FFmpeg to seek to find metadata
+	// (e.g., moov atom at end of MP4 files) and enables better seeking/error recovery
+	if hasDirectURL {
 		log.Printf("[hls] session %s: using direct URL: %s (startOffset=%.3f, isExternal=%v)", session.ID, directURL, session.StartOffset, isExternalURL)
 		usingPipe = false
 	} else {
-		// Fall back to pipe streaming (only for non-external paths)
+		// Fall back to pipe streaming only if direct URL not available
 		providerStartTime := time.Now()
 		log.Printf("[hls] session %s: requesting stream from provider", session.ID)
 
@@ -2741,6 +2767,7 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 
 // ServeSubtitles serves the sidecar VTT file for fMP4/HDR sessions
 // The VTT file grows progressively as FFmpeg processes the stream, so we serve whatever is available
+// Supports ?track=N query parameter to serve a different subtitle track than the one selected when creating the session
 func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sessionID string) {
 	session, exists := m.GetSession(sessionID)
 	if !exists {
@@ -2748,7 +2775,39 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	vttPath := filepath.Join(session.OutputDir, "subtitles.vtt")
+	// Check if a specific track is requested via query parameter
+	requestedTrackStr := r.URL.Query().Get("track")
+	requestedTrack := session.SubtitleTrackIndex // Default to session's original track
+
+	if requestedTrackStr != "" {
+		if parsed, err := strconv.Atoi(requestedTrackStr); err == nil && parsed >= 0 {
+			requestedTrack = parsed
+		}
+	}
+
+	// Determine which VTT file to serve based on requested track
+	var vttPath string
+	if requestedTrack == session.SubtitleTrackIndex {
+		// Serving the original track that was extracted when session was created
+		vttPath = filepath.Join(session.OutputDir, "subtitles.vtt")
+	} else {
+		// Serving a different track - use track-specific file
+		vttPath = filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
+
+		// If this track-specific file doesn't exist yet, extract it on-demand
+		if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+			log.Printf("[hls] extracting subtitle track %d on-demand for session %s", requestedTrack, sessionID)
+			if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
+				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
+				// Return empty VTT instead of error to avoid breaking playback
+				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Write([]byte("WEBVTT\n\n"))
+				return
+			}
+		}
+	}
 
 	// Check if file exists (might not be ready yet or no subtitles selected)
 	stat, err := os.Stat(vttPath)
@@ -2779,7 +2838,56 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
 
 	w.Write(content)
-	log.Printf("[hls] served subtitles for session %s, size=%d bytes", sessionID, len(content))
+	log.Printf("[hls] served subtitles for session %s track %d, size=%d bytes", sessionID, requestedTrack, len(content))
+}
+
+// extractSubtitleTrackToVTT extracts a specific subtitle track to a VTT file on-demand
+// This allows switching subtitle tracks without recreating the HLS session
+func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex int, outputPath string) error {
+	ctx := context.Background()
+
+	// Probe subtitle streams to map track index to actual stream index
+	subtitleStreams, err := m.probeSubtitleStreams(ctx, session.Path)
+	if err != nil {
+		return fmt.Errorf("failed to probe subtitle streams: %w", err)
+	}
+
+	if trackIndex < 0 || trackIndex >= len(subtitleStreams) {
+		return fmt.Errorf("subtitle track %d not found (have %d tracks)", trackIndex, len(subtitleStreams))
+	}
+
+	actualStreamIndex := subtitleStreams[trackIndex].Index
+	codec := subtitleStreams[trackIndex].Codec
+
+	log.Printf("[hls] extracting subtitle track %d (stream index %d, codec %s) to %s",
+		trackIndex, actualStreamIndex, codec, outputPath)
+
+	// Check for unsupported subtitle codecs (bitmap-based)
+	if codec == "hdmv_pgs_subtitle" || codec == "pgs" || codec == "dvd_subtitle" {
+		return fmt.Errorf("unsupported subtitle codec: %s (bitmap-based subtitles cannot be converted to VTT)", codec)
+	}
+
+	// Build ffmpeg command to extract subtitle track to VTT
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "warning",
+		"-i", session.Path,
+		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
+		"-c", "webvtt",
+		"-f", "webvtt",
+		outputPath,
+	}
+
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
+
+	// Run extraction synchronously (should be fast for most subtitle tracks)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg extraction failed: %w (output: %s)", err, string(output))
+	}
+
+	log.Printf("[hls] successfully extracted subtitle track %d to %s", trackIndex, outputPath)
+	return nil
 }
 
 func isMatroskaPath(path string) bool {
