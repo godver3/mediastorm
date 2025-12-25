@@ -519,12 +519,9 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 
 	log.Printf("[hls] created session %s for path %q (DV=%v, duration=%.2fs, startOffset=%.2fs)", sessionID, path, hasDV, duration, startOffset)
 
-	// Wait for at least one segment to be available before returning
-	// This prevents AVPlayer from getting an empty playlist and stalling
-	if err := m.waitForFirstSegment(ctx, session); err != nil {
-		log.Printf("[hls] session %s: warning - first segment not ready within timeout: %v", sessionID, err)
-		// Don't fail the session creation - let the client retry if needed
-	}
+	// Return immediately - modern HLS players (AVPlayer, ExoPlayer) handle empty playlists
+	// by polling until segments are available. This eliminates the 5-6 second blocking wait.
+	log.Printf("[hls] session %s: returning immediately, FFmpeg transcoding in background", sessionID)
 
 	// Note: For HLS sessions, FFmpeg will always start segment numbering from 0
 	// The actual start offset is stored in session.StartOffset for the frontend to use
@@ -963,6 +960,13 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			log.Printf("[hls] session %s: no compatible audio found, forcing AAC transcoding", session.ID)
 			forceAAC = true
 		}
+	}
+
+	// For fMP4 output (DV/HDR), if audio is not compatible with MP4 container (e.g., pcm_bluray),
+	// force AAC transcoding to avoid "codec not currently supported in container" errors
+	if !hasCompatibleAudio && (session.HasDV || session.HasHDR) {
+		log.Printf("[hls] session %s: fMP4 output with incompatible audio codec, forcing AAC transcoding", session.ID)
+		forceAAC = true
 	}
 
 	// If audio probe failed (no streams returned) and we're using fMP4 output (DV/HDR),
