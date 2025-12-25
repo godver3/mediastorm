@@ -114,6 +114,7 @@ type StreamingSettings struct {
 	MaxDownloadWorkers int                      `json:"maxDownloadWorkers"`
 	MaxCacheSizeMB     int                      `json:"maxCacheSizeMB"`
 	ServiceMode        StreamingServiceMode     `json:"serviceMode"`
+	ServicePriority    StreamingServicePriority `json:"servicePriority"`  // Priority for service type in search results
 	DebridProviders    []DebridProviderSettings `json:"debridProviders,omitempty"`
 }
 
@@ -204,12 +205,11 @@ type HomeShelvesSettings struct {
 
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB   float64                  `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB float64                  `json:"maxSizeEpisodeGb"`
-	ExcludeHdr       bool                     `json:"excludeHdr"`
-	PrioritizeHdr    bool                     `json:"prioritizeHdr"`    // Prioritize HDR/DV content in search results
-	FilterOutTerms   []string                 `json:"filterOutTerms"`   // Terms to filter out from results (exact match in title)
-	ServicePriority  StreamingServicePriority `json:"servicePriority"`  // Priority for service type in search results
+	MaxSizeMovieGB   float64  `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB float64  `json:"maxSizeEpisodeGb"`
+	ExcludeHdr       bool     `json:"excludeHdr"`
+	PrioritizeHdr    bool     `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
+	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (exact match in title)
 }
 
 // UISettings captures user interface preferences shared with the clients.
@@ -237,7 +237,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, DebridProviders: []DebridProviderSettings{}},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, DebridProviders: []DebridProviderSettings{}},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
@@ -254,11 +254,10 @@ func DefaultSettings() Settings {
 			TrendingMovieSource: TrendingMovieSourceReleased, // Default to released-only (MDBList)
 		},
 		Filtering: FilterSettings{
-			MaxSizeMovieGB:   0,                             // 0 means no limit
-			MaxSizeEpisodeGB: 0,                             // 0 means no limit
-			ExcludeHdr:       false,                         // false = include HDR content
-			PrioritizeHdr:    true,                          // true = prioritize HDR/DV content when not excluded
-			ServicePriority:  StreamingServicePriorityNone,  // no service priority by default
+			MaxSizeMovieGB:   0,     // 0 means no limit
+			MaxSizeEpisodeGB: 0,     // 0 means no limit
+			ExcludeHdr:       false, // false = include HDR content
+			PrioritizeHdr:    true,  // true = prioritize HDR/DV content when not excluded
 		},
 		UI: UISettings{
 			LoadingAnimationEnabled: true,
@@ -389,6 +388,20 @@ func (m *Manager) Load() (Settings, error) {
 		raw["ui"] = map[string]interface{}{"loadingAnimationEnabled": true}
 	}
 
+	// Migrate servicePriority from filtering to streaming
+	if filteringRaw, ok := raw["filtering"].(map[string]interface{}); ok {
+		if servicePriority, hasPriority := filteringRaw["servicePriority"]; hasPriority {
+			// Move it to streaming section
+			if streamingRaw, ok := raw["streaming"].(map[string]interface{}); ok {
+				streamingRaw["servicePriority"] = servicePriority
+			} else {
+				raw["streaming"] = map[string]interface{}{"servicePriority": servicePriority}
+			}
+			// Remove from filtering
+			delete(filteringRaw, "servicePriority")
+		}
+	}
+
 	// Re-encode and decode into Settings struct
 	rawJSON, err := json.Marshal(raw)
 	if err != nil {
@@ -444,9 +457,9 @@ func (m *Manager) Load() (Settings, error) {
 	if s.Streaming.ServiceMode == "" {
 		s.Streaming.ServiceMode = StreamingServiceModeUsenet
 	}
-	// ServicePriority moved from Streaming to Filtering
-	if s.Filtering.ServicePriority == "" {
-		s.Filtering.ServicePriority = StreamingServicePriorityNone
+	// Backfill ServicePriority if not set
+	if s.Streaming.ServicePriority == "" {
+		s.Streaming.ServicePriority = StreamingServicePriorityNone
 	}
 	if len(s.Streaming.DebridProviders) == 0 {
 		s.Streaming.DebridProviders = []DebridProviderSettings{

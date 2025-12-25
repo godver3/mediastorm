@@ -185,10 +185,10 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		return nil, lastErr
 	}
 
-	log.Printf("[indexer] Sorting %d results with ServicePriority=%q", len(aggregated), settings.Filtering.ServicePriority)
+	log.Printf("[indexer] Sorting %d results with ServicePriority=%q", len(aggregated), settings.Streaming.ServicePriority)
 	sort.SliceStable(aggregated, func(i, j int) bool {
 		// Apply service priority FIRST - prioritized service type always comes before non-prioritized
-		priority := settings.Filtering.ServicePriority
+		priority := settings.Streaming.ServicePriority
 		if priority != config.StreamingServicePriorityNone {
 			iIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[i].ServiceType == models.ServiceTypeUsenet) ||
 				(priority == config.StreamingServicePriorityDebrid && aggregated[i].ServiceType == models.ServiceTypeDebrid)

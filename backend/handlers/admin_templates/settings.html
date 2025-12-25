@@ -111,19 +111,19 @@
             }
         }
 
-        // Content Filtering - if service priority selected, must have enabled provider of that type
-        const servicePriority = currentSettings.filtering?.servicePriority;
+        // Streaming - if service priority selected, must have enabled provider of that type
+        const servicePriority = currentSettings.streaming?.servicePriority;
         if (servicePriority === 'usenet') {
             const usenetProviders = currentSettings.usenet || [];
             if (!hasEnabledItem(usenetProviders)) {
-                if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
-                errors.filtering.fields.servicePriority = 'Usenet priority requires an enabled usenet provider';
+                if (!errors.streaming) errors.streaming = { fields: {}, messages: [] };
+                errors.streaming.fields.servicePriority = 'Usenet priority requires an enabled usenet provider';
             }
         } else if (servicePriority === 'debrid') {
             const debridProviders = currentSettings.streaming?.debridProviders || [];
             if (!hasEnabledItem(debridProviders)) {
-                if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
-                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider';
+                if (!errors.streaming) errors.streaming = { fields: {}, messages: [] };
+                errors.streaming.fields.servicePriority = 'Debrid priority requires an enabled debrid provider';
             }
         }
 

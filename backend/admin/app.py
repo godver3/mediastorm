@@ -53,6 +53,7 @@ SETTINGS_SCHEMA = {
             "maxDownloadWorkers": {"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers"},
             "maxCacheSizeMB": {"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes"},
             "serviceMode": {"type": "select", "label": "Service Mode", "options": ["usenet", "debrid", "hybrid"], "description": "Streaming service mode"},
+            "servicePriority": {"type": "select", "label": "Service Priority", "description": "Prioritize results from a specific service type", "options": ["none", "usenet", "debrid"]},
         }
     },
     "debridProviders": {
@@ -93,7 +94,6 @@ SETTINGS_SCHEMA = {
         "group": "sources",
         "order": 0,
         "fields": {
-            "servicePriority": {"type": "select", "label": "Service Priority", "description": "Prioritize results from a specific service type", "options": ["none", "usenet", "debrid"]},
             "maxSizeMovieGb": {"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
             "maxSizeEpisodeGb": {"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
             "excludeHdr": {"type": "boolean", "label": "Exclude HDR", "description": "Exclude HDR content from results"},
