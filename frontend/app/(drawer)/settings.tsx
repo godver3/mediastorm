@@ -2020,7 +2020,7 @@ function SettingsScreen() {
         type: 'button-row',
         id: 'connection-buttons',
         buttons: [
-          { label: 'Apply', action: 'connection-apply', disabled: !isReady || busy },
+          { label: 'Apply', action: 'connection-apply' },
         ],
       },
       {
@@ -2880,7 +2880,6 @@ function SettingsScreen() {
                         <FocusablePressable
                           text="Apply"
                           onSelect={handleBackendConnectionApply}
-                          disabled={!isReady || busy}
                         />
                       </View>
                     </SpatialNavigationNode>
@@ -3838,13 +3837,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     versionInfoLabel: {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
+      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize }),
     },
     versionInfoValue: {
       ...theme.typography.body.md,
       color: theme.colors.text.primary,
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
+      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize }),
     },
     loadingRow: {
       flexDirection: 'row',
