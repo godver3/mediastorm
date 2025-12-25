@@ -2795,17 +2795,27 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		vttPath = filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
 
 		// If this track-specific file doesn't exist yet, extract it on-demand
+		// Use session mutex to prevent concurrent extraction of the same track
 		if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-			log.Printf("[hls] extracting subtitle track %d on-demand for session %s", requestedTrack, sessionID)
-			if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
-				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
-				// Return empty VTT instead of error to avoid breaking playback
-				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Write([]byte("WEBVTT\n\n"))
-				return
+			session.mu.Lock()
+			// Double-check after acquiring lock (another request might have extracted it)
+			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+				log.Printf("[hls] extracting subtitle track %d on-demand for session %s", requestedTrack, sessionID)
+				if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
+					session.mu.Unlock()
+					log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
+					// Return empty VTT instead of error to avoid breaking playback
+					w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+					w.Write([]byte("WEBVTT\n\n"))
+					return
+				}
 			}
+			session.mu.Unlock()
+
+			// Wait a moment for filesystem to flush (race condition fix)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
@@ -2832,6 +2842,13 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
+	// If we read 0 bytes immediately after extraction, retry once
+	// (filesystem buffering race condition)
+	if len(content) == 0 && stat.Size() > 0 {
+		time.Sleep(100 * time.Millisecond)
+		content, _ = os.ReadFile(vttPath)
+	}
+
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache") // Don't cache since file is growing
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -2843,35 +2860,59 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 
 // extractSubtitleTrackToVTT extracts a specific subtitle track to a VTT file on-demand
 // This allows switching subtitle tracks without recreating the HLS session
+// trackIndex is the absolute ffprobe stream index (same as session.SubtitleTrackIndex)
 func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex int, outputPath string) error {
 	ctx := context.Background()
 
-	// Probe subtitle streams to map track index to actual stream index
+	// Probe subtitle streams to map absolute stream index to relative subtitle index
 	subtitleStreams, err := m.probeSubtitleStreams(ctx, session.Path)
 	if err != nil {
 		return fmt.Errorf("failed to probe subtitle streams: %w", err)
 	}
 
-	if trackIndex < 0 || trackIndex >= len(subtitleStreams) {
-		return fmt.Errorf("subtitle track %d not found (have %d tracks)", trackIndex, len(subtitleStreams))
+	// Find which subtitle stream matches the requested absolute stream index
+	// This is the same logic used in HLS session creation (lines 1350-1356)
+	relativeIndex := -1
+	var actualStreamIndex int
+	var codec string
+
+	for pos, stream := range subtitleStreams {
+		if stream.Index == trackIndex {
+			relativeIndex = pos
+			actualStreamIndex = stream.Index
+			codec = stream.Codec
+			break
+		}
 	}
 
-	actualStreamIndex := subtitleStreams[trackIndex].Index
-	codec := subtitleStreams[trackIndex].Codec
+	if relativeIndex < 0 {
+		return fmt.Errorf("subtitle stream index %d not found (have %d subtitle streams)", trackIndex, len(subtitleStreams))
+	}
 
-	log.Printf("[hls] extracting subtitle track %d (stream index %d, codec %s) to %s",
-		trackIndex, actualStreamIndex, codec, outputPath)
+	log.Printf("[hls] extracting subtitle track (absoluteIndex=%d relativeIndex=%d streamIndex=%d codec=%s) to %s",
+		trackIndex, relativeIndex, actualStreamIndex, codec, outputPath)
 
 	// Check for unsupported subtitle codecs (bitmap-based)
 	if codec == "hdmv_pgs_subtitle" || codec == "pgs" || codec == "dvd_subtitle" {
 		return fmt.Errorf("unsupported subtitle codec: %s (bitmap-based subtitles cannot be converted to VTT)", codec)
 	}
 
+	// Get the stream URL (convert virtual path to direct URL if needed)
+	streamURL := session.Path
+	if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+		if directURL, err := directProvider.GetDirectURL(ctx, session.Path); err == nil && directURL != "" {
+			streamURL = directURL
+			log.Printf("[hls] using direct URL for subtitle extraction")
+		} else if err != nil {
+			log.Printf("[hls] failed to get direct URL for subtitle extraction: %v", err)
+		}
+	}
+
 	// Build ffmpeg command to extract subtitle track to VTT
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-i", session.Path,
+		"-i", streamURL,
 		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
 		"-c", "webvtt",
 		"-f", "webvtt",

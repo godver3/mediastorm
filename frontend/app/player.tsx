@@ -559,9 +559,13 @@ export default function PlayerScreen() {
   const [extractedSubtitleUrl, setExtractedSubtitleUrl] = useState<string | null>(null);
   const [extractedSubtitleSessionId, setExtractedSubtitleSessionId] = useState<string | null>(null);
   // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
-  const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<
-    Array<{ index: number; language: string; title: string; codec: string; forced: boolean }> | null
-  >(null);
+  const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<Array<{
+    index: number;
+    language: string;
+    title: string;
+    codec: string;
+    forced: boolean;
+  }> | null>(null);
   const [debugEntries, setDebugEntries] = useState<DebugLogEntry[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const isModalOpenRef = useRef(isModalOpen);
@@ -711,26 +715,6 @@ export default function PlayerScreen() {
       return String(effectiveMovie).includes('/video/hls/');
     }
   }, [effectiveMovie]);
-
-  // Derive the sidecar subtitle VTT URL from the HLS playlist URL
-  // The backend extracts subtitles to subtitles.vtt alongside the HLS segments for fMP4/HDR content
-  const sidecarSubtitleUrl = useMemo(() => {
-    if (!isHlsStream || !effectiveMovie) {
-      return null;
-    }
-    // Replace stream.m3u8 with subtitles.vtt in the URL
-    return String(effectiveMovie).replace(/stream\.m3u8/, 'subtitles.vtt');
-  }, [isHlsStream, effectiveMovie]);
-
-  // Debug logging for sidecar subtitle URL changes
-  useEffect(() => {
-    console.log('[player] sidecarSubtitleUrl changed', {
-      sidecarSubtitleUrl,
-      effectiveMovie: effectiveMovie ? String(effectiveMovie).substring(0, 100) : null,
-      isHlsStream,
-      currentTime: currentTimeRef.current,
-    });
-  }, [sidecarSubtitleUrl, effectiveMovie, isHlsStream]);
 
   // Prevent screen saver / display sleep while video is playing
   // This is needed because VLC player on Android doesn't handle this automatically
@@ -2234,7 +2218,15 @@ export default function PlayerScreen() {
     return () => {
       subscription.remove();
     };
-  }, [controlsVisible, hideControls, isModalOpen, isTvPlatform, usesSystemManagedControls, subtitleSearchModalVisible, handleCloseSubtitleSearch]);
+  }, [
+    controlsVisible,
+    hideControls,
+    isModalOpen,
+    isTvPlatform,
+    usesSystemManagedControls,
+    subtitleSearchModalVisible,
+    handleCloseSubtitleSearch,
+  ]);
 
   // Cleanup seek indicator timeout on unmount
   useEffect(() => {
@@ -2389,7 +2381,14 @@ export default function PlayerScreen() {
         hideControls();
       }, EXTENDED_HIDE_DURATION_MS);
     }
-  }, [showControls, hideControls, usesSystemManagedControls, shouldAutoHideControls, isFilenameDisplayed, EXTENDED_HIDE_DURATION_MS]);
+  }, [
+    showControls,
+    hideControls,
+    usesSystemManagedControls,
+    shouldAutoHideControls,
+    isFilenameDisplayed,
+    EXTENDED_HIDE_DURATION_MS,
+  ]);
 
   // Keep extendControlsVisibilityRef updated
   useEffect(() => {
@@ -2985,6 +2984,46 @@ export default function PlayerScreen() {
     selectedSubtitleTrackIndexRef.current = selectedSubtitleTrackIndex;
   }, [selectedSubtitleTrackIndex]);
 
+  // Derive the sidecar subtitle VTT URL from the HLS playlist URL
+  // The backend extracts subtitles to subtitles.vtt alongside the HLS segments for fMP4/HDR content
+  // Supports ?track=N parameter to switch subtitle tracks without recreating HLS session
+  const sidecarSubtitleUrl = useMemo(() => {
+    if (!isHlsStream || !effectiveMovie) {
+      return null;
+    }
+
+    // Replace stream.m3u8 with subtitles.vtt in the URL
+    let baseUrl = String(effectiveMovie).replace(/stream\.m3u8/, 'subtitles.vtt');
+
+    // Add track parameter if a subtitle track is selected
+    if (selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0) {
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      baseUrl = `${baseUrl}${separator}track=${selectedSubtitleTrackIndex}`;
+      console.log('[player] sidecarSubtitleUrl: adding track parameter', {
+        selectedSubtitleTrackIndex,
+        finalUrl: baseUrl,
+      });
+    } else {
+      console.log('[player] sidecarSubtitleUrl: no track selected', {
+        selectedSubtitleTrackIndex,
+        finalUrl: baseUrl,
+      });
+    }
+
+    return baseUrl;
+  }, [isHlsStream, effectiveMovie, selectedSubtitleTrackIndex]);
+
+  // Debug logging for sidecar subtitle URL changes
+  useEffect(() => {
+    console.log('[player] sidecarSubtitleUrl changed', {
+      sidecarSubtitleUrl,
+      selectedSubtitleTrackIndex,
+      effectiveMovie: effectiveMovie ? String(effectiveMovie).substring(0, 100) : null,
+      isHlsStream,
+      currentTime: currentTimeRef.current,
+    });
+  }, [sidecarSubtitleUrl, effectiveMovie, isHlsStream, selectedSubtitleTrackIndex]);
+
   // Check if any sidecar subtitles are active (for showing offset controls)
   const isUsingSidecarSubtitles = useMemo(() => {
     const hasActiveTrack = selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0;
@@ -2992,7 +3031,14 @@ export default function PlayerScreen() {
     if (isHlsStream && sidecarSubtitleUrl && hasActiveTrack) return true;
     if (!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasActiveTrack) return true;
     return false;
-  }, [isUsingExternalSubtitles, isHlsStream, sidecarSubtitleUrl, extractedSubtitleUrl, selectedSubtitleTrackId, selectedSubtitleTrackIndex]);
+  }, [
+    isUsingExternalSubtitles,
+    isHlsStream,
+    sidecarSubtitleUrl,
+    extractedSubtitleUrl,
+    selectedSubtitleTrackId,
+    selectedSubtitleTrackIndex,
+  ]);
 
   // Probe subtitle tracks from backend for non-HLS streams
   // This gives us accurate track indices and metadata for subtitle selection
@@ -3048,18 +3094,15 @@ export default function PlayerScreen() {
             settings?.playback?.preferredSubtitleLanguage ||
             ''
           ).toLowerCase();
-          const preferredMode = userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
+          const preferredMode =
+            userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
 
           if (preferredMode === 'off') {
             setSelectedSubtitleTrackId('off');
           } else if (preferredLang) {
             // Find a track matching the preferred language (prefer non-forced)
-            const matchingTrack = response.tracks.find(
-              (t) => t.language?.toLowerCase() === preferredLang && !t.forced,
-            );
-            const forcedMatch = response.tracks.find(
-              (t) => t.language?.toLowerCase() === preferredLang && t.forced,
-            );
+            const matchingTrack = response.tracks.find((t) => t.language?.toLowerCase() === preferredLang && !t.forced);
+            const forcedMatch = response.tracks.find((t) => t.language?.toLowerCase() === preferredLang && t.forced);
             const selected = matchingTrack || forcedMatch;
             if (selected) {
               console.log('[player] auto-selecting subtitle track based on preference:', selected);
@@ -3170,7 +3213,14 @@ export default function PlayerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isHlsStream, routeHasAnyHDR, selectedSubtitleTrackIndex, selectedSubtitleTrackId, sourcePath, backendSubtitleTracks]);
+  }, [
+    isHlsStream,
+    routeHasAnyHDR,
+    selectedSubtitleTrackIndex,
+    selectedSubtitleTrackId,
+    sourcePath,
+    backendSubtitleTracks,
+  ]);
 
   // Recreate HLS session when audio/subtitle tracks change for HLS streams
   const lastHlsTrackSelectionRef = useRef<{ audio: number | null; subtitle: number | null }>({
@@ -3256,10 +3306,14 @@ export default function PlayerScreen() {
         return;
       }
 
-      // If only subtitle changed to disabled (null), don't recreate session
-      // The sidecar VTT overlay will just stop rendering - no need for new HLS session
-      if (!audioChanged && subtitleChanged && selectedSubtitleTrackIndex === null) {
-        console.log('[player] subtitle disabled - skipping session recreation (sidecar overlay will hide)');
+      // If only subtitle changed (not audio), don't recreate session
+      // The sidecar VTT URL includes ?track=N parameter, so the SubtitleOverlay will fetch the new track
+      // This avoids re-transcoding the entire video just to switch subtitle tracks
+      if (!audioChanged && subtitleChanged) {
+        console.log('[player] subtitle track changed - skipping session recreation (sidecar will load new track)', {
+          from: lastHlsTrackSelectionRef.current.subtitle,
+          to: selectedSubtitleTrackIndex,
+        });
         lastHlsTrackSelectionRef.current = { audio: selectedAudioTrackIndex, subtitle: selectedSubtitleTrackIndex };
         return;
       }
@@ -3656,7 +3710,12 @@ export default function PlayerScreen() {
 
     const fetchSeriesEpisodes = async () => {
       try {
-        console.log('[player] fetching series details for episode navigation', { titleId, tvdbId, imdbId, name: cleanSeriesTitle });
+        console.log('[player] fetching series details for episode navigation', {
+          titleId,
+          tvdbId,
+          imdbId,
+          name: cleanSeriesTitle,
+        });
         const details = await apiService.getSeriesDetails({
           titleId: titleId || undefined,
           tvdbId: tvdbId || undefined,
