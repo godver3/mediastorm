@@ -351,8 +351,8 @@ func main() {
 	r.HandleFunc("/admin/logout", adminUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
 	// Protected admin routes (require PIN authentication)
-	r.HandleFunc("/admin", adminUIHandler.RequireAuth(adminUIHandler.Dashboard)).Methods(http.MethodGet)
-	r.HandleFunc("/admin/", adminUIHandler.RequireAuth(adminUIHandler.Dashboard)).Methods(http.MethodGet)
+	r.HandleFunc("/admin", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/status", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)

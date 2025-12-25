@@ -1,12 +1,12 @@
 {{template "base" .}}
 
-{{define "title"}}Status - strmr Admin{{end}}
+{{define "title"}}Dashboard - strmr Admin{{end}}
 
 {{define "content"}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
-        <h1>Server Status</h1>
-        <p>Real-time monitoring of your strmr server</p>
+        <h1>Dashboard</h1>
+        <p>Real-time monitoring and overview of your strmr server</p>
     </div>
     <button class="btn btn-secondary" onclick="refreshStatus()">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -40,7 +40,7 @@
     <div class="stat-card">
         <div class="stat-label">Service Mode</div>
         <div class="stat-value" style="font-size: 1rem;">{{.Settings.Streaming.ServiceMode}}</div>
-        <div class="stat-subtext">Priority: {{.Settings.Filtering.ServicePriority}}</div>
+        <div class="stat-subtext">Priority: {{.Settings.Streaming.ServicePriority}}</div>
     </div>
 
     <div class="stat-card">
@@ -53,6 +53,12 @@
             {{end}}
         </div>
         <div class="stat-subtext">{{.Settings.Transmux.FFmpegPath}}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Cache Limit</div>
+        <div class="stat-value">{{.Settings.Streaming.MaxCacheSizeMB}} MB</div>
+        <div class="stat-subtext">{{.Settings.Streaming.MaxDownloadWorkers}} workers</div>
     </div>
 </div>
 
@@ -324,6 +330,111 @@
                     </tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- Indexers and Scrapers -->
+<div class="grid grid-2" style="margin-bottom: 1.5rem;">
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                Indexers
+            </h2>
+            <a href="/admin/settings#indexers" class="btn btn-sm btn-secondary">Edit</a>
+        </div>
+        <div class="card-body">
+            {{if .Settings.Indexers}}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Settings.Indexers}}
+                        <tr>
+                            <td>{{.Name}}</td>
+                            <td>{{.Type}}</td>
+                            <td>
+                                {{if .Enabled}}
+                                <span class="status-badge online"><span class="status-dot"></span> Enabled</span>
+                                {{else}}
+                                <span class="status-badge offline"><span class="status-dot"></span> Disabled</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                <div style="display: flex; justify-content: space-between; color: var(--text-secondary); font-size: 0.875rem;">
+                    <span>Total Indexers:</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">{{countEnabledIndexers .Settings.Indexers}} enabled / {{len .Settings.Indexers}} total</span>
+                </div>
+            </div>
+            {{else}}
+            <p style="color: var(--text-muted); text-align: center; padding: 1rem;">No indexers configured</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                    <path d="M22 7l-10 7L2 7"/>
+                </svg>
+                Torrent Scrapers
+            </h2>
+            <a href="/admin/settings#torrentScrapers" class="btn btn-sm btn-secondary">Edit</a>
+        </div>
+        <div class="card-body">
+            {{if .Settings.TorrentScrapers}}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Settings.TorrentScrapers}}
+                        <tr>
+                            <td>{{.Name}}</td>
+                            <td>{{.Type}}</td>
+                            <td>
+                                {{if .Enabled}}
+                                <span class="status-badge online"><span class="status-dot"></span> Enabled</span>
+                                {{else}}
+                                <span class="status-badge offline"><span class="status-dot"></span> Disabled</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                <div style="display: flex; justify-content: space-between; color: var(--text-secondary); font-size: 0.875rem;">
+                    <span>Total Scrapers:</span>
+                    <span style="font-weight: 600; color: var(--text-primary);">{{countEnabledScrapers .Settings.TorrentScrapers}} enabled / {{len .Settings.TorrentScrapers}} total</span>
+                </div>
+            </div>
+            {{else}}
+            <p style="color: var(--text-muted); text-align: center; padding: 1rem;">No scrapers configured</p>
+            {{end}}
         </div>
     </div>
 </div>
