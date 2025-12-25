@@ -7,12 +7,15 @@
 A streaming media server with native mobile and TV apps. strmr supports:
 
 - Usenet
-- Real Debrid/Torbox
+- Real Debrid/Torbox/AllDebrid
 
 Scraping supports:
 
 - Torrentio
-- Newznab
+- Jackett
+- AIOStreams
+- Zilean
+- Newznab indexers
 
 Discord: https://discord.gg/kT74mwf4bu
 
