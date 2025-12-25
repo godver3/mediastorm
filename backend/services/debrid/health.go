@@ -299,7 +299,31 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 
 	// Select all files for caching, but track the preferred playable target
 	selection := selectMediaFiles(info.Files, buildSelectionHints(result, info.Filename))
-	if selection == nil || len(selection.OrderedIDs) == 0 {
+	if selection == nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		log.Printf("[debrid-health] %s torrent %s has no media files", providerName, torrentID)
+		return &DebridHealthCheck{
+			Healthy:      false,
+			Status:       "error",
+			Cached:       false,
+			Provider:     providerName,
+			InfoHash:     infoHash,
+			ErrorMessage: "no media files found in torrent",
+		}, nil
+	}
+	if selection.RejectionReason != "" {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		log.Printf("[debrid-health] %s torrent %s rejected: %s", providerName, torrentID, selection.RejectionReason)
+		return &DebridHealthCheck{
+			Healthy:      false,
+			Status:       "error",
+			Cached:       false,
+			Provider:     providerName,
+			InfoHash:     infoHash,
+			ErrorMessage: selection.RejectionReason,
+		}, nil
+	}
+	if len(selection.OrderedIDs) == 0 {
 		_ = client.DeleteTorrent(ctx, torrentID)
 		log.Printf("[debrid-health] %s torrent %s has no media files", providerName, torrentID)
 		return &DebridHealthCheck{
@@ -424,10 +448,11 @@ var mediaExtensionPriority = map[string]int{
 }
 
 type mediaFileSelection struct {
-	OrderedIDs      []string
-	PreferredID     string
-	PreferredLabel  string
-	PreferredReason string
+	OrderedIDs       []string
+	PreferredID      string
+	PreferredLabel   string
+	PreferredReason  string
+	RejectionReason  string // Set when selection is rejected (e.g., target episode not found)
 }
 
 func (s *mediaFileSelection) promotePreferredToFront() {
@@ -511,6 +536,15 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 
 	selectedIdx, reason := mediaresolve.SelectBestCandidate(resolverCandidates, hints)
 	if selectedIdx == -1 {
+		// Check if we were looking for a specific episode that wasn't found
+		// In this case, reject the result entirely rather than falling back
+		if hints.TargetEpisode > 0 && hints.TargetSeason > 0 {
+			rejectionMsg := fmt.Sprintf("target episode S%02dE%02d not found in torrent", hints.TargetSeason, hints.TargetEpisode)
+			log.Printf("[debrid-playback] rejecting result: %s", rejectionMsg)
+			return &mediaFileSelection{
+				RejectionReason: rejectionMsg,
+			}
+		}
 		selectedIdx = bestIdx
 		reason = "fallback to extension priority"
 	}

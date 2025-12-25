@@ -187,7 +187,15 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 
 	// Select the most relevant media file (but send all files to trigger caching)
 	selection := selectMediaFiles(info.Files, buildSelectionHints(candidate, info.Filename))
-	if selection == nil || len(selection.OrderedIDs) == 0 {
+	if selection == nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("no media files found in torrent")
+	}
+	if selection.RejectionReason != "" {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("%s", selection.RejectionReason)
+	}
+	if len(selection.OrderedIDs) == 0 {
 		_ = client.DeleteTorrent(ctx, torrentID)
 		return nil, fmt.Errorf("no media files found in torrent")
 	}

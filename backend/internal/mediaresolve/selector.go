@@ -124,6 +124,14 @@ func SelectBestCandidate(candidates []Candidate, hints SelectionHints) (int, str
 				return idx, fmt.Sprintf("episode match fallback to extension priority (S%02dE%02d)", targetEpisode.Season, targetEpisode.Episode)
 			}
 		}
+
+		// CRITICAL: If we have a target episode but NO candidates matched, reject this result.
+		// This prevents falling back to title similarity which would select the wrong episode
+		// (e.g., selecting S01E01 when we need S01E05 but the season pack only has eps 1-2).
+		if len(matching) == 0 {
+			fmt.Printf("[selector] No candidates match target episode S%02dE%02d - rejecting result\n", targetEpisode.Season, targetEpisode.Episode)
+			return -1, fmt.Sprintf("no file matches target episode S%02dE%02d", targetEpisode.Season, targetEpisode.Episode)
+		}
 	}
 
 	if len(releaseTokens) == 0 {

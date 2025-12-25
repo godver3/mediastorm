@@ -749,21 +749,26 @@ export default function DetailsScreen() {
       title: title ? title.substring(0, 30) : 'null',
       isSeries,
     });
+
+    // For series, determine which episode to prequeue
+    // Priority: activeEpisode (user-selected) > nextUpEpisode (from watch history)
+    const targetEpisode = isSeries ? activeEpisode || nextUpEpisode : null;
+
+    // Clear existing prequeue state immediately when episode changes
+    // This ensures we wait for the new prequeue instead of using stale data
+    setPrequeueId(null);
+    setPrequeueTargetEpisode(null);
+    setPrequeueReady(false);
+
     if (!activeUserId || !titleId || !title) {
       console.log('[prequeue] Skipping prequeue - missing:', {
         activeUserId: !activeUserId,
         titleId: !titleId,
         title: !title,
       });
-      setPrequeueId(null);
-      setPrequeueTargetEpisode(null);
       prequeuePromiseRef.current = null;
       return;
     }
-
-    // For series, determine which episode to prequeue
-    // Priority: activeEpisode (user-selected) > nextUpEpisode (from watch history)
-    const targetEpisode = isSeries ? activeEpisode || nextUpEpisode : null;
 
     // For series, wait until we have episode info before prequeuing
     // This prevents prequeuing the wrong episode
@@ -2497,7 +2502,8 @@ export default function DetailsScreen() {
   }, [handlePlayEpisode]);
 
   const getItemIdForProgress = useCallback((): string | null => {
-    const episodeToCheck = nextUpEpisode || activeEpisode;
+    // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
+    const episodeToCheck = activeEpisode || nextUpEpisode;
 
     if (episodeToCheck && seriesIdentifier) {
       // For episodes, construct the itemId
@@ -2623,8 +2629,9 @@ export default function DetailsScreen() {
 
   const handleWatchNow = useCallback(async () => {
     const playAction = async () => {
-      // Use nextUpEpisode if available, otherwise fall back to activeEpisode
-      const episodeToPlay = nextUpEpisode || activeEpisode;
+      // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
+      // This matches the prequeue priority order
+      const episodeToPlay = activeEpisode || nextUpEpisode;
 
       if (episodeToPlay) {
         const context = getEpisodeSearchContext(episodeToPlay);
@@ -2668,7 +2675,9 @@ export default function DetailsScreen() {
 
   const handleLaunchDebugPlayer = useCallback(async () => {
     const playAction = async () => {
-      const episodeToPlay = nextUpEpisode || activeEpisode;
+      // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
+      // This matches the prequeue priority order
+      const episodeToPlay = activeEpisode || nextUpEpisode;
 
       if (episodeToPlay) {
         const context = getEpisodeSearchContext(episodeToPlay);
@@ -2888,8 +2897,8 @@ export default function DetailsScreen() {
       return;
     }
 
-    // Use nextUpEpisode if available, otherwise fall back to activeEpisode
-    const episodeToSelect = nextUpEpisode || activeEpisode;
+    // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
+    const episodeToSelect = activeEpisode || nextUpEpisode;
     const context = episodeToSelect ? getEpisodeSearchContext(episodeToSelect) : null;
     console.log('🛠️ Manual selection: fetching indexer results', context ? `for ${context.episodeCode}` : '');
     // Don't show loading overlay here - it should appear after user selects a release
