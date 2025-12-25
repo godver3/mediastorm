@@ -52,7 +52,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
-import Constants from 'expo-constants';
+import { APP_VERSION } from '@/version';
 import { router, Stack } from 'expo-router';
 
 type SettingsTab = 'connection' | 'content' | 'playback' | 'home' | 'advanced' | 'live' | 'filtering';
@@ -2723,7 +2723,7 @@ function SettingsScreen() {
         }
 
         case 'version-info': {
-          const versionString = Constants.expoConfig?.version ?? 'Unknown';
+          const versionString = APP_VERSION;
 
           return (
             <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing, styles.versionInfoContainer]}>
@@ -2896,7 +2896,7 @@ function SettingsScreen() {
                       <View style={styles.versionInfoRow}>
                         <Text style={styles.versionInfoLabel}>Frontend</Text>
                         <Text style={styles.versionInfoValue}>
-                          {Constants.expoConfig?.version ?? 'Unknown'}
+                          {APP_VERSION}
                         </Text>
                       </View>
                       <View style={styles.versionInfoRow}>
