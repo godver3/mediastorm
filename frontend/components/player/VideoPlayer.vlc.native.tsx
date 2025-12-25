@@ -23,7 +23,7 @@ const VlcVideoPlayerInner = (
     onAutoplayBlocked: _onAutoplayBlocked,
     onToggleFullscreen: _onToggleFullscreen,
     selectedAudioTrackIndex,
-    selectedSubtitleTrackIndex,
+    selectedSubtitleTrackIndex: _selectedSubtitleTrackIndex,
     onTracksAvailable,
     onVideoSize,
     mediaType,
@@ -64,9 +64,11 @@ const VlcVideoPlayerInner = (
   const [isVideoLandscape, setIsVideoLandscape] = useState<boolean | null>(null);
   const [tracksLoaded, setTracksLoaded] = useState(false);
   const [appliedAudioTrack, setAppliedAudioTrack] = useState<number | undefined>(undefined);
-  // Initialize to -1 to disable VLC built-in subtitles - we use SubtitleOverlay for consistent sizing
-  const [appliedSubtitleTrack, setAppliedSubtitleTrack] = useState<number | undefined>(-1);
   const [isPlaying, setIsPlaying] = useState(false);
+  // Counter to force re-applying textTrack=-1 when tracks become available
+  // React won't re-send the same prop value, so we toggle to undefined then back to -1
+  const [subtitleDisableCounter, setSubtitleDisableCounter] = useState(0);
+  const [effectiveTextTrack, setEffectiveTextTrack] = useState<number | undefined>(-1);
   const resolvedVolume = useMemo(() => {
     const numericVolume = Number(volume);
     if (!Number.isFinite(numericVolume)) {
@@ -95,7 +97,13 @@ const VlcVideoPlayerInner = (
   const nextVideoSource = useMemo<VLCPlayerSource>(() => {
     // Use higher buffer values for TV devices (Fire Stick, Apple TV) to reduce jitter
     const cachingValue = Platform.isTV ? '4000' : '2000';
-    const initOptions = ['--http-reconnect', `--network-caching=${cachingValue}`, `--file-caching=${cachingValue}`];
+    const initOptions = [
+      '--http-reconnect',
+      `--network-caching=${cachingValue}`,
+      `--file-caching=${cachingValue}`,
+      // Disable VLC's built-in subtitles by default - we use SubtitleOverlay for consistent sizing
+      '--sub-track=-1',
+    ];
 
     // Configure subtitle size with user scaling
     // Platform base values: tvOS = 60, others = 100 (VLC default)
@@ -117,12 +125,13 @@ const VlcVideoPlayerInner = (
       subtitleSize,
       baseScale,
       scaledValue,
-      initOptions: initOptions.filter((o) => o.includes('sub') || o.includes('freetype')),
+      initOptions: initOptions.filter((o) => o.includes('sub') || o.includes('freetype') || o.includes('track')),
     });
 
     return {
       uri: resolvedMovie ?? '',
-      initType: 1 as 1, // Network stream (literal type required)
+      // Use initType 2 to ensure initOptions are applied (initType 1 ignores initOptions in native code)
+      initType: 2 as 2,
       initOptions,
     };
   }, [resolvedMovie, subtitleSize]);
@@ -169,8 +178,10 @@ const VlcVideoPlayerInner = (
     setHasRenderedFirstFrame(false);
     setTracksLoaded(false);
     setAppliedAudioTrack(undefined);
-    setAppliedSubtitleTrack(undefined);
     setIsPlaying(false);
+    // Reset subtitle disable state - will be re-applied when new tracks load
+    setSubtitleDisableCounter(0);
+    setEffectiveTextTrack(-1);
     onBuffer(true);
 
     // Use duration hint if provided (from API metadata, more reliable for HLS streams)
@@ -369,6 +380,9 @@ const VlcVideoPlayerInner = (
       if (onTracksAvailable && (info.audioTracks?.length > 0 || info.textTracks?.length > 0)) {
         onTracksAvailable(info.audioTracks || [], info.textTracks || []);
         setTracksLoaded(true);
+        // Force re-apply textTrack=-1 after tracks load to ensure VLC subtitles are disabled
+        // VLC may auto-select a subtitle track when loading, so we need to explicitly disable again
+        setSubtitleDisableCounter((c) => c + 1);
       }
     },
     [normalizeVlcTime, onLoad, onTracksAvailable, onVideoSize, width, height, durationHint],
@@ -509,25 +523,33 @@ const VlcVideoPlayerInner = (
     onEnd();
   }, [onEnd]);
 
-  // Apply track selections after tracks are loaded AND playback has started
+  // Force re-apply textTrack=-1 when subtitleDisableCounter changes
+  // This ensures VLC subtitles are disabled even if VLC auto-selected one on load
+  useEffect(() => {
+    if (subtitleDisableCounter === 0) {
+      return; // Skip initial render
+    }
+    // Briefly set to undefined to force React to see a change, then back to -1
+    setEffectiveTextTrack(undefined);
+    const timer = setTimeout(() => {
+      setEffectiveTextTrack(-1);
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [subtitleDisableCounter]);
+
+  // Apply audio track selection after tracks are loaded AND playback has started
+  // Note: VLC subtitles are always disabled (textTrack={-1}) - we use SubtitleOverlay instead
   useEffect(() => {
     if (!tracksLoaded || !isPlaying) {
       return;
     }
 
     const audioNeedsUpdate = appliedAudioTrack !== selectedAudioTrackIndex;
-    const subtitleNeedsUpdate = appliedSubtitleTrack !== selectedSubtitleTrackIndex;
 
-    if (audioNeedsUpdate || subtitleNeedsUpdate) {
+    if (audioNeedsUpdate) {
       // Delay track application to let VLC stabilize playback first
       const timer = setTimeout(() => {
-        if (audioNeedsUpdate) {
-          setAppliedAudioTrack(selectedAudioTrackIndex ?? undefined);
-        }
-        if (subtitleNeedsUpdate) {
-          // VLC uses -1 to disable tracks explicitly
-          setAppliedSubtitleTrack(selectedSubtitleTrackIndex ?? -1);
-        }
+        setAppliedAudioTrack(selectedAudioTrackIndex ?? undefined);
       }, 500); // Wait 500ms after playback starts before applying tracks
 
       return () => clearTimeout(timer);
@@ -536,9 +558,7 @@ const VlcVideoPlayerInner = (
     tracksLoaded,
     isPlaying,
     selectedAudioTrackIndex,
-    selectedSubtitleTrackIndex,
     appliedAudioTrack,
-    appliedSubtitleTrack,
   ]);
 
   return (
@@ -557,7 +577,9 @@ const VlcVideoPlayerInner = (
           videoAspectRatio={optimalAspectRatio}
           resizeMode={optimalResizeMode}
           audioTrack={appliedAudioTrack}
-          textTrack={appliedSubtitleTrack}
+          // Always disable VLC subtitles - we use SubtitleOverlay for consistent sizing across platforms
+          // effectiveTextTrack toggles to force re-apply when tracks become available
+          textTrack={effectiveTextTrack}
           // @ts-ignore - nowPlayingInfo is added via patch
           nowPlayingInfo={nowPlayingInfo}
           onError={handleVideoError}
