@@ -1,11 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 
-// Read version from frontend/version.txt
+// Read version from frontend/version.ts and truncate patch to 0 for runtime version
+// e.g., '1.1.2' -> '1.1.0' (patch versions are OTA updates, major.minor are native builds)
 const getVersion = () => {
   try {
-    const versionPath = path.join(__dirname, 'version.txt');
-    return fs.readFileSync(versionPath, 'utf8').trim();
+    const versionPath = path.join(__dirname, 'version.ts');
+    const content = fs.readFileSync(versionPath, 'utf8');
+    const match = content.match(/APP_VERSION\s*=\s*['"](\d+)\.(\d+)\.\d+['"]/);
+    if (match) {
+      return `${match[1]}.${match[2]}.0`;
+    }
+    return '1.0.0';
   } catch {
     return '1.0.0'; // fallback
   }
