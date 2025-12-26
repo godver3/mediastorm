@@ -296,9 +296,10 @@ func main() {
 		prequeueHandler.SetVideoProber(videoHandler)
 		prequeueHandler.SetHLSCreator(videoHandler)
 		prequeueHandler.SetMetadataProber(videoHandler)
+		prequeueHandler.SetFullProber(videoHandler) // Combined prober for single ffprobe call
 		prequeueHandler.SetUserSettingsService(userSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
-		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, metadata prober, user settings, and config")
+		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, and config")
 	}
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours)

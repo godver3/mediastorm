@@ -2327,6 +2327,132 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 	return result, nil
 }
 
+// ProbeVideoFull performs a single ffprobe call to get both HDR detection and stream metadata.
+// This consolidates ProbeVideoPath and ProbeVideoMetadata into one call for efficiency.
+func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoFullResult, error) {
+	if h == nil {
+		return nil, errors.New("video handler is nil")
+	}
+	if h.ffprobePath == "" {
+		return nil, errors.New("ffprobe not configured")
+	}
+
+	// Clean the path
+	cleanPath := path
+	if strings.HasPrefix(cleanPath, "/webdav/") {
+		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
+	} else if strings.HasPrefix(cleanPath, "webdav/") {
+		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+	}
+
+	log.Printf("[video] ProbeVideoFull: probing path=%q (unified HDR + metadata)", cleanPath)
+
+	var meta *ffprobeOutput
+
+	// For external URLs, probe directly
+	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+		m, err := h.runFFProbe(ctx, cleanPath, nil)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[video] ProbeVideoFull: ffprobe external URL failed for %q: %v", cleanPath, err)
+			}
+			return nil, err
+		}
+		meta = m
+	} else if h.streamer != nil {
+		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[video] ProbeVideoFull: ffprobe via provider failed for %q: %v", cleanPath, err)
+			}
+			return nil, err
+		}
+		meta = m
+	} else {
+		return nil, errors.New("no stream provider configured")
+	}
+
+	if meta == nil {
+		return nil, errors.New("ffprobe returned no metadata")
+	}
+
+	result := &VideoFullResult{
+		AudioStreams:    make([]AudioStreamInfo, 0),
+		SubtitleStreams: make([]SubtitleStreamInfo, 0),
+	}
+
+	// Extract HDR info from primary video stream
+	stream := selectPrimaryVideoStream(meta)
+	if stream != nil {
+		// Detect Dolby Vision
+		hasDV, dvProfile, _ := detectDolbyVision(stream)
+		result.HasDolbyVision = hasDV
+		result.DolbyVisionProfile = dvProfile
+
+		// Detect HDR10 (PQ transfer with BT.2020)
+		colorTransfer := strings.ToLower(strings.TrimSpace(stream.ColorTransfer))
+		colorPrimaries := strings.ToLower(strings.TrimSpace(stream.ColorPrimaries))
+		if colorTransfer == "smpte2084" && colorPrimaries == "bt2020" {
+			result.HasHDR10 = true
+		}
+	}
+
+	// Extract audio and subtitle stream info
+	for i := range meta.Streams {
+		s := &meta.Streams[i]
+		codecType := strings.ToLower(strings.TrimSpace(s.CodecType))
+
+		switch codecType {
+		case "audio":
+			codec := strings.ToLower(strings.TrimSpace(s.CodecName))
+			info := AudioStreamInfo{
+				Index:    s.Index,
+				Codec:    codec,
+				Language: normalizeTag(s.Tags, "language"),
+				Title:    normalizeTag(s.Tags, "title"),
+			}
+			result.AudioStreams = append(result.AudioStreams, info)
+
+			// Detect TrueHD and other incompatible audio codecs
+			if codec == "truehd" || codec == "dts" || strings.HasPrefix(codec, "dts-") ||
+				codec == "dts_hd" || codec == "dts-hd" || codec == "dtshd" {
+				result.HasTrueHD = true
+			}
+			// Check for compatible codecs
+			if _, ok := copyableAudioCodecs[codec]; ok {
+				result.HasCompatibleAudio = true
+			}
+
+		case "subtitle":
+			isForced := false
+			isDefault := false
+			if s.Disposition != nil {
+				if f, ok := s.Disposition["forced"]; ok && f > 0 {
+					isForced = true
+				}
+				if d, ok := s.Disposition["default"]; ok && d > 0 {
+					isDefault = true
+				}
+			}
+			info := SubtitleStreamInfo{
+				Index:     s.Index,
+				Language:  normalizeTag(s.Tags, "language"),
+				Title:     normalizeTag(s.Tags, "title"),
+				IsForced:  isForced,
+				IsDefault: isDefault,
+			}
+			result.SubtitleStreams = append(result.SubtitleStreams, info)
+		}
+	}
+
+	log.Printf("[video] ProbeVideoFull: DV=%v HDR10=%v dvProfile=%q TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
+		result.HasDolbyVision, result.HasHDR10, result.DolbyVisionProfile,
+		result.HasTrueHD, result.HasCompatibleAudio,
+		len(result.AudioStreams), len(result.SubtitleStreams))
+
+	return result, nil
+}
+
 // proxyExternalURL proxies a pre-resolved external URL (e.g., from AIOStreams) to the client.
 // It supports range requests for seeking and passes through the response from the remote server.
 func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, externalURL string) (bool, error) {

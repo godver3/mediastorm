@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"novastream/config"
@@ -205,32 +206,64 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	log.Printf("[debrid] Using metadata: Title=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IMDBID=%s",
 		parsed.Title, parsed.Season, parsed.Episode, parsed.Year, parsed.MediaType, imdbID)
 
+	// scraperResult holds results from a single scraper
+	type scraperResult struct {
+		name    string
+		results []ScrapeResult
+		err     error
+		elapsed time.Duration
+	}
+
+	// Run all scrapers in parallel
+	var wg sync.WaitGroup
+	resultsChan := make(chan scraperResult, len(s.scrapers))
+
+	for _, scraper := range s.scrapers {
+		if scraper == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(sc Scraper) {
+			defer wg.Done()
+			start := time.Now()
+			results, err := sc.Search(ctx, req)
+			resultsChan <- scraperResult{
+				name:    sc.Name(),
+				results: results,
+				err:     err,
+				elapsed: time.Since(start),
+			}
+		}(scraper)
+	}
+
+	// Wait for all scrapers to complete, then close channel
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect results from all scrapers
 	var (
 		aggregate []models.NZBResult
 		errs      []error
 		seenGuids = make(map[string]struct{})
 	)
 
-	for _, scraper := range s.scrapers {
-		if scraper == nil {
+	for sr := range resultsChan {
+		if sr.err != nil {
+			log.Printf("[debrid] %s search failed: %v", sr.name, sr.err)
+			errs = append(errs, fmt.Errorf("%s scraper: %w", sr.name, sr.err))
 			continue
 		}
-		start := time.Now()
-		results, scrapeErr := scraper.Search(ctx, req)
-		if scrapeErr != nil {
-			log.Printf("[debrid] %s search failed: %v", scraper.Name(), scrapeErr)
-			errs = append(errs, fmt.Errorf("%s scraper: %w", scraper.Name(), scrapeErr))
-			continue
-		}
-		log.Printf("[debrid] %s search produced %d results for %q in %s", scraper.Name(), len(results), parsed.Title, time.Since(start).Round(10*time.Millisecond))
-		for _, res := range results {
+		log.Printf("[debrid] %s search produced %d results for %q in %s", sr.name, len(sr.results), parsed.Title, sr.elapsed.Round(10*time.Millisecond))
+		for _, res := range sr.results {
 			nzb := normalizeScrapeResult(res)
 			decorateResultWithParsedMetadata(&nzb, req.Parsed)
 			if nzb.GUID == "" {
-				nzb.GUID = fmt.Sprintf("%s:%s:%d", scraper.Name(), strings.ToLower(res.InfoHash), res.FileIndex)
+				nzb.GUID = fmt.Sprintf("%s:%s:%d", sr.name, strings.ToLower(res.InfoHash), res.FileIndex)
 			}
 			if nzb.Indexer == "" {
-				nzb.Indexer = scraper.Name()
+				nzb.Indexer = sr.name
 			}
 			if _, dup := seenGuids[nzb.GUID]; dup {
 				continue

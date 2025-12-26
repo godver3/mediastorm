@@ -60,7 +60,10 @@ type PrequeueStatusResponse struct {
 	HasHDR10           bool   `json:"hasHdr10,omitempty"`
 	DolbyVisionProfile string `json:"dolbyVisionProfile,omitempty"`
 
-	// For HLS (HDR content):
+	// Audio transcoding detection (TrueHD, DTS, etc.)
+	NeedsAudioTranscode bool `json:"needsAudioTranscode,omitempty"`
+
+	// For HLS (HDR content or audio transcoding):
 	HLSSessionID   string `json:"hlsSessionId,omitempty"`
 	HLSPlaylistURL string `json:"hlsPlaylistUrl,omitempty"`
 
@@ -92,7 +95,10 @@ type PrequeueEntry struct {
 	HasHDR10           bool
 	DolbyVisionProfile string
 
-	// HLS session (for HDR)
+	// Audio transcoding detection (TrueHD, DTS, etc.)
+	NeedsAudioTranscode bool
+
+	// HLS session (for HDR or audio transcoding)
 	HLSSessionID   string
 	HLSPlaylistURL string
 
@@ -336,6 +342,7 @@ func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 		HasDolbyVision:        e.HasDolbyVision,
 		HasHDR10:              e.HasHDR10,
 		DolbyVisionProfile:    e.DolbyVisionProfile,
+		NeedsAudioTranscode:   e.NeedsAudioTranscode,
 		HLSSessionID:          e.HLSSessionID,
 		HLSPlaylistURL:        e.HLSPlaylistURL,
 		SelectedAudioTrack:    e.SelectedAudioTrack,
