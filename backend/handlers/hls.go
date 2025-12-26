@@ -128,6 +128,9 @@ type HLSSession struct {
 
 	// Fatal error tracking (unplayable streams)
 	FatalError       string // Set when stream is determined to be unplayable (persistent bitstream errors)
+
+	// Cached probe data from unified probe (avoids multiple ffprobe calls)
+	ProbeData *UnifiedProbeResult
 	FatalErrorTime   time.Time
 	BitstreamErrors  int // Count of bitstream filter errors (to detect persistent issues)
 }
@@ -140,6 +143,16 @@ type audioStreamInfo struct {
 type subtitleStreamInfo struct {
 	Index int
 	Codec string
+}
+
+// UnifiedProbeResult holds all data extracted from a single ffprobe call
+type UnifiedProbeResult struct {
+	Duration         float64
+	ColorTransfer    string              // e.g., "smpte2084" for HDR, "bt709" for SDR
+	AudioStreams     []audioStreamInfo
+	SubtitleStreams  []subtitleStreamInfo
+	HasTrueHD        bool
+	HasCompatibleAudio bool
 }
 
 const (
@@ -441,34 +454,31 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		}
 	}
 
-	// Probe the file for duration before starting transcoding
-	// For external URLs, we can probe directly without needing a streamer
+	// Unified probe: extract duration, color metadata, audio/subtitle streams in a single ffprobe call
+	// This replaces 4 separate ffprobe invocations with 1, significantly reducing playback start time
 	var duration float64
+	var probeData *UnifiedProbeResult
 	if m.ffprobePath != "" && (m.streamer != nil || isExternalURL) {
-		log.Printf("[hls] probing duration for session %s path=%q", sessionID, path)
-		if probedDuration, err := m.probeDuration(ctx, path); err == nil && probedDuration > 0 {
-			duration = probedDuration
-			log.Printf("[hls] probed duration for session %s: %.2f seconds", sessionID, duration)
-		} else if err != nil {
-			log.Printf("[hls] failed to probe duration for session %s: %v", sessionID, err)
-		}
-	}
+		log.Printf("[hls] running unified probe for session %s path=%q", sessionID, path)
+		if pd, err := m.probeAllMetadata(ctx, path); err == nil && pd != nil {
+			probeData = pd
+			duration = pd.Duration
+			log.Printf("[hls] unified probe for session %s: duration=%.2fs colorTransfer=%q audioStreams=%d",
+				sessionID, duration, pd.ColorTransfer, len(pd.AudioStreams))
 
-	// Check for incorrect color tagging on DV content
-	// Some re-encodes (e.g., YTS) have DV RPU data but wrong color metadata (bt709 instead of smpte2084)
-	// The DV RPU's color transforms are designed for HDR base layer, causing saturated colors when applied to bt709
-	// In this case, disable DV and use HDR10 fallback which applies correct color space via hevc_metadata filter
-	if hasDV && m.ffprobePath != "" && (m.streamer != nil || isExternalURL) {
-		if colorTransfer, err := m.probeColorMetadata(ctx, path); err == nil {
-			log.Printf("[hls] session %s: probed color_transfer=%q for DV content", sessionID, colorTransfer)
-			// bt709 or empty color_transfer on DV content indicates incorrect tagging
-			if colorTransfer == "bt709" || colorTransfer == "" {
-				log.Printf("[hls] session %s: WARNING - DV content has incorrect color tagging (%s), disabling DV to prevent saturated colors", sessionID, colorTransfer)
+			// Check for incorrect color tagging on DV Profile 8 content
+			// Some re-encodes (e.g., YTS) have DV RPU data but wrong color metadata (bt709 instead of smpte2084)
+			// The DV RPU's color transforms are designed for HDR base layer, causing saturated colors when applied to bt709
+			// NOTE: Only apply this check for Profile 8 (dvhe.08.xx) with explicit bt709 tagging
+			// Profile 5 (dvhe.05.xx) uses dual-layer and may have empty color metadata - that's expected
+			isProfile8 := strings.HasPrefix(dvProfile, "dvhe.08")
+			if hasDV && isProfile8 && pd.ColorTransfer == "bt709" {
+				log.Printf("[hls] session %s: WARNING - DV Profile 8 content has bt709 color tagging, disabling DV to prevent saturated colors", sessionID)
 				hasDV = false
 				hasHDR = true // DV Profile 8 has HDR10 fallback, enable HDR mode
 			}
-		} else {
-			log.Printf("[hls] session %s: failed to probe color metadata: %v", sessionID, err)
+		} else if err != nil {
+			log.Printf("[hls] failed unified probe for session %s: %v", sessionID, err)
 		}
 	}
 
@@ -501,6 +511,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		LastSegmentRequest:  now, // Initialize to now to avoid immediate timeout
 		MinSegmentRequested: -1,  // Initialize to -1 (no segments requested yet)
 		MaxSegmentRequested: -1,  // Initialize to -1 (no segments requested yet)
+		ProbeData:           probeData, // Cache unified probe results for startTranscoding
 	}
 
 	m.mu.Lock()
@@ -629,6 +640,172 @@ func (m *HLSManager) fixDVCodecTag(session *HLSSession) error {
 
 	log.Printf("[hls] session %s: fixed DV codec tag (hev1 -> %s)", session.ID, string(newTag))
 	return nil
+}
+
+// probeAllMetadata performs a single ffprobe call to extract all metadata needed for HLS transcoding.
+// This consolidates what was previously 4 separate ffprobe calls (duration, color, audio, subtitles).
+func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*UnifiedProbeResult, error) {
+	if m.ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not configured")
+	}
+
+	isExternalURL := strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+
+	// For external URLs, probe directly
+	if isExternalURL {
+		return m.probeAllMetadataFromURL(ctx, path)
+	}
+
+	// For provider-backed paths, try direct URL first for better metadata access
+	if m.streamer != nil {
+		if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+			if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
+				log.Printf("[hls] probing all metadata using direct URL for path: %s", path)
+				return m.probeAllMetadataFromURL(ctx, directURL)
+			}
+		}
+	}
+
+	// Fall back to pipe-based probe
+	if m.streamer == nil {
+		return nil, fmt.Errorf("stream provider not configured")
+	}
+
+	log.Printf("[hls] probing all metadata using pipe for path: %s", path)
+	request := streaming.Request{
+		Path:        path,
+		Method:      http.MethodGet,
+		RangeHeader: "bytes=0-16777215", // 16MB
+	}
+
+	resp, err := m.streamer.Stream(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("provider stream: %w", err)
+	}
+	if resp.Body == nil {
+		resp.Close()
+		return nil, fmt.Errorf("provider stream returned empty body")
+	}
+	defer resp.Close()
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		buf := make([]byte, 128*1024)
+		io.CopyBuffer(pw, resp.Body, buf)
+	}()
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-print_format", "json",
+		"-show_format",
+		"-show_streams",
+		"-i", "pipe:0",
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	cmd.Stdin = pr
+	output, err := cmd.Output()
+	if err != nil {
+		pw.CloseWithError(err)
+		return nil, fmt.Errorf("ffprobe execution: %w", err)
+	}
+
+	return m.parseUnifiedProbeOutput(output)
+}
+
+// probeAllMetadataFromURL probes all metadata directly from an external URL
+func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*UnifiedProbeResult, error) {
+	log.Printf("[hls] probing all metadata from external URL (unified probe)")
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer probeCancel()
+
+	args := []string{
+		"-v", "error",
+		"-print_format", "json",
+		"-show_format",
+		"-show_streams",
+		"-i", url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe execution: %w", err)
+	}
+
+	return m.parseUnifiedProbeOutput(output)
+}
+
+// parseUnifiedProbeOutput parses the JSON output from ffprobe -show_format -show_streams
+func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult, error) {
+	var probeData struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+		Streams []struct {
+			Index         int    `json:"index"`
+			CodecType     string `json:"codec_type"`
+			CodecName     string `json:"codec_name"`
+			ColorTransfer string `json:"color_transfer"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(output, &probeData); err != nil {
+		return nil, fmt.Errorf("parse ffprobe output: %w", err)
+	}
+
+	result := &UnifiedProbeResult{}
+
+	// Parse duration
+	if probeData.Format.Duration != "" {
+		if dur, err := strconv.ParseFloat(probeData.Format.Duration, 64); err == nil {
+			result.Duration = dur
+		}
+	}
+
+	compatibleCodecs := map[string]bool{
+		"aac": true, "ac3": true, "eac3": true, "mp3": true,
+	}
+
+	// Process streams
+	for _, stream := range probeData.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+
+		switch stream.CodecType {
+		case "video":
+			// Get color_transfer from first video stream
+			if result.ColorTransfer == "" && stream.ColorTransfer != "" {
+				result.ColorTransfer = stream.ColorTransfer
+			}
+		case "audio":
+			result.AudioStreams = append(result.AudioStreams, audioStreamInfo{
+				Index: stream.Index,
+				Codec: codec,
+			})
+			if codec == "truehd" || codec == "mlp" {
+				result.HasTrueHD = true
+			}
+			if compatibleCodecs[codec] {
+				result.HasCompatibleAudio = true
+			}
+		case "subtitle":
+			result.SubtitleStreams = append(result.SubtitleStreams, subtitleStreamInfo{
+				Index: stream.Index,
+				Codec: codec,
+			})
+		}
+	}
+
+	log.Printf("[hls] unified probe results: duration=%.2fs colorTransfer=%q audioStreams=%d subStreams=%d hasTrueHD=%v hasCompatibleAudio=%v",
+		result.Duration, result.ColorTransfer, len(result.AudioStreams), len(result.SubtitleStreams),
+		result.HasTrueHD, result.HasCompatibleAudio)
+
+	return result, nil
 }
 
 // probeAudioStreams inspects audio streams for codec compatibility and exposes their ordering
@@ -967,17 +1144,32 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		log.Printf("[hls] session %s: applying start offset %.3fs", session.ID, session.StartOffset)
 	}
 
-	// Probe audio streams to detect TrueHD and build audio index mapping
-	audioStreams, hasTrueHD, hasCompatibleAudio, _ := m.probeAudioStreams(ctx, session.Path)
-
+	// Use cached probe data from CreateSession if available, otherwise probe now (recovery case)
+	var audioStreams []audioStreamInfo
 	var subtitleStreams []subtitleStreamInfo
-	if session.SubtitleTrackIndex >= 0 {
-		if streams, err := m.probeSubtitleStreams(ctx, session.Path); err == nil {
-			subtitleStreams = streams
-		} else {
-			log.Printf("[hls] session %s: subtitle probe failed: %v", session.ID, err)
+	var hasTrueHD, hasCompatibleAudio bool
+
+	if session.ProbeData != nil {
+		// Use cached unified probe results - no additional ffprobe calls needed
+		audioStreams = session.ProbeData.AudioStreams
+		subtitleStreams = session.ProbeData.SubtitleStreams
+		hasTrueHD = session.ProbeData.HasTrueHD
+		hasCompatibleAudio = session.ProbeData.HasCompatibleAudio
+		log.Printf("[hls] session %s: using cached probe data (audioStreams=%d, subStreams=%d, hasTrueHD=%v, hasCompatibleAudio=%v)",
+			session.ID, len(audioStreams), len(subtitleStreams), hasTrueHD, hasCompatibleAudio)
+	} else {
+		// Fallback: probe now (for recovery restarts or if unified probe failed)
+		log.Printf("[hls] session %s: no cached probe data, probing now", session.ID)
+		audioStreams, hasTrueHD, hasCompatibleAudio, _ = m.probeAudioStreams(ctx, session.Path)
+		if session.SubtitleTrackIndex >= 0 {
+			if streams, err := m.probeSubtitleStreams(ctx, session.Path); err == nil {
+				subtitleStreams = streams
+			} else {
+				log.Printf("[hls] session %s: subtitle probe failed: %v", session.ID, err)
+			}
 		}
 	}
+
 	if hasTrueHD {
 		log.Printf("[hls] session %s: TrueHD audio detected, will handle appropriately", session.ID)
 		if !hasCompatibleAudio {

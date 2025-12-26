@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -131,27 +132,44 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 
-	var aggregated []models.NZBResult
-	var lastErr error
+	// Run usenet and debrid searches in parallel for faster results
+	type searchResult struct {
+		results []models.NZBResult
+		err     error
+		source  string
+	}
 
+	var wg sync.WaitGroup
+	resultsChan := make(chan searchResult, 2)
+
+	// Launch usenet search
 	if includeUsenet {
-		usenetResults, err := s.searchUsenetWithFilter(ctx, settings, opts, parsedQuery, alternateTitles, searchQueries, filterSettings)
-		if err != nil {
-			lastErr = err
-		} else if len(usenetResults) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			usenetResults, err := s.searchUsenetWithFilter(ctx, settings, opts, parsedQuery, alternateTitles, searchQueries, filterSettings)
+			if err != nil {
+				resultsChan <- searchResult{err: err, source: "usenet"}
+				return
+			}
 			for i := range usenetResults {
 				if usenetResults[i].ServiceType == models.ServiceTypeUnknown {
 					usenetResults[i].ServiceType = models.ServiceTypeUsenet
 				}
 			}
-			aggregated = append(aggregated, usenetResults...)
-		}
+			resultsChan <- searchResult{results: usenetResults, source: "usenet"}
+		}()
 	}
 
+	// Launch debrid search
 	if includeDebrid {
-		if s.debrid == nil {
-			lastErr = fmt.Errorf("debrid search service not configured")
-		} else {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if s.debrid == nil {
+				resultsChan <- searchResult{err: fmt.Errorf("debrid search service not configured"), source: "debrid"}
+				return
+			}
 			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID)
 			debOpts := debrid.SearchOptions{
 				Query:           opts.Query,
@@ -165,19 +183,36 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			if err != nil {
-				lastErr = err
-			} else if len(debridResults) > 0 {
-				// Mark all results as debrid service type
-				for i := range debridResults {
-					if debridResults[i].ServiceType == models.ServiceTypeUnknown {
-						debridResults[i].ServiceType = models.ServiceTypeDebrid
-					}
-				}
-
-				// Return all debrid results unchecked - frontend will check first 3 for cached status
-
-				aggregated = append(aggregated, debridResults...)
+				resultsChan <- searchResult{err: err, source: "debrid"}
+				return
 			}
+			for i := range debridResults {
+				if debridResults[i].ServiceType == models.ServiceTypeUnknown {
+					debridResults[i].ServiceType = models.ServiceTypeDebrid
+				}
+			}
+			resultsChan <- searchResult{results: debridResults, source: "debrid"}
+		}()
+	}
+
+	// Wait for all searches to complete, then close channel
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect results from both searches
+	var aggregated []models.NZBResult
+	var lastErr error
+
+	for sr := range resultsChan {
+		if sr.err != nil {
+			log.Printf("[indexer] %s search failed: %v", sr.source, sr.err)
+			lastErr = sr.err
+			continue
+		}
+		if len(sr.results) > 0 {
+			aggregated = append(aggregated, sr.results...)
 		}
 	}
 

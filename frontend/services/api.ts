@@ -515,7 +515,10 @@ export interface PrequeueStatusResponse {
   hasHdr10?: boolean;
   dolbyVisionProfile?: string;
 
-  // For HLS (HDR content):
+  // Audio transcoding detection (TrueHD, DTS, etc.)
+  needsAudioTranscode?: boolean;
+
+  // For HLS (HDR content or audio transcoding):
   hlsSessionId?: string;
   hlsPlaylistUrl?: string;
 

@@ -28,6 +28,7 @@ type PrequeueHandler struct {
 	videoProber     VideoProber
 	hlsCreator      HLSCreator
 	metadataProber  VideoMetadataProber
+	fullProber      VideoFullProber // Combined prober for single ffprobe call
 	userSettingsSvc *user_settings.Service
 	configManager   *config.Manager
 	demoMode        bool
@@ -48,6 +49,7 @@ type VideoProbeResult struct {
 // AudioStreamInfo contains audio stream metadata for track selection
 type AudioStreamInfo struct {
 	Index    int
+	Codec    string
 	Language string
 	Title    string
 }
@@ -70,6 +72,25 @@ type VideoMetadataResult struct {
 // VideoMetadataProber interface for probing video stream metadata
 type VideoMetadataProber interface {
 	ProbeVideoMetadata(ctx context.Context, path string) (*VideoMetadataResult, error)
+}
+
+// VideoFullResult combines HDR detection and stream metadata in a single result
+type VideoFullResult struct {
+	// HDR detection
+	HasDolbyVision     bool
+	HasHDR10           bool
+	DolbyVisionProfile string
+	// Audio codec detection
+	HasTrueHD          bool // Audio requires transcoding (TrueHD, DTS-HD, etc.)
+	HasCompatibleAudio bool // Audio can be copied without transcoding
+	// Stream metadata
+	AudioStreams    []AudioStreamInfo
+	SubtitleStreams []SubtitleStreamInfo
+}
+
+// VideoFullProber interface for combined HDR and metadata probing in a single ffprobe call
+type VideoFullProber interface {
+	ProbeVideoFull(ctx context.Context, path string) (*VideoFullResult, error)
 }
 
 // HLSCreator interface for creating HLS sessions
@@ -119,6 +140,11 @@ func (h *PrequeueHandler) SetHLSCreator(creator HLSCreator) {
 // SetMetadataProber sets the metadata prober for track selection
 func (h *PrequeueHandler) SetMetadataProber(prober VideoMetadataProber) {
 	h.metadataProber = prober
+}
+
+// SetFullProber sets the combined prober for single ffprobe call
+func (h *PrequeueHandler) SetFullProber(prober VideoFullProber) {
+	h.fullProber = prober
 }
 
 // SetUserSettingsService sets the user settings service for track preferences
@@ -400,25 +426,65 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			log.Printf("[prequeue] Failed to get user settings (non-fatal): %v", err)
 		}
 
-		// Probe video metadata for available tracks
-		metadata, err := h.metadataProber.ProbeVideoMetadata(ctx, resolution.WebDAVPath)
-		if err != nil {
-			log.Printf("[prequeue] Metadata probe failed (non-fatal): %v", err)
-		} else if metadata != nil {
-			// Debug: log user settings for track preferences
+		// Use combined prober if available (single ffprobe call), otherwise fall back to separate probes
+		var audioStreams []AudioStreamInfo
+		var subtitleStreams []SubtitleStreamInfo
+		var hasDV, hasHDR10 bool
+		var hasTrueHD, hasCompatibleAudio bool
+		var dvProfile string
+
+		if h.fullProber != nil {
+			// Single ffprobe call for both HDR detection and track metadata
+			fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+			if err != nil {
+				log.Printf("[prequeue] Unified probe failed (non-fatal): %v", err)
+			} else if fullResult != nil {
+				audioStreams = fullResult.AudioStreams
+				subtitleStreams = fullResult.SubtitleStreams
+				hasDV = fullResult.HasDolbyVision
+				hasHDR10 = fullResult.HasHDR10
+				dvProfile = fullResult.DolbyVisionProfile
+				hasTrueHD = fullResult.HasTrueHD
+				hasCompatibleAudio = fullResult.HasCompatibleAudio
+				log.Printf("[prequeue] Unified probe: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
+					hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams))
+			}
+		} else {
+			// Fallback: separate probes (legacy path)
+			if h.metadataProber != nil {
+				metadata, err := h.metadataProber.ProbeVideoMetadata(ctx, resolution.WebDAVPath)
+				if err != nil {
+					log.Printf("[prequeue] Metadata probe failed (non-fatal): %v", err)
+				} else if metadata != nil {
+					audioStreams = metadata.AudioStreams
+					subtitleStreams = metadata.SubtitleStreams
+				}
+			}
+			if h.videoProber != nil {
+				probeResult, err := h.videoProber.ProbeVideoPath(ctx, resolution.WebDAVPath)
+				if err != nil {
+					log.Printf("[prequeue] Video probe failed (non-fatal): %v", err)
+				} else if probeResult != nil {
+					hasDV = probeResult.HasDolbyVision
+					hasHDR10 = probeResult.HasHDR10
+					dvProfile = probeResult.DolbyVisionProfile
+				}
+			}
+		}
+
+		// Process track selection using probe results
+		if len(audioStreams) > 0 || len(subtitleStreams) > 0 {
 			log.Printf("[prequeue] User track preferences: audioLang=%q, subLang=%q, subMode=%q",
 				userSettings.Playback.PreferredAudioLanguage,
 				userSettings.Playback.PreferredSubtitleLanguage,
 				userSettings.Playback.PreferredSubtitleMode)
 
-			// Debug: log available audio streams
-			for i, stream := range metadata.AudioStreams {
-				log.Printf("[prequeue] Audio stream[%d]: index=%d lang=%q title=%q", i, stream.Index, stream.Language, stream.Title)
+			for i, stream := range audioStreams {
+				log.Printf("[prequeue] Audio stream[%d]: index=%d codec=%q lang=%q title=%q", i, stream.Index, stream.Codec, stream.Language, stream.Title)
 			}
 
-			// Select audio track based on preferred language
 			if userSettings.Playback.PreferredAudioLanguage != "" {
-				selectedAudioTrack = h.findAudioTrackByLanguage(metadata.AudioStreams, userSettings.Playback.PreferredAudioLanguage)
+				selectedAudioTrack = h.findAudioTrackByLanguage(audioStreams, userSettings.Playback.PreferredAudioLanguage)
 				if selectedAudioTrack >= 0 {
 					log.Printf("[prequeue] Selected audio track %d for language %q", selectedAudioTrack, userSettings.Playback.PreferredAudioLanguage)
 				} else {
@@ -428,44 +494,53 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 				log.Printf("[prequeue] No preferred audio language set in user settings")
 			}
 
-			// Select subtitle track based on preferred language and mode
 			subMode := userSettings.Playback.PreferredSubtitleMode
 			subLang := userSettings.Playback.PreferredSubtitleLanguage
 			if subMode != "off" && subMode != "" {
-				selectedSubtitleTrack = h.findSubtitleTrackByPreference(metadata.SubtitleStreams, subLang, subMode)
+				selectedSubtitleTrack = h.findSubtitleTrackByPreference(subtitleStreams, subLang, subMode)
 				if selectedSubtitleTrack >= 0 {
 					log.Printf("[prequeue] Selected subtitle track %d for language %q (mode: %s)", selectedSubtitleTrack, subLang, subMode)
 				}
 			}
 		}
-	}
 
-	// Store selected tracks
-	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
-		e.SelectedAudioTrack = selectedAudioTrack
-		e.SelectedSubtitleTrack = selectedSubtitleTrack
-	})
+		// Store selected tracks
+		h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+			e.SelectedAudioTrack = selectedAudioTrack
+			e.SelectedSubtitleTrack = selectedSubtitleTrack
+		})
 
-	// Probe for HDR if we have a video prober
-	if h.videoProber != nil {
-		probeResult, err := h.videoProber.ProbeVideoPath(ctx, resolution.WebDAVPath)
-		if err != nil {
-			log.Printf("[prequeue] Video probe failed (non-fatal): %v", err)
-		} else if probeResult != nil {
+		// Handle HDR content or incompatible audio (TrueHD, DTS, etc.)
+		// When TrueHD/DTS is present, we need transmux to exclude those tracks even if compatible audio exists
+		// This is because the player may still encounter the incompatible codec in the container
+		needsAudioTranscode := hasTrueHD // Always transcode if TrueHD/DTS present
+		needsHLS := hasDV || hasHDR10 || needsAudioTranscode
+		if needsHLS {
 			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
-				e.HasDolbyVision = probeResult.HasDolbyVision
-				e.HasHDR10 = probeResult.HasHDR10
-				e.DolbyVisionProfile = probeResult.DolbyVisionProfile
+				e.HasDolbyVision = hasDV
+				e.HasHDR10 = hasHDR10
+				e.DolbyVisionProfile = dvProfile
+				e.NeedsAudioTranscode = needsAudioTranscode
 			})
 
-			// If HDR content, create HLS session with selected tracks
-			if (probeResult.HasDolbyVision || probeResult.HasHDR10) && h.hlsCreator != nil {
+			reason := "HDR"
+			if hasTrueHD {
+				if hasCompatibleAudio {
+					reason = "TrueHD/DTS present (using compatible track, excluding TrueHD)"
+				} else {
+					reason = "TrueHD/DTS audio transcoding to AAC"
+				}
+			}
+			log.Printf("[prequeue] Creating HLS session for: %s", reason)
+
+			// Create HLS session for HDR content or incompatible audio
+			if h.hlsCreator != nil {
 				hlsResult, err := h.hlsCreator.CreateHLSSession(
 					ctx,
 					resolution.WebDAVPath,
-					probeResult.HasDolbyVision,
-					probeResult.DolbyVisionProfile,
-					probeResult.HasHDR10,
+					hasDV,
+					dvProfile,
+					hasHDR10,
 					selectedAudioTrack,
 					selectedSubtitleTrack,
 				)
@@ -519,7 +594,20 @@ func padNumber(n int) string {
 	return fmt.Sprintf("%02d", n)
 }
 
+// compatibleAudioCodecs lists codecs that can be played without transcoding
+var compatibleAudioCodecs = map[string]bool{
+	"aac": true, "ac3": true, "eac3": true, "mp3": true,
+}
+
+// isIncompatibleAudioCodec returns true for codecs that need transcoding (TrueHD, DTS, etc.)
+func isIncompatibleAudioCodec(codec string) bool {
+	c := strings.ToLower(strings.TrimSpace(codec))
+	return c == "truehd" || c == "dts" || strings.HasPrefix(c, "dts-") ||
+		c == "dts_hd" || c == "dtshd" || c == "mlp"
+}
+
 // findAudioTrackByLanguage finds an audio track matching the preferred language
+// Prefers compatible audio codecs (AAC, AC3, etc.) over TrueHD/DTS when multiple tracks exist
 func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, preferredLanguage string) int {
 	if preferredLanguage == "" || len(streams) == 0 {
 		return -1
@@ -527,25 +615,40 @@ func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, pr
 
 	normalizedPref := strings.ToLower(strings.TrimSpace(preferredLanguage))
 
-	// Try exact match on language code or title
-	for _, stream := range streams {
+	// Helper to check if language matches
+	matchesLanguage := func(stream AudioStreamInfo) bool {
 		language := strings.ToLower(strings.TrimSpace(stream.Language))
 		title := strings.ToLower(strings.TrimSpace(stream.Title))
-
+		// Exact match
 		if language == normalizedPref || title == normalizedPref {
-			return stream.Index
+			return true
 		}
-	}
-
-	// Try partial match (e.g., "eng" matches "English")
-	for _, stream := range streams {
-		language := strings.ToLower(strings.TrimSpace(stream.Language))
-		title := strings.ToLower(strings.TrimSpace(stream.Title))
-
+		// Partial match
 		if strings.Contains(language, normalizedPref) ||
 			strings.Contains(title, normalizedPref) ||
 			strings.Contains(normalizedPref, language) ||
 			strings.Contains(normalizedPref, title) {
+			return true
+		}
+		return false
+	}
+
+	// First pass: find compatible codec (AAC, AC3, etc.) matching language
+	for _, stream := range streams {
+		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] {
+			log.Printf("[prequeue] Preferred compatible audio track %d (%s) for language %q",
+				stream.Index, stream.Codec, preferredLanguage)
+			return stream.Index
+		}
+	}
+
+	// Second pass: find any track matching language (even TrueHD/DTS)
+	for _, stream := range streams {
+		if matchesLanguage(stream) {
+			if isIncompatibleAudioCodec(stream.Codec) {
+				log.Printf("[prequeue] Selected incompatible audio track %d (%s) for language %q - will need HLS transcoding",
+					stream.Index, stream.Codec, preferredLanguage)
+			}
 			return stream.Index
 		}
 	}

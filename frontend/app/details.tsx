@@ -1608,6 +1608,7 @@ export default function DetailsScreen() {
       }
 
       const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
+      const needsHLS = hasAnyHDR || prequeueStatus.needsAudioTranscode;
 
       // Build stream URL
       let streamUrl: string;
@@ -1616,29 +1617,35 @@ export default function DetailsScreen() {
       // Log the decision factors for HLS path
       console.log('[prequeue] HLS decision factors:', {
         hasAnyHDR,
+        needsAudioTranscode: prequeueStatus.needsAudioTranscode ?? false,
+        needsHLS,
         hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
         hasStartOffset: typeof startOffset === 'number',
         startOffset,
         platformOS: Platform.OS,
-        willUsePrequeueHLS: hasAnyHDR && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number',
-        willCreateNewHLS: hasAnyHDR && (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number'),
+        willUsePrequeueHLS: needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number',
+        willCreateNewHLS: needsHLS && (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number'),
       });
 
-      if (hasAnyHDR && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number') {
-        // HDR content with HLS session already created by backend (no resume position)
+      if (needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number') {
+        // HDR/TrueHD content with HLS session already created by backend (no resume position)
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const apiKey = apiService.getApiKey().trim();
         streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${apiKey ? `?apiKey=${apiKey}` : ''}`;
         console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl);
-      } else if (hasAnyHDR && Platform.OS !== 'web') {
-        // HDR content - create HLS session with start offset
+      } else if (needsHLS && Platform.OS !== 'web') {
+        // HDR/TrueHD content - create HLS session with start offset
         // This happens when: (a) backend didn't create session, or (b) we have a resume position
         // and need to recreate with the correct start offset
         console.log('[prequeue] ⚠️ Creating NEW HLS session (not using prequeue HLS)');
         const reason = typeof startOffset === 'number' ? `resuming at ${startOffset}s` : 'no HLS URL from backend';
-        console.log(`[prequeue] HDR detected, creating HLS session (${reason})...`);
-        const hdrType = prequeueStatus.hasDolbyVision ? 'Dolby Vision' : 'HDR10';
-        setSelectionInfo(`Creating HLS session for ${hdrType}...`);
+        const contentType = prequeueStatus.needsAudioTranscode
+          ? 'TrueHD/DTS audio'
+          : prequeueStatus.hasDolbyVision
+            ? 'Dolby Vision'
+            : 'HDR10';
+        console.log(`[prequeue] ${contentType} detected, creating HLS session (${reason})...`);
+        setSelectionInfo(`Creating HLS session for ${contentType}...`);
 
         try {
           // Use prequeue-selected tracks if available, otherwise fall back to fetching metadata
@@ -1710,6 +1717,7 @@ export default function DetailsScreen() {
             dv: prequeueStatus.hasDolbyVision,
             dvProfile: prequeueStatus.dolbyVisionProfile,
             hdr: prequeueStatus.hasHdr10,
+            forceAAC: prequeueStatus.needsAudioTranscode,
             start: typeof startOffset === 'number' ? startOffset : undefined,
             audioTrack: selectedAudioTrack,
             subtitleTrack: selectedSubtitleTrack,
@@ -1724,7 +1732,7 @@ export default function DetailsScreen() {
           console.log('[prequeue] Created HLS session, using URL:', streamUrl);
         } catch (hlsError) {
           console.error('[prequeue] Failed to create HLS session:', hlsError);
-          throw new Error(`Failed to create HLS session for ${hdrType} content: ${hlsError}`);
+          throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
         }
       } else {
         // SDR content - build direct stream URL
@@ -1774,6 +1782,7 @@ export default function DetailsScreen() {
           ...(prequeueStatus.hasDolbyVision ? { dv: '1' } : {}),
           ...(prequeueStatus.hasHdr10 ? { hdr10: '1' } : {}),
           ...(prequeueStatus.dolbyVisionProfile ? { dvProfile: prequeueStatus.dolbyVisionProfile } : {}),
+          ...(prequeueStatus.needsAudioTranscode ? { forceAAC: '1' } : {}),
           ...(typeof startOffset === 'number' ? { startOffset: String(startOffset) } : {}),
           ...(typeof hlsDuration === 'number' ? { durationHint: String(hlsDuration) } : {}),
           ...(titleId ? { titleId } : {}),
