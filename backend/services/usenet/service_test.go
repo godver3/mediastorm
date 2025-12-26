@@ -655,6 +655,7 @@ func TestCheckSegmentsConcurrentlyFallsBackToSecondaryProvider(t *testing.T) {
 }
 
 func TestCheckSegmentsWithPoolTrustsArticleNotFoundError(t *testing.T) {
+	t.Skip("Pool is bypassed for health checks due to nntppool v1.5.5 Stat bug")
 	// When the pool returns ErrArticleNotFoundInProviders, we trust that
 	// all providers were checked and don't retry with the dialer fallback.
 	ctx := context.Background()
@@ -702,6 +703,7 @@ func TestCheckSegmentsWithPoolTrustsArticleNotFoundError(t *testing.T) {
 }
 
 func TestCheckSegmentsWithPoolFallsBackOnConnectionErrors(t *testing.T) {
+	t.Skip("Pool is bypassed for health checks due to nntppool v1.5.5 Stat bug")
 	// When the pool returns a non-404 error (connection issues), we should
 	// fall back to the dialer to retry with fresh connections.
 	ctx := context.Background()

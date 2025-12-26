@@ -425,10 +425,10 @@ func (s *Service) checkSegmentsConcurrently(ctx context.Context, segments []stri
 		return nil, fmt.Errorf("no enabled usenet providers configured")
 	}
 
-	if s.poolManager != nil && s.poolManager.HasPool() {
-		return s.checkSegmentsWithPool(ctx, segments, enabled)
-	}
-
+	// Skip pool for health checks - nntppool v1.5.5 has a bug where Stat
+	// returns ErrArticleNotFoundInProviders even when articles exist.
+	// Direct connections work correctly.
+	// TODO: Re-enable pool usage once nntppool Stat is fixed upstream
 	return s.checkSegmentsWithDialer(ctx, segments, enabled)
 }
 
