@@ -66,13 +66,15 @@ func (m *manager) SetProviders(providers []nntppool.UsenetProviderConfig) error 
 	}
 
 	// Create new pool with providers
+	// Keep MinConnections > 0 to maintain warm connections for faster health checks
+	// MaxConnections is set per-provider from user config (UsenetSettings.Connections)
 	slog.Info("Creating NNTP connection pool", "provider_count", len(providers))
 	pool, err := nntppool.NewConnectionPool(nntppool.Config{
 		Providers:      providers,
 		Logger:         slog.Default(),
 		DelayType:      nntppool.DelayTypeFixed,
 		RetryDelay:     10 * time.Millisecond,
-		MinConnections: 0,
+		MinConnections: 2, // Keep 2 warm connections per provider for faster STAT commands
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create NNTP connection pool: %w", err)

@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"novastream/config"
@@ -52,12 +54,29 @@ var (
 	ErrQueueItemFailed   = errors.New("playback queue item failed")
 )
 
+// HealthCheckResult holds the result of a parallel health check for a single candidate
+type HealthCheckResult struct {
+	Index     int                    // Original index in the results slice (for priority)
+	Candidate models.NZBResult       // The candidate that was checked
+	NZBBytes  []byte                 // The fetched NZB bytes (if successful)
+	FileName  string                 // The derived filename
+	Healthy   bool                   // Whether the health check passed
+	Error     error                  // Any error that occurred
+	Check     *models.NZBHealthCheck // The health check result (if performed)
+}
+
 // NewService returns a new playback service with a default HTTP client when one is not provided.
 func NewService(cfg *config.Manager, usenetSvc usenetHealthService, nzbSystem *integration.NzbSystem, metadataSvc metadataService) *Service {
 	return &Service{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20, // Allow parallel NZB fetches from same indexer
+				MaxConnsPerHost:     20,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		usenet:      usenetSvc,
 		debrid:      debrid.NewPlaybackService(cfg, nil),
@@ -149,6 +168,228 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	// Calculate file size from NZB if possible
 	fileSize := int64(0)
 	if parsed, parseErr := nzbparser.Parse(bytes.NewReader(nzbBytes)); parseErr == nil && len(parsed.Files) > 0 {
+		for _, f := range parsed.Files {
+			var size int64
+			for _, seg := range f.Segments {
+				size += int64(seg.Bytes)
+			}
+			if size > fileSize {
+				fileSize = size
+			}
+		}
+	}
+
+	// Prepend WebDAV prefix to the storage path
+	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), storagePath)
+
+	resolution := &models.PlaybackResolution{
+		HealthStatus:  "healthy",
+		FileSize:      fileSize,
+		SourceNZBPath: sourceNZBPath,
+		WebDAVPath:    webdavPath,
+	}
+
+	log.Printf("[playback] NZB processed and ready for playback, webdavPath=%q", webdavPath)
+	return resolution, nil
+}
+
+// ParallelHealthCheck performs health checks on multiple candidates concurrently.
+// It returns results sorted by original index (priority order), with healthy results first.
+// The limit parameter controls how many candidates to check in parallel.
+func (s *Service) ParallelHealthCheck(ctx context.Context, candidates []models.NZBResult, limit int) []HealthCheckResult {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Only check usenet results - debrid doesn't need health checks
+	var usenetCandidates []struct {
+		index     int
+		candidate models.NZBResult
+	}
+	for i, c := range candidates {
+		if c.ServiceType != models.ServiceTypeDebrid {
+			usenetCandidates = append(usenetCandidates, struct {
+				index     int
+				candidate models.NZBResult
+			}{i, c})
+		}
+		if len(usenetCandidates) >= limit {
+			break
+		}
+	}
+
+	if len(usenetCandidates) == 0 {
+		return nil
+	}
+
+	log.Printf("[playback] starting parallel health check for %d candidates (limit=%d)", len(usenetCandidates), limit)
+	start := time.Now()
+
+	// Check if health checks are disabled
+	cfg, err := s.cfg.Load()
+	if err != nil {
+		log.Printf("[playback] warning: failed to load config for parallel health check: %v", err)
+	}
+	skipHealthCheck := cfg.Import.SkipHealthCheck
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results []HealthCheckResult
+	)
+
+	// Create a child context that we can cancel once we have enough healthy results
+	checkCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for _, uc := range usenetCandidates {
+		wg.Add(1)
+		go func(idx int, candidate models.NZBResult) {
+			defer wg.Done()
+
+			result := HealthCheckResult{
+				Index:     idx,
+				Candidate: candidate,
+			}
+
+			// Check if context was cancelled
+			select {
+			case <-checkCtx.Done():
+				result.Error = checkCtx.Err()
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			default:
+			}
+
+			// Get download URL
+			downloadURL := strings.TrimSpace(candidate.DownloadURL)
+			if downloadURL == "" {
+				downloadURL = strings.TrimSpace(candidate.Link)
+			}
+			if downloadURL == "" {
+				result.Error = fmt.Errorf("missing download URL")
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			// Fetch NZB
+			nzbBytes, fileName, err := s.fetchNZB(checkCtx, downloadURL, candidate)
+			if err != nil {
+				result.Error = fmt.Errorf("fetch NZB: %w", err)
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			result.NZBBytes = nzbBytes
+			result.FileName = fileName
+
+			// Perform health check if not skipped
+			if skipHealthCheck {
+				result.Healthy = true
+				log.Printf("[playback] parallel health check [%d] %s: skipped (config)", idx, candidate.Title)
+			} else if s.usenet != nil {
+				check, err := s.usenet.CheckHealthWithNZB(checkCtx, candidate, nzbBytes, fileName)
+				if err != nil {
+					result.Error = fmt.Errorf("health check: %w", err)
+					mu.Lock()
+					results = append(results, result)
+					mu.Unlock()
+					return
+				}
+				result.Check = check
+				result.Healthy = check != nil && check.Healthy
+				if result.Healthy {
+					log.Printf("[playback] parallel health check [%d] %s: healthy", idx, candidate.Title)
+				} else {
+					status := "unknown"
+					if check != nil {
+						status = check.Status
+					}
+					log.Printf("[playback] parallel health check [%d] %s: %s", idx, candidate.Title, status)
+				}
+			} else {
+				// No health service, assume healthy
+				result.Healthy = true
+				log.Printf("[playback] parallel health check [%d] %s: no health service, assuming healthy", idx, candidate.Title)
+			}
+
+			mu.Lock()
+			results = append(results, result)
+			mu.Unlock()
+		}(uc.index, uc.candidate)
+	}
+
+	wg.Wait()
+
+	// Sort results: healthy first (by original index), then unhealthy (by original index)
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Healthy != results[j].Healthy {
+			return results[i].Healthy // healthy comes first
+		}
+		return results[i].Index < results[j].Index // then by original priority
+	})
+
+	elapsed := time.Since(start)
+	healthyCount := 0
+	for _, r := range results {
+		if r.Healthy {
+			healthyCount++
+		}
+	}
+	log.Printf("[playback] parallel health check complete: %d/%d healthy in %v", healthyCount, len(results), elapsed)
+
+	return results
+}
+
+// ResolveWithHealthResult processes an NZB using pre-fetched health check results.
+// This avoids re-fetching and re-checking the NZB when we already have the data.
+func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthCheckResult) (*models.PlaybackResolution, error) {
+	if !result.Healthy {
+		return nil, fmt.Errorf("health check failed")
+	}
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if len(result.NZBBytes) == 0 {
+		return nil, fmt.Errorf("no NZB data")
+	}
+
+	log.Printf("[playback] resolving with pre-checked result: %s", result.Candidate.Title)
+
+	if s.nzbSystem == nil {
+		return nil, fmt.Errorf("NZB system not configured")
+	}
+
+	cfg, err := s.cfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	// Process NZB immediately without queuing
+	service := s.nzbSystem.ImporterService()
+	log.Printf("[playback] processing NZB immediately fileName=%q", result.FileName)
+
+	storagePath, err := service.ProcessNZBImmediately(ctx, result.FileName, result.NZBBytes)
+	if err != nil {
+		return nil, fmt.Errorf("process NZB immediately: %w", err)
+	}
+
+	log.Printf("[playback] NZB processed successfully, storagePath=%q", storagePath)
+
+	sourceNZBPath := strings.TrimSpace(result.FileName)
+	if result.Check != nil && strings.TrimSpace(result.Check.FileName) != "" {
+		sourceNZBPath = strings.TrimSpace(result.Check.FileName)
+	}
+
+	// Calculate file size from NZB if possible
+	fileSize := int64(0)
+	if parsed, parseErr := nzbparser.Parse(bytes.NewReader(result.NZBBytes)); parseErr == nil && len(parsed.Files) > 0 {
 		for _, f := range parsed.Files {
 			var size int64
 			for _, seg := range f.Segments {
