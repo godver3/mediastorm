@@ -2250,9 +2250,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					}
 				}
 
-				// NOTE: Segment cleanup disabled during playback.
-				// EVENT playlists require all segments to remain available.
-				// Cleanup happens when the session ends instead.
+				// Segment cleanup now happens in ServeSegment after each segment is served.
+				// The playlist is filtered to exclude deleted segments.
 
 				// Skip rate limiting if no segments found yet
 				if highestSegment < 0 {
@@ -2898,6 +2897,59 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	}
 	log.Printf("[hls] playlist file read successfully for session %s, size=%d bytes", sessionID, len(content))
 
+	// Filter out segments that have been deleted to save disk space
+	// This allows us to use EVENT playlists while still cleaning up old segments
+	session.mu.RLock()
+	minSegmentAvailable := session.MinSegmentAvailable
+	session.mu.RUnlock()
+
+	if minSegmentAvailable > 0 {
+		filteredLines := []string{}
+		lines := strings.Split(string(content), "\n")
+		var pendingExtinf string
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+
+			// Update EXT-X-MEDIA-SEQUENCE to reflect the first available segment
+			if strings.HasPrefix(trimmed, "#EXT-X-MEDIA-SEQUENCE:") {
+				filteredLines = append(filteredLines, fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d", minSegmentAvailable))
+				continue
+			}
+
+			// Store EXTINF lines temporarily - we'll add them with their segment
+			if strings.HasPrefix(trimmed, "#EXTINF:") {
+				pendingExtinf = line
+				continue
+			}
+
+			// Check if this is a segment line
+			if strings.HasPrefix(trimmed, "segment") && (strings.HasSuffix(trimmed, ".ts") || strings.HasSuffix(trimmed, ".m4s")) {
+				var segNum int
+				if _, err := fmt.Sscanf(trimmed, "segment%d.", &segNum); err == nil {
+					if segNum < minSegmentAvailable {
+						// Skip this segment and its EXTINF
+						pendingExtinf = ""
+						continue
+					}
+				}
+				// Keep this segment - add the EXTINF line first, then the segment
+				if pendingExtinf != "" {
+					filteredLines = append(filteredLines, pendingExtinf)
+					pendingExtinf = ""
+				}
+				filteredLines = append(filteredLines, line)
+				continue
+			}
+
+			// All other lines (headers, etc.) are kept
+			filteredLines = append(filteredLines, line)
+		}
+
+		content = []byte(strings.Join(filteredLines, "\n"))
+		log.Printf("[hls] session %s: filtered playlist to start at segment %d", sessionID, minSegmentAvailable)
+	}
+
 	// Get API key from request
 	apiKey := r.URL.Query().Get("apiKey")
 	if apiKey == "" {
@@ -3080,10 +3132,9 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	log.Printf("[hls] segment served: session=%s segment=%s size=%d bytes serve_time=%v total_time=%v",
 		sessionID, segmentName, segmentSize, serveDuration, totalDuration)
 
-	// NOTE: Segment cleanup disabled during playback.
-	// EVENT playlists require all segments to remain available.
-	// Cleanup happens when the session ends instead.
-	// go m.deleteOldSegments(session, segmentName)
+	// Clean up old segments to save disk space
+	// The playlist is filtered at serve time to exclude deleted segments
+	go m.deleteOldSegments(session, segmentName)
 }
 
 // ServeSubtitles serves the sidecar VTT file for fMP4/HDR sessions
@@ -3513,18 +3564,10 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 	hasDV := session.HasDV
 	hasHDR := session.HasHDR
 	sessionID := session.ID
-	minSegmentRequested := session.MinSegmentRequested
 	session.mu.RUnlock()
 
-	// Only clean up segments if we know the player has started requesting segments
-	if minSegmentRequested < 0 {
-		log.Printf("[hls] session %s: skipping cleanup - no segments requested yet", sessionID)
-		return
-	}
-
-	// Keep last 20 segments for player buffering, delete older ones
-	// But only delete segments that the player has already progressed past
-	cutoff := currentSegNum - 20
+	// Keep last 5 segments for player buffering (~20 seconds at 4s/segment), delete older ones
+	cutoff := currentSegNum - 5
 	if cutoff < 0 {
 		return
 	}
@@ -3534,21 +3577,14 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 		segmentExt = ".m4s"
 	}
 
-	// Delete segments older than cutoff, but never delete segments at or after minSegmentRequested
-	// This ensures we keep all segments from the earliest point the player has accessed
+	// Delete segments older than cutoff
+	// Player can only seek back ~20 seconds (5 segments) from current position
 	deletedCount := 0
-	newMinAvailable := 0
+	newMinAvailable := cutoff + 1
 	for i := 0; i <= cutoff; i++ {
-		// Don't delete segments that are at or after the minimum segment the player has requested
-		// This preserves the ability to seek back to the beginning
-		if i >= minSegmentRequested {
-			newMinAvailable = i
-			break
-		}
 		oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d%s", i, segmentExt))
 		if err := os.Remove(oldSegment); err == nil {
 			deletedCount++
-			newMinAvailable = i + 1
 		}
 	}
 
@@ -3559,8 +3595,8 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 			session.MinSegmentAvailable = newMinAvailable
 		}
 		session.mu.Unlock()
-		log.Printf("[hls] session %s: deleted %d old segments (keeping last 3, current=%d, minRequested=%d)",
-			sessionID, deletedCount, currentSegNum, minSegmentRequested)
+		log.Printf("[hls] session %s: deleted %d old segments (keeping last 5, current=%d, minAvailable=%d)",
+			sessionID, deletedCount, currentSegNum, newMinAvailable)
 	}
 }
 
