@@ -4034,10 +4034,10 @@ export default function PlayerScreen() {
                               seekIndicatorStartTime={seekIndicatorStartTimeRef.current}
                               isSeeking={isTVSeeking}
                               streamInfo={fullStreamInfo}
-                              hasPreviousEpisode={hasPreviousEpisode}
-                              hasNextEpisode={hasNextEpisode}
-                              onPreviousEpisode={handlePreviousEpisode}
-                              onNextEpisode={handleNextEpisode}
+                              hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
+                              hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
+                              onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
+                              onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
                               showSubtitleOffset={isUsingSidecarSubtitles}
                               subtitleOffset={subtitleOffset}
                               onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
@@ -4137,10 +4137,10 @@ export default function PlayerScreen() {
                           onSkipForward={handleSkipForward}
                           onFocusChange={handleFocusChange}
                           streamInfo={fullStreamInfo}
-                          hasPreviousEpisode={hasPreviousEpisode}
-                          hasNextEpisode={hasNextEpisode}
-                          onPreviousEpisode={handlePreviousEpisode}
-                          onNextEpisode={handleNextEpisode}
+                          hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
+                          hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
+                          onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
+                          onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
                           showSubtitleOffset={isUsingSidecarSubtitles}
                           subtitleOffset={subtitleOffset}
                           onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
