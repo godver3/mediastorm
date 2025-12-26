@@ -361,24 +361,90 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		e.Status = playback.PrequeueStatusResolving
 	})
 
-	// Try to resolve the best result
+	// Try to resolve the best result using parallel health checks for usenet
 	var resolution *models.PlaybackResolution
 	var lastErr error
-	for _, result := range results {
-		select {
-		case <-ctx.Done():
-			h.failPrequeue(prequeueID, "cancelled")
-			return
-		default:
+
+	// Separate debrid and usenet results
+	var debridResults, usenetResults []models.NZBResult
+	for _, r := range results {
+		if r.ServiceType == models.ServiceTypeDebrid {
+			debridResults = append(debridResults, r)
+		} else {
+			usenetResults = append(usenetResults, r)
+		}
+	}
+
+	log.Printf("[prequeue] DEBUG: separated results - usenet=%d debrid=%d total=%d", len(usenetResults), len(debridResults), len(results))
+
+	// For usenet results, use parallel health checking (top 10)
+	const parallelHealthCheckLimit = 10
+	if len(usenetResults) > 0 {
+		log.Printf("[prequeue] DEBUG: entering parallel health check path for %d usenet results", len(usenetResults))
+		healthResults := h.playbackSvc.ParallelHealthCheck(ctx, usenetResults, parallelHealthCheckLimit)
+
+		// Try to resolve the first healthy result
+		for _, hr := range healthResults {
+			if !hr.Healthy {
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				h.failPrequeue(prequeueID, "cancelled")
+				return
+			default:
+			}
+
+			resolution, lastErr = h.playbackSvc.ResolveWithHealthResult(ctx, hr)
+			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
+				log.Printf("[prequeue] Resolved result: %s -> %s", hr.Candidate.Title, resolution.WebDAVPath)
+				break
+			}
+			log.Printf("[prequeue] Failed to resolve %s: %v", hr.Candidate.Title, lastErr)
+			resolution = nil
 		}
 
-		resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
-		if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
-			log.Printf("[prequeue] Resolved result: %s -> %s", result.Title, resolution.WebDAVPath)
-			break
+		// If parallel health check didn't find a healthy result in top 10,
+		// fall back to sequential checking for remaining usenet results
+		if resolution == nil && len(usenetResults) > parallelHealthCheckLimit {
+			for _, result := range usenetResults[parallelHealthCheckLimit:] {
+				select {
+				case <-ctx.Done():
+					h.failPrequeue(prequeueID, "cancelled")
+					return
+				default:
+				}
+
+				resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
+				if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
+					log.Printf("[prequeue] Resolved result: %s -> %s", result.Title, resolution.WebDAVPath)
+					break
+				}
+				log.Printf("[prequeue] Failed to resolve %s: %v", result.Title, lastErr)
+				resolution = nil
+			}
 		}
-		log.Printf("[prequeue] Failed to resolve %s: %v", result.Title, lastErr)
-		resolution = nil
+	}
+
+	// If no usenet result resolved, try debrid results
+	if resolution == nil && len(debridResults) > 0 {
+		for _, result := range debridResults {
+			select {
+			case <-ctx.Done():
+				h.failPrequeue(prequeueID, "cancelled")
+				return
+			default:
+			}
+
+			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
+			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
+				log.Printf("[prequeue] Resolved result: %s -> %s", result.Title, resolution.WebDAVPath)
+				break
+			}
+			log.Printf("[prequeue] Failed to resolve %s: %v", result.Title, lastErr)
+			resolution = nil
+		}
 	}
 
 	if resolution == nil {
