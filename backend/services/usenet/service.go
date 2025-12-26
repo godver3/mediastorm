@@ -19,6 +19,8 @@ import (
 	"novastream/config"
 	"novastream/internal/pool"
 	"novastream/models"
+
+	"github.com/javi11/nntppool"
 )
 
 type statClient interface {
@@ -112,17 +114,9 @@ func (s *Service) evaluateNZBHealth(ctx context.Context, settings config.Setting
 	if len(fileSubjects) > 0 {
 		log.Printf("[usenet] files title=%q count=%d list=%s", strings.TrimSpace(candidate.Title), len(fileSubjects), summarizeNZBFileList(fileSubjects))
 	}
-	if hasSevenZip {
-		result := &models.NZBHealthCheck{
-			Status:          "unsupported_archive",
-			Healthy:         false,
-			CheckedSegments: 0,
-			TotalSegments:   totalSegments,
-			FileName:        trimmedName,
-		}
-		logHealthCheckResult(candidate, result, time.Since(start))
-		return result, nil
-	}
+	// Note: 7z archives are now supported (for uncompressed/store mode)
+	// Compressed 7z archives will be rejected during import, not during health check
+	_ = hasSevenZip // suppress unused variable warning
 
 	sampleSegments := s.sampleSegments(allSegments)
 
@@ -446,24 +440,14 @@ func (s *Service) checkSegmentsWithPool(ctx context.Context, segments []string, 
 	}
 
 	var (
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		retryIDs  []string
-		retrySeen = make(map[string]struct{})
+		wg                sync.WaitGroup
+		mu                sync.Mutex
+		retryIDs          []string               // Segments that need retry (connection issues)
+		definitelyMissing []string               // Segments confirmed missing from all providers
+		seen              = make(map[string]struct{})
 	)
 
-	queueRetry := func(id string) {
-		if id == "" {
-			return
-		}
-		if _, exists := retrySeen[id]; exists {
-			return
-		}
-		retrySeen[id] = struct{}{}
-		retryIDs = append(retryIDs, id)
-	}
-
-	// Check all segments concurrently using the pool. Any non-ideal result falls back to direct provider checks.
+	// Check all segments concurrently using the pool
 	for _, segmentID := range segments {
 		segmentID := segmentID
 		wg.Add(1)
@@ -472,30 +456,52 @@ func (s *Service) checkSegmentsWithPool(ctx context.Context, segments []string, 
 
 			normalizedID := normalizeMessageID(segmentID)
 			code, err := pool.Stat(ctx, normalizedID, nil)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if _, exists := seen[segmentID]; exists {
+				return
+			}
+			seen[segmentID] = struct{}{}
+
 			if err != nil {
-				if !errors.Is(err, context.Canceled) {
-					log.Printf("[usenet] warning: failed to check segment %s: %v", segmentID, err)
+				if errors.Is(err, context.Canceled) {
+					return
 				}
-				mu.Lock()
-				queueRetry(segmentID)
-				mu.Unlock()
+				// Check if pool confirmed segment is missing from all providers
+				if errors.Is(err, nntppool.ErrArticleNotFoundInProviders) {
+					// Pool already checked all providers - no need to retry
+					definitelyMissing = append(definitelyMissing, segmentID)
+					return
+				}
+				// Other errors (connection issues) - queue for retry
+				log.Printf("[usenet] warning: failed to check segment %s: %v", segmentID, err)
+				retryIDs = append(retryIDs, segmentID)
 				return
 			}
 
 			if code != 223 {
-				mu.Lock()
-				queueRetry(segmentID)
-				mu.Unlock()
+				// Non-found response - queue for retry with fresh connections
+				retryIDs = append(retryIDs, segmentID)
 			}
 		}()
 	}
 
 	wg.Wait()
 
+	// If any segments are definitively missing, fail fast
+	if len(definitelyMissing) > 0 {
+		log.Printf("[usenet] %d segment(s) confirmed missing from all providers by pool", len(definitelyMissing))
+		return definitelyMissing, nil
+	}
+
+	// Retry segments that had connection issues
 	if len(retryIDs) == 0 {
 		return nil, nil
 	}
 
+	log.Printf("[usenet] retrying %d segment(s) with fresh connections", len(retryIDs))
 	missing, err := s.checkSegmentsWithDialer(ctx, retryIDs, providers)
 	if err != nil {
 		return nil, err

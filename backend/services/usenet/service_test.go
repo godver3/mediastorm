@@ -248,7 +248,9 @@ func TestServiceCheckHealth(t *testing.T) {
 	}
 }
 
-func TestServiceMarksSevenZipUnhealthy(t *testing.T) {
+func TestServiceAllowsSevenZipArchives(t *testing.T) {
+	// 7z archives are now supported (for uncompressed/store mode)
+	// The health check should pass and actually check segments
 	cfg := config.DefaultSettings()
 	cfg.Usenet = []config.UsenetSettings{
 		{
@@ -277,13 +279,16 @@ func TestServiceMarksSevenZipUnhealthy(t *testing.T) {
   </file>
 </nzb>`)
 
+	stub := &stubClient{results: map[string]bool{
+		"<item1@test>": true,
+	}}
+
 	svc := NewService(mgr, nil)
 	svc.httpClient = newStaticHTTPClient(t, http.StatusOK, sampleNZB, http.Header{
 		"Content-Type": {"application/xml"},
 	})
 	svc.dialer = func(ctx context.Context, settings config.UsenetSettings) (statClient, error) {
-		t.Fatalf("dialer should not be invoked for unsupported 7z archives")
-		return nil, nil
+		return stub, nil
 	}
 
 	candidate := models.NZBResult{Title: "Movie", DownloadURL: "https://example.com/movie.nzb"}
@@ -293,20 +298,14 @@ func TestServiceMarksSevenZipUnhealthy(t *testing.T) {
 		t.Fatalf("CheckHealth returned error: %v", err)
 	}
 
-	if res.Healthy {
-		t.Fatalf("expected unhealthy result for 7z archive")
-	}
-	if res.Status != "unsupported_archive" {
-		t.Fatalf("unexpected status: %s", res.Status)
-	}
-	if res.CheckedSegments != 0 {
-		t.Fatalf("expected zero checked segments, got %d", res.CheckedSegments)
+	if !res.Healthy {
+		t.Fatalf("expected healthy result for 7z archive, got status: %s", res.Status)
 	}
 	if res.TotalSegments != 1 {
 		t.Fatalf("expected total segments to reflect parsed NZB, got %d", res.TotalSegments)
 	}
-	if res.FileName == "" {
-		t.Fatalf("expected file name to be set")
+	if res.CheckedSegments != 1 {
+		t.Fatalf("expected 1 checked segment, got %d", res.CheckedSegments)
 	}
 }
 
@@ -655,7 +654,9 @@ func TestCheckSegmentsConcurrentlyFallsBackToSecondaryProvider(t *testing.T) {
 	}
 }
 
-func TestCheckSegmentsWithPoolRevalidatesMissingSegments(t *testing.T) {
+func TestCheckSegmentsWithPoolTrustsArticleNotFoundError(t *testing.T) {
+	// When the pool returns ErrArticleNotFoundInProviders, we trust that
+	// all providers were checked and don't retry with the dialer fallback.
 	ctx := context.Background()
 	segmentID := "poolfallback@example"
 	normalized := normalizeMessageID(segmentID)
@@ -672,24 +673,24 @@ func TestCheckSegmentsWithPoolRevalidatesMissingSegments(t *testing.T) {
 		{Name: "Backup", Host: "backup.example", Enabled: true, Connections: 1},
 	}
 
+	dialerCalled := false
 	svc := NewService(nil, &stubPoolManager{pool: pool})
 	svc.dialer = func(ctx context.Context, settings config.UsenetSettings) (statClient, error) {
-		switch settings.Host {
-		case "primary.example":
-			return &stubClient{results: map[string]bool{segmentID: false}}, nil
-		case "backup.example":
-			return &stubClient{results: map[string]bool{segmentID: true}}, nil
-		default:
-			return nil, fmt.Errorf("unexpected host %s", settings.Host)
-		}
+		dialerCalled = true
+		return &stubClient{results: map[string]bool{segmentID: true}}, nil
 	}
 
 	missing, err := svc.checkSegmentsConcurrently(ctx, []string{segmentID}, providers)
 	if err != nil {
 		t.Fatalf("checkSegmentsConcurrently returned error: %v", err)
 	}
-	if len(missing) != 0 {
-		t.Fatalf("expected no missing segments after pool fallback, got %v", missing)
+	// When pool returns ErrArticleNotFoundInProviders, we trust it and report missing
+	if len(missing) != 1 {
+		t.Fatalf("expected 1 missing segment (pool confirmed missing), got %v", missing)
+	}
+	// Dialer should NOT be called since pool already checked all providers
+	if dialerCalled {
+		t.Fatal("dialer should not be called when pool returns ErrArticleNotFoundInProviders")
 	}
 
 	pool.mu.Lock()
@@ -697,6 +698,40 @@ func TestCheckSegmentsWithPoolRevalidatesMissingSegments(t *testing.T) {
 	pool.mu.Unlock()
 	if callCount != 1 {
 		t.Fatalf("expected pool.Stat to be called once, got %d", callCount)
+	}
+}
+
+func TestCheckSegmentsWithPoolFallsBackOnConnectionErrors(t *testing.T) {
+	// When the pool returns a non-404 error (connection issues), we should
+	// fall back to the dialer to retry with fresh connections.
+	ctx := context.Background()
+	segmentID := "connfail@example"
+	normalized := normalizeMessageID(segmentID)
+
+	pool := newStubPool(map[string]struct {
+		code int
+		err  error
+	}{
+		normalized: {code: 430, err: nil}, // 430 = not found, but not the definitive error
+	})
+
+	providers := []config.UsenetSettings{
+		{Name: "Primary", Host: "primary.example", Enabled: true, Connections: 1},
+	}
+
+	svc := NewService(nil, &stubPoolManager{pool: pool})
+	svc.dialer = func(ctx context.Context, settings config.UsenetSettings) (statClient, error) {
+		// Dialer finds the segment (pool may have had stale connection)
+		return &stubClient{results: map[string]bool{segmentID: true}}, nil
+	}
+
+	missing, err := svc.checkSegmentsConcurrently(ctx, []string{segmentID}, providers)
+	if err != nil {
+		t.Fatalf("checkSegmentsConcurrently returned error: %v", err)
+	}
+	// Fallback dialer found the segment
+	if len(missing) != 0 {
+		t.Fatalf("expected no missing segments after dialer fallback, got %v", missing)
 	}
 }
 
