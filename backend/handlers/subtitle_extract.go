@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,11 @@ type SubtitleExtractManager struct {
 	ffprobePath string
 	streamer    streaming.Provider
 	cleanupDone chan struct{}
+
+	// WebDAV URL building (for usenet paths)
+	webdavMu     sync.RWMutex
+	webdavBase   string
+	webdavPrefix string
 }
 
 // NewSubtitleExtractManager creates a new subtitle extraction manager
@@ -58,6 +64,52 @@ func NewSubtitleExtractManager(ffmpegPath, ffprobePath string, streamer streamin
 	}
 	go m.cleanupLoop()
 	return m
+}
+
+// ConfigureLocalWebDAVAccess configures WebDAV URL building for usenet paths
+func (m *SubtitleExtractManager) ConfigureLocalWebDAVAccess(baseURL, prefix, username, password string) {
+	m.webdavMu.Lock()
+	defer m.webdavMu.Unlock()
+
+	if baseURL == "" || prefix == "" {
+		return
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		log.Printf("[subtitle-extract] invalid WebDAV base URL %q: %v", baseURL, err)
+		return
+	}
+
+	if username != "" && password != "" {
+		parsed.User = url.UserPassword(username, password)
+	}
+
+	m.webdavBase = strings.TrimRight(parsed.String(), "/")
+	m.webdavPrefix = prefix
+	log.Printf("[subtitle-extract] configured WebDAV access: base=%q prefix=%q", m.webdavBase, m.webdavPrefix)
+}
+
+// buildWebDAVURL constructs a WebDAV URL for the given path
+func (m *SubtitleExtractManager) buildWebDAVURL(cleanPath string) string {
+	m.webdavMu.RLock()
+	base := m.webdavBase
+	prefix := m.webdavPrefix
+	m.webdavMu.RUnlock()
+
+	if base == "" || prefix == "" {
+		return ""
+	}
+
+	pathToUse := cleanPath
+	if !strings.HasPrefix(pathToUse, "/") {
+		pathToUse = "/" + pathToUse
+	}
+	if !strings.HasPrefix(pathToUse, prefix) {
+		pathToUse = prefix + pathToUse
+	}
+
+	return base + pathToUse
 }
 
 // cleanupLoop periodically removes stale sessions
@@ -303,20 +355,37 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 		useDirectProbe = true
 	} else if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
 		url, err := directProvider.GetDirectURL(ctx, session.Path)
-		if err != nil {
-			log.Printf("[subtitle-extract] failed to get direct URL for session %s: %v", session.ID, err)
+		if err == nil && url != "" {
+			streamURL = url
+			useDirectProbe = true
+		} else {
+			// Try WebDAV URL as fallback (for usenet paths)
+			webdavURL := m.buildWebDAVURL(session.Path)
+			if webdavURL != "" {
+				log.Printf("[subtitle-extract] using WebDAV URL for session %s: %s", session.ID, session.Path)
+				streamURL = webdavURL
+				useDirectProbe = true
+			} else {
+				log.Printf("[subtitle-extract] failed to get direct URL for session %s: %v", session.ID, err)
+				session.mu.Lock()
+				session.extractionErr = err
+				session.mu.Unlock()
+				return
+			}
+		}
+	} else {
+		// No direct provider, try WebDAV URL
+		webdavURL := m.buildWebDAVURL(session.Path)
+		if webdavURL != "" {
+			log.Printf("[subtitle-extract] using WebDAV URL for session %s: %s", session.ID, session.Path)
+			streamURL = webdavURL
+			useDirectProbe = true
+		} else {
 			session.mu.Lock()
-			session.extractionErr = err
+			session.extractionErr = fmt.Errorf("no direct URL provider available")
 			session.mu.Unlock()
 			return
 		}
-		streamURL = url
-		useDirectProbe = true
-	} else {
-		session.mu.Lock()
-		session.extractionErr = fmt.Errorf("no direct URL provider available")
-		session.mu.Unlock()
-		return
 	}
 
 	// Probe subtitle streams to get actual stream indices
@@ -434,6 +503,9 @@ func (h *VideoHandler) ProbeSubtitleTracks(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Check if this is a webdav path before cleaning
+	isWebDAVPath := strings.HasPrefix(path, "/webdav/") || strings.HasPrefix(path, "webdav/")
+
 	// Clean the path
 	cleanPath := path
 	if strings.HasPrefix(cleanPath, "/webdav/") {
@@ -451,6 +523,16 @@ func (h *VideoHandler) ProbeSubtitleTracks(w http.ResponseWriter, r *http.Reques
 	var streamURL string
 	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
 		streamURL = cleanPath
+	} else if isWebDAVPath {
+		// For webdav paths (usenet), use the WebDAV URL directly
+		webdavURL := h.buildWebDAVURL(cleanPath)
+		if webdavURL == "" {
+			log.Printf("[subtitle-extract] webdav URL not configured for path: %s", cleanPath)
+			http.Error(w, "webdav access not configured", http.StatusServiceUnavailable)
+			return
+		}
+		streamURL = webdavURL
+		log.Printf("[subtitle-extract] using WebDAV URL for probe: %s", cleanPath)
 	} else if directProvider, ok := h.subtitleExtractManager.streamer.(streaming.DirectURLProvider); ok {
 		url, err := directProvider.GetDirectURL(r.Context(), cleanPath)
 		if err != nil {

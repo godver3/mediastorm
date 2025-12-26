@@ -2108,6 +2108,11 @@ func (h *VideoHandler) ConfigureLocalWebDAVAccess(baseURL, prefix, username, pas
 	if h.hlsManager != nil {
 		h.hlsManager.ConfigureLocalWebDAVAccess(baseURL, prefix, username, password)
 	}
+
+	// Pass to subtitle extract manager as well
+	if h.subtitleExtractManager != nil {
+		h.subtitleExtractManager.ConfigureLocalWebDAVAccess(baseURL, prefix, username, password)
+	}
 }
 
 // GetHLSManager returns the HLS manager for admin/monitoring purposes.
