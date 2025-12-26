@@ -127,16 +127,17 @@ const Controls: React.FC<ControlsProps> = ({
     if (selectedSubtitleTrackId === 'external') {
       return 'External';
     }
-    // Always show something - "Search" if no embedded tracks, otherwise the selected track
+    // For live TV, only show subtitle selection if there are embedded tracks (no external search)
+    // For other content, show "Search" if no embedded tracks
     if (!subtitleTracks.length || !subtitleTracks.some((track) => Number.isFinite(Number(track.id)))) {
-      return 'Search';
+      return isLiveTV ? undefined : 'Search';
     }
     const fallback = subtitleTracks[0]?.label;
     if (!selectedSubtitleTrackId) {
       return fallback;
     }
     return subtitleTracks.find((track) => track.id === selectedSubtitleTrackId)?.label ?? fallback;
-  }, [selectedSubtitleTrackId, subtitleTracks]);
+  }, [selectedSubtitleTrackId, subtitleTracks, isLiveTV]);
 
   // Format subtitle offset for display (e.g., "-0.25s", "+0.50s", "0s")
   const formattedSubtitleOffset = useMemo(() => {
@@ -551,7 +552,7 @@ const Controls: React.FC<ControlsProps> = ({
           onSelect={handleSelectTrack}
           onClose={closeMenu}
           focusKeyPrefix={activeMenu}
-          onSearchSubtitles={activeMenu === 'subtitles' ? handleOpenSubtitleSearch : undefined}
+          onSearchSubtitles={activeMenu === 'subtitles' && !isLiveTV ? handleOpenSubtitleSearch : undefined}
         />
       ) : null}
       {activeMenu === 'info' && streamInfo ? (
