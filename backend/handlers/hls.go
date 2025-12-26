@@ -136,24 +136,45 @@ type HLSSession struct {
 }
 
 type audioStreamInfo struct {
-	Index int
-	Codec string
+	Index    int
+	Codec    string
+	Language string
+	Title    string
 }
 
 type subtitleStreamInfo struct {
-	Index int
-	Codec string
+	Index     int
+	Codec     string
+	Language  string
+	Title     string
+	IsForced  bool
+	IsDefault bool
 }
 
 // UnifiedProbeResult holds all data extracted from a single ffprobe call
 type UnifiedProbeResult struct {
-	Duration         float64
-	ColorTransfer    string              // e.g., "smpte2084" for HDR, "bt709" for SDR
-	AudioStreams     []audioStreamInfo
-	SubtitleStreams  []subtitleStreamInfo
-	HasTrueHD        bool
+	Duration           float64
+	ColorTransfer      string // e.g., "smpte2084" for HDR, "bt709" for SDR
+	AudioStreams       []audioStreamInfo
+	SubtitleStreams    []subtitleStreamInfo
+	HasTrueHD          bool
 	HasCompatibleAudio bool
+	// Extended fields for VideoFullResult compatibility
+	HasDolbyVision     bool
+	HasHDR10           bool
+	DolbyVisionProfile string
 }
+
+// cachedProbeEntry stores a probe result with expiration time
+type cachedProbeEntry struct {
+	result    *UnifiedProbeResult
+	expiresAt time.Time
+}
+
+const (
+	// TTL for cached probe results (shared between prequeue and HLS)
+	probeCacheTTL = 60 * time.Second
+)
 
 const (
 	// How long to wait with no segment requests before killing FFmpeg
@@ -195,6 +216,9 @@ type HLSManager struct {
 	localAccessMu      sync.RWMutex
 	localWebDAVBaseURL string
 	localWebDAVPrefix  string
+	// Global probe cache - shared between prequeue (ProbeVideoFull) and HLS (probeAllMetadata)
+	probeCache   map[string]*cachedProbeEntry
+	probeCacheMu sync.RWMutex
 }
 
 // NewHLSManager creates a new HLS session manager
@@ -216,6 +240,7 @@ func NewHLSManager(baseDir, ffmpegPath, ffprobePath string, streamer streaming.P
 		ffprobePath: ffprobePath,
 		streamer:    streamer,
 		cleanupDone: make(chan struct{}),
+		probeCache:  make(map[string]*cachedProbeEntry),
 	}
 
 	// Clean up any orphaned directories from previous runs
@@ -225,6 +250,49 @@ func NewHLSManager(baseDir, ffmpegPath, ffprobePath string, streamer streaming.P
 	go manager.cleanupLoop()
 
 	return manager
+}
+
+// GetCachedProbe retrieves a cached probe result if available and not expired
+func (m *HLSManager) GetCachedProbe(path string) *UnifiedProbeResult {
+	m.probeCacheMu.RLock()
+	defer m.probeCacheMu.RUnlock()
+
+	entry, exists := m.probeCache[path]
+	if !exists {
+		return nil
+	}
+
+	if time.Now().After(entry.expiresAt) {
+		return nil // expired
+	}
+
+	log.Printf("[hls] probe cache HIT for path: %s", path)
+	return entry.result
+}
+
+// CacheProbe stores a probe result in the cache with TTL
+func (m *HLSManager) CacheProbe(path string, result *UnifiedProbeResult) {
+	m.probeCacheMu.Lock()
+	defer m.probeCacheMu.Unlock()
+
+	m.probeCache[path] = &cachedProbeEntry{
+		result:    result,
+		expiresAt: time.Now().Add(probeCacheTTL),
+	}
+	log.Printf("[hls] probe cached for path: %s (expires in %v)", path, probeCacheTTL)
+}
+
+// cleanupProbeCache removes expired entries from the probe cache
+func (m *HLSManager) cleanupProbeCache() {
+	m.probeCacheMu.Lock()
+	defer m.probeCacheMu.Unlock()
+
+	now := time.Now()
+	for path, entry := range m.probeCache {
+		if now.After(entry.expiresAt) {
+			delete(m.probeCache, path)
+		}
+	}
 }
 
 // ConfigureLocalWebDAVAccess allows the manager to build direct URLs against the local WebDAV server.
@@ -644,16 +712,29 @@ func (m *HLSManager) fixDVCodecTag(session *HLSSession) error {
 
 // probeAllMetadata performs a single ffprobe call to extract all metadata needed for HLS transcoding.
 // This consolidates what was previously 4 separate ffprobe calls (duration, color, audio, subtitles).
+// Results are cached for probeCacheTTL (60s) to avoid redundant probes between prequeue and HLS.
 func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*UnifiedProbeResult, error) {
 	if m.ffprobePath == "" {
 		return nil, fmt.Errorf("ffprobe not configured")
 	}
 
+	// Check cache first
+	if cached := m.GetCachedProbe(path); cached != nil {
+		return cached, nil
+	}
+
 	isExternalURL := strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+
+	var result *UnifiedProbeResult
+	var err error
 
 	// For external URLs, probe directly
 	if isExternalURL {
-		return m.probeAllMetadataFromURL(ctx, path)
+		result, err = m.probeAllMetadataFromURL(ctx, path)
+		if err == nil && result != nil {
+			m.CacheProbe(path, result)
+		}
+		return result, err
 	}
 
 	// For provider-backed paths, try direct URL first for better metadata access
@@ -661,7 +742,11 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 		if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
 			if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
 				log.Printf("[hls] probing all metadata using direct URL for path: %s", path)
-				return m.probeAllMetadataFromURL(ctx, directURL)
+				result, err = m.probeAllMetadataFromURL(ctx, directURL)
+				if err == nil && result != nil {
+					m.CacheProbe(path, result) // Cache by original path, not direct URL
+				}
+				return result, err
 			}
 		}
 	}
@@ -714,7 +799,11 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 		return nil, fmt.Errorf("ffprobe execution: %w", err)
 	}
 
-	return m.parseUnifiedProbeOutput(output)
+	result, parseErr := m.parseUnifiedProbeOutput(output)
+	if parseErr == nil && result != nil {
+		m.CacheProbe(path, result)
+	}
+	return result, parseErr
 }
 
 // probeAllMetadataFromURL probes all metadata directly from an external URL
@@ -748,10 +837,12 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			Duration string `json:"duration"`
 		} `json:"format"`
 		Streams []struct {
-			Index         int    `json:"index"`
-			CodecType     string `json:"codec_type"`
-			CodecName     string `json:"codec_name"`
-			ColorTransfer string `json:"color_transfer"`
+			Index         int               `json:"index"`
+			CodecType     string            `json:"codec_type"`
+			CodecName     string            `json:"codec_name"`
+			ColorTransfer string            `json:"color_transfer"`
+			Tags          map[string]string `json:"tags"`
+			Disposition   map[string]int    `json:"disposition"`
 		} `json:"streams"`
 	}
 
@@ -772,9 +863,31 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 		"aac": true, "ac3": true, "eac3": true, "mp3": true,
 	}
 
+	// Helper to get tag value (case-insensitive)
+	getTag := func(tags map[string]string, key string) string {
+		if tags == nil {
+			return ""
+		}
+		// Try exact match first
+		if v, ok := tags[key]; ok {
+			return v
+		}
+		// Try lowercase
+		if v, ok := tags[strings.ToLower(key)]; ok {
+			return v
+		}
+		// Try uppercase first letter
+		if v, ok := tags[strings.Title(key)]; ok {
+			return v
+		}
+		return ""
+	}
+
 	// Process streams
 	for _, stream := range probeData.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		language := getTag(stream.Tags, "language")
+		title := getTag(stream.Tags, "title")
 
 		switch stream.CodecType {
 		case "video":
@@ -784,8 +897,10 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			}
 		case "audio":
 			result.AudioStreams = append(result.AudioStreams, audioStreamInfo{
-				Index: stream.Index,
-				Codec: codec,
+				Index:    stream.Index,
+				Codec:    codec,
+				Language: language,
+				Title:    title,
 			})
 			if codec == "truehd" || codec == "mlp" {
 				result.HasTrueHD = true
@@ -794,9 +909,23 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				result.HasCompatibleAudio = true
 			}
 		case "subtitle":
+			isForced := false
+			isDefault := false
+			if stream.Disposition != nil {
+				if f, ok := stream.Disposition["forced"]; ok && f > 0 {
+					isForced = true
+				}
+				if d, ok := stream.Disposition["default"]; ok && d > 0 {
+					isDefault = true
+				}
+			}
 			result.SubtitleStreams = append(result.SubtitleStreams, subtitleStreamInfo{
-				Index: stream.Index,
-				Codec: codec,
+				Index:     stream.Index,
+				Codec:     codec,
+				Language:  language,
+				Title:     title,
+				IsForced:  isForced,
+				IsDefault: isDefault,
 			})
 		}
 	}
@@ -3301,6 +3430,7 @@ func (m *HLSManager) cleanupLoop() {
 		select {
 		case <-ticker.C:
 			m.cleanupOldSessions()
+			m.cleanupProbeCache() // Clean expired probe cache entries
 		case <-m.cleanupDone:
 			log.Printf("[hls] cleanup loop shutting down")
 			return
