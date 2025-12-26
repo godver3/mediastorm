@@ -349,8 +349,9 @@ func (ns *NzbSystem) streamQueuePath(ctx context.Context, req streaming.Request,
 
 // streamStoragePath handles streaming for storage paths (completed items)
 func (ns *NzbSystem) streamStoragePath(ctx context.Context, req streaming.Request) (*streaming.Response, error) {
-	// Clean the path - remove leading slash
+	// Clean the path - remove leading slash and webdav prefix
 	actualPath := strings.TrimPrefix(req.Path, "/")
+	actualPath = strings.TrimPrefix(actualPath, "webdav/")
 	if actualPath == "" {
 		return nil, streaming.ErrNotFound
 	}
