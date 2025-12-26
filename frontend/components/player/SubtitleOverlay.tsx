@@ -26,6 +26,8 @@ interface SubtitleOverlayProps {
   videoHeight?: number;
   /** Size scale factor for subtitles (1.0 = default) */
   sizeScale?: number;
+  /** Whether player controls are visible (subtitles bump up to avoid overlap) */
+  controlsVisible?: boolean;
 }
 
 /**
@@ -138,6 +140,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   videoWidth,
   videoHeight,
   sizeScale = 1.0,
+  controlsVisible = false,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -165,6 +168,12 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     }
 
     const { width: containerWidth, height: containerHeight } = containerSize;
+    const isLandscape = containerWidth > containerHeight;
+
+    // Extra offset when controls are visible to avoid overlap with control bar (landscape only)
+    // Control bar heights: ~120px mobile, ~180px TV (including padding and secondary row)
+    const controlsOffset = controlsVisible && isLandscape ? (Platform.isTV ? 180 : 120) : 0;
+
     const videoAspectRatio = videoWidth / videoHeight;
     const containerAspectRatio = containerWidth / containerHeight;
 
@@ -174,16 +183,15 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       // Video fills container width, calculate actual video height
       const actualVideoHeight = containerWidth / videoAspectRatio;
       const letterboxHeight = (containerHeight - actualVideoHeight) / 2;
-      return letterboxHeight + basePadding;
+      return letterboxHeight + basePadding + controlsOffset;
     }
 
     // Video is taller than container: letterboxing on left/right
     // Video fills height, no bottom offset needed beyond base padding
     // Add extra safe area padding in landscape mode
-    const isLandscape = containerWidth > containerHeight;
     const landscapeExtra = isLandscape ? 20 : 0;
-    return basePadding + landscapeExtra;
-  }, [videoWidth, videoHeight, containerSize]);
+    return basePadding + landscapeExtra + controlsOffset;
+  }, [videoWidth, videoHeight, containerSize, controlsVisible]);
 
   // Fetch and parse VTT file
   const fetchVTT = useCallback(async () => {

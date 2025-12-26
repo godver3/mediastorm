@@ -3894,6 +3894,7 @@ export default function PlayerScreen() {
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+              controlsVisible={controlsVisible}
             />
           )}
 
@@ -3909,6 +3910,7 @@ export default function PlayerScreen() {
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+              controlsVisible={controlsVisible}
             />
           )}
 
@@ -3923,6 +3925,7 @@ export default function PlayerScreen() {
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+              controlsVisible={controlsVisible}
             />
           )}
 
