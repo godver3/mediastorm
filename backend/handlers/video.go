@@ -2329,6 +2329,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 
 // ProbeVideoFull performs a single ffprobe call to get both HDR detection and stream metadata.
 // This consolidates ProbeVideoPath and ProbeVideoMetadata into one call for efficiency.
+// Results are cached in HLSManager.probeCache to avoid redundant probes between prequeue and HLS.
 func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoFullResult, error) {
 	if h == nil {
 		return nil, errors.New("video handler is nil")
@@ -2343,6 +2344,14 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
 	} else if strings.HasPrefix(cleanPath, "webdav/") {
 		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+	}
+
+	// Check shared cache first (via HLSManager)
+	if h.hlsManager != nil {
+		if cached := h.hlsManager.GetCachedProbe(cleanPath); cached != nil {
+			log.Printf("[video] ProbeVideoFull: using cached probe for path=%q", cleanPath)
+			return h.unifiedProbeToVideoFull(cached), nil
+		}
 	}
 
 	log.Printf("[video] ProbeVideoFull: probing path=%q (unified HDR + metadata)", cleanPath)
@@ -2450,7 +2459,84 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		result.HasTrueHD, result.HasCompatibleAudio,
 		len(result.AudioStreams), len(result.SubtitleStreams))
 
+	// Cache the result for shared use between prequeue and HLS
+	if h.hlsManager != nil {
+		h.hlsManager.CacheProbe(cleanPath, h.videoFullToUnifiedProbe(result))
+	}
+
 	return result, nil
+}
+
+// unifiedProbeToVideoFull converts a cached UnifiedProbeResult to VideoFullResult
+func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *VideoFullResult {
+	result := &VideoFullResult{
+		HasDolbyVision:     cached.HasDolbyVision,
+		HasHDR10:           cached.HasHDR10,
+		DolbyVisionProfile: cached.DolbyVisionProfile,
+		HasTrueHD:          cached.HasTrueHD,
+		HasCompatibleAudio: cached.HasCompatibleAudio,
+		AudioStreams:       make([]AudioStreamInfo, 0, len(cached.AudioStreams)),
+		SubtitleStreams:    make([]SubtitleStreamInfo, 0, len(cached.SubtitleStreams)),
+	}
+
+	// Convert audio streams
+	for _, as := range cached.AudioStreams {
+		result.AudioStreams = append(result.AudioStreams, AudioStreamInfo{
+			Index:    as.Index,
+			Codec:    as.Codec,
+			Language: as.Language,
+			Title:    as.Title,
+		})
+	}
+
+	// Convert subtitle streams
+	for _, ss := range cached.SubtitleStreams {
+		result.SubtitleStreams = append(result.SubtitleStreams, SubtitleStreamInfo{
+			Index:     ss.Index,
+			Language:  ss.Language,
+			Title:     ss.Title,
+			IsForced:  ss.IsForced,
+			IsDefault: ss.IsDefault,
+		})
+	}
+
+	return result
+}
+
+// videoFullToUnifiedProbe converts a VideoFullResult to UnifiedProbeResult for caching
+func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *UnifiedProbeResult {
+	cached := &UnifiedProbeResult{
+		HasDolbyVision:     result.HasDolbyVision,
+		HasHDR10:           result.HasHDR10,
+		DolbyVisionProfile: result.DolbyVisionProfile,
+		HasTrueHD:          result.HasTrueHD,
+		HasCompatibleAudio: result.HasCompatibleAudio,
+		AudioStreams:       make([]audioStreamInfo, 0, len(result.AudioStreams)),
+		SubtitleStreams:    make([]subtitleStreamInfo, 0, len(result.SubtitleStreams)),
+	}
+
+	// Convert audio streams
+	for _, as := range result.AudioStreams {
+		cached.AudioStreams = append(cached.AudioStreams, audioStreamInfo{
+			Index:    as.Index,
+			Codec:    as.Codec,
+			Language: as.Language,
+			Title:    as.Title,
+		})
+	}
+
+	// Convert subtitle streams
+	for _, ss := range result.SubtitleStreams {
+		cached.SubtitleStreams = append(cached.SubtitleStreams, subtitleStreamInfo{
+			Index:     ss.Index,
+			Language:  ss.Language,
+			Title:     ss.Title,
+			IsForced:  ss.IsForced,
+			IsDefault: ss.IsDefault,
+		})
+	}
+
+	return cached
 }
 
 // proxyExternalURL proxies a pre-resolved external URL (e.g., from AIOStreams) to the client.
