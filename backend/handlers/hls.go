@@ -1661,12 +1661,45 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	// Subtitle handling
 	// Note: FFmpeg's HLS muxer has different subtitle support for fMP4 vs MPEG-TS:
-	// - fMP4 (Dolby Vision/HDR): Subtitles are extracted to a sidecar VTT file for overlay rendering
+	// - fMP4 (Dolby Vision/HDR): Subtitles are extracted to sidecar VTT files for overlay rendering
+	//   We extract ALL text-based subtitle tracks upfront to support track switching without re-downloading
 	// - MPEG-TS: Supports multiple WebVTT subtitle streams in the HLS playlist
 	subtitleHandled := false
-	var sidecarSubtitleRelativeIndex int = -1 // Track for sidecar extraction (fMP4 only)
 
-	if session.SubtitleTrackIndex >= 0 {
+	// For fMP4, collect ALL text-based subtitle tracks for upfront extraction
+	// This prevents needing to re-download the source when switching tracks
+	type sidecarSubtitle struct {
+		streamIndex   int    // Absolute stream index (for ffprobe reference)
+		relativeIndex int    // Relative subtitle index (for -map 0:s:N)
+		codec         string // Codec name
+	}
+	var sidecarSubtitles []sidecarSubtitle
+
+	if needsFmp4 {
+		// For fMP4 (DV/HDR), extract ALL text-based subtitle tracks to sidecar VTT files
+		// This allows track switching without re-downloading the source file
+		for pos, stream := range subtitleStreams {
+			if stream.Codec == "hdmv_pgs_subtitle" || stream.Codec == "pgs" || stream.Codec == "dvd_subtitle" {
+				log.Printf("[hls] session %s: skipping bitmap subtitle stream %d (codec=%s) for sidecar extraction",
+					session.ID, stream.Index, stream.Codec)
+				continue
+			}
+			sidecarSubtitles = append(sidecarSubtitles, sidecarSubtitle{
+				streamIndex:   stream.Index,
+				relativeIndex: pos,
+				codec:         stream.Codec,
+			})
+		}
+		if len(sidecarSubtitles) > 0 {
+			log.Printf("[hls] session %s: will extract %d text-based subtitle tracks to sidecar VTT files",
+				session.ID, len(sidecarSubtitles))
+		} else if len(subtitleStreams) > 0 {
+			log.Printf("[hls] session %s: no text-based subtitles found for sidecar extraction (%d bitmap streams skipped)",
+				session.ID, len(subtitleStreams))
+		}
+		subtitleHandled = true
+	} else if session.SubtitleTrackIndex >= 0 {
+		// For MPEG-TS with specific track selection
 		relativeIndex := -1
 		var selectedCodec string
 
@@ -1679,69 +1712,41 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 
 		if relativeIndex >= 0 {
-			// Check for unsupported subtitle codecs (bitmap-based)
 			if selectedCodec == "hdmv_pgs_subtitle" || selectedCodec == "pgs" || selectedCodec == "dvd_subtitle" {
 				log.Printf("[hls] session %s: requested subtitle stream %d has unsupported codec %q; skipping mapping",
 					session.ID, session.SubtitleTrackIndex, selectedCodec)
-				subtitleHandled = true
-			} else if needsFmp4 {
-				// For fMP4 (DV/HDR), don't mux subtitles into HLS - extract to sidecar VTT instead
-				// iOS AVPlayer in fullscreen doesn't properly expose muxed subtitles to react-native-video
-				sidecarSubtitleRelativeIndex = relativeIndex
-				log.Printf("[hls] session %s: will extract subtitle stream to sidecar VTT (streamIndex=%d relativeIndex=%d codec=%s)",
-					session.ID, session.SubtitleTrackIndex, relativeIndex, selectedCodec)
-				subtitleHandled = true
 			} else {
-				// For MPEG-TS, mux subtitles into HLS playlist as usual
 				subtitleMap := fmt.Sprintf("0:s:%d", relativeIndex)
 				args = append(args, "-map", subtitleMap, "-c:s", "webvtt")
 				log.Printf("[hls] session %s: mapping specific subtitle stream (streamIndex=%d relativeIndex=%d codec=%s)",
 					session.ID, session.SubtitleTrackIndex, relativeIndex, selectedCodec)
-				subtitleHandled = true
 			}
-		} else if needsFmp4 {
-			log.Printf("[hls] session %s: requested subtitle stream index %d not found for fMP4/DV output; skipping mapping",
-				session.ID, session.SubtitleTrackIndex)
-			subtitleHandled = true
 		} else {
 			log.Printf("[hls] session %s: requested subtitle stream index %d not found; skipping subtitle mapping",
 				session.ID, session.SubtitleTrackIndex)
-			subtitleHandled = true
 		}
+		subtitleHandled = true
 	}
 
 	if !subtitleHandled {
-		if !needsFmp4 {
-			// For MPEG-TS segments without specific selection, map text-based subtitle streams only
-			// Filter out bitmap codecs (PGS, DVD) which can't be converted to WebVTT
-			textSubtitleCount := 0
-			for pos, stream := range subtitleStreams {
-				if stream.Codec == "hdmv_pgs_subtitle" || stream.Codec == "pgs" || stream.Codec == "dvd_subtitle" {
-					log.Printf("[hls] session %s: skipping bitmap subtitle stream %d (codec=%s) for auto-mapping",
-						session.ID, stream.Index, stream.Codec)
-					continue
-				}
-				subtitleMap := fmt.Sprintf("0:s:%d", pos)
-				args = append(args, "-map", subtitleMap)
-				textSubtitleCount++
+		// For MPEG-TS without specific selection, map all text-based subtitle streams
+		textSubtitleCount := 0
+		for pos, stream := range subtitleStreams {
+			if stream.Codec == "hdmv_pgs_subtitle" || stream.Codec == "pgs" || stream.Codec == "dvd_subtitle" {
+				log.Printf("[hls] session %s: skipping bitmap subtitle stream %d (codec=%s) for auto-mapping",
+					session.ID, stream.Index, stream.Codec)
+				continue
 			}
-			if textSubtitleCount > 0 {
-				args = append(args, "-c:s", "webvtt")
-				log.Printf("[hls] session %s: mapping %d text-based subtitle streams with WebVTT codec", session.ID, textSubtitleCount)
-			} else if len(subtitleStreams) > 0 {
-				log.Printf("[hls] session %s: no text-based subtitles found (%d bitmap streams skipped)", session.ID, len(subtitleStreams))
-			}
-		} else {
-			// For fMP4/DV without specific selection, skip subtitles to avoid errors
-			log.Printf("[hls] session %s: skipping subtitle streams for fMP4/DV (no subtitle selected)", session.ID)
+			subtitleMap := fmt.Sprintf("0:s:%d", pos)
+			args = append(args, "-map", subtitleMap)
+			textSubtitleCount++
 		}
-	}
-
-	// For fMP4 with a valid subtitle track, add a second output to extract subtitles to sidecar VTT
-	// This runs alongside the HLS output, writing cues progressively as FFmpeg processes the stream
-	sidecarVTTPath := ""
-	if sidecarSubtitleRelativeIndex >= 0 {
-		sidecarVTTPath = filepath.Join(session.OutputDir, "subtitles.vtt")
+		if textSubtitleCount > 0 {
+			args = append(args, "-c:s", "webvtt")
+			log.Printf("[hls] session %s: mapping %d text-based subtitle streams with WebVTT codec", session.ID, textSubtitleCount)
+		} else if len(subtitleStreams) > 0 {
+			log.Printf("[hls] session %s: no text-based subtitles found (%d bitmap streams skipped)", session.ID, len(subtitleStreams))
+		}
 	}
 
 	// Update segment pattern with correct extension
@@ -1771,52 +1776,36 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// Use fMP4 segments for Dolby Vision and HDR10
 		// iOS AVPlayer requires fMP4 for proper HEVC/HDR playback
 
-		// For fMP4 with sidecar subtitles, we need to structure FFmpeg args carefully:
-		// FFmpeg applies -map and codec options to the next output file in sequence.
-		// So we first output the HLS stream (video/audio), then the VTT subtitle file.
-		if sidecarVTTPath != "" {
-			// First output: HLS stream with video and audio only
-			args = append(args,
-				"-f", "hls",
-				"-hls_time", "4",
-				"-hls_list_size", "0",
-				"-hls_playlist_type", "event",
-				"-hls_flags", "independent_segments+temp_file",
-				"-hls_segment_type", "fmp4",
-				"-hls_fmp4_init_filename", "init.mp4",
-				"-hls_segment_filename", segmentPattern,
-				"-movflags", "+faststart+frag_keyframe",
-				"-start_number", segmentStartNum,
-				playlistPath,
-			)
+		// First output: HLS stream with video and audio only
+		args = append(args,
+			"-f", "hls",
+			"-hls_time", "4",
+			"-hls_list_size", "0",
+			"-hls_playlist_type", "event",
+			"-hls_flags", "independent_segments+temp_file",
+			"-hls_segment_type", "fmp4",
+			"-hls_fmp4_init_filename", "init.mp4",
+			"-hls_segment_filename", segmentPattern,
+			"-movflags", "+faststart+frag_keyframe",
+			"-start_number", segmentStartNum,
+			playlistPath,
+		)
 
-			// Second output: Sidecar VTT file with subtitle track only
-			// Map the subtitle stream and output as WebVTT
-			// Use -flush_packets 1 to write subtitle cues immediately as they're processed
-			subtitleMap := fmt.Sprintf("0:s:%d", sidecarSubtitleRelativeIndex)
+		// Additional outputs: Sidecar VTT files for ALL text-based subtitle tracks
+		// This allows track switching without re-downloading the source file
+		// Each subtitle track is extracted to subtitles_<streamIndex>.vtt
+		for _, sub := range sidecarSubtitles {
+			vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", sub.streamIndex))
+			subtitleMap := fmt.Sprintf("0:s:%d", sub.relativeIndex)
 			args = append(args,
 				"-map", subtitleMap,
 				"-c", "webvtt",
 				"-f", "webvtt",
 				"-flush_packets", "1",
-				sidecarVTTPath,
+				vttPath,
 			)
-			log.Printf("[hls] session %s: adding sidecar VTT output at %s (subtitle stream %d)", session.ID, sidecarVTTPath, sidecarSubtitleRelativeIndex)
-		} else {
-			// No sidecar subtitles - just output HLS
-			args = append(args,
-				"-f", "hls",
-				"-hls_time", "4",
-				"-hls_list_size", "0",
-				"-hls_playlist_type", "event",
-				"-hls_flags", "independent_segments+temp_file",
-				"-hls_segment_type", "fmp4",
-				"-hls_fmp4_init_filename", "init.mp4",
-				"-hls_segment_filename", segmentPattern,
-				"-movflags", "+faststart+frag_keyframe",
-				"-start_number", segmentStartNum,
-				playlistPath,
-			)
+			log.Printf("[hls] session %s: adding sidecar VTT output at %s (streamIndex=%d relativeIndex=%d codec=%s)",
+				session.ID, vttPath, sub.streamIndex, sub.relativeIndex, sub.codec)
 		}
 	} else {
 		// Use MPEG-TS segments for non-HDR content
@@ -3121,38 +3110,32 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		}
 	}
 
-	// Determine which VTT file to serve based on requested track
-	var vttPath string
-	if requestedTrack == session.SubtitleTrackIndex {
-		// Serving the original track that was extracted when session was created
-		vttPath = filepath.Join(session.OutputDir, "subtitles.vtt")
-	} else {
-		// Serving a different track - use track-specific file
-		vttPath = filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
+	// All subtitle tracks are now extracted upfront to subtitles_<streamIndex>.vtt
+	// This naming is consistent for both initially selected and switched tracks
+	vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
 
-		// If this track-specific file doesn't exist yet, extract it on-demand
-		// Use session mutex to prevent concurrent extraction of the same track
+	// Check if file exists - for fMP4/DV sessions, all tracks should be pre-extracted
+	// If not found, fall back to on-demand extraction (for MPEG-TS or edge cases)
+	if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+		session.mu.Lock()
+		// Double-check after acquiring lock (another request might have extracted it)
 		if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-			session.mu.Lock()
-			// Double-check after acquiring lock (another request might have extracted it)
-			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-				log.Printf("[hls] extracting subtitle track %d on-demand for session %s", requestedTrack, sessionID)
-				if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
-					session.mu.Unlock()
-					log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
-					// Return empty VTT instead of error to avoid breaking playback
-					w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.Header().Set("Access-Control-Allow-Origin", "*")
-					w.Write([]byte("WEBVTT\n\n"))
-					return
-				}
+			log.Printf("[hls] subtitle track %d not pre-extracted, attempting on-demand extraction for session %s", requestedTrack, sessionID)
+			if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
+				session.mu.Unlock()
+				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
+				// Return empty VTT instead of error to avoid breaking playback
+				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Write([]byte("WEBVTT\n\n"))
+				return
 			}
-			session.mu.Unlock()
-
-			// Wait a moment for filesystem to flush (race condition fix)
-			time.Sleep(50 * time.Millisecond)
 		}
+		session.mu.Unlock()
+
+		// Wait a moment for filesystem to flush (race condition fix)
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	// Check if file exists (might not be ready yet or no subtitles selected)
@@ -3234,15 +3217,13 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 	}
 
 	// Get the stream URL (convert virtual path to direct URL if needed)
-	streamURL := session.Path
-	if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
-		if directURL, err := directProvider.GetDirectURL(ctx, session.Path); err == nil && directURL != "" {
-			streamURL = directURL
-			log.Printf("[hls] using direct URL for subtitle extraction")
-		} else if err != nil {
-			log.Printf("[hls] failed to get direct URL for subtitle extraction: %v", err)
-		}
+	// Use getDirectURL which has WebDAV fallback for usenet streams
+	streamURL, hasURL := m.getDirectURL(ctx, session)
+	if !hasURL {
+		// No direct URL available (not debrid, no WebDAV) - cannot extract subtitles
+		return fmt.Errorf("no direct URL available for subtitle extraction (usenet streams require WebDAV)")
 	}
+	log.Printf("[hls] using URL for subtitle extraction: %s", streamURL)
 
 	// Build ffmpeg command to extract subtitle track to VTT
 	args := []string{
