@@ -623,11 +623,11 @@ func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, pr
 		if language == normalizedPref || title == normalizedPref {
 			return true
 		}
-		// Partial match
-		if strings.Contains(language, normalizedPref) ||
-			strings.Contains(title, normalizedPref) ||
-			strings.Contains(normalizedPref, language) ||
-			strings.Contains(normalizedPref, title) {
+		// Partial match (skip empty strings to avoid false positives)
+		if language != "" && (strings.Contains(language, normalizedPref) || strings.Contains(normalizedPref, language)) {
+			return true
+		}
+		if title != "" && (strings.Contains(title, normalizedPref) || strings.Contains(normalizedPref, title)) {
 			return true
 		}
 		return false
@@ -692,15 +692,15 @@ func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStream
 			}
 		}
 
-		// Try partial match
+		// Try partial match (skip empty strings to avoid false positives)
 		for _, stream := range candidateStreams {
 			language := strings.ToLower(strings.TrimSpace(stream.Language))
 			title := strings.ToLower(strings.TrimSpace(stream.Title))
 
-			if strings.Contains(language, normalizedPref) ||
-				strings.Contains(title, normalizedPref) ||
-				strings.Contains(normalizedPref, language) ||
-				strings.Contains(normalizedPref, title) {
+			if language != "" && (strings.Contains(language, normalizedPref) || strings.Contains(normalizedPref, language)) {
+				return stream.Index
+			}
+			if title != "" && (strings.Contains(title, normalizedPref) || strings.Contains(normalizedPref, title)) {
 				return stream.Index
 			}
 		}
