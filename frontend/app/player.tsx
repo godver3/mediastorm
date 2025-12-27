@@ -294,60 +294,103 @@ const findAudioTrackByLanguage = (streams: AudioStreamMetadata[], preferredLangu
   return null;
 };
 
+const isStreamForced = (stream: SubtitleStreamMetadata): boolean => {
+  // Check isForced flag, disposition.forced, or title containing "forced"
+  if (stream.isForced) return true;
+  if ((stream.disposition?.forced ?? 0) > 0) return true;
+  if (stream.title?.toLowerCase().includes('forced')) return true;
+  return false;
+};
+
+const isStreamSDH = (stream: SubtitleStreamMetadata): boolean => {
+  const title = stream.title?.toLowerCase() || '';
+  return title.includes('sdh') || title.includes('hearing impaired') || title.includes('cc');
+};
+
 const findSubtitleTrackByPreference = (
   streams: SubtitleStreamMetadata[],
   preferredLanguage: string | undefined,
   mode: 'off' | 'on' | 'forced-only' | undefined,
 ): number | null => {
+  console.log('[player][subtitle-debug] findSubtitleTrackByPreference called:', {
+    mode,
+    preferredLanguage,
+    streamCount: streams?.length ?? 0,
+  });
+
   if (!streams?.length || mode === 'off') {
+    console.log('[player][subtitle-debug] Early return: no streams or mode is off');
     return null;
   }
 
   const normalizedPref = preferredLanguage ? normalizeLanguageForMatching(preferredLanguage) : null;
 
-  // Filter by mode
-  let candidateStreams = streams;
+  // Helper to check if stream matches the preferred language
+  const matchesLanguage = (stream: SubtitleStreamMetadata): boolean => {
+    if (!normalizedPref) return true; // No preference means any language matches
+    const language = normalizeLanguageForMatching(stream.language || '');
+    const title = normalizeLanguageForMatching(stream.title || '');
+    // Exact or partial match
+    return (
+      language === normalizedPref ||
+      title === normalizedPref ||
+      language.includes(normalizedPref) ||
+      normalizedPref.includes(language)
+    );
+  };
+
+  // For forced-only mode: only consider forced tracks
   if (mode === 'forced-only') {
-    candidateStreams = streams.filter((s) => s.isForced ?? (s.disposition?.forced ?? 0) > 0);
-    if (!candidateStreams.length) {
-      // No forced subtitles available, return null (off)
-      return null;
+    const forcedStreams = streams.filter((s) => isStreamForced(s) && matchesLanguage(s));
+    console.log('[player][subtitle-debug] forced-only mode: found', forcedStreams.length, 'forced streams matching language');
+    if (forcedStreams.length > 0) {
+      console.log('[player][subtitle-debug] Selected forced track:', { index: forcedStreams[0].index, language: forcedStreams[0].language, title: forcedStreams[0].title });
+      return forcedStreams[0].index;
     }
+    // No forced subtitles available for this language
+    console.log('[player][subtitle-debug] No forced subtitles available, returning null');
+    return null;
   }
 
-  // If language preference is set, try to find a match
-  if (normalizedPref) {
-    // Try exact match
-    for (const stream of candidateStreams) {
-      const language = normalizeLanguageForMatching(stream.language || '');
-      const title = normalizeLanguageForMatching(stream.title || '');
+  // For 'on' mode: prefer SDH > no title/plain > anything else, exclude forced
+  if (mode === 'on') {
+    // Get all non-forced streams matching the language
+    const nonForcedMatches = streams.filter((s) => !isStreamForced(s) && matchesLanguage(s));
+    console.log('[player][subtitle-debug] on mode: found', nonForcedMatches.length, 'non-forced streams matching language');
 
-      if (language === normalizedPref || title === normalizedPref) {
-        return stream.index;
+    if (nonForcedMatches.length > 0) {
+      // Priority 1: SDH subtitles
+      const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s));
+      if (sdhMatch) {
+        console.log('[player][subtitle-debug] Selected SDH track:', { index: sdhMatch.index, language: sdhMatch.language, title: sdhMatch.title });
+        return sdhMatch.index;
       }
-    }
 
-    // Try partial match
-    for (const stream of candidateStreams) {
-      const language = normalizeLanguageForMatching(stream.language || '');
-      const title = normalizeLanguageForMatching(stream.title || '');
-
-      if (
-        language.includes(normalizedPref) ||
-        title.includes(normalizedPref) ||
-        normalizedPref.includes(language) ||
-        normalizedPref.includes(title)
-      ) {
-        return stream.index;
+      // Priority 2: No title (plain/full subtitles)
+      const plainMatch = nonForcedMatches.find((s) => !s.title || s.title.trim() === '');
+      if (plainMatch) {
+        console.log('[player][subtitle-debug] Selected plain track (no title):', { index: plainMatch.index, language: plainMatch.language, title: plainMatch.title });
+        return plainMatch.index;
       }
+
+      // Priority 3: Any non-forced match
+      console.log('[player][subtitle-debug] Selected first non-forced track:', { index: nonForcedMatches[0].index, language: nonForcedMatches[0].language, title: nonForcedMatches[0].title });
+      return nonForcedMatches[0].index;
     }
+
+    // Fallback: if no non-forced matches, try any stream matching language (including forced)
+    const anyMatch = streams.filter((s) => matchesLanguage(s));
+    if (anyMatch.length > 0) {
+      console.log('[player][subtitle-debug] Fallback to any matching track:', { index: anyMatch[0].index, language: anyMatch[0].language, title: anyMatch[0].title });
+      return anyMatch[0].index;
+    }
+
+    // Last resort: first available stream
+    console.log('[player][subtitle-debug] Last resort, first available:', { index: streams[0].index, language: streams[0].language, title: streams[0].title });
+    return streams[0].index;
   }
 
-  // If mode is 'on' and no language match, return first available
-  if (mode === 'on' && candidateStreams.length > 0) {
-    return candidateStreams[0].index;
-  }
-
+  console.log('[player][subtitle-debug] No match found, returning null');
   return null;
 };
 
@@ -3108,22 +3151,47 @@ export default function PlayerScreen() {
           const preferredMode =
             userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
 
-          if (preferredMode === 'off') {
+          console.log('[player][subtitle-debug] Backend tracks settings check:', {
+            userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
+            globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
+            resolvedMode: preferredMode,
+            userSubtitleLang: userSettings?.playback?.preferredSubtitleLanguage,
+            globalSubtitleLang: settings?.playback?.preferredSubtitleLanguage,
+            resolvedLang: preferredLang,
+            availableTracks: response.tracks.map((t) => ({
+              index: t.index,
+              language: t.language,
+              title: t.title,
+              forced: t.forced,
+            })),
+          });
+
+          // Convert backend tracks to SubtitleStreamMetadata-like format for reuse of selection logic
+          const streamsForSelection: SubtitleStreamMetadata[] = response.tracks.map((t) => ({
+            index: t.index,
+            language: t.language,
+            title: t.title,
+            isForced: t.forced,
+            codec: t.codec || '',
+          }));
+
+          // Use the same selection logic as metadata path
+          const validMode = preferredMode === 'on' || preferredMode === 'off' || preferredMode === 'forced-only'
+            ? preferredMode
+            : 'on'; // Default to 'on' if not set
+
+          const selectedIndex = findSubtitleTrackByPreference(
+            streamsForSelection,
+            preferredLang || undefined,
+            validMode,
+          );
+
+          if (selectedIndex !== null) {
+            console.log('[player][subtitle-debug] Backend tracks: selected index', selectedIndex);
+            setSelectedSubtitleTrackId(String(selectedIndex));
+          } else if (validMode === 'off') {
+            console.log('[player][subtitle-debug] Backend tracks: mode is off');
             setSelectedSubtitleTrackId('off');
-          } else if (preferredLang) {
-            // Find a track matching the preferred language (prefer non-forced)
-            const matchingTrack = response.tracks.find((t) => t.language?.toLowerCase() === preferredLang && !t.forced);
-            const forcedMatch = response.tracks.find((t) => t.language?.toLowerCase() === preferredLang && t.forced);
-            const selected = matchingTrack || forcedMatch;
-            if (selected) {
-              console.log('[player] auto-selecting subtitle track based on preference:', selected);
-              setSelectedSubtitleTrackId(String(selected.index));
-            } else {
-              // No matching preference found - default to first track or off
-              const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
-              console.log('[player] no preference match, defaulting to:', firstTrackId);
-              setSelectedSubtitleTrackId(firstTrackId);
-            }
           } else {
             // No preferred language set - check if current selection is valid
             // This handles the race condition where VLC set an invalid track id
@@ -3661,12 +3729,31 @@ export default function PlayerScreen() {
               ? preferredSubtitleModeRaw
               : undefined;
 
+          console.log('[player][subtitle-debug] Metadata path settings:', {
+            userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
+            globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
+            preferredSubtitleModeRaw,
+            preferredSubtitleMode,
+            preferredSubtitleLanguage,
+            availableStreams: (metadata.subtitleStreams ?? []).map((s) => ({
+              index: s.index,
+              language: s.language,
+              title: s.title,
+              isForced: s.isForced,
+              disposition: s.disposition,
+            })),
+          });
+
           if (preferredSubtitleMode !== undefined) {
             const preferredSubtitleIndex = findSubtitleTrackByPreference(
               metadata.subtitleStreams ?? [],
               preferredSubtitleLanguage,
               preferredSubtitleMode,
             );
+            console.log('[player][subtitle-debug] findSubtitleTrackByPreference result:', {
+              preferredSubtitleIndex,
+              willUsePreference: preferredSubtitleIndex !== null || preferredSubtitleMode === 'off',
+            });
             if (preferredSubtitleIndex !== null || preferredSubtitleMode === 'off') {
               selectedSubtitleIndex = preferredSubtitleIndex ?? undefined;
               console.log('[player] using preferred subtitle settings', {
