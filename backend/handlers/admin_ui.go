@@ -306,6 +306,8 @@ var SettingsSchema = map[string]interface{}{
 			"preferredSubtitleLanguage": map[string]interface{}{"type": "text", "label": "Subtitle Language", "description": "Preferred subtitle language code"},
 			"preferredSubtitleMode":     map[string]interface{}{"type": "select", "label": "Subtitle Mode", "options": []string{"off", "on", "auto"}, "description": "Default subtitle behavior"},
 			"subtitleSize":              map[string]interface{}{"type": "number", "label": "Subtitle Size", "description": "Subtitle size scaling factor (1.0 = default, 0.5 = half, 2.0 = double)", "step": 0.05, "min": 0.25, "max": 3.0},
+			"seekForwardSeconds":        map[string]interface{}{"type": "number", "label": "Skip Forward", "description": "Seconds to skip forward (default 30)", "step": 5, "min": 5, "max": 120},
+			"seekBackwardSeconds":       map[string]interface{}{"type": "number", "label": "Skip Backward", "description": "Seconds to skip backward (default 10)", "step": 5, "min": 5, "max": 120},
 			"useLoadingScreen":          map[string]interface{}{"type": "boolean", "label": "Loading Screen", "description": "Show loading screen during playback init"},
 		},
 	},

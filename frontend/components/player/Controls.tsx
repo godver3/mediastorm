@@ -52,6 +52,9 @@ interface ControlsProps {
   subtitleOffset?: number;
   onSubtitleOffsetEarlier?: () => void;
   onSubtitleOffsetLater?: () => void;
+  /** Seek amounts for skip buttons */
+  seekBackwardSeconds?: number;
+  seekForwardSeconds?: number;
 }
 
 type TrackOption = {
@@ -99,6 +102,8 @@ const Controls: React.FC<ControlsProps> = ({
   subtitleOffset = 0,
   onSubtitleOffsetEarlier,
   onSubtitleOffsetLater,
+  seekBackwardSeconds = 10,
+  seekForwardSeconds = 30,
 }) => {
   const theme = useTheme();
   const { width, height } = useWindowDimensions();
@@ -275,7 +280,7 @@ const Controls: React.FC<ControlsProps> = ({
             <View style={styles.skipButtonContainer}>
               <Pressable onPress={onSkipBackward} style={styles.skipButton}>
                 <View style={styles.skipButtonContent}>
-                  <Text style={styles.skipButtonText}>30</Text>
+                  <Text style={styles.skipButtonText}>{seekBackwardSeconds}</Text>
                   <Ionicons name="play-back" size={20} color={theme.colors.text.primary} />
                 </View>
               </Pressable>
@@ -290,7 +295,7 @@ const Controls: React.FC<ControlsProps> = ({
             <View style={styles.skipButtonContainer}>
               <Pressable onPress={onSkipForward} style={styles.skipButton}>
                 <View style={styles.skipButtonContent}>
-                  <Text style={styles.skipButtonText}>30</Text>
+                  <Text style={styles.skipButtonText}>{seekForwardSeconds}</Text>
                   <Ionicons name="play-forward" size={20} color={theme.colors.text.primary} />
                 </View>
               </Pressable>

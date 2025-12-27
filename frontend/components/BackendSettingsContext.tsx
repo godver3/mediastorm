@@ -94,6 +94,8 @@ export interface BackendPlaybackSettings {
   preferredSubtitleMode?: 'off' | 'on' | 'forced-only';
   useLoadingScreen?: boolean;
   subtitleSize?: number; // Scaling factor for subtitle size (1.0 = default)
+  seekForwardSeconds?: number; // Seconds to skip forward (default 30)
+  seekBackwardSeconds?: number; // Seconds to skip backward (default 10)
 }
 
 export interface BackendLiveSettings {

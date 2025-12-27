@@ -590,7 +590,6 @@ export default function PlayerScreen() {
   const [seekIndicatorAmount, setSeekIndicatorAmount] = useState<number>(0);
   const seekIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekIndicatorStartTimeRef = useRef<number>(0);
-  const seekPressCountRef = useRef<number>(0);
   // Refs for callbacks used in key handler (declared before callback definitions)
   const seekRef = useRef<((time: number, showControlsAfter?: boolean) => void) | null>(null);
   const showControlsRef = useRef<(() => void) | null>(null);
@@ -1710,10 +1709,7 @@ export default function PlayerScreen() {
       switch (key) {
         case SupportedKeys.Left:
           if (!controlsVisibleRef.current) {
-            // Progressive seek: increase amount based on consecutive presses
-            // 1-2 presses: 30s, 3-4: 60s, 5-6: 90s, etc.
-            seekPressCountRef.current += 1;
-            const seekAmountBackward = 30 * Math.ceil(seekPressCountRef.current / 2);
+            const backwardAmount = settings?.playback?.seekBackwardSeconds ?? 10;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -1724,7 +1720,7 @@ export default function PlayerScreen() {
                 startTime = currentTimeRef.current;
                 seekIndicatorStartTimeRef.current = startTime;
               }
-              const newAmount = prev - seekAmountBackward;
+              const newAmount = prev - backwardAmount;
               const targetTime = Math.max(0, startTime + newAmount);
               void seekRef.current?.(targetTime, false);
               return newAmount;
@@ -1740,7 +1736,6 @@ export default function PlayerScreen() {
             seekIndicatorTimeoutRef.current = setTimeout(() => {
               setSeekIndicatorAmount(0);
               seekIndicatorStartTimeRef.current = 0;
-              seekPressCountRef.current = 0;
               // Hide controls again after seeking is done
               controlsOpacity.setValue(0);
             }, 1000);
@@ -1751,10 +1746,7 @@ export default function PlayerScreen() {
           break;
         case SupportedKeys.Right:
           if (!controlsVisibleRef.current) {
-            // Progressive seek: increase amount based on consecutive presses
-            // 1-2 presses: 30s, 3-4: 60s, 5-6: 90s, etc.
-            seekPressCountRef.current += 1;
-            const seekAmountForward = 30 * Math.ceil(seekPressCountRef.current / 2);
+            const forwardAmount = settings?.playback?.seekForwardSeconds ?? 30;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -1765,7 +1757,7 @@ export default function PlayerScreen() {
                 startTime = currentTimeRef.current;
                 seekIndicatorStartTimeRef.current = startTime;
               }
-              const newAmount = prev + seekAmountForward;
+              const newAmount = prev + forwardAmount;
               const targetTime = startTime + newAmount;
               void seekRef.current?.(targetTime, false);
               return newAmount;
@@ -1781,7 +1773,6 @@ export default function PlayerScreen() {
             seekIndicatorTimeoutRef.current = setTimeout(() => {
               setSeekIndicatorAmount(0);
               seekIndicatorStartTimeRef.current = 0;
-              seekPressCountRef.current = 0;
               // Hide controls again after seeking is done
               controlsOpacity.setValue(0);
             }, 1000);
@@ -1791,11 +1782,11 @@ export default function PlayerScreen() {
           }
           break;
         case SupportedKeys.FastForward:
-          void seekRef.current?.(currentTimeRef.current + 10);
+          void seekRef.current?.(currentTimeRef.current + (settings?.playback?.seekForwardSeconds ?? 30));
           showControlsRef.current?.();
           break;
         case SupportedKeys.Rewind:
-          void seekRef.current?.(currentTimeRef.current - 10);
+          void seekRef.current?.(currentTimeRef.current - (settings?.playback?.seekBackwardSeconds ?? 10));
           showControlsRef.current?.();
           break;
         case SupportedKeys.Back:
@@ -1818,7 +1809,7 @@ export default function PlayerScreen() {
     return () => {
       RemoteControlManager.removeKeydownListener(listener);
     };
-  }, [usesSystemManagedControls, router]);
+  }, [usesSystemManagedControls, router, settings]);
 
   const updateDuration = useCallback((value: number, source: string) => {
     if (!Number.isFinite(value) || value <= 0) {
@@ -2755,15 +2746,18 @@ export default function PlayerScreen() {
     showControls();
   };
 
+  const seekBackwardSeconds = settings?.playback?.seekBackwardSeconds ?? 10;
+  const seekForwardSeconds = settings?.playback?.seekForwardSeconds ?? 30;
+
   const handleSkipBackward = useCallback(() => {
-    const targetTime = Math.max(0, currentTimeRef.current - 30);
+    const targetTime = Math.max(0, currentTimeRef.current - seekBackwardSeconds);
     seek(targetTime);
-  }, [seek]);
+  }, [seek, seekBackwardSeconds]);
 
   const handleSkipForward = useCallback(() => {
-    const targetTime = currentTimeRef.current + 30;
+    const targetTime = currentTimeRef.current + seekForwardSeconds;
     seek(targetTime);
-  }, [seek]);
+  }, [seek, seekForwardSeconds]);
 
   useEffect(() => {
     if (!usesSystemManagedControls) {
@@ -4184,6 +4178,8 @@ export default function PlayerScreen() {
                               subtitleOffset={subtitleOffset}
                               onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
                               onSubtitleOffsetLater={handleSubtitleOffsetLater}
+                              seekBackwardSeconds={seekBackwardSeconds}
+                              seekForwardSeconds={seekForwardSeconds}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -4287,6 +4283,8 @@ export default function PlayerScreen() {
                           subtitleOffset={subtitleOffset}
                           onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
                           onSubtitleOffsetLater={handleSubtitleOffsetLater}
+                          seekBackwardSeconds={seekBackwardSeconds}
+                          seekForwardSeconds={seekForwardSeconds}
                         />
                       </SpatialNavigationNode>
                     </View>
