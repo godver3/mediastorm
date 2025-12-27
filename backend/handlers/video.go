@@ -78,21 +78,21 @@ type VideoHandler struct {
 
 // NewVideoHandler creates a new video handler without an attached provider.
 func NewVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath string) *VideoHandler {
-	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, nil)
+	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, "", nil)
 }
 
 // NewVideoHandlerWithProvider creates a handler that prefers the provided stream source.
-func NewVideoHandlerWithProvider(transmuxEnabled bool, ffmpegPath, ffprobePath string, provider streaming.Provider) *VideoHandler {
-	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, provider)
+func NewVideoHandlerWithProvider(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir string, provider streaming.Provider) *VideoHandler {
+	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, hlsTempDir, provider)
 }
 
 // NewVideoHandlerWithNzbSystem creates a handler that uses NzbSystem for streaming
 // NzbSystem handles queue paths through the Stream method, other paths go through WebDAV
 func NewVideoHandlerWithNzbSystem(transmuxEnabled bool, ffmpegPath, ffprobePath string, nzbSystem *integration.NzbSystem) *VideoHandler {
-	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, nzbSystem)
+	return newVideoHandler(transmuxEnabled, ffmpegPath, ffprobePath, "", nzbSystem)
 }
 
-func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath string, provider streaming.Provider) *VideoHandler {
+func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir string, provider streaming.Provider) *VideoHandler {
 	resolvedFFmpeg := strings.TrimSpace(ffmpegPath)
 	if resolvedFFmpeg == "" {
 		resolvedFFmpeg = "ffmpeg"
@@ -122,8 +122,8 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath string, provi
 	// Initialize HLS manager if transmux is enabled
 	var hlsMgr *HLSManager
 	if transmuxEnabled {
-		hlsMgr = NewHLSManager("", resolvedFFmpeg, resolvedFFprobe, provider)
-		log.Printf("[video] initialized HLS manager for Dolby Vision streaming")
+		hlsMgr = NewHLSManager(hlsTempDir, resolvedFFmpeg, resolvedFFprobe, provider)
+		log.Printf("[video] initialized HLS manager for Dolby Vision streaming (temp dir: %s)", hlsMgr.baseDir)
 	}
 
 	// Initialize subtitle extraction manager
