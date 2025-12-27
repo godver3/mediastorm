@@ -1,3 +1,7 @@
+// Initialize logger first to capture all console output
+import { logger } from '../services/logger';
+logger.init();
+
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';

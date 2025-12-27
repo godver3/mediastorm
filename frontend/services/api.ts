@@ -1684,6 +1684,18 @@ class ApiService {
 
     return `${this.baseUrl}/subtitles/download?${query.toString()}`;
   }
+
+  /**
+   * Submit frontend and backend logs to paste service for debugging
+   * @param frontendLogs - Frontend console logs captured by the logger service
+   * @returns Promise with the paste URL
+   */
+  async submitLogs(frontendLogs: string): Promise<{ url?: string; error?: string }> {
+    return this.request<{ url?: string; error?: string }>('/logs/submit', {
+      method: 'POST',
+      body: JSON.stringify({ frontendLogs }),
+    });
+  }
 }
 
 export { ApiService };

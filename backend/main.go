@@ -34,6 +34,7 @@ import (
 	"novastream/utils"
 
 	"github.com/gorilla/mux"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
@@ -61,6 +62,28 @@ func main() {
 	settings, err := cfgManager.Load()
 	if err != nil {
 		log.Fatalf("failed to load settings: %v", err)
+	}
+
+	// Set up file logging with rotation
+	if settings.Log.File != "" {
+		// Ensure log directory exists
+		logDir := filepath.Dir(settings.Log.File)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			log.Printf("Warning: could not create log directory %s: %v", logDir, err)
+		} else {
+			fileWriter := &lumberjack.Logger{
+				Filename:   settings.Log.File,
+				MaxSize:    settings.Log.MaxSize,
+				MaxBackups: settings.Log.MaxBackups,
+				MaxAge:     settings.Log.MaxAge,
+				Compress:   settings.Log.Compress,
+			}
+			// Redirect standard log to both console and file
+			multiWriter := io.MultiWriter(os.Stdout, fileWriter)
+			log.SetOutput(multiWriter)
+			log.SetFlags(log.LstdFlags | log.Lshortfile)
+			log.Printf("Logging to file: %s", settings.Log.File)
+		}
 	}
 
 	// Apply port override if specified
@@ -235,6 +258,7 @@ func main() {
 	}
 	usersHandler := handlers.NewUsersHandler(userService)
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
+	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
 
 	watchlistService, err := watchlist.NewService(settings.Cache.Directory)
 	if err != nil {
@@ -333,6 +357,7 @@ func main() {
 		watchlistHandler,
 		historyHandler,
 		debugHandler,
+		logsHandler,
 		liveHandler,
 		debugVideoHandler,
 		userSettingsHandler,

@@ -49,6 +49,7 @@ func Register(
 	watchlistHandler *handlers.WatchlistHandler,
 	historyHandler *handlers.HistoryHandler,
 	debugHandler *handlers.DebugHandler,
+	logsHandler *handlers.LogsHandler,
 	liveHandler *handlers.LiveHandler,
 	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
@@ -136,6 +137,10 @@ func Register(
 	api.HandleFunc("/subtitles/download", subtitlesHandler.Options).Methods(http.MethodOptions)
 
 	api.HandleFunc("/debug/log", debugHandler.Capture).Methods(http.MethodPost, http.MethodOptions)
+
+	// Log submission endpoint
+	api.HandleFunc("/logs/submit", logsHandler.Submit).Methods(http.MethodPost)
+	api.HandleFunc("/logs/submit", logsHandler.Options).Methods(http.MethodOptions)
 
 	// Version endpoint
 	versionHandler := handlers.NewVersionHandler()
