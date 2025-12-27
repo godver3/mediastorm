@@ -12,7 +12,7 @@
 <div class="settings-group">
     <div class="group-title">Integrations</div>
 
-    <!-- Trakt Account Section -->
+    <!-- Trakt Accounts Section -->
     <div class="section" id="traktAccountSection">
         <div class="section-header" onclick="toggleSection(this)">
             <div class="section-title">
@@ -20,7 +20,7 @@
                     <circle cx="12" cy="12" r="10"/>
                     <path d="M8 12l2 2 4-4"/>
                 </svg>
-                Trakt Account
+                Trakt Accounts
             </div>
             <span id="traktStatusBadge" class="status-badge"></span>
             <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -29,66 +29,81 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Connect your Trakt account to import your watchlist and watch history.
-                You'll need to create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get your Client ID and Secret.
+                Register Trakt accounts and link them to profiles. Each profile can have its own Trakt account for scrobbling.
+                Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get Client ID and Secret.
             </p>
 
-            <!-- Credentials Form -->
-            <div id="traktCredentialsForm">
+            <!-- Trakt Accounts List -->
+            <div id="traktAccountsList" style="margin-bottom: 1.5rem;">
+                <!-- Accounts will be rendered here -->
+            </div>
+
+            <!-- Add New Account Button -->
+            <button class="btn btn-primary" onclick="showAddTraktAccountForm()" id="addTraktAccountBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Trakt Account
+            </button>
+
+            <!-- Add Account Form (hidden by default) -->
+            <div id="traktAddAccountForm" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 1rem;">Add New Trakt Account</h4>
+                <div class="form-group">
+                    <label class="form-label">Account Name</label>
+                    <input type="text" class="form-input" id="newTraktAccountName" placeholder="e.g., Family Account">
+                </div>
                 <div class="form-group">
                     <label class="form-label">Client ID</label>
-                    <input type="text" class="form-input" id="traktClientId" placeholder="Enter your Trakt Client ID">
+                    <input type="text" class="form-input" id="newTraktClientId" placeholder="From trakt.tv/oauth/applications">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Client Secret</label>
-                    <input type="password" class="form-input" id="traktClientSecret" placeholder="Enter your Trakt Client Secret">
+                    <input type="password" class="form-input" id="newTraktClientSecret" placeholder="From trakt.tv/oauth/applications">
                 </div>
                 <div class="btn-group" style="margin-top: 1rem;">
-                    <button class="btn btn-secondary" onclick="saveTraktCredentials()">Save Credentials</button>
-                    <button class="btn btn-primary" onclick="connectTrakt()" id="traktConnectBtn" disabled>Connect Account</button>
+                    <button class="btn btn-secondary" onclick="hideAddTraktAccountForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createTraktAccount()">Create Account</button>
                 </div>
             </div>
 
-            <!-- Waiting for auth -->
-            <div id="traktAuthWaiting" style="display: none;">
-                <div class="status-box">
-                    <div class="spinner"></div>
-                    <div>
-                        <div class="status-title">Waiting for authorization...</div>
-                        <div class="text-muted">
-                            Go to <a id="traktAuthUrl" href="#" target="_blank">trakt.tv/activate</a> and enter code:
-                            <strong id="traktUserCode" style="font-family: monospace; font-size: 1.25rem;"></strong>
-                        </div>
-                    </div>
+            <!-- OAuth Waiting Modal -->
+            <div id="traktAuthModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                    <h3 style="margin-bottom: 0.5rem;">Waiting for authorization...</h3>
+                    <p class="text-muted" style="margin-bottom: 1rem;">
+                        Go to <a id="traktAuthUrl" href="#" target="_blank" style="color: var(--accent);">trakt.tv/activate</a> and enter code:
+                    </p>
+                    <div id="traktUserCode" style="font-family: monospace; font-size: 2rem; font-weight: bold; color: var(--accent); margin-bottom: 1.5rem;"></div>
+                    <button class="btn btn-secondary" onclick="cancelTraktAuth()">Cancel</button>
                 </div>
-                <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="cancelTraktAuth()">Cancel</button>
             </div>
+        </div>
+    </div>
 
-            <!-- Connected State -->
-            <div id="traktConnectedSection" style="display: none;">
-                <div class="connected-status">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                        <polyline points="22 4 12 14.01 9 11.01"/>
-                    </svg>
-                    <div>
-                        <div class="status-title" style="color: var(--success);">Connected to Trakt</div>
-                        <div class="text-muted" id="traktConnectedUsername"></div>
-                    </div>
-                    <button class="btn btn-secondary btn-sm" onclick="disconnectTrakt()">Disconnect</button>
-                </div>
-
-                <!-- Scrobbling Toggle -->
-                <div class="toggle-option" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-                    <div class="toggle-label">
-                        <div class="toggle-title">Scrobbling</div>
-                        <div class="toggle-description text-muted">Automatically sync watch progress to Trakt when you finish watching</div>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="traktScrobblingToggle" onchange="toggleTraktScrobbling(this.checked)">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
+    <!-- Profile-Trakt Linking Section -->
+    <div class="section" id="profileTraktLinkingSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="8.5" cy="7" r="4"/>
+                    <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
+                </svg>
+                Profile Trakt Linking
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Link each profile to a Trakt account. When a profile watches content, it will sync to their linked Trakt account.
+                <br><strong style="color: var(--text-secondary);">Note:</strong> Syncing only occurs if the linked Trakt account has scrobbling enabled (toggle above).
+            </p>
+            <div id="profileTraktLinkingList">
+                <!-- Profile linking rows will be rendered here -->
             </div>
         </div>
     </div>
@@ -343,6 +358,13 @@
 
                     <!-- Connected - Ready to import -->
                     <div id="traktHistoryConnected" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Import from Trakt Account</label>
+                            <select id="traktHistoryAccountSelect" class="form-select" style="max-width: 300px;">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
                         <div class="form-group">
                             <label class="form-label">Import to Profile</label>
                             <select id="traktHistoryProfileSelect" class="form-select" style="max-width: 300px;">
@@ -803,17 +825,19 @@
     let plexPollInterval = null;
 
     // ========== Trakt State ==========
-    let traktStatus = { hasCredentials: false, connected: false, username: '' };
+    let traktAccounts = [];
     let traktHistoryItems = [];
     let traktHistorySelectedItems = new Set();
-    let traktDeviceCode = null;
+    let traktAuthAccountId = null;
     let traktPollInterval = null;
+    let userProfiles = [];
 
     // ========== Initialize ==========
     document.addEventListener('DOMContentLoaded', function() {
         // Load Plex and Trakt status from backend
         loadPlexStatus();
-        loadTraktStatus();
+        loadTraktAccounts();
+        loadUserProfiles();
     });
 
     // ========== Plex Account Functions ==========
@@ -880,141 +904,249 @@
         document.getElementById('plexNotConnected').style.display = 'block';
     }
 
-    // ========== Trakt Account Functions ==========
-    async function loadTraktStatus() {
+    // ========== User Profiles Functions ==========
+    async function loadUserProfiles() {
         try {
-            const response = await fetch('/admin/api/trakt/status');
-            const data = await response.json();
-            traktStatus = data;
-            updateTraktUI();
+            const response = await fetch('/admin/api/profiles');
+            if (response.ok) {
+                userProfiles = await response.json();
+                renderProfileTraktLinking();
+            }
         } catch (err) {
-            console.error('Failed to load Trakt status:', err);
+            console.error('Failed to load user profiles:', err);
         }
     }
 
-    function updateTraktUI() {
+    // ========== Trakt Accounts Functions ==========
+    async function loadTraktAccounts() {
+        try {
+            const response = await fetch('/admin/api/trakt/accounts');
+            const data = await response.json();
+            traktAccounts = data.accounts || [];
+            renderTraktAccountsList();
+            updateTraktStatusBadge();
+            updateTraktHistorySection();
+        } catch (err) {
+            console.error('Failed to load Trakt accounts:', err);
+        }
+    }
+
+    function updateTraktStatusBadge() {
         const badge = document.getElementById('traktStatusBadge');
-        const credentialsForm = document.getElementById('traktCredentialsForm');
-        const connectedSection = document.getElementById('traktConnectedSection');
-        const connectBtn = document.getElementById('traktConnectBtn');
-        const historyNotConnected = document.getElementById('traktHistoryNotConnected');
-        const historyConnected = document.getElementById('traktHistoryConnected');
-
-        if (traktStatus.connected) {
-            badge.textContent = 'Connected';
+        const connectedCount = traktAccounts.filter(a => a.connected).length;
+        if (connectedCount > 0) {
+            badge.textContent = `${connectedCount} Connected`;
             badge.className = 'status-badge connected';
-            credentialsForm.style.display = 'none';
-            connectedSection.style.display = 'block';
-            document.getElementById('traktConnectedUsername').textContent = 'Logged in as ' + traktStatus.username;
-
-            // Update history section
-            historyNotConnected.style.display = 'none';
-            historyConnected.style.display = 'block';
-            document.getElementById('traktHistoryUsername').textContent = 'Logged in as ' + traktStatus.username;
-
-            // Update scrobbling toggle
-            document.getElementById('traktScrobblingToggle').checked = traktStatus.scrobblingEnabled || false;
-        } else {
+        } else if (traktAccounts.length > 0) {
             badge.textContent = 'Not Connected';
             badge.className = 'status-badge disconnected';
-            credentialsForm.style.display = 'block';
-            connectedSection.style.display = 'none';
-            connectBtn.disabled = !traktStatus.hasCredentials;
-
-            // Update history section
-            historyNotConnected.style.display = 'block';
-            historyConnected.style.display = 'none';
+        } else {
+            badge.textContent = 'No Accounts';
+            badge.className = 'status-badge';
         }
     }
 
-    async function saveTraktCredentials() {
-        const clientId = document.getElementById('traktClientId').value.trim();
-        const clientSecret = document.getElementById('traktClientSecret').value.trim();
+    function renderTraktAccountsList() {
+        const container = document.getElementById('traktAccountsList');
+        if (traktAccounts.length === 0) {
+            container.innerHTML = '<p class="text-muted">No Trakt accounts configured. Add one to get started.</p>';
+            return;
+        }
+
+        container.innerHTML = traktAccounts.map(account => `
+            <div class="trakt-account-card" style="padding: 1rem; margin-bottom: 0.75rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem;">
+                    <div style="flex: 1; min-width: 150px;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                            <strong style="word-break: break-word;">${escapeHtml(account.name || 'Unnamed Account')}</strong>
+                            ${account.connected ?
+                                `<span class="status-badge connected" style="font-size: 0.75rem;">Connected</span>` :
+                                `<span class="status-badge disconnected" style="font-size: 0.75rem;">Not Connected</span>`
+                            }
+                        </div>
+                        ${account.connected && account.username ?
+                            `<div class="text-muted" style="font-size: 0.875rem;">Logged in as ${escapeHtml(account.username)}</div>` :
+                            ''
+                        }
+                        ${account.linkedProfiles && account.linkedProfiles.length > 0 ?
+                            `<div class="text-muted" style="font-size: 0.8rem; margin-top: 0.25rem;">
+                                Linked to: ${account.linkedProfiles.map(pid => {
+                                    const profile = userProfiles.find(p => p.id === pid);
+                                    return profile ? escapeHtml(profile.name) : pid;
+                                }).join(', ')}
+                            </div>` :
+                            ''
+                        }
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-shrink: 0; align-items: center;">
+                        ${account.connected ? `
+                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-right: 0.5rem;" title="Enable scrobbling to sync watch history to Trakt">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" ${account.scrobblingEnabled ? 'checked' : ''} onchange="toggleAccountScrobbling('${account.id}', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span style="font-size: 0.75rem; color: var(--text-muted);">Scrobble</span>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" onclick="disconnectTraktAccount('${account.id}')">Disconnect</button>
+                        ` : `
+                            <button class="btn btn-primary btn-sm" onclick="connectTraktAccount('${account.id}')">Connect</button>
+                        `}
+                        <button class="btn btn-secondary btn-sm" onclick="deleteTraktAccount('${account.id}')" style="color: var(--danger);">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function renderProfileTraktLinking() {
+        const container = document.getElementById('profileTraktLinkingList');
+        if (userProfiles.length === 0) {
+            container.innerHTML = '<p class="text-muted">No profiles found.</p>';
+            return;
+        }
+
+        const connectedAccounts = traktAccounts.filter(a => a.connected);
+
+        container.innerHTML = userProfiles.map(profile => {
+            const currentAccountId = profile.traktAccountId || '';
+            // Check if current account ID exists in any account (connected or not)
+            const currentAccountExists = currentAccountId && traktAccounts.some(a => a.id === currentAccountId);
+            const currentAccountConnected = currentAccountId && connectedAccounts.some(a => a.id === currentAccountId);
+            // Show warning if profile has an account ID that doesn't exist
+            const orphanedLink = currentAccountId && !currentAccountExists;
+
+            return `
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); gap: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.75rem; min-width: 120px;">
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: ${profile.color || 'var(--bg-elevated)'}; display: flex; align-items: center; justify-content: center; font-weight: 600; color: white; flex-shrink: 0;">
+                            ${profile.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span style="font-weight: 500;">${escapeHtml(profile.name)}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        ${orphanedLink ? `<span class="status-badge" style="background: var(--warning); color: #000; font-size: 0.7rem;">Orphaned link</span>` : ''}
+                        <select class="form-select" style="max-width: 200px; min-width: 150px;" onchange="updateProfileTraktLink('${profile.id}', this.value)">
+                            <option value="" ${!currentAccountId ? 'selected' : ''}>No Trakt Account</option>
+                            ${orphanedLink ? `<option value="${currentAccountId}" selected style="color: var(--warning);">⚠ Unknown Account</option>` : ''}
+                            ${connectedAccounts.map(acc => `
+                                <option value="${acc.id}" ${currentAccountId === acc.id ? 'selected' : ''}>
+                                    ${escapeHtml(acc.name || acc.username || 'Unnamed')}
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function showAddTraktAccountForm() {
+        document.getElementById('traktAddAccountForm').style.display = 'block';
+        document.getElementById('addTraktAccountBtn').style.display = 'none';
+    }
+
+    function hideAddTraktAccountForm() {
+        document.getElementById('traktAddAccountForm').style.display = 'none';
+        document.getElementById('addTraktAccountBtn').style.display = 'inline-flex';
+        document.getElementById('newTraktAccountName').value = '';
+        document.getElementById('newTraktClientId').value = '';
+        document.getElementById('newTraktClientSecret').value = '';
+    }
+
+    async function createTraktAccount() {
+        const name = document.getElementById('newTraktAccountName').value.trim();
+        const clientId = document.getElementById('newTraktClientId').value.trim();
+        const clientSecret = document.getElementById('newTraktClientSecret').value.trim();
 
         if (!clientId || !clientSecret) {
-            showToast('Please enter both Client ID and Client Secret', 'error');
+            showToast('Client ID and Client Secret are required', 'error');
             return;
         }
 
         try {
-            const response = await fetch('/admin/api/trakt/credentials', {
+            const response = await fetch('/admin/api/trakt/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ clientId, clientSecret })
+                body: JSON.stringify({ name: name || 'Trakt Account', clientId, clientSecret })
             });
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.error || 'Failed to save credentials');
+                throw new Error(error.error || 'Failed to create account');
             }
 
-            showToast('Trakt credentials saved', 'success');
-            traktStatus.hasCredentials = true;
-            document.getElementById('traktConnectBtn').disabled = false;
+            showToast('Trakt account created', 'success');
+            hideAddTraktAccountForm();
+            await loadTraktAccounts();
         } catch (err) {
             showToast(err.message, 'error');
         }
     }
 
-    async function connectTrakt() {
-        const connectBtn = document.getElementById('traktConnectBtn');
-        connectBtn.disabled = true;
+    async function deleteTraktAccount(accountId) {
+        if (!confirm('Delete this Trakt account? Any linked profiles will be unlinked.')) return;
 
         try {
-            const response = await fetch('/admin/api/trakt/auth/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}`, { method: 'DELETE' });
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.error || 'Failed to start authentication');
+                throw new Error(error.error || 'Failed to delete account');
+            }
+            showToast('Trakt account deleted', 'success');
+            await loadTraktAccounts();
+            await loadUserProfiles();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function connectTraktAccount(accountId) {
+        try {
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/auth/start`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to start auth');
             }
 
             const data = await response.json();
-            traktDeviceCode = data.deviceCode;
+            traktAuthAccountId = accountId;
 
-            // Show waiting UI
-            document.getElementById('traktCredentialsForm').style.display = 'none';
-            document.getElementById('traktAuthWaiting').style.display = 'block';
+            // Show auth modal
+            document.getElementById('traktAuthModal').style.display = 'flex';
             document.getElementById('traktUserCode').textContent = data.userCode;
             document.getElementById('traktAuthUrl').href = data.verificationUrl;
             document.getElementById('traktAuthUrl').textContent = data.verificationUrl;
 
             // Start polling
             const pollInterval = (data.interval || 5) * 1000;
-            traktPollInterval = setInterval(() => pollTraktAuth(data.deviceCode), pollInterval);
+            traktPollInterval = setInterval(() => pollTraktAuth(accountId, data.deviceCode), pollInterval);
 
-            // Timeout after expiry
+            // Set timeout
             setTimeout(() => {
                 if (traktPollInterval) {
                     clearInterval(traktPollInterval);
                     traktPollInterval = null;
                     cancelTraktAuth();
-                    showToast('Authentication timed out', 'error');
+                    showToast('Authorization timed out', 'error');
                 }
-            }, data.expiresIn * 1000);
-
+            }, (data.expiresIn || 600) * 1000);
         } catch (err) {
             showToast(err.message, 'error');
-            connectBtn.disabled = false;
         }
     }
 
-    async function pollTraktAuth(deviceCode) {
+    async function pollTraktAuth(accountId, deviceCode) {
         try {
-            const response = await fetch(`/admin/api/trakt/auth/check/${deviceCode}`);
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/auth/check/${deviceCode}`);
             const data = await response.json();
 
             if (data.authenticated) {
                 clearInterval(traktPollInterval);
                 traktPollInterval = null;
-
-                document.getElementById('traktAuthWaiting').style.display = 'none';
-                traktStatus.connected = true;
-                traktStatus.username = data.username;
-                updateTraktUI();
+                document.getElementById('traktAuthModal').style.display = 'none';
                 showToast('Successfully connected to Trakt', 'success');
+                await loadTraktAccounts();
+                renderProfileTraktLinking();
             }
         } catch (err) {
             console.error('Poll error:', err);
@@ -1026,64 +1158,116 @@
             clearInterval(traktPollInterval);
             traktPollInterval = null;
         }
-        document.getElementById('traktAuthWaiting').style.display = 'none';
-        document.getElementById('traktCredentialsForm').style.display = 'block';
-        document.getElementById('traktConnectBtn').disabled = false;
+        document.getElementById('traktAuthModal').style.display = 'none';
+        traktAuthAccountId = null;
     }
 
-    async function disconnectTrakt() {
+    async function disconnectTraktAccount(accountId) {
         try {
-            const response = await fetch('/admin/api/trakt/disconnect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/disconnect`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to disconnect');
             }
-
-            traktStatus.connected = false;
-            traktStatus.username = '';
-            updateTraktUI();
             showToast('Disconnected from Trakt', 'success');
+            await loadTraktAccounts();
+            renderProfileTraktLinking();
         } catch (err) {
             showToast(err.message, 'error');
         }
     }
 
-    async function toggleTraktScrobbling(enabled) {
+    async function toggleAccountScrobbling(accountId, enabled) {
         try {
-            const response = await fetch('/admin/api/trakt/scrobbling', {
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/scrobbling`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled })
             });
-
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.error || 'Failed to update scrobbling setting');
+                throw new Error(error.error || 'Failed to update scrobbling');
             }
-
-            traktStatus.scrobblingEnabled = enabled;
-            showToast(enabled ? 'Scrobbling enabled' : 'Scrobbling disabled', 'success');
+            showToast(`Scrobbling ${enabled ? 'enabled' : 'disabled'}`, 'success');
         } catch (err) {
-            // Revert toggle on error
-            document.getElementById('traktScrobblingToggle').checked = !enabled;
             showToast(err.message, 'error');
+            // Reload to reset toggle state
+            await loadTraktAccounts();
         }
     }
+
+    async function updateProfileTraktLink(profileId, traktAccountId) {
+        try {
+            const method = traktAccountId ? 'PUT' : 'DELETE';
+            const response = await fetch(`/admin/api/users/${profileId}/trakt`, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: traktAccountId ? JSON.stringify({ traktAccountId }) : undefined
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update profile');
+            }
+            showToast(traktAccountId ? 'Profile linked to Trakt account' : 'Profile unlinked from Trakt', 'success');
+            await loadUserProfiles();
+            await loadTraktAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+            await loadUserProfiles();
+        }
+    }
+
+    function updateTraktHistorySection() {
+        const historyNotConnected = document.getElementById('traktHistoryNotConnected');
+        const historyConnected = document.getElementById('traktHistoryConnected');
+        const accountSelect = document.getElementById('traktHistoryAccountSelect');
+
+        const connectedAccounts = traktAccounts.filter(a => a.connected);
+
+        if (connectedAccounts.length > 0) {
+            if (historyNotConnected) historyNotConnected.style.display = 'none';
+            if (historyConnected) historyConnected.style.display = 'block';
+
+            // Populate account select for history import
+            if (accountSelect) {
+                accountSelect.innerHTML = connectedAccounts.map(acc =>
+                    `<option value="${acc.id}">${escapeHtml(acc.name || acc.username || 'Unnamed')}</option>`
+                ).join('');
+            }
+        } else {
+            if (historyNotConnected) historyNotConnected.style.display = 'block';
+            if (historyConnected) historyConnected.style.display = 'none';
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Legacy compatibility - redirect old function calls
+    function loadTraktStatus() { loadTraktAccounts(); }
+    function saveTraktCredentials() { showAddTraktAccountForm(); }
 
     // ========== Trakt History Import Functions ==========
     async function fetchTraktHistory() {
         const fetchBtn = document.getElementById('traktHistoryFetchBtn');
+        const accountSelect = document.getElementById('traktHistoryAccountSelect');
+        const accountId = accountSelect?.value;
+
+        if (!accountId) {
+            showToast('Please select a Trakt account', 'error');
+            return;
+        }
+
         fetchBtn.disabled = true;
         document.getElementById('traktHistoryLoading').style.display = 'block';
         document.getElementById('traktHistoryPreview').style.display = 'none';
         document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'none';
 
         try {
-            const response = await fetch('/admin/api/trakt/history?all=true');
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/history?all=true`);
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to fetch history');

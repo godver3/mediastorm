@@ -169,6 +169,9 @@ func Register(
 	api.HandleFunc("/users/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)
 	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.VerifyPin).Methods(http.MethodPost)
 	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/users/{userID}/trakt", usersHandler.SetTraktAccount).Methods(http.MethodPut)
+	api.HandleFunc("/users/{userID}/trakt", usersHandler.ClearTraktAccount).Methods(http.MethodDelete)
+	api.HandleFunc("/users/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
 
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
@@ -209,6 +212,32 @@ func Register(
 	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPatch)
 	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.DeletePlaybackProgress).Methods(http.MethodDelete)
 	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
+}
+
+// RegisterTraktRoutes registers Trakt account management API endpoints.
+func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, getPIN func() string) {
+	api := r.PathPrefix("/api").Subrouter()
+	api.Use(corsMiddleware)
+	api.Use(pinMiddleware(getPIN))
+
+	// Trakt accounts management
+	api.HandleFunc("/trakt/accounts", traktHandler.ListAccounts).Methods(http.MethodGet)
+	api.HandleFunc("/trakt/accounts", traktHandler.CreateAccount).Methods(http.MethodPost)
+	api.HandleFunc("/trakt/accounts", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.GetAccount).Methods(http.MethodGet)
+	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.UpdateAccount).Methods(http.MethodPatch)
+	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.DeleteAccount).Methods(http.MethodDelete)
+	api.HandleFunc("/trakt/accounts/{accountID}", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}/auth/start", traktHandler.StartAuth).Methods(http.MethodPost)
+	api.HandleFunc("/trakt/accounts/{accountID}/auth/start", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}/auth/check/{deviceCode}", traktHandler.CheckAuth).Methods(http.MethodGet)
+	api.HandleFunc("/trakt/accounts/{accountID}/auth/check/{deviceCode}", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}/disconnect", traktHandler.Disconnect).Methods(http.MethodPost)
+	api.HandleFunc("/trakt/accounts/{accountID}/disconnect", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}/scrobbling", traktHandler.SetScrobbling).Methods(http.MethodPost)
+	api.HandleFunc("/trakt/accounts/{accountID}/scrobbling", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/trakt/accounts/{accountID}/history", traktHandler.GetHistory).Methods(http.MethodGet)
+	api.HandleFunc("/trakt/accounts/{accountID}/history", handleOptions).Methods(http.MethodOptions)
 }
 
 func pinMiddleware(getPIN func() string) mux.MiddlewareFunc {

@@ -290,6 +290,51 @@ func (s *Service) HasPin(id string) bool {
 	return user.PinHash != ""
 }
 
+// SetTraktAccountID associates a Trakt account with the user.
+func (s *Service) SetTraktAccountID(id, traktAccountID string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.TraktAccountID = strings.TrimSpace(traktAccountID)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// ClearTraktAccountID removes the Trakt account association from the user.
+func (s *Service) ClearTraktAccountID(id string) (models.User, error) {
+	return s.SetTraktAccountID(id, "")
+}
+
+// GetUsersByTraktAccountID returns all users that have the specified Trakt account linked.
+func (s *Service) GetUsersByTraktAccountID(traktAccountID string) []models.User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var users []models.User
+	for _, user := range s.users {
+		if user.TraktAccountID == traktAccountID {
+			users = append(users, user)
+		}
+	}
+	return users
+}
+
 // Delete removes a user by ID. The last remaining user cannot be deleted.
 func (s *Service) Delete(id string) error {
 	id = strings.TrimSpace(id)

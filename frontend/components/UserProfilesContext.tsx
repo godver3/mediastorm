@@ -26,6 +26,8 @@ interface UserProfilesContextValue {
   setPin: (id: string, pin: string) => Promise<UserProfile>;
   clearPin: (id: string) => Promise<UserProfile>;
   deleteUser: (id: string) => Promise<void>;
+  setTraktAccount: (id: string, traktAccountId: string) => Promise<UserProfile>;
+  clearTraktAccount: (id: string) => Promise<UserProfile>;
   // PIN entry modal state
   pendingPinUserId: Nullable<string>;
   setPendingPinUserId: (id: Nullable<string>) => void;
@@ -273,6 +275,18 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return updated;
   }, []);
 
+  const setTraktAccount = useCallback(async (id: string, traktAccountId: string) => {
+    const updated = await apiService.setUserTraktAccount(id, traktAccountId);
+    setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
+    return updated;
+  }, []);
+
+  const clearTraktAccount = useCallback(async (id: string) => {
+    const updated = await apiService.clearUserTraktAccount(id);
+    setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
+    return updated;
+  }, []);
+
   const deleteUser = useCallback(
     async (id: string) => {
       await apiService.deleteUser(id);
@@ -300,6 +314,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setPin,
       clearPin,
       deleteUser,
+      setTraktAccount,
+      clearTraktAccount,
       pendingPinUserId,
       setPendingPinUserId,
       cancelPinEntry,
@@ -320,6 +336,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setPin,
     clearPin,
     deleteUser,
+    setTraktAccount,
+    clearTraktAccount,
     pendingPinUserId,
     cancelPinEntry,
     isInitialPinCheck,
