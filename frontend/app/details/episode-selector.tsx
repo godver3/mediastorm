@@ -41,22 +41,28 @@ export function EpisodeSelector({
     itemLayoutsRef.current[index] = { y, height };
   }, []);
 
-  const handleItemFocus = useCallback((index: number) => {
-    if (!Platform.isTV) return;
+  const handleItemFocus = useCallback(
+    (index: number) => {
+      if (!Platform.isTV) return;
 
-    // Calculate cumulative Y position from measured layouts
-    let cumulativeY = 0;
-    for (let i = 0; i < index; i++) {
-      const layout = itemLayoutsRef.current[i];
-      if (layout) {
-        cumulativeY += layout.height;
+      // Get the margin between items (matches episodeItem marginBottom for TV)
+      const itemMargin = theme.spacing.lg;
+
+      // Calculate cumulative Y position from measured layouts (including margins)
+      let cumulativeY = 0;
+      for (let i = 0; i < index; i++) {
+        const layout = itemLayoutsRef.current[i];
+        if (layout) {
+          cumulativeY += layout.height + itemMargin;
+        }
       }
-    }
 
-    // Scroll to position the focused item with some offset from top
-    const scrollOffset = Math.max(0, cumulativeY - 100);
-    scrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
-  }, []);
+      // Scroll to position the focused item with some offset from top
+      const scrollOffset = Math.max(0, cumulativeY - 100);
+      scrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
+    },
+    [theme.spacing.lg],
+  );
 
   const handleEpisodePress = useCallback(
     (episode: SeriesEpisode) => {
