@@ -526,8 +526,8 @@ const Controls: React.FC<ControlsProps> = ({
                     />
                   </View>
                 )}
-                {/* Info button for TV platforms */}
-                {isTvPlatform && streamInfo && (
+                {/* Info button for TV platforms (not for live TV) */}
+                {isTvPlatform && streamInfo && !isLiveTV && (
                   <FocusablePressable
                     icon="information-circle"
                     focusKey="info-button"
