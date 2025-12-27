@@ -306,6 +306,7 @@ func main() {
 		settings.Transmux.Enabled,
 		settings.Transmux.FFmpegPath,
 		settings.Transmux.FFprobePath,
+		settings.Transmux.HLSTempDirectory,
 		compositeProvider,
 	)
 

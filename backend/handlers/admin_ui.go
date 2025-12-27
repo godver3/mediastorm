@@ -287,6 +287,18 @@ var SettingsSchema = map[string]interface{}{
 			"rarMaxMemoryGB":    map[string]interface{}{"type": "number", "label": "RAR Max Memory (GB)", "description": "Maximum memory for RAR operations"},
 		},
 	},
+	"transmux": map[string]interface{}{
+		"label": "Transmux Settings",
+		"icon":  "film",
+		"group": "storage",
+		"order": 3,
+		"fields": map[string]interface{}{
+			"enabled":          map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable video transmuxing for HLS streaming"},
+			"ffmpegPath":       map[string]interface{}{"type": "text", "label": "FFmpeg Path", "description": "Path to ffmpeg binary"},
+			"ffprobePath":      map[string]interface{}{"type": "text", "label": "FFprobe Path", "description": "Path to ffprobe binary"},
+			"hlsTempDirectory": map[string]interface{}{"type": "text", "label": "HLS Temp Directory", "description": "Directory for HLS segment storage (default: /tmp/novastream-hls)"},
+		},
+	},
 	"subtitles": map[string]interface{}{
 		"label":    "Subtitles",
 		"icon":     "film",

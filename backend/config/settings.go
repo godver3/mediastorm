@@ -92,9 +92,10 @@ type LogConfig struct {
 
 // TransmuxSettings describes optional container conversion for browser playback
 type TransmuxSettings struct {
-	Enabled     bool   `json:"enabled"`
-	FFmpegPath  string `json:"ffmpegPath"`
-	FFprobePath string `json:"ffprobePath"`
+	Enabled          bool   `json:"enabled"`
+	FFmpegPath       string `json:"ffmpegPath"`
+	FFprobePath      string `json:"ffprobePath"`
+	HLSTempDirectory string `json:"hlsTempDirectory"` // Directory for HLS segment storage (default: /tmp/novastream-hls)
 }
 
 // WebDAVSettings defines WebDAV server configuration
@@ -242,7 +243,7 @@ func DefaultSettings() Settings {
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
-		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"},
+		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
 		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0},
 		Live:      LiveSettings{PlaylistURL: "", PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
@@ -424,13 +425,16 @@ func (m *Manager) Load() (Settings, error) {
 
 	// Backfill defaults for newly introduced settings when config predates them
 	if !s.Transmux.Enabled && strings.TrimSpace(s.Transmux.FFmpegPath) == "" && strings.TrimSpace(s.Transmux.FFprobePath) == "" {
-		s.Transmux = TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"}
+		s.Transmux = TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"}
 	} else {
 		if strings.TrimSpace(s.Transmux.FFmpegPath) == "" {
 			s.Transmux.FFmpegPath = "ffmpeg"
 		}
 		if strings.TrimSpace(s.Transmux.FFprobePath) == "" {
 			s.Transmux.FFprobePath = "ffprobe"
+		}
+		if strings.TrimSpace(s.Transmux.HLSTempDirectory) == "" {
+			s.Transmux.HLSTempDirectory = "/tmp/novastream-hls"
 		}
 	}
 
