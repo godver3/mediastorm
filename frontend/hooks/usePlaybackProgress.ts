@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { AppState } from 'react-native';
 import apiService, { PlaybackProgressUpdate } from '../services/api';
 
 export interface PlaybackProgressOptions {
@@ -68,6 +69,7 @@ export function usePlaybackProgress(
   const currentPositionRef = useRef<number>(0);
   const currentDurationRef = useRef<number>(0);
   const isUnmountedRef = useRef<boolean>(false);
+  const isBackgroundedRef = useRef<boolean>(false);
 
   const log = useCallback(
     (...args: unknown[]) => {
@@ -80,7 +82,7 @@ export function usePlaybackProgress(
 
   const sendUpdate = useCallback(
     async (position: number, duration: number) => {
-      if (isUnmountedRef.current) {
+      if (isUnmountedRef.current || isBackgroundedRef.current) {
         return;
       }
 
@@ -160,6 +162,22 @@ export function usePlaybackProgress(
       intervalRef.current = null;
       log('Stopped tracking');
     }
+  }, [log]);
+
+  // Track app state to avoid sending updates when backgrounded
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      isBackgroundedRef.current = nextAppState !== 'active';
+      if (isBackgroundedRef.current) {
+        log('App backgrounded - pausing progress updates');
+      } else {
+        log('App active - resuming progress updates');
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [log]);
 
   // Set up periodic progress reporting

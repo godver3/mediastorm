@@ -29,7 +29,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, BackHandler, Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, AppState, BackHandler, Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 // TVMenuControl is available on tvOS but not typed in RN types
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -772,6 +772,28 @@ export default function PlayerScreen() {
 
     return () => {
       deactivateKeepAwake();
+    };
+  }, [paused]);
+
+  // Auto-pause when app is backgrounded (mobile and TV)
+  const wasPlayingBeforeBackgroundRef = useRef(false);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // App is being minimized - pause if currently playing
+        if (!paused) {
+          wasPlayingBeforeBackgroundRef.current = true;
+          setPaused(true);
+          console.log('[player] Auto-paused: app went to background');
+        }
+      } else if (nextAppState === 'active') {
+        // App came back to foreground - we don't auto-resume, user can manually resume
+        wasPlayingBeforeBackgroundRef.current = false;
+      }
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, [paused]);
 
