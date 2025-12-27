@@ -74,7 +74,9 @@ const FocusablePressable = ({
   const lastSelectTimeRef = useRef(0);
   const SELECT_DEBOUNCE_MS = 100;
 
-  return (
+  // Wrap in a View to position the pip outside the spatial navigation wrapper
+  // This prevents clipping on Android TV where the library's internal View clips overflow
+  const wrapper = (
     <SpatialNavigationFocusableView
       focusKey={focusKey}
       onSelect={() => {
@@ -160,24 +162,36 @@ const FocusablePressable = ({
             // Use hardware texture on Android TV to improve compositing over SurfaceView video layer
             renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}>
             {content}
-            {showReadyPip && !loading && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: -3,
-                  right: -3,
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: theme.colors.status.success,
-                }}
-              />
-            )}
           </Pressable>
         );
       }}
     </SpatialNavigationFocusableView>
   );
+
+  // If showing the ready pip, wrap in a View so the pip can be positioned outside
+  // the spatial navigation wrapper without being clipped
+  if (showReadyPip && !loading) {
+    return (
+      <View style={{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }}>
+        {wrapper}
+        <View
+          style={{
+            position: 'absolute',
+            top: -3,
+            right: -3,
+            width: 10,
+            height: 10,
+            borderRadius: 5,
+            backgroundColor: theme.colors.status.success,
+            zIndex: 10,
+          }}
+          pointerEvents="none"
+        />
+      </View>
+    );
+  }
+
+  return wrapper;
 };
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean) => {

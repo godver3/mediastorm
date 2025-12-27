@@ -158,10 +158,22 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         onClose();
         return;
       }
-      onClose();
-      router.replace(routeName as any);
+      // On Android TV, immediately hide the menu before navigating to avoid
+      // Fabric race condition where animation and navigation both modify view hierarchy
+      if (isAndroidTV) {
+        setIsAnimatedHidden(true);
+        slideAnim.setValue(-MENU_WIDTH);
+        onClose();
+        // Delay navigation slightly to let the view hierarchy settle
+        setTimeout(() => {
+          router.replace(routeName as any);
+        }, 50);
+      } else {
+        onClose();
+        router.replace(routeName as any);
+      }
     },
-    [onClose, router, isRouteDisabled, pathname],
+    [onClose, router, isRouteDisabled, pathname, slideAnim],
   );
 
   if (!isVisible && isAnimatedHidden) {

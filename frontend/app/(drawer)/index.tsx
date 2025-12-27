@@ -149,64 +149,6 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
-/**
- * AndroidTVFocusAnchor - Invisible component that captures initial native Android focus
- *
- * On Android TV, the native focus system runs before react-tv-space-navigation
- * initializes, causing focus to cycle through all focusable elements randomly.
- * This component captures that initial native focus and transfers it to the
- * spatial navigation system immediately.
- */
-function AndroidTVFocusAnchor({ targetFocusId }: { targetFocusId: string | null }) {
-  const spatialNavigator = useSpatialNavigator();
-  const hasTransferredFocusRef = React.useRef(false);
-
-  const handleFocus = useCallback(() => {
-    // Only transfer focus once per mount
-    if (hasTransferredFocusRef.current || !targetFocusId) {
-      return;
-    }
-    hasTransferredFocusRef.current = true;
-
-    // Small delay to ensure spatial navigation is ready
-    setTimeout(() => {
-      spatialNavigator.grabFocus(targetFocusId);
-    }, 50);
-  }, [spatialNavigator, targetFocusId]);
-
-  // Reset transfer flag when targetFocusId changes
-  React.useEffect(() => {
-    hasTransferredFocusRef.current = false;
-  }, [targetFocusId]);
-
-  if (!isAndroidTV) {
-    return null;
-  }
-
-  return (
-    <Pressable
-      onFocus={handleFocus}
-      // @ts-ignore - TV props not in RN types
-      hasTVPreferredFocus={true}
-      style={styles.focusAnchor}
-      accessible={false}
-      importantForAccessibility="no"
-    />
-  );
-}
-
-const styles = StyleSheet.create({
-  focusAnchor: {
-    position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
-    // Position off-screen to avoid any visual impact
-    top: -100,
-    left: -100,
-  },
-});
-
 function IndexScreen() {
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const theme = useTheme();
@@ -503,12 +445,12 @@ function IndexScreen() {
 
     // Only reset shelf focus when RETURNING from navigation (e.g., details page)
     // Not on initial load - that causes unnecessary remounts
-    if (isReturnFromNavigation && Platform.isTV) {
+    // Skip on Android TV - the key-based remount causes IllegalStateException crashes
+    if (isReturnFromNavigation && Platform.isTV && !isAndroidTV) {
       setShelfResetCounter((prev) => prev + 1);
     }
 
     // Programmatically grab focus to the first item of the first shelf and scroll to show it
-    // On Android TV, let AndroidTVFocusAnchor handle initial focus, only grab focus on navigation return
     // Note: We compute the first shelf inline here since desktopShelves may not be ready yet
     const shelfConfig = userSettings?.homeShelves?.shelves ??
       settings?.homeShelves?.shelves ?? [
@@ -547,13 +489,10 @@ function IndexScreen() {
         scrollToShelf(firstShelfWithCards.id, true); // Skip animation
       }, 50);
 
-      // Only programmatically grab focus when returning from navigation
-      // Initial focus is handled by AndroidTVFocusAnchor on Android TV
-      if (isReturnFromNavigation || !isAndroidTV) {
-        setTimeout(() => {
-          spatialNavigator.grabFocus(focusId);
-        }, 100);
-      }
+      // Grab focus to the first card
+      setTimeout(() => {
+        spatialNavigator.grabFocus(focusId);
+      }, 100);
 
       // Mark initial load as complete after first focus
       if (isInitialLoadRef.current) {
@@ -1329,22 +1268,6 @@ function IndexScreen() {
     return `shelves-${desktopShelves.map((s) => `${s.key}-${s.cards.length}`).join('-')}-reset-${shelfResetCounter}`;
   }, [desktopShelves, shelfResetCounter]);
 
-  // Compute target focus ID for Android TV initial focus
-  const androidTVInitialFocusId = useMemo(() => {
-    if (!isAndroidTV || !desktopShelves || desktopShelves.length === 0) return null;
-
-    // Find the first shelf that has cards
-    const firstShelfWithCards = desktopShelves.find((shelf) => shelf.cards.length > 0);
-    if (!firstShelfWithCards) return null;
-
-    // Get the first card's key (same logic as in renderCard)
-    const firstCard = firstShelfWithCards.cards[0];
-    const rawId = String(firstCard.id ?? 0);
-    const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
-
-    return `${firstShelfWithCards.key}-card-${cardKey}`;
-  }, [desktopShelves]);
-
   // Determine if we should show the fade gradient (any row except the first is focused)
   const focusedShelfIndex = useMemo(() => {
     if (!focusedShelfKey || !desktopShelves || desktopShelves.length === 0) return -1;
@@ -1497,8 +1420,6 @@ function IndexScreen() {
       isActive={isFocused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible}
       onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
     >
-      {/* Android TV focus anchor - captures initial native focus and transfers to spatial navigation */}
-      <AndroidTVFocusAnchor targetFocusId={androidTVInitialFocusId} />
       <Stack.Screen options={{ headerShown: false }} />
       <View ref={pageRef} style={desktopStyles?.styles.page} onLayout={handleDesktopLayout}>
         {Platform.isTV && (
@@ -2061,24 +1982,24 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
     topTitle: {
       ...theme.typography.title.xl,
-      // Design for tvOS at 1.5x, Android TV auto-scales
-      fontSize: Math.round(theme.typography.title.xl.fontSize * 1.5 * tvScale),
-      lineHeight: Math.round(theme.typography.title.xl.lineHeight * 1.5 * tvScale),
+      // Design for tvOS at 1.5x, Android TV at 1.8x (20% larger)
+      fontSize: Math.round(theme.typography.title.xl.fontSize * (isAndroidTV ? 1.8 : 1.5) * tvScale),
+      lineHeight: Math.round(theme.typography.title.xl.lineHeight * (isAndroidTV ? 1.8 : 1.5) * tvScale),
       color: theme.colors.text.primary,
       fontWeight: '700',
     },
     topYear: {
       ...theme.typography.body.lg,
-      // Design for tvOS at 1.75x, Android TV auto-scales
-      fontSize: Math.round(theme.typography.body.lg.fontSize * 1.75 * tvScale),
-      lineHeight: Math.round(theme.typography.body.lg.lineHeight * 1.75 * tvScale),
+      // Design for tvOS at 1.75x, Android TV at 2.1x (20% larger)
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 2.1 : 1.75) * tvScale),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 2.1 : 1.75) * tvScale),
       color: theme.colors.text.secondary,
     },
     topDescription: {
       ...theme.typography.body.lg,
-      // Design for tvOS at 1.5x, Android TV auto-scales
-      fontSize: Math.round(theme.typography.body.lg.fontSize * 1.5 * tvScale),
-      lineHeight: Math.round(theme.typography.body.lg.lineHeight * 1.5 * tvScale),
+      // Design for tvOS at 1.5x, Android TV at 1.8x (20% larger)
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.8 : 1.5) * tvScale),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.8 : 1.5) * tvScale),
       color: theme.colors.text.secondary,
     },
     hero: {
