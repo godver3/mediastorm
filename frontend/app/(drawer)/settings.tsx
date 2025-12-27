@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Clipboard,
   Keyboard,
   Modal,
   Platform,
@@ -38,6 +39,8 @@ import { useToast } from '@/components/ToastContext';
 import { useLiveChannels } from '@/hooks/useLiveChannels';
 import useUnplayableReleases from '@/hooks/useUnplayableReleases';
 import { apiService } from '@/services/api';
+import { logger } from '@/services/logger';
+import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import {
   DefaultFocus,
@@ -917,6 +920,9 @@ function SettingsScreen() {
     tempFilterTermsRef.current = editableSettings?.filtering.filterOutTerms || '';
   }, [editableSettings?.filtering.filterOutTerms]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isSubmittingLogs, setIsSubmittingLogs] = useState(false);
+  const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
+  const [logUrl, setLogUrl] = useState<string | null>(null);
   const { releases: unplayableReleases, unmarkUnplayable, clearAll: clearUnplayableReleases } = useUnplayableReleases();
   const playbackOptions = useMemo<
     {
@@ -1278,6 +1284,37 @@ function SettingsScreen() {
     updateBackendSettings,
     updateUserSettings,
   ]);
+
+  const handleSubmitLogs = useCallback(async () => {
+    if (isSubmittingLogs) return;
+
+    setIsSubmittingLogs(true);
+    showToast('Submitting logs...', { tone: 'info' });
+
+    try {
+      const frontendLogs = logger.getLogsAsString();
+      const result = await apiService.submitLogs(frontendLogs);
+
+      if (result.error) {
+        showToast(`Failed to submit logs: ${result.error}`, { tone: 'danger', duration: 8000 });
+      } else if (result.url) {
+        setLogUrl(result.url);
+        if (Platform.isTV) {
+          // On TV, show QR code modal for easy scanning
+          setLogUrlModalVisible(true);
+        } else {
+          showToast('Logs submitted successfully!', { tone: 'success' });
+        }
+      } else {
+        showToast('Logs submitted successfully', { tone: 'success' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to submit logs';
+      showToast(message, { tone: 'danger', duration: 8000 });
+    } finally {
+      setIsSubmittingLogs(false);
+    }
+  }, [isSubmittingLogs, showToast]);
 
   const _updateServerField = useCallback(
     (field: keyof EditableBackendSettings['server']) => (value: string) => {
@@ -2032,8 +2069,21 @@ function SettingsScreen() {
         type: 'version-info',
         id: 'version-info',
       },
+      {
+        type: 'header',
+        id: 'support-header',
+        title: 'Support',
+        description: 'Submit logs to help diagnose issues. The URL can be shared with developers.',
+      },
+      {
+        type: 'button',
+        id: 'submit-logs',
+        label: isSubmittingLogs ? 'Submitting...' : 'Submit Logs',
+        action: 'submit-logs',
+        disabled: isSubmittingLogs,
+      },
     ],
-    [backendUrlInput, backendApiKeyInput, isReady, busy],
+    [backendUrlInput, backendApiKeyInput, isReady, busy, isSubmittingLogs],
   );
 
   const playbackGridData = useMemo<SettingsGridItem[]>(() => {
@@ -2308,9 +2358,12 @@ function SettingsScreen() {
         case 'manage-hidden-channels':
           setIsHiddenChannelsModalOpen(true);
           break;
+        case 'submit-logs':
+          void handleSubmitLogs();
+          break;
       }
     },
-    [handleBackendConnectionApply, handleSaveSettings, clearUnplayableReleases, showToast],
+    [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, clearUnplayableReleases, showToast],
   );
 
   // TV Grid field update handler
@@ -2903,6 +2956,51 @@ function SettingsScreen() {
                         <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
                       </View>
                     </View>
+                  </View>
+                )}
+
+                {/* Support section - shown on Connection tab */}
+                {!Platform.isTV && activeTab === 'connection' && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Support</Text>
+                    <Text style={styles.sectionDescription}>
+                      Submit logs to help diagnose issues. The URL can be shared with developers.
+                    </Text>
+                    <FocusablePressable
+                      text={isSubmittingLogs ? 'Submitting...' : 'Submit Logs'}
+                      onSelect={handleSubmitLogs}
+                      disabled={isSubmittingLogs}
+                      style={styles.debugButton}
+                    />
+                    {logUrl && (
+                      <View style={{ marginTop: 16 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <FocusablePressable
+                            text="Copy URL"
+                            onSelect={() => {
+                              Clipboard.setString(logUrl);
+                              showToast('URL copied to clipboard', { tone: 'success' });
+                            }}
+                            style={[styles.debugButton, { flex: 0 }]}
+                          />
+                          <FocusablePressable
+                            text="Clear"
+                            onSelect={() => setLogUrl(null)}
+                            style={[styles.debugButton, { flex: 0, opacity: 0.7 }]}
+                          />
+                        </View>
+                        <Text
+                          style={{
+                            marginTop: 12,
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                            color: theme.colors.text.secondary,
+                          }}
+                          selectable>
+                          {logUrl}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 )}
 
@@ -3645,6 +3743,49 @@ function SettingsScreen() {
           styles={styles}
           theme={theme}
         />
+      )}
+
+      {/* Log URL QR Code Modal - TV */}
+      {Platform.isTV && logUrlModalVisible && logUrl && (
+        <SpatialNavigationRoot isActive={logUrlModalVisible}>
+          <View style={styles.tvModalOverlay}>
+            <View style={[styles.tvModalContent, { alignItems: 'center', maxWidth: 600 }]}>
+              <Text style={[styles.tvModalTitle, { fontSize: 32 }]}>Logs Submitted</Text>
+              <Text style={[styles.tvModalSubtitle, { textAlign: 'center', marginBottom: 28, fontSize: 22 }]}>
+                Scan the QR code
+              </Text>
+
+              <QRCode value={logUrl} size={286} />
+
+              <Text style={[styles.tvModalSubtitle, { marginTop: 28, fontSize: 20, textAlign: 'center' }]}>URL</Text>
+              <Text
+                style={[
+                  styles.tvModalSubtitle,
+                  { marginTop: 8, fontSize: 18, fontFamily: 'monospace', textAlign: 'center' },
+                ]}
+                selectable>
+                {logUrl}
+              </Text>
+
+              <View style={[styles.tvModalFooter, { marginTop: 36 }]}>
+                <DefaultFocus>
+                  <FocusablePressable
+                    focusKey="close-log-url-modal"
+                    text="Close"
+                    onSelect={() => {
+                      setLogUrlModalVisible(false);
+                      setLogUrl(null);
+                    }}
+                    style={styles.tvModalCloseButton}
+                    focusedStyle={styles.tvModalCloseButtonFocused}
+                    textStyle={styles.tvModalCloseButtonText}
+                    focusedTextStyle={styles.tvModalCloseButtonTextFocused}
+                  />
+                </DefaultFocus>
+              </View>
+            </View>
+          </View>
+        </SpatialNavigationRoot>
       )}
     </>
   );

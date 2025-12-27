@@ -30,6 +30,7 @@ type Settings struct {
 	Filtering       FilterSettings         `json:"filtering"`
 	UI              UISettings             `json:"ui"`
 	Subtitles       SubtitleSettings       `json:"subtitles"`
+	Log             LogConfig              `json:"log"`
 }
 
 type ServerSettings struct {
@@ -265,6 +266,14 @@ func DefaultSettings() Settings {
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
 			OpenSubtitlesPassword: "",
+		},
+		Log: LogConfig{
+			File:       "cache/logs/backend.log",
+			Level:      "info",
+			MaxSize:    50,   // 50 MB per file
+			MaxBackups: 3,    // keep 3 old files
+			MaxAge:     7,    // 7 days
+			Compress:   true, // compress old files
 		},
 	}
 }
@@ -525,6 +534,20 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults
+
+	// Backfill Log settings
+	if strings.TrimSpace(s.Log.File) == "" {
+		s.Log.File = "cache/logs/backend.log"
+	}
+	if s.Log.MaxSize == 0 {
+		s.Log.MaxSize = 50
+	}
+	if s.Log.MaxBackups == 0 {
+		s.Log.MaxBackups = 3
+	}
+	if s.Log.MaxAge == 0 {
+		s.Log.MaxAge = 7
+	}
 
 	// Legacy AltMount configuration is ignored going forward.
 	s.AltMount = nil
