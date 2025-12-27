@@ -106,7 +106,11 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   const handleOptionSelect = useCallback(
     (id: string) => {
-      withSelectGuard(() => onSelect(id));
+      console.log('[TrackSelectionModal] handleOptionSelect called', { id, guardActive: selectGuardRef.current });
+      withSelectGuard(() => {
+        console.log('[TrackSelectionModal] calling onSelect callback', { id });
+        onSelect(id);
+      });
     },
     [onSelect, withSelectGuard],
   );

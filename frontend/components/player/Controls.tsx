@@ -165,6 +165,8 @@ const Controls: React.FC<ControlsProps> = ({
   }, [hasAudioSelection, hasSubtitleSelection, isTvPlatform, onPreviousEpisode, onNextEpisode, showSubtitleOffset, streamInfo]);
 
   const activeMenuRef = useRef<ActiveMenu>(null);
+  // Guard to prevent modal from immediately reopening when focus returns to the button on tvOS
+  const menuClosingGuardRef = useRef(false);
 
   useEffect(() => {
     activeMenuRef.current = activeMenu;
@@ -172,6 +174,12 @@ const Controls: React.FC<ControlsProps> = ({
 
   const openMenu = useCallback(
     (menu: Exclude<ActiveMenu, null>) => {
+      // On TV platforms, check if we just closed a menu (prevents focus-return re-triggering)
+      if (Platform.isTV && menuClosingGuardRef.current) {
+        console.log('[Controls] openMenu blocked by closing guard', { menu });
+        return;
+      }
+      console.log('[Controls] openMenu called', { menu, currentActiveMenu: activeMenuRef.current });
       setActiveMenu(menu);
       onModalStateChange?.(true);
     },
@@ -179,6 +187,14 @@ const Controls: React.FC<ControlsProps> = ({
   );
 
   const closeMenu = useCallback(() => {
+    console.log('[Controls] closeMenu called', { currentActiveMenu: activeMenuRef.current });
+    // Set guard to prevent immediate re-opening on TV platforms
+    if (Platform.isTV) {
+      menuClosingGuardRef.current = true;
+      setTimeout(() => {
+        menuClosingGuardRef.current = false;
+      }, 400);
+    }
     setActiveMenu(null);
     onModalStateChange?.(false);
   }, [onModalStateChange]);
@@ -204,6 +220,7 @@ const Controls: React.FC<ControlsProps> = ({
 
   const handleSelectTrack = useCallback(
     (id: string) => {
+      console.log('[Controls] handleSelectTrack called', { id, activeMenu });
       if (activeMenu === 'audio' && onSelectAudioTrack) {
         onSelectAudioTrack(id);
       } else if (activeMenu === 'subtitles' && onSelectSubtitleTrack) {
