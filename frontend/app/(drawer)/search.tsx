@@ -752,25 +752,32 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     searchInput: {
       flex: 1,
-      fontSize: isCompact ? theme.typography.body.lg.fontSize : 32,
+      // Android TV renders larger than tvOS, so use smaller font size
+      fontSize: isCompact ? theme.typography.body.lg.fontSize : Platform.OS === 'android' ? 16 : 32,
       color: theme.colors.text.primary,
-      paddingHorizontal: isCompact ? theme.spacing.md : theme.spacing.lg,
-      paddingVertical: isCompact ? theme.spacing.sm : theme.spacing.md,
+      paddingHorizontal: isCompact ? theme.spacing.md : Platform.OS === 'android' ? theme.spacing.sm : theme.spacing.lg,
+      paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
       borderWidth: 2,
       borderColor: 'transparent',
-      minHeight: isCompact ? 44 : 60,
+      // Android TV renders larger than tvOS, so use smaller minHeight
+      minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
     },
     searchInputFocused: {
       borderColor: theme.colors.accent.primary,
       borderWidth: 3,
-      ...(Platform.isTV
+      ...(Platform.isTV && Platform.OS === 'ios'
         ? {
             shadowColor: theme.colors.accent.primary,
             shadowOpacity: 0.4,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
+          }
+        : null),
+      ...(Platform.isTV && Platform.OS === 'android'
+        ? {
+            elevation: 8,
           }
         : null),
     },
@@ -848,20 +855,21 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     badge: {
       position: 'absolute',
-      top: isCompact ? theme.spacing.xs : theme.spacing.sm,
-      right: isCompact ? theme.spacing.xs : theme.spacing.sm,
+      top: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
+      right: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      paddingHorizontal: isCompact ? theme.spacing.sm : theme.spacing.md,
-      paddingVertical: isCompact ? 2 : theme.spacing.xs,
+      paddingHorizontal: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
+      paddingVertical: isCompact ? 2 : Platform.OS === 'android' ? 1 : theme.spacing.xs,
       borderRadius: theme.radius.sm,
-      borderWidth: isCompact ? 1 : 2,
+      borderWidth: isCompact ? 1 : Platform.OS === 'android' ? 1 : 2,
       borderColor: theme.colors.accent.primary,
     },
     badgeText: {
       ...theme.typography.caption.sm,
       color: theme.colors.accent.primary,
       fontWeight: '700',
-      fontSize: isCompact ? 10 : 16, // Larger font size for TV
+      // Android TV renders larger, use smaller font
+      fontSize: isCompact ? 10 : Platform.OS === 'android' ? 10 : 16,
       letterSpacing: 0.5,
     },
     cardTextContainer: {

@@ -154,8 +154,9 @@ const createStyles = (theme: NovaTheme) => {
       marginTop: theme.spacing.xs,
     },
     selectedMetadataText: {
-      fontSize: Math.round(theme.typography.caption.sm.fontSize * (isAppleTV ? 1.3 : 1.0)),
-      lineHeight: Math.round(theme.typography.caption.sm.lineHeight * (isAppleTV ? 1.3 : 1.0)),
+      // Android TV: reduced slightly (1.0 -> 0.95)
+      fontSize: Math.round(theme.typography.caption.sm.fontSize * (isAppleTV ? 1.3 : 0.95)),
+      lineHeight: Math.round(theme.typography.caption.sm.lineHeight * (isAppleTV ? 1.3 : 0.95)),
       color: theme.colors.text.muted,
       marginTop: theme.spacing.sm,
     },
@@ -192,7 +193,8 @@ const createStyles = (theme: NovaTheme) => {
       alignItems: 'center',
     },
     thumbnailCode: {
-      fontSize: isAppleTV ? 14 : 12,
+      // Android TV: reduced 30% (12 -> 8)
+      fontSize: isAppleTV ? 14 : 8,
       fontWeight: '700',
       color: theme.colors.text.primary,
       textShadowColor: 'rgba(0, 0, 0, 0.8)',
