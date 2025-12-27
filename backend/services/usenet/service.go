@@ -580,17 +580,35 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 		})
 	}
 
+	const maxRetries = 2
+	const retryDelay = 500 * time.Millisecond
+
 	for i := 0; i < maxConcurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			client, err := s.dialer(ctx, provider)
-			if err != nil {
+			var client statClient
+			var err error
+
+			// Helper to get a fresh connection
+			getClient := func() error {
+				if client != nil {
+					client.Close()
+				}
+				client, err = s.dialer(ctx, provider)
+				return err
+			}
+
+			if err := getClient(); err != nil {
 				sendErr(fmt.Errorf("connect to usenet server: %w", err))
 				cancel()
 				return
 			}
-			defer client.Close()
+			defer func() {
+				if client != nil {
+					client.Close()
+				}
+			}()
 
 			for {
 				select {
@@ -600,9 +618,43 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 					if !ok {
 						return
 					}
-					okArticle, err := client.CheckArticle(ctx, segmentID)
-					if err != nil {
-						sendErr(fmt.Errorf("check article %s: %w", segmentID, err))
+
+					var okArticle bool
+					var lastErr error
+
+					// Try with retries for transient NNTP errors (502, etc.)
+					for attempt := 0; attempt <= maxRetries; attempt++ {
+						okArticle, lastErr = client.CheckArticle(ctx, segmentID)
+						if lastErr == nil {
+							break
+						}
+
+						// Check if this is a retryable NNTP error
+						if !isRetryableNNTPError(lastErr) {
+							break
+						}
+
+						if attempt < maxRetries {
+							log.Printf("[usenet] retryable error on segment %s (attempt %d/%d): %v",
+								segmentID, attempt+1, maxRetries+1, lastErr)
+
+							// Wait before retry
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(retryDelay):
+							}
+
+							// Get fresh connection for retry
+							if err := getClient(); err != nil {
+								lastErr = fmt.Errorf("reconnect failed: %w", err)
+								break
+							}
+						}
+					}
+
+					if lastErr != nil {
+						sendErr(fmt.Errorf("check article %s: %w", segmentID, lastErr))
 						cancel()
 						return
 					}
@@ -669,6 +721,27 @@ func uniqueStrings(values []string) []string {
 	}
 
 	return result
+}
+
+// isRetryableNNTPError returns true if the error is a transient NNTP error
+// that may succeed on retry with a fresh connection.
+// NNTP 502 = "Service temporarily unavailable" / "Too many connections"
+// NNTP 503 = "Program fault - command not performed"
+func isRetryableNNTPError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for specific NNTP error codes that are transient
+	if strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "i/o timeout") {
+		return true
+	}
+	return false
 }
 
 func filterEnabledUsenetProviders(providers []config.UsenetSettings) []config.UsenetSettings {
