@@ -2419,9 +2419,17 @@ function SettingsScreen() {
           const isTopmost = topmostHeaders.includes(item.id);
 
           const isAdminNote = item.id === 'connection-admin-note';
+          const isAboutHeader = item.id === 'about-header';
+          const isAndroidTV = Platform.isTV && Platform.OS !== 'ios';
           const headerContent = (
-            <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing, isAdminNote && { paddingTop: 0, paddingBottom: 8 }]}>
-              {item.title ? <Text style={[styles.tvGridHeaderTitle, { marginBottom: 8 }]}>{item.title}</Text> : null}
+            <View style={[
+              styles.tvGridHeader,
+              styles.tvGridItemFullWidth,
+              styles.tvGridItemSpacing,
+              isAdminNote && { paddingTop: isAndroidTV ? 12 : 8, paddingBottom: 8 },
+              isAboutHeader && isAndroidTV && { paddingTop: 4, paddingBottom: 4 },
+            ]}>
+              {item.title ? <Text style={[styles.tvGridHeaderTitle, { marginBottom: isAboutHeader && isAndroidTV ? 0 : 8 }]}>{item.title}</Text> : null}
               {item.description && <Text style={[styles.tvGridHeaderDescription, isAdminNote && { marginBottom: 0 }]}>{item.description}</Text>}
             </View>
           );
@@ -3991,10 +3999,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       paddingHorizontal: theme.spacing.lg * atvScale,
     },
     versionInfoLabel: {
-      ...theme.typography.body.lg,
+      ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
+      ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
     },
     versionInfoValue: {
       ...theme.typography.body.lg,
@@ -4447,8 +4455,8 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
     },
     tvGridHeader: {
-      paddingTop: theme.spacing.md * atvScale,
-      paddingBottom: theme.spacing['2xl'] * atvScale,
+      paddingTop: isNonTvosTV ? theme.spacing.xs : theme.spacing.md,
+      paddingBottom: isNonTvosTV ? theme.spacing.sm : theme.spacing['2xl'],
       paddingHorizontal: theme.spacing.sm * atvScale,
     },
     tvGridHeaderTitle: {
@@ -4555,7 +4563,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
     },
     // TV Grid item height for virtualized list (includes spacing between items)
-    tvGridItemHeight: { height: 100 * atvScale },
+    tvGridItemHeight: { height: isNonTvosTV ? 52 : 100 },
     tvGridHeaderHeight: { height: 80 * atvScale },
     tvGridDropdownHeight: { height: 120 * atvScale },
     // Row container style for settings grid
@@ -4563,7 +4571,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridRowContainer: isTV
       ? {
           width: (screenWidth - tvEdgeBufferHorizontal * 2 - tvPadding * 2) * 0.6,
-          gap: theme.spacing.md * atvScale,
+          gap: isNonTvosTV ? theme.spacing.xs : theme.spacing.md,
         }
       : {},
     // Full width style for grid items (needed because virtualized grid item wrappers don't have width)
@@ -4574,7 +4582,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       : { width: '100%' },
     // Spacing between grid items
     tvGridItemSpacing: {
-      marginBottom: theme.spacing.sm * atvScale,
+      marginBottom: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
     },
     tvGridCustomToggle: {
       width: isNonTvosTV ? 50 * atvScale * 0.8 : 50,
