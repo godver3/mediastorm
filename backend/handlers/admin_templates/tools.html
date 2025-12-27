@@ -82,13 +82,12 @@
                 <div class="toggle-option" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
                     <div class="toggle-label">
                         <div class="toggle-title">Scrobbling</div>
-                        <div class="toggle-description text-muted">Automatically sync watch progress to Trakt</div>
+                        <div class="toggle-description text-muted">Automatically sync watch progress to Trakt when you finish watching</div>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" id="traktScrobblingToggle" onchange="toggleTraktScrobbling(this.checked)">
                         <span class="toggle-slider"></span>
                     </label>
-                    <span class="todo-badge" style="margin-left: 0.5rem;">Coming Soon</span>
                 </div>
             </div>
         </div>
@@ -912,6 +911,9 @@
             historyNotConnected.style.display = 'none';
             historyConnected.style.display = 'block';
             document.getElementById('traktHistoryUsername').textContent = 'Logged in as ' + traktStatus.username;
+
+            // Update scrobbling toggle
+            document.getElementById('traktScrobblingToggle').checked = traktStatus.scrobblingEnabled || false;
         } else {
             badge.textContent = 'Not Connected';
             badge.className = 'status-badge disconnected';
@@ -1046,6 +1048,28 @@
             updateTraktUI();
             showToast('Disconnected from Trakt', 'success');
         } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function toggleTraktScrobbling(enabled) {
+        try {
+            const response = await fetch('/admin/api/trakt/scrobbling', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update scrobbling setting');
+            }
+
+            traktStatus.scrobblingEnabled = enabled;
+            showToast(enabled ? 'Scrobbling enabled' : 'Scrobbling disabled', 'success');
+        } catch (err) {
+            // Revert toggle on error
+            document.getElementById('traktScrobblingToggle').checked = !enabled;
             showToast(err.message, 'error');
         }
     }

@@ -27,6 +27,7 @@ import (
 	"novastream/services/indexer"
 	"novastream/services/metadata"
 	"novastream/services/playback"
+	"novastream/services/trakt"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
@@ -284,6 +285,12 @@ func main() {
 	}
 	// Wire up metadata service for continue watching generation
 	historyService.SetMetadataService(metadataService)
+
+	// Wire up Trakt scrobbler for syncing watch history
+	traktClient := trakt.NewClient(settings.Trakt.ClientID, settings.Trakt.ClientSecret)
+	traktScrobbler := trakt.NewScrobbler(traktClient, cfgManager)
+	historyService.SetTraktScrobbler(traktScrobbler)
+
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
 
 	// Create prequeue handler now that history service is available
@@ -428,6 +435,7 @@ func main() {
 	r.HandleFunc("/admin/api/trakt/auth/start", adminUIHandler.RequireAuth(adminUIHandler.TraktStartAuth)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/auth/check/{deviceCode}", adminUIHandler.RequireAuth(adminUIHandler.TraktCheckAuth)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/trakt/disconnect", adminUIHandler.RequireAuth(adminUIHandler.TraktDisconnect)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/scrobbling", adminUIHandler.RequireAuth(adminUIHandler.TraktSetScrobbling)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/watchlist", adminUIHandler.RequireAuth(adminUIHandler.TraktGetWatchlist)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/trakt/history", adminUIHandler.RequireAuth(adminUIHandler.TraktGetHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/trakt/import/watchlist", adminUIHandler.RequireAuth(adminUIHandler.TraktImportWatchlist)).Methods(http.MethodPost)

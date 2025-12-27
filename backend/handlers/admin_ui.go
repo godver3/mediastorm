@@ -2813,9 +2813,10 @@ func (h *AdminUIHandler) TraktGetStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response := map[string]interface{}{
-		"hasCredentials": settings.Trakt.ClientID != "" && settings.Trakt.ClientSecret != "",
-		"connected":      settings.Trakt.AccessToken != "",
-		"username":       settings.Trakt.Username,
+		"hasCredentials":    settings.Trakt.ClientID != "" && settings.Trakt.ClientSecret != "",
+		"connected":         settings.Trakt.AccessToken != "",
+		"username":          settings.Trakt.Username,
+		"scrobblingEnabled": settings.Trakt.ScrobblingEnabled,
 	}
 
 	// Check if token is expired
@@ -3028,6 +3029,49 @@ func (h *AdminUIHandler) TraktDisconnect(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
+	})
+}
+
+// TraktSetScrobbling enables or disables Trakt scrobbling
+func (h *AdminUIHandler) TraktSetScrobbling(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	settings.Trakt.ScrobblingEnabled = req.Enabled
+
+	if err := h.configManager.Save(settings); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to save settings: " + err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":           true,
+		"scrobblingEnabled": req.Enabled,
 	})
 }
 

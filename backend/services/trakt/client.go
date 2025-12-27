@@ -445,3 +445,133 @@ func (c *Client) UpdateCredentials(clientID, clientSecret string) {
 	c.clientID = clientID
 	c.clientSecret = clientSecret
 }
+
+// SyncHistoryRequest represents the request body for /sync/history
+type SyncHistoryRequest struct {
+	Movies []SyncMovie `json:"movies,omitempty"`
+	Shows  []SyncShow  `json:"shows,omitempty"`
+}
+
+// SyncMovie represents a movie to add to history
+type SyncMovie struct {
+	WatchedAt string  `json:"watched_at,omitempty"` // ISO 8601 format
+	IDs       SyncIDs `json:"ids"`
+}
+
+// SyncShow represents a show with episodes to add to history
+type SyncShow struct {
+	IDs     SyncIDs      `json:"ids"`
+	Seasons []SyncSeason `json:"seasons,omitempty"`
+}
+
+// SyncSeason represents a season with episodes
+type SyncSeason struct {
+	Number   int           `json:"number"`
+	Episodes []SyncEpisode `json:"episodes,omitempty"`
+}
+
+// SyncEpisode represents an episode to add to history
+type SyncEpisode struct {
+	Number    int    `json:"number"`
+	WatchedAt string `json:"watched_at,omitempty"` // ISO 8601 format
+}
+
+// SyncIDs holds IDs for sync operations
+type SyncIDs struct {
+	Trakt int    `json:"trakt,omitempty"`
+	IMDB  string `json:"imdb,omitempty"`
+	TMDB  int    `json:"tmdb,omitempty"`
+	TVDB  int    `json:"tvdb,omitempty"`
+}
+
+// SyncHistoryResponse represents the response from /sync/history
+type SyncHistoryResponse struct {
+	Added struct {
+		Movies   int `json:"movies"`
+		Episodes int `json:"episodes"`
+	} `json:"added"`
+	NotFound struct {
+		Movies []SyncMovie `json:"movies"`
+		Shows  []SyncShow  `json:"shows"`
+	} `json:"not_found"`
+}
+
+// AddToHistory adds movies and/or episodes to the user's watch history on Trakt
+func (c *Client) AddToHistory(accessToken string, request SyncHistoryRequest) (*SyncHistoryResponse, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, traktAPIBaseURL+"/sync/history", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt sync history failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	var syncResp SyncHistoryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &syncResp, nil
+}
+
+// AddMovieToHistory adds a single movie to the user's Trakt watch history
+func (c *Client) AddMovieToHistory(accessToken string, tmdbID, tvdbID int, imdbID string, watchedAt string) error {
+	request := SyncHistoryRequest{
+		Movies: []SyncMovie{
+			{
+				WatchedAt: watchedAt,
+				IDs: SyncIDs{
+					TMDB: tmdbID,
+					TVDB: tvdbID,
+					IMDB: imdbID,
+				},
+			},
+		},
+	}
+
+	_, err := c.AddToHistory(accessToken, request)
+	return err
+}
+
+// AddEpisodeToHistory adds a single episode to the user's Trakt watch history
+// using the show's TVDB ID and season/episode numbers
+func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, episode int, watchedAt string) error {
+	request := SyncHistoryRequest{
+		Shows: []SyncShow{
+			{
+				IDs: SyncIDs{
+					TVDB: showTVDBID,
+				},
+				Seasons: []SyncSeason{
+					{
+						Number: season,
+						Episodes: []SyncEpisode{
+							{
+								Number:    episode,
+								WatchedAt: watchedAt,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := c.AddToHistory(accessToken, request)
+	return err
+}

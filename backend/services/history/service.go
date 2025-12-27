@@ -31,6 +31,16 @@ type MetadataService interface {
 	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
 }
 
+// TraktScrobbler handles syncing watch history to Trakt.
+type TraktScrobbler interface {
+	// ScrobbleMovie syncs a watched movie to Trakt.
+	ScrobbleMovie(tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error
+	// ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode.
+	ScrobbleEpisode(showTVDBID, season, episode int, watchedAt time.Time) error
+	// IsEnabled returns whether scrobbling is currently enabled.
+	IsEnabled() bool
+}
+
 // cachedSeriesMetadata holds cached series details with expiration.
 type cachedSeriesMetadata struct {
 	details   *models.SeriesDetails
@@ -69,6 +79,7 @@ type Service struct {
 	watchHistory          map[string]map[string]models.WatchHistoryItem // Manual watch tracking (all media)
 	playbackProgress      map[string]map[string]models.PlaybackProgress // userID -> mediaKey -> progress
 	metadataService       MetadataService
+	traktScrobbler        TraktScrobbler
 	metadataCache         map[string]*cachedSeriesMetadata // seriesID -> metadata (full details)
 	seriesInfoCache       map[string]*cachedSeriesInfo     // seriesID -> lightweight info
 	movieMetadataCache    map[string]*cachedMovieMetadata  // movieID -> metadata
@@ -122,6 +133,84 @@ func (s *Service) SetMetadataService(metadataService MetadataService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.metadataService = metadataService
+}
+
+// SetTraktScrobbler sets the Trakt scrobbler for syncing watch history.
+func (s *Service) SetTraktScrobbler(scrobbler TraktScrobbler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.traktScrobbler = scrobbler
+}
+
+// scrobbleWatchedItem syncs a watched item to Trakt if scrobbling is enabled.
+// This should be called after an item is marked as watched.
+// IMPORTANT: This method must NOT be called while holding s.mu lock, as it spawns
+// goroutines that may need to access the lock. Pass the scrobbler reference directly
+// if calling from a locked context.
+func (s *Service) scrobbleWatchedItem(item models.WatchHistoryItem) {
+	s.mu.RLock()
+	scrobbler := s.traktScrobbler
+	s.mu.RUnlock()
+
+	s.doScrobble(scrobbler, item)
+}
+
+// doScrobble performs the actual scrobbling. This is separated from scrobbleWatchedItem
+// to allow callers holding the lock to pass the scrobbler directly without re-acquiring the lock.
+func (s *Service) doScrobble(scrobbler TraktScrobbler, item models.WatchHistoryItem) {
+	if scrobbler == nil || !scrobbler.IsEnabled() {
+		return
+	}
+
+	// Extract IDs from the item
+	var tmdbID, tvdbID int
+	var imdbID string
+
+	if item.ExternalIDs != nil {
+		if id, ok := item.ExternalIDs["tmdb"]; ok {
+			tmdbID, _ = strconv.Atoi(id)
+		}
+		if id, ok := item.ExternalIDs["tvdb"]; ok {
+			tvdbID, _ = strconv.Atoi(id)
+		}
+		if id, ok := item.ExternalIDs["imdb"]; ok {
+			imdbID = id
+		}
+	}
+
+	watchedAt := item.WatchedAt
+	if watchedAt.IsZero() {
+		watchedAt = time.Now().UTC()
+	}
+
+	switch item.MediaType {
+	case "movie":
+		if tmdbID > 0 || tvdbID > 0 || imdbID != "" {
+			go func() {
+				if err := scrobbler.ScrobbleMovie(tmdbID, tvdbID, imdbID, watchedAt); err != nil {
+					log.Printf("[trakt] failed to scrobble movie %s: %v", item.Name, err)
+				} else {
+					log.Printf("[trakt] scrobbled movie: %s", item.Name)
+				}
+			}()
+		}
+	case "episode":
+		// For episodes, we need the show's TVDB ID plus season/episode numbers
+		if tvdbID > 0 && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
+			season := item.SeasonNumber
+			episode := item.EpisodeNumber
+			seriesName := item.SeriesName
+			go func() {
+				if err := scrobbler.ScrobbleEpisode(tvdbID, season, episode, watchedAt); err != nil {
+					log.Printf("[trakt] failed to scrobble episode %s S%02dE%02d: %v", seriesName, season, episode, err)
+				} else {
+					log.Printf("[trakt] scrobbled episode: %s S%02dE%02d", seriesName, season, episode)
+				}
+			}()
+		} else {
+			log.Printf("[trakt] skipping episode scrobble: missing tvdbID=%d, season=%d, or episode=%d", tvdbID, item.SeasonNumber, item.EpisodeNumber)
+		}
+	}
 }
 
 // RecordEpisode notes that the user has started watching the supplied episode.
@@ -1328,6 +1417,15 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	// Invalidate continue watching cache for this user
 	delete(s.continueWatchingCache, userID)
 
+	// Get scrobbler reference while holding lock (safe since we have write lock)
+	scrobbler := s.traktScrobbler
+
+	// Scrobble to Trakt if now marked as watched
+	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
+	if item.Watched {
+		s.doScrobble(scrobbler, item)
+	}
+
 	return item, nil
 }
 
@@ -1417,6 +1515,15 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 
 	// Invalidate continue watching cache for this user
 	delete(s.continueWatchingCache, userID)
+
+	// Get scrobbler reference while holding lock (safe since we have write lock)
+	scrobbler := s.traktScrobbler
+
+	// Scrobble to Trakt if marking as watched
+	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
+	if update.Watched != nil && *update.Watched {
+		s.doScrobble(scrobbler, item)
+	}
 
 	return item, nil
 }
@@ -1525,6 +1632,17 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 
 	// Invalidate continue watching cache for this user
 	delete(s.continueWatchingCache, userID)
+
+	// Get scrobbler reference while holding lock (safe since we have write lock)
+	scrobbler := s.traktScrobbler
+
+	// Scrobble items that were marked as watched
+	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
+	for i, update := range updates {
+		if update.Watched != nil && *update.Watched {
+			s.doScrobble(scrobbler, results[i])
+		}
+	}
 
 	return results, nil
 }
