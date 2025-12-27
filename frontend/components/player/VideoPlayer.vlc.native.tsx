@@ -96,7 +96,9 @@ const VlcVideoPlayerInner = (
 
   const nextVideoSource = useMemo<VLCPlayerSource>(() => {
     // Use higher buffer values for TV devices (Fire Stick, Apple TV) to reduce jitter
-    const cachingValue = Platform.isTV ? '4000' : '2000';
+    // Android TV needs larger buffers (8s) compared to Apple TV (4s) for smooth playback
+    const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+    const cachingValue = isAndroidTV ? '8000' : Platform.isTV ? '4000' : '2000';
     const initOptions = [
       '--http-reconnect',
       `--network-caching=${cachingValue}`,

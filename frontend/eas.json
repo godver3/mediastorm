@@ -27,6 +27,11 @@
         "EXPO_TV": "1",
         "ANDROID_HOME": "/root/android-sdk"
       },
+      "android": {
+        "buildType": "apk",
+        "withoutCredentials": true,
+        "gradleCommand": ":app:assembleDebug -Pabi_filters=arm64-v8a"
+      },
       "ios": {
         "buildConfiguration": "Debug",
         "simulator": false

@@ -423,7 +423,7 @@ const MediaGrid = React.memo(
           scrollEnabled={true}
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
-          removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
+          removeClippedSubviews={Platform.isTV}
           scrollEventThrottle={16}
           // Android TV: prevent native focus-based scrolling
           focusable={false}

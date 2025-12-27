@@ -4,6 +4,7 @@
  */
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import type { BufferConfig } from 'react-native-video';
 import Video, {
   type OnLoadData,
   type OnProgressData,
@@ -410,7 +411,21 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             // HDR-related props
             allowsExternalPlayback={true}
             automaticallyWaitsToMinimizeStalling={true}
-            preferredForwardBufferDuration={600} // Buffer up to 10 minutes ahead
+            preferredForwardBufferDuration={600} // Buffer up to 10 minutes ahead (iOS only)
+            // Android ExoPlayer buffer configuration
+            // Fire TV Stick has only 192MB heap limit, so we use minimal buffers
+            // to avoid OOM and GC pauses that freeze the UI
+            bufferConfig={
+              Platform.OS === 'android'
+                ? ({
+                    minBufferMs: 10000, // 10 seconds minimum buffer
+                    maxBufferMs: 20000, // 20 seconds maximum buffer
+                    bufferForPlaybackMs: 2500, // 2.5 seconds before playback starts
+                    bufferForPlaybackAfterRebufferMs: 5000, // 5 seconds after rebuffering
+                    backBufferDurationMs: 10000, // 10 seconds back buffer
+                  } as BufferConfig)
+                : undefined
+            }
             // Now Playing / Control Center integration
             showNotificationControls={true}
             playInBackground={true}

@@ -335,7 +335,8 @@ const Controls: React.FC<ControlsProps> = ({
             styles.bottomControls,
             isMobile && styles.bottomControlsMobile,
             isMobile && isLandscape && styles.bottomControlsMobileLandscape,
-          ]}>
+          ]}
+          renderToHardwareTextureAndroid={isTvPlatform}>
           {!isLiveTV && (
             <SpatialNavigationNode orientation="horizontal">
               <View style={styles.mainRow} pointerEvents="box-none">

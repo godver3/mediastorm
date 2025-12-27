@@ -266,7 +266,9 @@ const MediaItem = memo(function MediaItem({ title, onPress, onLongPress, onFocus
   return (
     <SpatialNavigationFocusableView onSelect={handlePress} onFocus={handleFocus}>
       {({ isFocused }: { isFocused: boolean }) => (
-        <View style={[styles.container, style, isFocused && styles.containerFocused]}>
+        <View
+          style={[styles.container, style, isFocused && styles.containerFocused]}
+          renderToHardwareTextureAndroid={isAndroidTV}>
           <View style={styles.imageContainer}>
             {title.poster?.url ? (
               <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />

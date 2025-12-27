@@ -3,7 +3,6 @@ import type { ScrollView as RNScrollView } from 'react-native';
 import {
   Animated,
   findNodeHandle,
-  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Image } from '@/components/Image';
 
 import { CategoryFilterModal } from '@/components/CategoryFilterModal';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
@@ -137,7 +137,7 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
         ]}>
         <View style={styles.channelAvatar}>
           {channel.logo ? (
-            <Image source={{ uri: channel.logo }} style={styles.channelLogo} />
+            <Image source={{ uri: channel.logo }} style={styles.channelLogo} contentFit="contain" transition={0} cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'} />
           ) : (
             <View style={styles.channelPlaceholder}>
               <Text style={styles.channelPlaceholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
@@ -683,9 +683,10 @@ function LiveScreen() {
                     key={`img-${cardKey}`}
                     source={{ uri: channel.logo }}
                     style={styles.gridCardImage}
-                    resizeMode="contain"
-                    fadeDuration={0}
-                    progressiveRenderingEnabled
+                    contentFit="contain"
+                    transition={0}
+                    cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                    recyclingKey={cardKey}
                   />
                 ) : (
                   <View style={styles.placeholder}>
@@ -926,7 +927,7 @@ function LiveScreen() {
                           contentContainerStyle={styles.channelList}
                           showsVerticalScrollIndicator={false}
                           bounces={false}
-                          removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
+                          removeClippedSubviews={Platform.isTV}
                           onScroll={(event: { nativeEvent: { contentOffset: { y: number } } }) => {
                             scrollMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
                           }}
