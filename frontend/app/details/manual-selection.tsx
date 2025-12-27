@@ -14,6 +14,7 @@ import {
 import type { NovaTheme } from '@/theme';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Modal,
   Platform,
   Pressable,
@@ -74,6 +75,7 @@ export const ManualSelection = ({
   const styles = useMemo(() => createManualSelectionStyles(theme), [theme]);
   const safeAreaInsets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(new Animated.Value(0)).current;
   const itemLayoutsRef = useRef<{ y: number; height: number }[]>([]);
   const showMobileIOSCloseButton = !Platform.isTV && isMobile && Platform.OS === 'ios';
 
@@ -94,27 +96,36 @@ export const ManualSelection = ({
     itemLayoutsRef.current[index] = { y, height };
   }, []);
 
-  const handleItemFocus = useCallback((index: number) => {
-    if (!Platform.isTV) return;
+  const handleItemFocus = useCallback(
+    (index: number) => {
+      if (!Platform.isTV) return;
 
-    console.log(`[ManualSelection] Focusing item ${index}`);
+      console.log(`[ManualSelection] Focusing item ${index}`);
 
-    // Calculate cumulative Y position from measured layouts
-    let cumulativeY = 0;
-    for (let i = 0; i < index; i++) {
-      const layout = itemLayoutsRef.current[i];
-      if (layout) {
-        cumulativeY += layout.height;
+      // Calculate cumulative Y position from measured layouts
+      let cumulativeY = 0;
+      for (let i = 0; i < index; i++) {
+        const layout = itemLayoutsRef.current[i];
+        if (layout) {
+          cumulativeY += layout.height;
+        }
       }
-    }
 
-    console.log(`[ManualSelection] Calculated cumulative Y: ${cumulativeY}`);
+      console.log(`[ManualSelection] Calculated cumulative Y: ${cumulativeY}`);
 
-    // Scroll to position the focused item with some offset from top
-    const scrollOffset = Math.max(0, cumulativeY - 100); // 100px from top
-    console.log(`[ManualSelection] Scrolling to: ${scrollOffset}`);
-    scrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
-  }, []);
+      // Scroll to position the focused item with some offset from top
+      const scrollOffset = Math.max(0, cumulativeY - 100); // 100px from top
+      console.log(`[ManualSelection] Scrolling to: ${scrollOffset}`);
+
+      // Use animated transform for TV (bypasses native scroll)
+      Animated.timing(scrollOffsetRef, {
+        toValue: -scrollOffset,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    },
+    [scrollOffsetRef],
+  );
 
   const renderManualResultContent = useCallback(
     (result: NZBResult, isFocused: boolean) => {
@@ -267,92 +278,85 @@ export const ManualSelection = ({
                 !error &&
                 filteredResults.length > 0 &&
                 (Platform.isTV ? (
-                  // TV: Use spatial navigation with manual scroll control
+                  // TV: Use View + Animated.View to bypass native scroll gestures
                   <SpatialNavigationNode orientation="vertical">
-                    <ScrollView
-                      ref={scrollViewRef}
-                      style={[styles.manualResultsContainer, { maxHeight }]}
-                      contentContainerStyle={styles.manualResultsContent}
-                      scrollEnabled={false}>
-                      {filteredResults.map((result, index) => {
-                        const key = getResultKey(result) || `${result.indexer}-${index}`;
-                        const healthState = healthChecks[key];
-                        const hasHealthCheck = healthState && healthState.state !== 'checking';
-                        const isHealthy = healthState?.state === 'healthy';
+                    <View style={[styles.manualResultsContainer, { maxHeight, overflow: 'hidden' }]}>
+                      <Animated.View
+                        style={[
+                          styles.manualResultsContent,
+                          { transform: [{ translateY: scrollOffsetRef }] },
+                        ]}>
+                        {filteredResults.map((result, index) => {
+                          const key = getResultKey(result) || `${result.indexer}-${index}`;
+                          const healthState = healthChecks[key];
+                          const hasHealthCheck = healthState && healthState.state !== 'checking';
+                          const isHealthy = healthState?.state === 'healthy';
 
-                        const handleSelect = () => {
-                          console.log('[ManualSelection] Item selected:', result.title, 'health:', healthState?.state);
+                          const handleSelect = () => {
+                            console.log('[ManualSelection] Item selected:', result.title, 'health:', healthState?.state);
 
-                          // First tap: check health if not already checked or checking
-                          if (!healthState || (!hasHealthCheck && healthState.state !== 'checking')) {
-                            console.log('[ManualSelection] Checking health for:', result.title);
-                            onCheckHealth(result);
-                            return;
-                          }
+                            // First tap: check health if not already checked or checking
+                            if (!healthState || (!hasHealthCheck && healthState.state !== 'checking')) {
+                              console.log('[ManualSelection] Checking health for:', result.title);
+                              onCheckHealth(result);
+                              return;
+                            }
 
-                          // If checking, do nothing
-                          if (healthState.state === 'checking') {
-                            console.log('[ManualSelection] Currently checking, ignoring select');
-                            return;
-                          }
+                            // If checking, do nothing
+                            if (healthState.state === 'checking') {
+                              console.log('[ManualSelection] Currently checking, ignoring select');
+                              return;
+                            }
 
-                          // Second tap: play if healthy
-                          if (isHealthy) {
-                            console.log('[ManualSelection] Selecting healthy result:', result.title);
-                            onSelect(result);
-                          } else {
-                            console.log(
-                              '[ManualSelection] Result not healthy, cannot select. State:',
-                              healthState?.state,
-                            );
-                          }
-                        };
-
-                        const focusableItem = (
-                          <SpatialNavigationFocusableView
-                            key={key}
-                            focusKey={`manual-result-${key}`}
-                            onSelect={() => {
+                            // Second tap: play if healthy
+                            if (isHealthy) {
+                              console.log('[ManualSelection] Selecting healthy result:', result.title);
+                              onSelect(result);
+                            } else {
                               console.log(
-                                '[ManualSelection] SpatialNavigationFocusableView onSelect called for index:',
-                                index,
+                                '[ManualSelection] Result not healthy, cannot select. State:',
+                                healthState?.state,
                               );
-                              handleSelect();
-                            }}
-                            onFocus={() => {
-                              console.log(
-                                '[ManualSelection] SpatialNavigationFocusableView onFocus called for index:',
-                                index,
-                              );
-                              handleItemFocus(index);
-                            }}>
-                            {({ isFocused }: { isFocused: boolean }) => (
-                              <Pressable
-                                onPress={
-                                  !Platform.isTV
-                                    ? () => {
-                                        console.log('[ManualSelection] Pressable onPress called for index:', index);
-                                        handleSelect();
-                                      }
-                                    : undefined
-                                }
-                                tvParallaxProperties={{ enabled: false }}>
-                                <View
-                                  onLayout={(event) => {
-                                    const { y, height } = event.nativeEvent.layout;
-                                    handleItemLayout(index, y, height);
-                                  }}>
-                                  {renderManualResultContent(result, isFocused)}
-                                </View>
-                              </Pressable>
-                            )}
-                          </SpatialNavigationFocusableView>
-                        );
+                            }
+                          };
 
-                        // Auto-focus first item
-                        return index === 0 ? <DefaultFocus key={key}>{focusableItem}</DefaultFocus> : focusableItem;
-                      })}
-                    </ScrollView>
+                          const focusableItem = (
+                            <SpatialNavigationFocusableView
+                              key={key}
+                              focusKey={`manual-result-${key}`}
+                              onSelect={() => {
+                                console.log(
+                                  '[ManualSelection] SpatialNavigationFocusableView onSelect called for index:',
+                                  index,
+                                );
+                                handleSelect();
+                              }}
+                              onFocus={() => {
+                                console.log(
+                                  '[ManualSelection] SpatialNavigationFocusableView onFocus called for index:',
+                                  index,
+                                );
+                                handleItemFocus(index);
+                              }}>
+                              {({ isFocused }: { isFocused: boolean }) => (
+                                <Pressable tvParallaxProperties={{ enabled: false }}>
+                                  <View
+                                    onLayout={(event) => {
+                                      const { y, height } = event.nativeEvent.layout;
+                                      handleItemLayout(index, y, height);
+                                    }}>
+                                    {renderManualResultContent(result, isFocused)}
+                                  </View>
+                                </Pressable>
+                              )}
+                            </SpatialNavigationFocusableView>
+                          );
+
+                          // Auto-focus first item
+                          return index === 0 ? <DefaultFocus key={key}>{focusableItem}</DefaultFocus> : focusableItem;
+                        })}
+                      </Animated.View>
+                    </View>
                   </SpatialNavigationNode>
                 ) : isMobile || isWebTouch ? (
                   <ScrollView
