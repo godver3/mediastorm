@@ -451,21 +451,23 @@ export const buildDirectUrlForExternalPlayer = async (
   // Real-Debrid URLs are IP-locked, and external URLs need to be proxied through the backend
   if (isDebridPath || isExternalUrl) {
     const base = apiService.getBaseUrl().replace(/\/$/, '');
-    const params = new URLSearchParams();
-    params.set('path', playback.webdavPath);
-    params.set('transmux', '0'); // No transmuxing needed for external players
+    // Build URL manually to ensure proper encoding of special chars like semicolons
+    // URLSearchParams doesn't encode semicolons which breaks some parsers
+    const queryParts: string[] = [];
+    queryParts.push(`path=${encodeURIComponent(playback.webdavPath)}`);
+    queryParts.push('transmux=0'); // No transmuxing needed for external players
     const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
     if (trimmedApiKey) {
-      params.set('apiKey', trimmedApiKey);
+      queryParts.push(`apiKey=${encodeURIComponent(trimmedApiKey)}`);
     }
     // Add profile info for stream tracking
     if (options?.profileId) {
-      params.set('profileId', options.profileId);
+      queryParts.push(`profileId=${encodeURIComponent(options.profileId)}`);
     }
     if (options?.profileName) {
-      params.set('profileName', options.profileName);
+      queryParts.push(`profileName=${encodeURIComponent(options.profileName)}`);
     }
-    const proxyUrl = `${base}/video/stream?${params.toString()}`;
+    const proxyUrl = `${base}/video/stream?${queryParts.join('&')}`;
     console.log(
       `🎬 [External Player] Using backend proxy URL for ${isExternalUrl ? 'external URL' : 'debrid'}:`,
       proxyUrl,

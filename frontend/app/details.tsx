@@ -1562,22 +1562,24 @@ export default function DetailsScreen() {
         const label = playbackPreference === 'outplayer' ? 'Outplayer' : 'Infuse';
 
         // Build backend proxy URL for external player (handles IP-locked debrid URLs)
+        // Use manual encoding to ensure semicolons and other special chars are properly encoded
+        // URLSearchParams doesn't encode semicolons which breaks some parsers
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const apiKey = apiService.getApiKey().trim();
-        const params = new URLSearchParams();
-        params.set('path', prequeueStatus.streamPath);
-        params.set('transmux', '0'); // No transmuxing needed for external players
+        const queryParts: string[] = [];
+        queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
+        queryParts.push('transmux=0'); // No transmuxing needed for external players
         if (apiKey) {
-          params.set('apiKey', apiKey);
+          queryParts.push(`apiKey=${encodeURIComponent(apiKey)}`);
         }
         // Add profile info for stream tracking
         if (activeUserId) {
-          params.set('profileId', activeUserId);
+          queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
         }
         if (activeUser?.name) {
-          params.set('profileName', activeUser.name);
+          queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
         }
-        const directUrl = `${baseUrl}/video/stream?${params.toString()}`;
+        const directUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
         console.log('[prequeue] Using backend proxy URL for external player:', directUrl);
 
         const externalTargets = buildExternalPlayerTargets(playbackPreference, directUrl, isIosWeb);
@@ -1738,20 +1740,22 @@ export default function DetailsScreen() {
         // SDR content - build direct stream URL
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const apiKey = apiService.getApiKey().trim();
-        const params = new URLSearchParams();
-        params.set('path', prequeueStatus.streamPath);
+        // Build URL manually to ensure proper encoding of special chars like semicolons
+        // URLSearchParams doesn't encode semicolons which breaks some parsers
+        const queryParts: string[] = [];
+        queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
         if (apiKey) {
-          params.set('apiKey', apiKey);
+          queryParts.push(`apiKey=${encodeURIComponent(apiKey)}`);
         }
-        params.set('transmux', '0'); // Let native player handle it
+        queryParts.push('transmux=0'); // Let native player handle it
         // Add profile info for stream tracking
         if (activeUserId) {
-          params.set('profileId', activeUserId);
+          queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
         }
         if (activeUser?.name) {
-          params.set('profileName', activeUser.name);
+          queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
         }
-        streamUrl = `${baseUrl}/video/stream?${params.toString()}`;
+        streamUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
         console.log('[prequeue] Using direct stream URL:', streamUrl);
       }
 

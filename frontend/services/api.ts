@@ -1422,14 +1422,16 @@ class ApiService {
   }
 
   async getVideoMetadata(path: string): Promise<VideoMetadata> {
-    const params = new URLSearchParams({ path });
+    // Build URL manually to ensure proper encoding of special chars like semicolons
+    // URLSearchParams doesn't encode semicolons which breaks some parsers
+    const queryParts: string[] = [`path=${encodeURIComponent(path)}`];
     const authKey = this.getApiKey().trim();
     if (!authKey) {
       console.warn('[api] getVideoMetadata missing authentication key; metadata request may fail');
     } else {
-      params.set('pin', authKey);
+      queryParts.push(`pin=${encodeURIComponent(authKey)}`);
     }
-    return this.request<VideoMetadata>(`/video/metadata?${params.toString()}`);
+    return this.request<VideoMetadata>(`/video/metadata?${queryParts.join('&')}`);
   }
 
   /**
@@ -1438,12 +1440,14 @@ class ApiService {
    * Useful for external players like Infuse that don't need our proxy.
    */
   async getDirectUrl(path: string): Promise<{ url: string }> {
-    const params = new URLSearchParams({ path });
+    // Build URL manually to ensure proper encoding of special chars like semicolons
+    // URLSearchParams doesn't encode semicolons which breaks some parsers
+    const queryParts: string[] = [`path=${encodeURIComponent(path)}`];
     const authKey = this.getApiKey().trim();
     if (authKey) {
-      params.set('apiKey', authKey);
+      queryParts.push(`apiKey=${encodeURIComponent(authKey)}`);
     }
-    return this.request<{ url: string }>(`/video/direct-url?${params.toString()}`);
+    return this.request<{ url: string }>(`/video/direct-url?${queryParts.join('&')}`);
   }
 
   async createHlsSession(params: {
@@ -1464,49 +1468,51 @@ class ApiService {
       throw new Error('Path is required to create an HLS session.');
     }
 
-    const search = new URLSearchParams();
-    search.set('path', trimmedPath);
+    // Build URL manually to ensure proper encoding of special chars like semicolons
+    // URLSearchParams doesn't encode semicolons which breaks some parsers
+    const queryParts: string[] = [];
+    queryParts.push(`path=${encodeURIComponent(trimmedPath)}`);
 
     const authKey = params.apiKey?.trim() || this.apiKey?.trim() || '';
     if (authKey) {
-      search.set('apiKey', authKey);
+      queryParts.push(`apiKey=${encodeURIComponent(authKey)}`);
     }
 
     if (params.dv) {
-      search.set('dv', 'true');
+      queryParts.push('dv=true');
     }
     if (params.dvProfile) {
-      search.set('dvProfile', params.dvProfile);
+      queryParts.push(`dvProfile=${encodeURIComponent(params.dvProfile)}`);
     }
     if (params.hdr) {
-      search.set('hdr', 'true');
+      queryParts.push('hdr=true');
     }
     if (params.forceAAC) {
-      search.set('forceAAC', 'true');
+      queryParts.push('forceAAC=true');
     }
     if (typeof params.start === 'number' && Number.isFinite(params.start) && params.start >= 0) {
-      search.set('start', params.start.toFixed(3));
+      queryParts.push(`start=${params.start.toFixed(3)}`);
     }
     if (typeof params.audioTrack === 'number' && Number.isFinite(params.audioTrack) && params.audioTrack >= 0) {
-      search.set('audioTrack', params.audioTrack.toString());
+      queryParts.push(`audioTrack=${params.audioTrack.toString()}`);
     }
     if (
       typeof params.subtitleTrack === 'number' &&
       Number.isFinite(params.subtitleTrack) &&
       params.subtitleTrack >= 0
     ) {
-      search.set('subtitleTrack', params.subtitleTrack.toString());
+      queryParts.push(`subtitleTrack=${params.subtitleTrack.toString()}`);
     }
 
     // Add profile info for stream tracking
     if (params.profileId) {
-      search.set('profileId', params.profileId);
+      queryParts.push(`profileId=${encodeURIComponent(params.profileId)}`);
     }
     if (params.profileName) {
-      search.set('profileName', params.profileName);
+      queryParts.push(`profileName=${encodeURIComponent(params.profileName)}`);
     }
 
-    return this.request<HlsSessionStartResponse>(`/video/hls/start?${search.toString()}`);
+    return this.request<HlsSessionStartResponse>(`/video/hls/start?${queryParts.join('&')}`);
   }
 
   /**

@@ -430,7 +430,8 @@ export default function PlayerScreen() {
     }
 
     // Expo Router automatically decodes URL params, but we need to re-encode
-    // special characters in the path for VLC to work correctly
+    // special characters for VLC to work correctly.
+    // URLSearchParams doesn't encode semicolons which breaks VLC's URL parsing.
     try {
       const url = new URL(movieParam);
       // Re-encode path segments while preserving slashes
@@ -439,6 +440,24 @@ export default function PlayerScreen() {
         .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
         .join('/');
       url.pathname = encodedPathname;
+
+      // Also re-encode the 'path' query parameter if present
+      // URLSearchParams doesn't encode semicolons, so we need to do it manually
+      const pathParam = url.searchParams.get('path');
+      if (pathParam) {
+        // Remove the old path param and rebuild query string manually
+        // to ensure proper encoding of semicolons and other special chars
+        const otherParams: string[] = [];
+        url.searchParams.forEach((value, key) => {
+          if (key !== 'path') {
+            otherParams.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+          }
+        });
+        // Add path first, properly encoded
+        const allParams = [`path=${encodeURIComponent(pathParam)}`, ...otherParams];
+        return `${url.origin}${url.pathname}?${allParams.join('&')}`;
+      }
+
       return url.toString();
     } catch {
       // If it's not a valid URL, return as-is
