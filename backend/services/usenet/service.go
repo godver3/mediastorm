@@ -599,8 +599,37 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 				return err
 			}
 
-			if err := getClient(); err != nil {
-				sendErr(fmt.Errorf("connect to usenet server: %w", err))
+			// Try initial connection with retries for transient errors (502 auth issues, etc.)
+			var connectErr error
+			for attempt := 0; attempt <= maxRetries; attempt++ {
+				connectErr = getClient()
+				if connectErr == nil {
+					break
+				}
+
+				// Check if this is a retryable error (502, connection issues)
+				if !isRetryableNNTPError(connectErr) {
+					break
+				}
+
+				if attempt < maxRetries {
+					log.Printf("[usenet] retryable connection error (attempt %d/%d): %v",
+						attempt+1, maxRetries+1, connectErr)
+
+					// Wait before retry with increasing delay
+					delay := retryDelay * time.Duration(attempt+1)
+					select {
+					case <-ctx.Done():
+						sendErr(fmt.Errorf("connect to usenet server: %w", ctx.Err()))
+						cancel()
+						return
+					case <-time.After(delay):
+					}
+				}
+			}
+
+			if connectErr != nil {
+				sendErr(fmt.Errorf("connect to usenet server: %w", connectErr))
 				cancel()
 				return
 			}
