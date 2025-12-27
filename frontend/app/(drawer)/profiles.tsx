@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -34,7 +35,7 @@ import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 
-type PendingAction = null | 'create' | 'refresh' | `activate:${string}` | `delete:${string}` | `color:${string}`;
+type PendingAction = null | 'create' | 'refresh' | `activate:${string}` | `color:${string}`;
 
 // Predefined profile colors for TV
 const PROFILE_COLORS = [
@@ -77,47 +78,24 @@ export default function ProfilesScreen() {
     activeUserId,
     selectUser,
     createUser,
-    renameUser,
     updateColor,
-    setPin,
-    clearPin,
-    verifyPin,
-    deleteUser,
     refresh,
     pendingPinUserId,
   } = useUserProfiles();
   const { showToast } = useToast();
 
   const [newProfileName, setNewProfileName] = useState('');
-  const [renameValues, setRenameValues] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<PendingAction>(null);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
   const [newlyCreatedProfileId, setNewlyCreatedProfileId] = useState<string | null>(null);
   const [openColorSelectorId, setOpenColorSelectorId] = useState<string | null>(null);
-  const [isPinModalVisible, setIsPinModalVisible] = useState(false);
-  const [isRemovePinMode, setIsRemovePinMode] = useState(false); // true = verifying to remove, false = setting new PIN
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState<string | null>(null);
-  // Delete confirmation state
-  const [isDeleteConfirmVisible, setIsDeleteConfirmVisible] = useState(false);
-  const [pendingDeleteProfile, setPendingDeleteProfile] = useState<UserProfile | null>(null);
-  const [isDeletePinVerifyMode, setIsDeletePinVerifyMode] = useState(false); // true = verifying PIN for deletion
   const newProfileInputRef = useRef<TextInput | null>(null);
-  const pinInputRef = useRef<TextInput | null>(null);
   const tempProfileNameRef = useRef('');
-  const tempPinRef = useRef('');
   const { lock, unlock } = useLockSpatialNavigation();
   const { grabFocus } = useSpatialNavigator();
 
   const isProfileModalVisible = selectedProfile !== null;
-  const isActive =
-    isFocused &&
-    !isMenuOpen &&
-    !isCreateModalVisible &&
-    !isProfileModalVisible &&
-    !pendingPinUserId &&
-    !isDeleteConfirmVisible &&
-    !isDeletePinVerifyMode;
+  const isActive = isFocused && !isMenuOpen && !isCreateModalVisible && !isProfileModalVisible && !pendingPinUserId;
 
   // Auto-focus newly created profile
   useEffect(() => {
@@ -130,16 +108,6 @@ export default function ProfilesScreen() {
       return () => clearTimeout(timer);
     }
   }, [newlyCreatedProfileId, users, grabFocus]);
-
-  useEffect(() => {
-    setRenameValues((current) => {
-      const next: Record<string, string> = {};
-      users.forEach((user) => {
-        next[user.id] = current[user.id] ?? user.name;
-      });
-      return next;
-    });
-  }, [users]);
 
   useEffect(() => {
     if (error) {
@@ -158,7 +126,6 @@ export default function ProfilesScreen() {
     try {
       const created = await createUser(trimmed);
       setNewProfileName('');
-      setRenameValues((current) => ({ ...current, [created.id]: created.name }));
       showToast(`Created profile "${created.name}".`, { tone: 'success' });
     } catch (err) {
       showToast(formatErrorMessage(err), { tone: 'danger' });
@@ -176,7 +143,7 @@ export default function ProfilesScreen() {
       setPending(`activate:${id}`);
       try {
         await selectUser(id);
-        const displayName = renameValues[id] ?? users.find((user) => user.id === id)?.name ?? 'profile';
+        const displayName = users.find((user) => user.id === id)?.name ?? 'profile';
         showToast(`Switched to ${displayName}.`, { tone: 'success' });
       } catch (err) {
         showToast(formatErrorMessage(err), { tone: 'danger' });
@@ -184,40 +151,7 @@ export default function ProfilesScreen() {
         setPending(null);
       }
     },
-    [activeUserId, renameValues, selectUser, users, showToast],
-  );
-
-  const handleDeleteProfile = useCallback(
-    async (id: string) => {
-      setPending(`delete:${id}`);
-      try {
-        const displayName = renameValues[id] ?? users.find((user) => user.id === id)?.name ?? 'profile';
-        await deleteUser(id);
-        showToast(`Deleted profile "${displayName}".`, { tone: 'success' });
-      } catch (err) {
-        showToast(formatErrorMessage(err), { tone: 'danger' });
-      } finally {
-        setPending(null);
-      }
-    },
-    [deleteUser, renameValues, users, showToast],
-  );
-
-  const handleRenameProfile = useCallback(
-    async (id: string, name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        showToast('Profile name cannot be empty.', { tone: 'danger' });
-        return;
-      }
-      try {
-        await renameUser(id, trimmed);
-        showToast(`Profile renamed to "${trimmed}".`, { tone: 'success' });
-      } catch (err) {
-        showToast(formatErrorMessage(err), { tone: 'danger' });
-      }
-    },
-    [renameUser, showToast],
+    [activeUserId, selectUser, users, showToast],
   );
 
   const handleUpdateColor = useCallback(
@@ -237,174 +171,6 @@ export default function ProfilesScreen() {
     },
     [updateColor, showToast],
   );
-
-  // PIN modal handlers
-  const handleOpenPinModal = useCallback((removeMode = false) => {
-    setPinInput('');
-    tempPinRef.current = '';
-    setPinError(null);
-    setIsRemovePinMode(removeMode);
-    setIsPinModalVisible(true);
-  }, []);
-
-  const handleClosePinModal = useCallback(() => {
-    Keyboard.dismiss();
-    setPinInput('');
-    tempPinRef.current = '';
-    setPinError(null);
-    setIsRemovePinMode(false);
-    setIsPinModalVisible(false);
-  }, []);
-
-  const handlePinInputChange = useCallback((text: string) => {
-    if (Platform.isTV) {
-      tempPinRef.current = text;
-    } else {
-      setPinInput(text);
-    }
-    setPinError(null);
-  }, []);
-
-  const handlePinInputFocus = useCallback(() => {
-    lock();
-    if (Platform.isTV) {
-      tempPinRef.current = pinInput;
-    }
-  }, [lock, pinInput]);
-
-  const handlePinInputBlur = useCallback(() => {
-    unlock();
-    if (Platform.isTV) {
-      setPinInput(tempPinRef.current);
-    }
-  }, [unlock]);
-
-  const handleSetPin = useCallback(async () => {
-    if (!selectedProfile) return;
-
-    const pinValue = Platform.isTV ? tempPinRef.current : pinInput;
-    if (pinValue.trim().length < 4) {
-      setPinError('PIN must be at least 4 characters');
-      return;
-    }
-
-    try {
-      const updated = await setPin(selectedProfile.id, pinValue.trim());
-      setSelectedProfile({ ...selectedProfile, hasPin: updated.hasPin });
-      handleClosePinModal();
-      showToast('PIN set successfully.', { tone: 'success' });
-    } catch (err) {
-      setPinError(formatErrorMessage(err));
-    }
-  }, [selectedProfile, pinInput, setPin, handleClosePinModal, showToast]);
-
-  const handleRemovePin = useCallback(async () => {
-    if (!selectedProfile) return;
-
-    const pinValue = Platform.isTV ? tempPinRef.current : pinInput;
-    if (!pinValue.trim()) {
-      setPinError('Please enter your current PIN');
-      return;
-    }
-
-    try {
-      // Verify the PIN first
-      const isValid = await verifyPin(selectedProfile.id, pinValue.trim());
-      if (!isValid) {
-        setPinError('Invalid PIN');
-        return;
-      }
-
-      // PIN verified, now remove it
-      const updated = await clearPin(selectedProfile.id);
-      setSelectedProfile({ ...selectedProfile, hasPin: updated.hasPin });
-      handleClosePinModal();
-      showToast('PIN removed successfully.', { tone: 'success' });
-    } catch (err) {
-      setPinError(formatErrorMessage(err));
-    }
-  }, [selectedProfile, pinInput, verifyPin, clearPin, handleClosePinModal, showToast]);
-
-  const handlePinSubmit = useCallback(async () => {
-    if (isRemovePinMode) {
-      await handleRemovePin();
-    } else {
-      await handleSetPin();
-    }
-  }, [isRemovePinMode, handleRemovePin, handleSetPin]);
-
-  // Delete confirmation handlers
-  const handleRequestDelete = useCallback((profile: UserProfile) => {
-    setPendingDeleteProfile(profile);
-    setIsDeleteConfirmVisible(true);
-  }, []);
-
-  const handleCancelDelete = useCallback(() => {
-    setIsDeleteConfirmVisible(false);
-    setPendingDeleteProfile(null);
-    setIsDeletePinVerifyMode(false);
-    setPinInput('');
-    tempPinRef.current = '';
-    setPinError(null);
-  }, []);
-
-  const handleConfirmDelete = useCallback(() => {
-    if (!pendingDeleteProfile) return;
-
-    // If profile has PIN, require PIN verification first
-    if (pendingDeleteProfile.hasPin) {
-      setIsDeleteConfirmVisible(false);
-      setIsDeletePinVerifyMode(true);
-      setPinInput('');
-      tempPinRef.current = '';
-      setPinError(null);
-    } else {
-      // No PIN, proceed with deletion
-      setIsDeleteConfirmVisible(false);
-      void handleDeleteProfile(pendingDeleteProfile.id);
-      setPendingDeleteProfile(null);
-      // Close profile modal if open (TV)
-      setSelectedProfile(null);
-    }
-  }, [pendingDeleteProfile, handleDeleteProfile]);
-
-  const handleDeletePinVerify = useCallback(async () => {
-    if (!pendingDeleteProfile) return;
-
-    const pinValue = Platform.isTV ? tempPinRef.current : pinInput;
-    if (!pinValue.trim()) {
-      setPinError('Please enter your PIN');
-      return;
-    }
-
-    try {
-      const isValid = await verifyPin(pendingDeleteProfile.id, pinValue.trim());
-      if (!isValid) {
-        setPinError('Invalid PIN');
-        return;
-      }
-
-      // PIN verified, proceed with deletion
-      setIsDeletePinVerifyMode(false);
-      await handleDeleteProfile(pendingDeleteProfile.id);
-      setPendingDeleteProfile(null);
-      setPinInput('');
-      tempPinRef.current = '';
-      setPinError(null);
-      // Close profile modal if open (TV)
-      setSelectedProfile(null);
-    } catch (err) {
-      setPinError(formatErrorMessage(err));
-    }
-  }, [pendingDeleteProfile, pinInput, verifyPin, handleDeleteProfile]);
-
-  const handleCancelDeletePinVerify = useCallback(() => {
-    setIsDeletePinVerifyMode(false);
-    setPendingDeleteProfile(null);
-    setPinInput('');
-    tempPinRef.current = '';
-    setPinError(null);
-  }, []);
 
   const handleRefreshProfiles = useCallback(async () => {
     setPending('refresh');
@@ -512,7 +278,6 @@ export default function ProfilesScreen() {
       const created = await createUser(trimmed);
       setNewProfileName('');
       tempProfileNameRef.current = '';
-      setRenameValues((current) => ({ ...current, [created.id]: created.name }));
       showToast(`Created profile "${created.name}".`, { tone: 'success' });
       setIsCreateModalVisible(false);
       setNewlyCreatedProfileId(created.id);
@@ -720,12 +485,12 @@ export default function ProfilesScreen() {
 
         {/* Profile Actions Modal */}
         <Modal
-          visible={isProfileModalVisible && selectedProfile !== null && !isPinModalVisible}
+          visible={isProfileModalVisible && selectedProfile !== null}
           transparent={true}
           animationType="fade"
           onRequestClose={handleCloseProfileActions}
         >
-          <SpatialNavigationRoot isActive={isProfileModalVisible && !isPinModalVisible}>
+          <SpatialNavigationRoot isActive={isProfileModalVisible}>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContainer}>
                 {selectedProfile && (
@@ -793,32 +558,8 @@ export default function ProfilesScreen() {
                           />
                         </DefaultFocus>
                         <FocusablePressable
-                          focusKey="profile-modal-pin"
-                          text={selectedProfile.hasPin ? 'Remove PIN' : 'Set PIN'}
-                          onSelect={() => {
-                            handleOpenPinModal(selectedProfile.hasPin);
-                          }}
-                          style={styles.modalButton}
-                          focusedStyle={styles.modalButtonFocused}
-                          textStyle={styles.modalButtonText}
-                          focusedTextStyle={styles.modalButtonTextFocused}
-                        />
-                        <FocusablePressable
-                          focusKey="profile-modal-delete"
-                          text={pending === `delete:${selectedProfile.id}` ? 'Deleting…' : 'Delete Profile'}
-                          onSelect={() => {
-                            handleRequestDelete(selectedProfile);
-                            handleCloseProfileActions();
-                          }}
-                          disabled={pending === `delete:${selectedProfile.id}`}
-                          style={[styles.modalButton, styles.modalButtonDanger]}
-                          focusedStyle={[styles.modalButtonFocused, styles.modalButtonDangerFocused]}
-                          textStyle={[styles.modalButtonText, styles.modalButtonDangerText]}
-                          focusedTextStyle={[styles.modalButtonTextFocused, styles.modalButtonDangerTextFocused]}
-                        />
-                        <FocusablePressable
                           focusKey="profile-modal-cancel"
-                          text="Cancel"
+                          text="Close"
                           onSelect={handleCloseProfileActions}
                           style={styles.modalButton}
                           focusedStyle={styles.modalButtonFocused}
@@ -827,6 +568,13 @@ export default function ProfilesScreen() {
                         />
                       </View>
                     </SpatialNavigationNode>
+
+                    <View style={styles.adminInfoNote}>
+                      <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
+                      <Text style={styles.adminInfoNoteText}>
+                        To rename, set PIN, or delete profiles, use the Admin Web UI
+                      </Text>
+                    </View>
                   </>
                 )}
               </View>
@@ -834,234 +582,6 @@ export default function ProfilesScreen() {
           </SpatialNavigationRoot>
         </Modal>
 
-        {/* Set PIN Modal */}
-        <Modal visible={isPinModalVisible} transparent={true} animationType="fade" onRequestClose={handleClosePinModal}>
-          <SpatialNavigationRoot isActive={isPinModalVisible}>
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                <Text style={styles.modalTitle}>{isRemovePinMode ? 'Remove PIN' : 'Set PIN'}</Text>
-                <Text style={styles.modalSubtitle}>
-                  {isRemovePinMode
-                    ? `Enter current PIN to remove protection from ${selectedProfile?.name || 'this profile'}`
-                    : `Enter a PIN to protect ${selectedProfile?.name || 'this profile'}`}
-                </Text>
-
-                {pinError && (
-                  <View style={styles.pinErrorContainer}>
-                    <Text style={styles.pinErrorText}>{pinError}</Text>
-                  </View>
-                )}
-
-                <SpatialNavigationNode orientation="vertical">
-                  <SpatialNavigationFocusableView
-                    focusKey="pin-set-input"
-                    onSelect={() => {
-                      pinInputRef.current?.focus();
-                    }}
-                    onBlur={() => pinInputRef.current?.blur()}
-                  >
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <Pressable tvParallaxProperties={{ enabled: false }}>
-                        <TextInput
-                          ref={pinInputRef}
-                          {...(Platform.isTV ? { defaultValue: pinInput } : { value: pinInput })}
-                          onChangeText={handlePinInputChange}
-                          onFocus={handlePinInputFocus}
-                          onBlur={handlePinInputBlur}
-                          placeholder={isRemovePinMode ? 'Enter current PIN' : 'Enter PIN (min 4 chars)'}
-                          placeholderTextColor={theme.colors.text.muted}
-                          style={[styles.modalInput, isFocused && styles.modalInputFocused]}
-                          secureTextEntry={true}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          autoComplete="off"
-                          textContentType="none"
-                          keyboardType="numeric"
-                          maxLength={16}
-                          returnKeyType="done"
-                          onSubmitEditing={() => {
-                            const pinValue = Platform.isTV ? tempPinRef.current : pinInput;
-                            if (isRemovePinMode ? pinValue.trim() : pinValue.trim().length >= 4) {
-                              void handlePinSubmit();
-                            }
-                          }}
-                          editable={Platform.isTV ? isFocused : true}
-                          {...(Platform.OS === 'ios' &&
-                            Platform.isTV && {
-                              keyboardAppearance: 'dark',
-                            })}
-                        />
-                      </Pressable>
-                    )}
-                  </SpatialNavigationFocusableView>
-
-                  <SpatialNavigationNode orientation="horizontal">
-                    <View style={styles.modalActions}>
-                      <DefaultFocus>
-                        <FocusablePressable
-                          focusKey="pin-set-cancel"
-                          text="Cancel"
-                          onSelect={handleClosePinModal}
-                          style={[styles.modalButton, styles.modalButtonHorizontal]}
-                          focusedStyle={styles.modalButtonFocused}
-                          textStyle={styles.modalButtonText}
-                          focusedTextStyle={styles.modalButtonTextFocused}
-                        />
-                      </DefaultFocus>
-                      <FocusablePressable
-                        focusKey="pin-set-confirm"
-                        text={isRemovePinMode ? 'Remove PIN' : 'Set PIN'}
-                        onSelect={handlePinSubmit}
-                        style={[styles.modalButton, styles.modalButtonHorizontal]}
-                        focusedStyle={styles.modalButtonFocused}
-                        textStyle={styles.modalButtonText}
-                        focusedTextStyle={styles.modalButtonTextFocused}
-                      />
-                    </View>
-                  </SpatialNavigationNode>
-                </SpatialNavigationNode>
-              </View>
-            </View>
-          </SpatialNavigationRoot>
-        </Modal>
-
-        {/* Delete Confirmation Modal */}
-        <Modal
-          visible={isDeleteConfirmVisible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={handleCancelDelete}
-        >
-          <SpatialNavigationRoot isActive={isDeleteConfirmVisible}>
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                <Text style={styles.modalTitle}>Delete Profile?</Text>
-                <Text style={styles.modalSubtitle}>
-                  Are you sure you want to delete "{pendingDeleteProfile?.name}"? This action cannot be undone.
-                </Text>
-
-                <SpatialNavigationNode orientation="horizontal">
-                  <View style={styles.modalActions}>
-                    <DefaultFocus>
-                      <FocusablePressable
-                        focusKey="delete-confirm-cancel"
-                        text="Cancel"
-                        onSelect={handleCancelDelete}
-                        style={[styles.modalButton, styles.modalButtonHorizontal]}
-                        focusedStyle={styles.modalButtonFocused}
-                        textStyle={styles.modalButtonText}
-                        focusedTextStyle={styles.modalButtonTextFocused}
-                      />
-                    </DefaultFocus>
-                    <FocusablePressable
-                      focusKey="delete-confirm-delete"
-                      text="Delete"
-                      onSelect={handleConfirmDelete}
-                      style={[styles.modalButton, styles.modalButtonHorizontal, styles.modalButtonDanger]}
-                      focusedStyle={[styles.modalButtonFocused, styles.modalButtonDangerFocused]}
-                      textStyle={[styles.modalButtonText, styles.modalButtonDangerText]}
-                      focusedTextStyle={[styles.modalButtonTextFocused, styles.modalButtonDangerTextFocused]}
-                    />
-                  </View>
-                </SpatialNavigationNode>
-              </View>
-            </View>
-          </SpatialNavigationRoot>
-        </Modal>
-
-        {/* Delete PIN Verification Modal */}
-        <Modal
-          visible={isDeletePinVerifyMode}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={handleCancelDeletePinVerify}
-        >
-          <SpatialNavigationRoot isActive={isDeletePinVerifyMode}>
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                <Text style={styles.modalTitle}>Enter PIN to Delete</Text>
-                <Text style={styles.modalSubtitle}>
-                  "{pendingDeleteProfile?.name}" is protected with a PIN. Enter the PIN to delete this profile.
-                </Text>
-
-                {pinError && (
-                  <View style={styles.pinErrorContainer}>
-                    <Text style={styles.pinErrorText}>{pinError}</Text>
-                  </View>
-                )}
-
-                <SpatialNavigationNode orientation="vertical">
-                  <SpatialNavigationFocusableView
-                    focusKey="delete-pin-input"
-                    onSelect={() => {
-                      pinInputRef.current?.focus();
-                    }}
-                    onBlur={() => pinInputRef.current?.blur()}
-                  >
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <Pressable tvParallaxProperties={{ enabled: false }}>
-                        <TextInput
-                          ref={pinInputRef}
-                          {...(Platform.isTV ? { defaultValue: pinInput } : { value: pinInput })}
-                          onChangeText={handlePinInputChange}
-                          onFocus={handlePinInputFocus}
-                          onBlur={handlePinInputBlur}
-                          placeholder="Enter PIN"
-                          placeholderTextColor={theme.colors.text.muted}
-                          style={[styles.modalInput, isFocused && styles.modalInputFocused]}
-                          secureTextEntry={true}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          autoComplete="off"
-                          textContentType="none"
-                          keyboardType="numeric"
-                          maxLength={16}
-                          returnKeyType="done"
-                          onSubmitEditing={() => {
-                            const pinValue = Platform.isTV ? tempPinRef.current : pinInput;
-                            if (pinValue.trim()) {
-                              void handleDeletePinVerify();
-                            }
-                          }}
-                          editable={Platform.isTV ? isFocused : true}
-                          {...(Platform.OS === 'ios' &&
-                            Platform.isTV && {
-                              keyboardAppearance: 'dark',
-                            })}
-                        />
-                      </Pressable>
-                    )}
-                  </SpatialNavigationFocusableView>
-
-                  <SpatialNavigationNode orientation="horizontal">
-                    <View style={styles.modalActions}>
-                      <DefaultFocus>
-                        <FocusablePressable
-                          focusKey="delete-pin-cancel"
-                          text="Cancel"
-                          onSelect={handleCancelDeletePinVerify}
-                          style={[styles.modalButton, styles.modalButtonHorizontal]}
-                          focusedStyle={styles.modalButtonFocused}
-                          textStyle={styles.modalButtonText}
-                          focusedTextStyle={styles.modalButtonTextFocused}
-                        />
-                      </DefaultFocus>
-                      <FocusablePressable
-                        focusKey="delete-pin-confirm"
-                        text="Delete"
-                        onSelect={handleDeletePinVerify}
-                        style={[styles.modalButton, styles.modalButtonHorizontal, styles.modalButtonDanger]}
-                        focusedStyle={[styles.modalButtonFocused, styles.modalButtonDangerFocused]}
-                        textStyle={[styles.modalButtonText, styles.modalButtonDangerText]}
-                        focusedTextStyle={[styles.modalButtonTextFocused, styles.modalButtonDangerTextFocused]}
-                      />
-                    </View>
-                  </SpatialNavigationNode>
-                </SpatialNavigationNode>
-              </View>
-            </View>
-          </SpatialNavigationRoot>
-        </Modal>
       </>
     );
   }
@@ -1087,9 +607,6 @@ export default function ProfilesScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Create a profile</Text>
-              <Text style={styles.sectionDescription}>
-                Profiles keep watchlists and history separate for each viewer.
-              </Text>
               <DefaultFocus>
                 <SpatialNavigationFocusableView
                   onSelect={() => {
@@ -1132,9 +649,7 @@ export default function ProfilesScreen() {
               <View style={styles.sectionHeaderRow}>
                 <View style={styles.sectionHeaderContent}>
                   <Text style={styles.sectionTitle}>Existing profiles</Text>
-                  <Text style={styles.sectionDescription}>
-                    Switch to another profile or delete profiles you no longer need.
-                  </Text>
+                  <Text style={styles.sectionDescription}>Switch between profiles or change colors.</Text>
                 </View>
                 <View style={styles.sectionHeaderAction}>
                   <FocusablePressable
@@ -1155,7 +670,6 @@ export default function ProfilesScreen() {
               ) : (
                 <View style={styles.profileList}>
                   {users.map((user) => {
-                    const renameValue = renameValues[user.id] ?? '';
                     const isActive = activeUserId === user.id;
                     const activateKey = `activate:${user.id}` as const;
                     const avatarColor = user.color || undefined;
@@ -1175,18 +689,7 @@ export default function ProfilesScreen() {
                               </View>
                             )}
                           </Pressable>
-                          <TextInput
-                            value={renameValue}
-                            onChangeText={(text) => setRenameValues((current) => ({ ...current, [user.id]: text }))}
-                            onBlur={() => {
-                              if (renameValue !== user.name) {
-                                void handleRenameProfile(user.id, renameValue);
-                              }
-                            }}
-                            placeholder="Profile name"
-                            placeholderTextColor={theme.colors.text.muted}
-                            style={[styles.input, styles.profileInput]}
-                          />
+                          <Text style={styles.profileName}>{user.name}</Text>
                           {isActive && <Text style={styles.activeBadge}>Active</Text>}
                         </View>
 
@@ -1216,18 +719,6 @@ export default function ProfilesScreen() {
                               onSelect={() => handleActivateProfile(user.id)}
                               disabled={isActive || pending === activateKey}
                             />
-                            <FocusablePressable
-                              text={user.hasPin ? 'Remove PIN' : 'Set PIN'}
-                              onSelect={() => {
-                                setSelectedProfile(user);
-                                handleOpenPinModal(user.hasPin);
-                              }}
-                            />
-                            <FocusablePressable
-                              text={pending === `delete:${user.id}` ? 'Deleting…' : 'Delete'}
-                              onSelect={() => handleRequestDelete(user)}
-                              disabled={pending === `delete:${user.id}`}
-                            />
                           </View>
                         </SpatialNavigationNode>
                       </View>
@@ -1235,144 +726,18 @@ export default function ProfilesScreen() {
                   })}
                 </View>
               )}
+
+              <View style={styles.adminInfoNoteMobile}>
+                <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
+                <Text style={styles.adminInfoNoteTextMobile}>
+                  To rename, set PIN, or delete profiles, use the Admin Web UI
+                </Text>
+              </View>
             </View>
           </SpatialNavigationScrollView>
         </View>
       </FixedSafeAreaView>
 
-      {/* Set/Remove PIN Modal (Mobile) */}
-      <Modal visible={isPinModalVisible} transparent={true} animationType="fade" onRequestClose={handleClosePinModal}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.mobileModalContainer}>
-            <Text style={styles.mobileModalTitle}>{isRemovePinMode ? 'Remove PIN' : 'Set PIN'}</Text>
-            <Text style={styles.mobileModalSubtitle}>
-              {isRemovePinMode
-                ? `Enter current PIN to remove protection from ${selectedProfile?.name || 'this profile'}`
-                : `Enter a PIN to protect ${selectedProfile?.name || 'this profile'}`}
-            </Text>
-
-            {pinError && (
-              <View style={styles.pinErrorContainer}>
-                <Text style={styles.pinErrorText}>{pinError}</Text>
-              </View>
-            )}
-
-            <TextInput
-              ref={pinInputRef}
-              value={pinInput}
-              onChangeText={handlePinInputChange}
-              placeholder={isRemovePinMode ? 'Enter current PIN' : 'Enter PIN (min 4 chars)'}
-              placeholderTextColor={theme.colors.text.muted}
-              style={[styles.input, styles.pinModalInput]}
-              secureTextEntry={true}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="numeric"
-              maxLength={16}
-              returnKeyType="done"
-              onSubmitEditing={() => {
-                if (isRemovePinMode ? pinInput.trim() : pinInput.trim().length >= 4) {
-                  void handlePinSubmit();
-                }
-              }}
-            />
-
-            <View style={styles.mobileModalActions}>
-              <Pressable onPress={handleClosePinModal} style={styles.mobileModalButton}>
-                <Text style={styles.mobileModalButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable onPress={handlePinSubmit} style={[styles.mobileModalButton, styles.mobileModalButtonPrimary]}>
-                <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonPrimaryText]}>
-                  {isRemovePinMode ? 'Remove PIN' : 'Set PIN'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Delete Confirmation Modal (Mobile) */}
-      <Modal
-        visible={isDeleteConfirmVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={handleCancelDelete}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.mobileModalContainer}>
-            <Text style={styles.mobileModalTitle}>Delete Profile?</Text>
-            <Text style={styles.mobileModalSubtitle}>
-              Are you sure you want to delete "{pendingDeleteProfile?.name}"? This action cannot be undone.
-            </Text>
-
-            <View style={styles.mobileModalActions}>
-              <Pressable onPress={handleCancelDelete} style={styles.mobileModalButton}>
-                <Text style={styles.mobileModalButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleConfirmDelete}
-                style={[styles.mobileModalButton, styles.mobileModalButtonDanger]}
-              >
-                <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonDangerText]}>Delete</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Delete PIN Verification Modal (Mobile) */}
-      <Modal
-        visible={isDeletePinVerifyMode}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={handleCancelDeletePinVerify}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.mobileModalContainer}>
-            <Text style={styles.mobileModalTitle}>Enter PIN to Delete</Text>
-            <Text style={styles.mobileModalSubtitle}>
-              "{pendingDeleteProfile?.name}" is protected with a PIN. Enter the PIN to delete this profile.
-            </Text>
-
-            {pinError && (
-              <View style={styles.pinErrorContainer}>
-                <Text style={styles.pinErrorText}>{pinError}</Text>
-              </View>
-            )}
-
-            <TextInput
-              value={pinInput}
-              onChangeText={handlePinInputChange}
-              placeholder="Enter PIN"
-              placeholderTextColor={theme.colors.text.muted}
-              style={[styles.input, styles.pinModalInput]}
-              secureTextEntry={true}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="numeric"
-              maxLength={16}
-              returnKeyType="done"
-              onSubmitEditing={() => {
-                if (pinInput.trim()) {
-                  void handleDeletePinVerify();
-                }
-              }}
-            />
-
-            <View style={styles.mobileModalActions}>
-              <Pressable onPress={handleCancelDeletePinVerify} style={styles.mobileModalButton}>
-                <Text style={styles.mobileModalButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleDeletePinVerify}
-                style={[styles.mobileModalButton, styles.mobileModalButtonDanger]}
-              >
-                <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonDangerText]}>Delete</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SpatialNavigationRoot>
   );
 }
@@ -1905,6 +1270,42 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     colorSwatchSelected: {
       borderColor: theme.colors.text.primary,
+    },
+    // Profile name text (mobile)
+    profileName: {
+      ...theme.typography.body.lg,
+      color: theme.colors.text.primary,
+      flex: 1,
+    },
+    // Admin info note styles (TV)
+    adminInfoNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+    },
+    adminInfoNoteText: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.muted,
+    },
+    // Admin info note styles (Mobile)
+    adminInfoNoteMobile: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.lg,
+      paddingTop: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+    },
+    adminInfoNoteTextMobile: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      flex: 1,
     },
   });
 
