@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,9 +39,11 @@ const (
 	adminSessionCookieName         = "strmr_admin_session"
 	adminSessionDuration           = 24 * time.Hour
 	adminSessionDurationRememberMe = 30 * 24 * time.Hour // 30 days
+	adminSessionsDir               = "cache/sessions"
+	adminSessionsFile              = "cache/sessions/admin.json"
 )
 
-// adminSessionStore manages admin session tokens
+// adminSessionStore manages admin session tokens with file persistence
 type adminSessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]time.Time // token -> expiry
@@ -50,9 +53,75 @@ var adminSessions = &adminSessionStore{
 	sessions: make(map[string]time.Time),
 }
 
-func (s *adminSessionStore) create(duration time.Duration) string {
+func init() {
+	adminSessions.load()
+}
+
+// sessionData is the JSON structure for persisted sessions
+type sessionData struct {
+	Token  string    `json:"token"`
+	Expiry time.Time `json:"expiry"`
+}
+
+func (s *adminSessionStore) load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(adminSessionsFile)
+	if err != nil {
+		// File doesn't exist yet, that's fine
+		return
+	}
+
+	var sessions []sessionData
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		log.Printf("[admin-session] failed to parse sessions file: %v", err)
+		return
+	}
+
+	now := time.Now()
+	loaded := 0
+	for _, sess := range sessions {
+		if sess.Expiry.After(now) {
+			s.sessions[sess.Token] = sess.Expiry
+			loaded++
+		}
+	}
+	if loaded > 0 {
+		log.Printf("[admin-session] loaded %d valid sessions from disk", loaded)
+	}
+}
+
+func (s *adminSessionStore) save() {
+	// Ensure directory exists
+	if err := os.MkdirAll(adminSessionsDir, 0700); err != nil {
+		log.Printf("[admin-session] failed to create sessions directory: %v", err)
+		return
+	}
+
+	s.mu.RLock()
+	var sessions []sessionData
+	now := time.Now()
+	for token, expiry := range s.sessions {
+		if expiry.After(now) {
+			sessions = append(sessions, sessionData{Token: token, Expiry: expiry})
+		}
+	}
+	s.mu.RUnlock()
+
+	data, err := json.Marshal(sessions)
+	if err != nil {
+		log.Printf("[admin-session] failed to marshal sessions: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(adminSessionsFile, data, 0600); err != nil {
+		log.Printf("[admin-session] failed to write sessions file: %v", err)
+	}
+}
+
+func (s *adminSessionStore) create(duration time.Duration) string {
+	s.mu.Lock()
 
 	// Generate random token
 	b := make([]byte, 32)
@@ -68,6 +137,9 @@ func (s *adminSessionStore) create(duration time.Duration) string {
 			delete(s.sessions, t)
 		}
 	}
+
+	s.mu.Unlock()
+	s.save()
 
 	return token
 }
@@ -85,8 +157,9 @@ func (s *adminSessionStore) validate(token string) bool {
 
 func (s *adminSessionStore) revoke(token string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.sessions, token)
+	s.mu.Unlock()
+	s.save()
 }
 
 // SettingsGroups defines the order and labels for settings groups
