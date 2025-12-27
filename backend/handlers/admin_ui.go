@@ -1617,12 +1617,13 @@ type TestDebridProviderRequest struct {
 
 // ProfileWithPinStatus represents a profile with its PIN status
 type ProfileWithPinStatus struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Color     string    `json:"color,omitempty"`
-	HasPin    bool      `json:"hasPin"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Color          string    `json:"color,omitempty"`
+	HasPin         bool      `json:"hasPin"`
+	TraktAccountID string    `json:"traktAccountId,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // GetProfiles returns all profiles with their PIN status
@@ -1636,12 +1637,13 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 	profiles := make([]ProfileWithPinStatus, len(users))
 	for i, u := range users {
 		profiles[i] = ProfileWithPinStatus{
-			ID:        u.ID,
-			Name:      u.Name,
-			Color:     u.Color,
-			HasPin:    u.HasPin(),
-			CreatedAt: u.CreatedAt,
-			UpdatedAt: u.UpdatedAt,
+			ID:             u.ID,
+			Name:           u.Name,
+			Color:          u.Color,
+			HasPin:         u.HasPin(),
+			TraktAccountID: u.TraktAccountID,
+			CreatedAt:      u.CreatedAt,
+			UpdatedAt:      u.UpdatedAt,
 		}
 	}
 

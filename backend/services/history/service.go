@@ -33,12 +33,14 @@ type MetadataService interface {
 
 // TraktScrobbler handles syncing watch history to Trakt.
 type TraktScrobbler interface {
-	// ScrobbleMovie syncs a watched movie to Trakt.
-	ScrobbleMovie(tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error
-	// ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode.
-	ScrobbleEpisode(showTVDBID, season, episode int, watchedAt time.Time) error
-	// IsEnabled returns whether scrobbling is currently enabled.
+	// ScrobbleMovie syncs a watched movie to Trakt for a specific user.
+	ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error
+	// ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode for a specific user.
+	ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error
+	// IsEnabled returns whether scrobbling is enabled for any account.
 	IsEnabled() bool
+	// IsEnabledForUser returns whether scrobbling is enabled for a specific user.
+	IsEnabledForUser(userID string) bool
 }
 
 // cachedSeriesMetadata holds cached series details with expiration.
@@ -142,23 +144,23 @@ func (s *Service) SetTraktScrobbler(scrobbler TraktScrobbler) {
 	s.traktScrobbler = scrobbler
 }
 
-// scrobbleWatchedItem syncs a watched item to Trakt if scrobbling is enabled.
+// scrobbleWatchedItem syncs a watched item to Trakt if scrobbling is enabled for the user.
 // This should be called after an item is marked as watched.
 // IMPORTANT: This method must NOT be called while holding s.mu lock, as it spawns
 // goroutines that may need to access the lock. Pass the scrobbler reference directly
 // if calling from a locked context.
-func (s *Service) scrobbleWatchedItem(item models.WatchHistoryItem) {
+func (s *Service) scrobbleWatchedItem(userID string, item models.WatchHistoryItem) {
 	s.mu.RLock()
 	scrobbler := s.traktScrobbler
 	s.mu.RUnlock()
 
-	s.doScrobble(scrobbler, item)
+	s.doScrobble(scrobbler, userID, item)
 }
 
 // doScrobble performs the actual scrobbling. This is separated from scrobbleWatchedItem
 // to allow callers holding the lock to pass the scrobbler directly without re-acquiring the lock.
-func (s *Service) doScrobble(scrobbler TraktScrobbler, item models.WatchHistoryItem) {
-	if scrobbler == nil || !scrobbler.IsEnabled() {
+func (s *Service) doScrobble(scrobbler TraktScrobbler, userID string, item models.WatchHistoryItem) {
+	if scrobbler == nil || !scrobbler.IsEnabledForUser(userID) {
 		return
 	}
 
@@ -187,10 +189,10 @@ func (s *Service) doScrobble(scrobbler TraktScrobbler, item models.WatchHistoryI
 	case "movie":
 		if tmdbID > 0 || tvdbID > 0 || imdbID != "" {
 			go func() {
-				if err := scrobbler.ScrobbleMovie(tmdbID, tvdbID, imdbID, watchedAt); err != nil {
-					log.Printf("[trakt] failed to scrobble movie %s: %v", item.Name, err)
+				if err := scrobbler.ScrobbleMovie(userID, tmdbID, tvdbID, imdbID, watchedAt); err != nil {
+					log.Printf("[trakt] failed to scrobble movie %s for user %s: %v", item.Name, userID, err)
 				} else {
-					log.Printf("[trakt] scrobbled movie: %s", item.Name)
+					log.Printf("[trakt] scrobbled movie: %s for user %s", item.Name, userID)
 				}
 			}()
 		}
@@ -201,10 +203,10 @@ func (s *Service) doScrobble(scrobbler TraktScrobbler, item models.WatchHistoryI
 			episode := item.EpisodeNumber
 			seriesName := item.SeriesName
 			go func() {
-				if err := scrobbler.ScrobbleEpisode(tvdbID, season, episode, watchedAt); err != nil {
-					log.Printf("[trakt] failed to scrobble episode %s S%02dE%02d: %v", seriesName, season, episode, err)
+				if err := scrobbler.ScrobbleEpisode(userID, tvdbID, season, episode, watchedAt); err != nil {
+					log.Printf("[trakt] failed to scrobble episode %s S%02dE%02d for user %s: %v", seriesName, season, episode, userID, err)
 				} else {
-					log.Printf("[trakt] scrobbled episode: %s S%02dE%02d", seriesName, season, episode)
+					log.Printf("[trakt] scrobbled episode: %s S%02dE%02d for user %s", seriesName, season, episode, userID)
 				}
 			}()
 		} else {
@@ -1423,7 +1425,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	// Scrobble to Trakt if now marked as watched
 	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
 	if item.Watched {
-		s.doScrobble(scrobbler, item)
+		s.doScrobble(scrobbler, userID, item)
 	}
 
 	return item, nil
@@ -1522,7 +1524,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	// Scrobble to Trakt if marking as watched
 	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
 	if update.Watched != nil && *update.Watched {
-		s.doScrobble(scrobbler, item)
+		s.doScrobble(scrobbler, userID, item)
 	}
 
 	return item, nil
@@ -1640,7 +1642,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
 	for i, update := range updates {
 		if update.Watched != nil && *update.Watched {
-			s.doScrobble(scrobbler, results[i])
+			s.doScrobble(scrobbler, userID, results[i])
 		}
 	}
 

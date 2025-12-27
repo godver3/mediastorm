@@ -227,15 +227,64 @@ type SubtitleSettings struct {
 	OpenSubtitlesPassword string `json:"openSubtitlesPassword"`
 }
 
+// TraktAccount represents a registered Trakt account with its own credentials and OAuth tokens.
+type TraktAccount struct {
+	ID                string `json:"id"`                          // UUID for this account
+	Name              string `json:"name"`                        // Display name (defaults to Trakt username)
+	ClientID          string `json:"clientId"`                    // Trakt API client ID
+	ClientSecret      string `json:"clientSecret"`                // Trakt API client secret
+	AccessToken       string `json:"accessToken,omitempty"`       // OAuth access token
+	RefreshToken      string `json:"refreshToken,omitempty"`      // OAuth refresh token
+	ExpiresAt         int64  `json:"expiresAt,omitempty"`         // Unix timestamp when access token expires
+	Username          string `json:"username,omitempty"`          // Trakt username (populated after OAuth)
+	ScrobblingEnabled bool   `json:"scrobblingEnabled,omitempty"` // Whether to scrobble for profiles using this account
+}
+
 // TraktSettings defines Trakt integration configuration.
 type TraktSettings struct {
-	ClientID        string `json:"clientId"`
-	ClientSecret    string `json:"clientSecret"`
-	AccessToken     string `json:"accessToken,omitempty"`
-	RefreshToken    string `json:"refreshToken,omitempty"`
-	ExpiresAt       int64  `json:"expiresAt,omitempty"` // Unix timestamp when access token expires
-	Username        string `json:"username,omitempty"`
-	ScrobblingEnabled bool `json:"scrobblingEnabled,omitempty"`
+	// Accounts is the list of registered Trakt accounts
+	Accounts []TraktAccount `json:"accounts,omitempty"`
+
+	// Legacy fields - kept for migration, will be moved to Accounts on load
+	ClientID          string `json:"clientId,omitempty"`
+	ClientSecret      string `json:"clientSecret,omitempty"`
+	AccessToken       string `json:"accessToken,omitempty"`
+	RefreshToken      string `json:"refreshToken,omitempty"`
+	ExpiresAt         int64  `json:"expiresAt,omitempty"`
+	Username          string `json:"username,omitempty"`
+	ScrobblingEnabled bool   `json:"scrobblingEnabled,omitempty"`
+}
+
+// GetAccountByID returns a Trakt account by its ID, or nil if not found.
+func (t *TraktSettings) GetAccountByID(id string) *TraktAccount {
+	for i := range t.Accounts {
+		if t.Accounts[i].ID == id {
+			return &t.Accounts[i]
+		}
+	}
+	return nil
+}
+
+// UpdateAccount updates an existing account or adds it if not found.
+func (t *TraktSettings) UpdateAccount(account TraktAccount) {
+	for i := range t.Accounts {
+		if t.Accounts[i].ID == account.ID {
+			t.Accounts[i] = account
+			return
+		}
+	}
+	t.Accounts = append(t.Accounts, account)
+}
+
+// RemoveAccount removes an account by ID.
+func (t *TraktSettings) RemoveAccount(id string) bool {
+	for i := range t.Accounts {
+		if t.Accounts[i].ID == id {
+			t.Accounts = append(t.Accounts[:i], t.Accounts[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // PlexSettings defines Plex integration configuration.
@@ -576,6 +625,35 @@ func (m *Manager) Load() (Settings, error) {
 
 	// Legacy AltMount configuration is ignored going forward.
 	s.AltMount = nil
+
+	// Migrate legacy Trakt settings to new Accounts array
+	if s.Trakt.ClientID != "" && len(s.Trakt.Accounts) == 0 {
+		// Generate a deterministic ID for the migrated account
+		migratedAccount := TraktAccount{
+			ID:                "migrated-default",
+			Name:              s.Trakt.Username,
+			ClientID:          s.Trakt.ClientID,
+			ClientSecret:      s.Trakt.ClientSecret,
+			AccessToken:       s.Trakt.AccessToken,
+			RefreshToken:      s.Trakt.RefreshToken,
+			ExpiresAt:         s.Trakt.ExpiresAt,
+			Username:          s.Trakt.Username,
+			ScrobblingEnabled: s.Trakt.ScrobblingEnabled,
+		}
+		if migratedAccount.Name == "" {
+			migratedAccount.Name = "Default Trakt Account"
+		}
+		s.Trakt.Accounts = []TraktAccount{migratedAccount}
+		// Clear legacy fields after migration
+		s.Trakt.ClientID = ""
+		s.Trakt.ClientSecret = ""
+		s.Trakt.AccessToken = ""
+		s.Trakt.RefreshToken = ""
+		s.Trakt.ExpiresAt = 0
+		s.Trakt.Username = ""
+		s.Trakt.ScrobblingEnabled = false
+	}
+
 	return s, nil
 }
 

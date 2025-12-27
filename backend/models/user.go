@@ -14,12 +14,13 @@ const (
 
 // User models a NovaStream profile capable of holding watchlist data.
 type User struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Color     string    `json:"color,omitempty"`
-	PinHash   string    `json:"-"` // bcrypt hash of PIN, excluded from JSON (security)
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Color          string    `json:"color,omitempty"`
+	PinHash        string    `json:"-"`                        // bcrypt hash of PIN, excluded from JSON (security)
+	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // HasPin returns true if the user has a PIN set.
@@ -32,9 +33,11 @@ func (u User) MarshalJSON() ([]byte, error) {
 	type UserAlias User // prevent recursion
 	return json.Marshal(&struct {
 		UserAlias
-		HasPin bool `json:"hasPin"`
+		HasPin         bool   `json:"hasPin"`
+		TraktAccountID string `json:"traktAccountId,omitempty"`
 	}{
-		UserAlias: UserAlias(u),
-		HasPin:    u.HasPin(),
+		UserAlias:      UserAlias(u),
+		HasPin:         u.HasPin(),
+		TraktAccountID: u.TraktAccountID,
 	})
 }

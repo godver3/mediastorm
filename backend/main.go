@@ -287,8 +287,9 @@ func main() {
 	historyService.SetMetadataService(metadataService)
 
 	// Wire up Trakt scrobbler for syncing watch history
-	traktClient := trakt.NewClient(settings.Trakt.ClientID, settings.Trakt.ClientSecret)
+	traktClient := trakt.NewClient("", "") // Credentials are per-account now
 	traktScrobbler := trakt.NewScrobbler(traktClient, cfgManager)
+	traktScrobbler.SetUserService(userService) // For per-profile Trakt account lookup
 	historyService.SetTraktScrobbler(traktScrobbler)
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
@@ -373,6 +374,10 @@ func main() {
 		getPIN,
 	)
 
+	// Register Trakt accounts API routes
+	traktAccountsHandler := handlers.NewTraktAccountsHandler(cfgManager, traktClient, userService)
+	api.RegisterTraktRoutes(r, traktAccountsHandler, getPIN)
+
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, getPIN)
 	adminUIHandler.SetMetadataService(metadataService)
@@ -440,6 +445,22 @@ func main() {
 	r.HandleFunc("/admin/api/trakt/history", adminUIHandler.RequireAuth(adminUIHandler.TraktGetHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/trakt/import/watchlist", adminUIHandler.RequireAuth(adminUIHandler.TraktImportWatchlist)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/import/history", adminUIHandler.RequireAuth(adminUIHandler.TraktImportHistory)).Methods(http.MethodPost)
+
+	// Trakt multi-account management (admin routes)
+	r.HandleFunc("/admin/api/trakt/accounts", adminUIHandler.RequireAuth(traktAccountsHandler.ListAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/accounts", adminUIHandler.RequireAuth(traktAccountsHandler.CreateAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}", adminUIHandler.RequireAuth(traktAccountsHandler.GetAccount)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}", adminUIHandler.RequireAuth(traktAccountsHandler.UpdateAccount)).Methods(http.MethodPatch)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}", adminUIHandler.RequireAuth(traktAccountsHandler.DeleteAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/auth/start", adminUIHandler.RequireAuth(traktAccountsHandler.StartAuth)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/auth/check/{deviceCode}", adminUIHandler.RequireAuth(traktAccountsHandler.CheckAuth)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/disconnect", adminUIHandler.RequireAuth(traktAccountsHandler.Disconnect)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/scrobbling", adminUIHandler.RequireAuth(traktAccountsHandler.SetScrobbling)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/history", adminUIHandler.RequireAuth(traktAccountsHandler.GetHistory)).Methods(http.MethodGet)
+
+	// Profile Trakt linking (admin routes)
+	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.SetTraktAccount)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.ClearTraktAccount)).Methods(http.MethodDelete)
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 

@@ -23,6 +23,8 @@ type usersService interface {
 	ClearPin(id string) (models.User, error)
 	VerifyPin(id, pin string) error
 	HasPin(id string) bool
+	SetTraktAccountID(id, traktAccountID string) (models.User, error)
+	ClearTraktAccountID(id string) (models.User, error)
 }
 
 var _ usersService = (*users.Service)(nil)
@@ -253,4 +255,60 @@ func (h *UsersHandler) VerifyPin(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"valid": true})
+}
+
+// SetTraktAccount associates a Trakt account with a user profile.
+func (h *UsersHandler) SetTraktAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		TraktAccountID string `json:"traktAccountId"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetTraktAccountID(id, body.TraktAccountID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ClearTraktAccount removes the Trakt account association from a user profile.
+func (h *UsersHandler) ClearTraktAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.ClearTraktAccountID(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }

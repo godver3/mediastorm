@@ -432,8 +432,38 @@ export interface UserProfile {
   name: string;
   color?: string;
   hasPin?: boolean; // Whether this profile has a PIN set (pinHash not exposed to frontend)
+  traktAccountId?: string; // ID of linked Trakt account
   createdAt: string;
   updatedAt: string;
+}
+
+// Trakt account types
+export interface TraktAccount {
+  id: string;
+  name: string;
+  username?: string; // Trakt username (populated after OAuth)
+  connected: boolean; // Whether OAuth tokens are present
+  scrobblingEnabled: boolean;
+  expiresAt?: number; // Token expiry timestamp
+  linkedProfiles?: string[]; // Profile IDs using this account
+}
+
+export interface TraktAccountsResponse {
+  accounts: TraktAccount[];
+}
+
+export interface TraktDeviceCodeResponse {
+  deviceCode: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export interface TraktAuthCheckResponse {
+  authenticated: boolean;
+  pending?: boolean;
+  username?: string;
 }
 
 // Per-user settings types
@@ -1295,6 +1325,93 @@ class ApiService {
     await this.request<void>(`/users/${safeId}`, {
       method: 'DELETE',
     });
+  }
+
+  // User Trakt account association
+  async setUserTraktAccount(userId: string, traktAccountId: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/trakt`, {
+      method: 'PUT',
+      body: JSON.stringify({ traktAccountId }),
+    });
+  }
+
+  async clearUserTraktAccount(userId: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/trakt`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Trakt accounts management
+  async getTraktAccounts(): Promise<TraktAccount[]> {
+    const response = await this.request<TraktAccountsResponse>('/trakt/accounts');
+    return response.accounts;
+  }
+
+  async createTraktAccount(
+    name: string,
+    clientId: string,
+    clientSecret: string,
+  ): Promise<TraktAccount> {
+    const response = await this.request<{ success: boolean; account: TraktAccount }>(
+      '/trakt/accounts',
+      {
+        method: 'POST',
+        body: JSON.stringify({ name, clientId, clientSecret }),
+      },
+    );
+    return response.account;
+  }
+
+  async updateTraktAccount(
+    accountId: string,
+    updates: { name?: string; clientId?: string; clientSecret?: string; scrobblingEnabled?: boolean },
+  ): Promise<void> {
+    await this.request<{ success: boolean }>(`/trakt/accounts/${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async deleteTraktAccount(accountId: string): Promise<void> {
+    await this.request<{ success: boolean }>(`/trakt/accounts/${encodeURIComponent(accountId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async startTraktAuth(accountId: string): Promise<TraktDeviceCodeResponse> {
+    return this.request<TraktDeviceCodeResponse>(
+      `/trakt/accounts/${encodeURIComponent(accountId)}/auth/start`,
+      {
+        method: 'POST',
+      },
+    );
+  }
+
+  async checkTraktAuth(accountId: string, deviceCode: string): Promise<TraktAuthCheckResponse> {
+    return this.request<TraktAuthCheckResponse>(
+      `/trakt/accounts/${encodeURIComponent(accountId)}/auth/check/${encodeURIComponent(deviceCode)}`,
+    );
+  }
+
+  async disconnectTraktAccount(accountId: string): Promise<void> {
+    await this.request<{ success: boolean }>(
+      `/trakt/accounts/${encodeURIComponent(accountId)}/disconnect`,
+      {
+        method: 'POST',
+      },
+    );
+  }
+
+  async setTraktScrobbling(accountId: string, enabled: boolean): Promise<void> {
+    await this.request<{ success: boolean; scrobblingEnabled: boolean }>(
+      `/trakt/accounts/${encodeURIComponent(accountId)}/scrobbling`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      },
+    );
   }
 
   async getWatchlist(userId: string): Promise<WatchlistItem[]> {
