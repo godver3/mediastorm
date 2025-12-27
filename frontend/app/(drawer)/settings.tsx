@@ -825,11 +825,11 @@ function SettingsScreen() {
     () => [
       { key: 'connection', label: 'Backend' },
       // { key: 'content', label: 'Content Sources' },  // Hidden for now
-      { key: 'playback', label: 'Playback' },
-      { key: 'home', label: 'Home Screen' },
-      { key: 'filtering', label: 'Filtering' },
+      // { key: 'playback', label: 'Playback' },  // Hidden for now
+      // { key: 'home', label: 'Home Screen' },  // Hidden for now
+      // { key: 'filtering', label: 'Filtering' },  // Hidden for now
       // { key: 'advanced', label: 'Advanced' },  // Hidden for now
-      { key: 'live', label: 'Live TV' },
+      // { key: 'live', label: 'Live TV' },  // Hidden for now
     ],
     [],
   );
@@ -2034,8 +2034,13 @@ function SettingsScreen() {
         type: 'header',
         id: 'connection-header',
         title: 'Backend Connection',
-        description:
-          'Enter the backend URL and the 6-digit PIN shown when the backend starts. Make sure to append /api to the URL.',
+        description: 'Enter the backend URL and the 6-digit PIN shown when the backend starts. Make sure to append /api to the URL.',
+      },
+      {
+        type: 'header',
+        id: 'connection-admin-note',
+        title: '',
+        description: `All other settings can be configured via the web UI at ${backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'} using your API PIN to login.`,
       },
       {
         type: 'text-field',
@@ -2083,7 +2088,7 @@ function SettingsScreen() {
         disabled: isSubmittingLogs,
       },
     ],
-    [backendUrlInput, backendApiKeyInput, isReady, busy, isSubmittingLogs],
+    [backendUrl, backendUrlInput, backendApiKeyInput, isReady, busy, isSubmittingLogs],
   );
 
   const playbackGridData = useMemo<SettingsGridItem[]>(() => {
@@ -2413,10 +2418,11 @@ function SettingsScreen() {
           ];
           const isTopmost = topmostHeaders.includes(item.id);
 
+          const isAdminNote = item.id === 'connection-admin-note';
           const headerContent = (
-            <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
-              <Text style={styles.tvGridHeaderTitle}>{item.title}</Text>
-              {item.description && <Text style={styles.tvGridHeaderDescription}>{item.description}</Text>}
+            <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing, isAdminNote && { paddingTop: 0, paddingBottom: 8 }]}>
+              {item.title ? <Text style={[styles.tvGridHeaderTitle, { marginBottom: 8 }]}>{item.title}</Text> : null}
+              {item.description && <Text style={[styles.tvGridHeaderDescription, isAdminNote && { marginBottom: 0 }]}>{item.description}</Text>}
             </View>
           );
 
@@ -2829,6 +2835,7 @@ function SettingsScreen() {
               {/* Header Section - at top of screen */}
               <View style={styles.tvHeader}>
                 <Text style={styles.tvScreenTitle}>Settings</Text>
+                {/* Tab bar hidden - only showing Backend content
                 <SpatialNavigationNode orientation="horizontal">
                   <View style={styles.tvTabBar}>
                     {tabs.map((tab) => {
@@ -2851,6 +2858,7 @@ function SettingsScreen() {
                     })}
                   </View>
                 </SpatialNavigationNode>
+                */}
               </View>
 
               {/* Grid Content - with edge buffer */}
@@ -2881,7 +2889,7 @@ function SettingsScreen() {
                 automaticallyAdjustContentInsets={false}>
                 <Text style={styles.screenTitle}>Settings</Text>
 
-                {/* Tab Bar */}
+                {/* Tab bar hidden - only showing Backend content
                 <SpatialNavigationNode orientation="horizontal">
                   <View style={styles.tabBar}>
                     {tabs.map((tab) => {
@@ -2904,6 +2912,7 @@ function SettingsScreen() {
                     })}
                   </View>
                 </SpatialNavigationNode>
+                */}
 
                 {/* Mobile Tab Content */}
                 {/* Connection Tab */}
@@ -2913,6 +2922,11 @@ function SettingsScreen() {
                     <Text style={styles.sectionDescription}>
                       Enter the backend URL and the 6-digit PIN shown when the backend starts. Make sure to append /api
                       to the URL.
+                    </Text>
+                    <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
+                      All other settings can be configured via the web UI at{' '}
+                      {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'} using your API
+                      PIN to login.
                     </Text>
                     <TextInputField
                       label="Backend URL"
@@ -3974,17 +3988,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       justifyContent: 'space-between',
       alignItems: 'center',
       paddingVertical: theme.spacing.xs * atvScale,
+      paddingHorizontal: theme.spacing.lg * atvScale,
     },
     versionInfoLabel: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.secondary,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize }),
+      ...theme.typography.body.lg,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     versionInfoValue: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.primary,
+      ...theme.typography.body.lg,
+      color: theme.colors.text.secondary,
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize }),
+      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     loadingRow: {
       flexDirection: 'row',
