@@ -912,8 +912,10 @@ export default function PlayerScreen() {
       }
 
       // Send keepalive ping with current playback time for rate limiting
+      // Also send bufferStart (using currentTime as approximation since players buffer from current position forward)
+      // Backend uses this to avoid deleting segments the player still needs
       try {
-        await apiService.keepaliveHlsSession(sessionId, currentTimeRef.current);
+        await apiService.keepaliveHlsSession(sessionId, currentTimeRef.current, currentTimeRef.current);
       } catch (error) {
         console.warn('[player] keepalive ping failed:', error);
       }
@@ -2762,11 +2764,20 @@ export default function PlayerScreen() {
       console.error('🚨 PlayerScreen - Video Error:', error);
       console.error('🚨 PlayerScreen - Error details:', JSON.stringify(error, null, 2));
 
+      // Suppress "resource unavailable" errors during HLS session seek transitions
+      // When seeking outside the current HLS session, we pause playback and create a new session.
+      // During the debounce window, iOS AVPlayer may throw NSURLErrorResourceUnavailable (-1008)
+      // because segments for the target position don't exist yet. This is expected and should be ignored.
+      const errorCode = error?.error?.code;
+      const errorDomain = error?.error?.domain;
+      if (pausedForSeekRef.current && errorDomain === 'NSURLErrorDomain' && errorCode === -1008) {
+        console.log('[player] suppressing resource unavailable error during HLS seek transition');
+        return;
+      }
+
       // Check if this is a CoreMedia error that might be caused by DV fallback
       // Error -19601 (kCMSampleBufferError_RequiredParameterMissing) occurs when
       // the player has stale init segment data after server-side DV fallback
-      const errorCode = error?.error?.code;
-      const errorDomain = error?.error?.domain;
       const isCoreMediaError = errorDomain === 'CoreMediaErrorDomain' && errorCode === -19601;
 
       // Only retry for HLS streams, CoreMedia errors, and if we haven't retried too much
