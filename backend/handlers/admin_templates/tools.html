@@ -8,165 +8,680 @@
     <p>Import and manage your media library</p>
 </div>
 
-<!-- Plex Watchlist Import Card -->
-<div class="card">
-    <div class="card-header">
-        <h2>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
+<!-- INTEGRATIONS CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">Integrations</div>
+
+    <!-- Trakt Account Section -->
+    <div class="section" id="traktAccountSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M8 12l2 2 4-4"/>
+                </svg>
+                Trakt Account
+            </div>
+            <span id="traktStatusBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
             </svg>
-            Import Plex Watchlist
-        </h2>
-    </div>
-    <div class="card-body">
-        <!-- Step 1: Login -->
-        <div id="loginSection">
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                Import your Plex watchlist to strmr. Click the button below to authenticate with Plex.
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Connect your Trakt account to import your watchlist and watch history.
+                You'll need to create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get your Client ID and Secret.
             </p>
-            <button class="btn btn-primary" onclick="loginWithPlex()" id="loginBtn">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-                    <polyline points="10 17 15 12 10 7"/>
-                    <line x1="15" y1="12" x2="3" y2="12"/>
-                </svg>
-                Login with Plex
-            </button>
-        </div>
 
-        <!-- Waiting for auth spinner -->
-        <div id="waitingSection" style="display: none;">
-            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius);">
-                <div class="spinner"></div>
-                <div>
-                    <div style="font-weight: 500;">Waiting for authorization...</div>
-                    <div style="color: var(--text-muted); font-size: 0.875rem;">Complete the login in the Plex window that opened</div>
+            <!-- Credentials Form -->
+            <div id="traktCredentialsForm">
+                <div class="form-group">
+                    <label class="form-label">Client ID</label>
+                    <input type="text" class="form-input" id="traktClientId" placeholder="Enter your Trakt Client ID">
                 </div>
-            </div>
-        </div>
-
-        <!-- Step 2: Authenticated -->
-        <div id="authenticatedSection" style="display: none;">
-            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success); border-radius: var(--radius); margin-bottom: 1.5rem;">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                    <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-                <div>
-                    <div style="font-weight: 500; color: var(--success);">Connected to Plex</div>
-                    <div style="color: var(--text-muted); font-size: 0.875rem;" id="plexUsername"></div>
+                <div class="form-group">
+                    <label class="form-label">Client Secret</label>
+                    <input type="password" class="form-input" id="traktClientSecret" placeholder="Enter your Trakt Client Secret">
                 </div>
-                <button class="btn btn-secondary" style="margin-left: auto;" onclick="logout()">Disconnect</button>
-            </div>
-
-            <!-- Profile Selection -->
-            <div style="margin-bottom: 1.5rem;">
-                <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Import to Profile</label>
-                <select id="profileSelect" class="form-select" style="max-width: 300px;">
-                    {{range .Users}}
-                    <option value="{{.ID}}">{{.Name}}</option>
-                    {{end}}
-                </select>
-            </div>
-
-            <!-- Fetch Watchlist Button -->
-            <button class="btn btn-primary" onclick="fetchWatchlist()" id="fetchBtn">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="1 4 1 10 7 10"/>
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                </svg>
-                Fetch Watchlist
-            </button>
-        </div>
-
-        <!-- Loading watchlist spinner -->
-        <div id="loadingWatchlist" style="display: none;">
-            <div style="display: flex; align-items: center; gap: 1rem; padding: 2rem; justify-content: center;">
-                <div class="spinner"></div>
-                <div style="color: var(--text-muted);">Loading watchlist...</div>
-            </div>
-        </div>
-
-        <!-- Step 3: Preview Table -->
-        <div id="previewSection" style="display: none; margin-top: 1.5rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                <div>
-                    <span style="font-weight: 500;" id="watchlistCount">0 items</span>
-                    <span style="color: var(--text-muted);"> in your Plex watchlist</span>
-                </div>
-                <div style="display: flex; gap: 0.5rem;">
-                    <button class="btn btn-secondary" onclick="selectAll(true)">Select All</button>
-                    <button class="btn btn-secondary" onclick="selectAll(false)">Deselect All</button>
+                <div class="btn-group" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="saveTraktCredentials()">Save Credentials</button>
+                    <button class="btn btn-primary" onclick="connectTrakt()" id="traktConnectBtn" disabled>Connect Account</button>
                 </div>
             </div>
 
-            <div style="overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius);">
-                <table class="data-table" style="width: 100%;">
-                    <thead>
-                        <tr>
-                            <th style="width: 40px;">
-                                <input type="checkbox" id="selectAllCheckbox" onchange="selectAll(this.checked)" checked>
-                            </th>
-                            <th style="width: 50px;"></th>
-                            <th>Title</th>
-                            <th style="width: 80px;">Year</th>
-                            <th style="width: 100px;">Type</th>
-                            <th style="width: 100px;">IDs</th>
-                        </tr>
-                    </thead>
-                    <tbody id="watchlistTableBody">
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Import Button -->
-            <div style="margin-top: 1.5rem; display: flex; align-items: center; gap: 1rem;">
-                <button class="btn btn-primary" onclick="importSelected()" id="importBtn">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
-                    Import <span id="selectedCount">0</span> Selected Items
-                </button>
-                <div id="importStatus" style="color: var(--text-muted);"></div>
-            </div>
-        </div>
-
-        <!-- Import Progress -->
-        <div id="importingSection" style="display: none; margin-top: 1.5rem;">
-            <div style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem; background: var(--bg-tertiary); border-radius: var(--radius);">
-                <div class="spinner"></div>
-                <div>
-                    <div style="font-weight: 500;">Importing items...</div>
-                    <div style="color: var(--text-muted); font-size: 0.875rem;" id="importProgress">0 of 0</div>
+            <!-- Waiting for auth -->
+            <div id="traktAuthWaiting" style="display: none;">
+                <div class="status-box">
+                    <div class="spinner"></div>
+                    <div>
+                        <div class="status-title">Waiting for authorization...</div>
+                        <div class="text-muted">
+                            Go to <a id="traktAuthUrl" href="#" target="_blank">trakt.tv/activate</a> and enter code:
+                            <strong id="traktUserCode" style="font-family: monospace; font-size: 1.25rem;"></strong>
+                        </div>
+                    </div>
                 </div>
+                <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="cancelTraktAuth()">Cancel</button>
             </div>
-        </div>
 
-        <!-- Import Complete -->
-        <div id="completeSection" style="display: none; margin-top: 1.5rem;">
-            <div style="padding: 1.5rem; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success); border-radius: var(--radius);">
-                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+            <!-- Connected State -->
+            <div id="traktConnectedSection" style="display: none;">
+                <div class="connected-status">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                         <polyline points="22 4 12 14.01 9 11.01"/>
                     </svg>
-                    <span style="font-weight: 500; color: var(--success);">Import Complete</span>
+                    <div>
+                        <div class="status-title" style="color: var(--success);">Connected to Trakt</div>
+                        <div class="text-muted" id="traktConnectedUsername"></div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="disconnectTrakt()">Disconnect</button>
                 </div>
-                <div id="importSummary" style="color: var(--text-secondary);"></div>
+
+                <!-- Scrobbling Toggle -->
+                <div class="toggle-option" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <div class="toggle-label">
+                        <div class="toggle-title">Scrobbling</div>
+                        <div class="toggle-description text-muted">Automatically sync watch progress to Trakt</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="traktScrobblingToggle" onchange="toggleTraktScrobbling(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="todo-badge" style="margin-left: 0.5rem;">Coming Soon</span>
+                </div>
             </div>
-            <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetImport()">Import More</button>
+        </div>
+    </div>
+
+    <!-- Plex Account Section -->
+    <div class="section" id="plexAccountSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Plex Account
+            </div>
+            <span id="plexStatusBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Connect your Plex account to import your watchlist.
+            </p>
+
+            <!-- Not Connected State -->
+            <div id="plexNotConnected">
+                <button class="btn btn-primary" onclick="loginWithPlex()" id="plexLoginBtn">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                        <polyline points="10 17 15 12 10 7"/>
+                        <line x1="15" y1="12" x2="3" y2="12"/>
+                    </svg>
+                    Login with Plex
+                </button>
+            </div>
+
+            <!-- Waiting for auth -->
+            <div id="plexAuthWaiting" style="display: none;">
+                <div class="status-box">
+                    <div class="spinner"></div>
+                    <div>
+                        <div class="status-title">Waiting for authorization...</div>
+                        <div class="text-muted">Complete the login in the Plex window</div>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="cancelPlexAuth()">Cancel</button>
+            </div>
+
+            <!-- Connected State -->
+            <div id="plexConnectedSection" style="display: none;">
+                <div class="connected-status">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                    <div>
+                        <div class="status-title" style="color: var(--success);">Connected to Plex</div>
+                        <div class="text-muted" id="plexConnectedUsername"></div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="disconnectPlex()">Disconnect</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- IMPORT CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">Import</div>
+
+    <!-- Watchlist Section -->
+    <div class="section open" id="watchlistSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                </svg>
+                Watchlist
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <!-- Plex Watchlist Import -->
+            <div class="import-card">
+                <div class="import-card-header">
+                    <h3>Plex Watchlist</h3>
+                </div>
+                <div class="import-card-body" id="plexWatchlistCard">
+                    <!-- Not Connected -->
+                    <div id="plexWatchlistNotConnected">
+                        <p class="text-muted">Connect your Plex account in the Integrations section above to import your watchlist.</p>
+                    </div>
+
+                    <!-- Connected - Ready to import -->
+                    <div id="plexWatchlistConnected" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="plexProfileSelect" class="form-select" style="max-width: 300px;">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+
+                        <!-- Action buttons - swap between Load and Import -->
+                        <div id="plexFetchBtnWrapper">
+                            <button class="btn btn-primary" onclick="fetchPlexWatchlist()" id="plexFetchBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="1 4 1 10 7 10"/>
+                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                </svg>
+                                Load Watchlist from Plex
+                            </button>
+                        </div>
+                        <div id="plexImportBtnWrapper" style="display: none;">
+                            <div class="import-action-bar">
+                                <button class="btn btn-primary" onclick="importPlexWatchlist()" id="plexImportBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    Import <span id="plexSelectedCount">0</span> Selected
+                                </button>
+                                <button class="btn btn-secondary" onclick="resetPlexWatchlistLoad()">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="1 4 1 10 7 10"/>
+                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                    </svg>
+                                    Reload
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading -->
+                    <div id="plexLoadingSection" style="display: none;">
+                        <div class="loading-box">
+                            <div class="spinner"></div>
+                            <span>Loading watchlist...</span>
+                        </div>
+                    </div>
+
+                    <!-- Preview Table -->
+                    <div id="plexPreviewSection" style="display: none; margin-top: 1rem;">
+                        <div class="preview-header">
+                            <div>
+                                <span class="preview-count" id="plexWatchlistCount">0 items</span>
+                                <span class="text-muted"> in your Plex watchlist</span>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary btn-sm" onclick="plexSelectAll(true)">Select All</button>
+                                <button class="btn btn-secondary btn-sm" onclick="plexSelectAll(false)">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="plexSelectAllCheckbox" onchange="plexSelectAll(this.checked)" checked></th>
+                                        <th style="width: 50px;"></th>
+                                        <th>Title</th>
+                                        <th style="width: 80px;">Year</th>
+                                        <th style="width: 100px;">Type</th>
+                                        <th style="width: 100px;">IDs</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="plexWatchlistTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Import Progress -->
+                    <div id="plexImportingSection" style="display: none; margin-top: 1rem;">
+                        <div class="status-box">
+                            <div class="spinner"></div>
+                            <div>
+                                <div class="status-title">Importing items...</div>
+                                <div class="text-muted" id="plexImportProgress">0 of 0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Import Complete -->
+                    <div id="plexCompleteSection" style="display: none; margin-top: 1rem;">
+                        <div class="success-box">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                <polyline points="22 4 12 14.01 9 11.01"/>
+                            </svg>
+                            <div>
+                                <div class="status-title" style="color: var(--success);">Import Complete</div>
+                                <div id="plexImportSummary" class="text-muted"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetPlexImport()">Import More</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trakt Watchlist Import (TODO) -->
+            <div class="import-card todo-card">
+                <div class="import-card-header">
+                    <h3>Trakt Watchlist</h3>
+                    <span class="todo-badge">Coming Soon</span>
+                </div>
+                <div class="import-card-body">
+                    <p class="text-muted">Import your Trakt watchlist. Connect your Trakt account in the Integrations section below first.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Watch History Section -->
+    <div class="section" id="historySection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Watch History
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <!-- Plex Watch History (TODO) -->
+            <div class="import-card todo-card">
+                <div class="import-card-header">
+                    <h3>Plex Watch History</h3>
+                    <span class="todo-badge">Coming Soon</span>
+                </div>
+                <div class="import-card-body">
+                    <p class="text-muted">Import your Plex watch history to strmr.</p>
+                </div>
+            </div>
+
+            <!-- Trakt Watch History Import -->
+            <div class="import-card">
+                <div class="import-card-header">
+                    <h3>Trakt Watch History</h3>
+                </div>
+                <div class="import-card-body" id="traktHistoryCard">
+                    <!-- Not Connected -->
+                    <div id="traktHistoryNotConnected">
+                        <p class="text-muted">Connect your Trakt account in the Integrations section above to import your watch history.</p>
+                    </div>
+
+                    <!-- Connected - Ready to import -->
+                    <div id="traktHistoryConnected" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="traktHistoryProfileSelect" class="form-select" style="max-width: 300px;">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+
+                        <!-- Action buttons - swap between Load and Import -->
+                        <div id="traktHistoryFetchBtnWrapper">
+                            <button class="btn btn-primary" onclick="fetchTraktHistory()" id="traktHistoryFetchBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="1 4 1 10 7 10"/>
+                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                </svg>
+                                Load History from Trakt
+                            </button>
+                        </div>
+                        <div id="traktHistoryImportBtnWrapper" style="display: none;">
+                            <div class="import-action-bar">
+                                <button class="btn btn-primary" onclick="importTraktHistory()" id="traktHistoryImportBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    Import <span id="traktHistorySelectedCount">0</span> Selected
+                                </button>
+                                <button class="btn btn-secondary" onclick="resetTraktHistoryLoad()">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="1 4 1 10 7 10"/>
+                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                    </svg>
+                                    Reload
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading -->
+                    <div id="traktHistoryLoading" style="display: none;">
+                        <div class="loading-box">
+                            <div class="spinner"></div>
+                            <span>Loading watch history...</span>
+                        </div>
+                    </div>
+
+                    <!-- Preview Table -->
+                    <div id="traktHistoryPreview" style="display: none; margin-top: 1rem;">
+                        <div class="preview-header">
+                            <div>
+                                <span class="preview-count" id="traktHistoryCount">0 items</span>
+                                <span class="text-muted"> in your Trakt history</span>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary btn-sm" onclick="traktHistorySelectAll(true)">Select All</button>
+                                <button class="btn btn-secondary btn-sm" onclick="traktHistorySelectAll(false)">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="traktHistorySelectAllCheckbox" onchange="traktHistorySelectAll(this.checked)" checked></th>
+                                        <th>Title</th>
+                                        <th style="width: 80px;">Year</th>
+                                        <th style="width: 100px;">Type</th>
+                                        <th style="width: 150px;">Watched</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="traktHistoryTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Import Progress -->
+                    <div id="traktHistoryImporting" style="display: none; margin-top: 1rem;">
+                        <div class="status-box">
+                            <div class="spinner"></div>
+                            <div>
+                                <div class="status-title">Importing items...</div>
+                                <div class="text-muted" id="traktHistoryImportProgress">0 of 0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Import Complete -->
+                    <div id="traktHistoryComplete" style="display: none; margin-top: 1rem;">
+                        <div class="success-box">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                <polyline points="22 4 12 14.01 9 11.01"/>
+                            </svg>
+                            <div>
+                                <div class="status-title" style="color: var(--success);">Import Complete</div>
+                                <div id="traktHistoryImportSummary" class="text-muted"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetTraktHistoryImport()">Import More</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
 <style>
+    /* Link styling - consistent light grey with underline */
+    a {
+        color: #9ca3af;
+        text-decoration: underline;
+    }
+    a:visited {
+        color: #9ca3af;
+    }
+    a:hover {
+        color: #d1d5db;
+    }
+    .settings-group {
+        margin-bottom: 2rem;
+    }
+    .group-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+        padding-left: 0.25rem;
+    }
+    .section {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        margin-bottom: 0.5rem;
+        overflow: hidden;
+    }
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem 1.25rem;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .section-header:hover {
+        background: var(--bg-hover);
+    }
+    .section-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 500;
+        flex: 1;
+    }
+    .section-toggle {
+        transition: transform 0.2s;
+    }
+    .section.open .section-toggle {
+        transform: rotate(180deg);
+    }
+    .section-content {
+        display: none;
+        padding: 0 1.25rem 1.25rem;
+    }
+    .section.open .section-content {
+        display: block;
+    }
+    .import-card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        margin-bottom: 1rem;
+        overflow: hidden;
+    }
+    .import-card:last-child {
+        margin-bottom: 0;
+    }
+    .import-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-secondary);
+    }
+    .import-card-header h3 {
+        margin: 0;
+        font-size: 0.9375rem;
+        font-weight: 500;
+    }
+    .import-card-body {
+        padding: 1rem;
+    }
+    .todo-card {
+        opacity: 0.7;
+    }
+    .todo-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        background: var(--warning);
+        color: var(--bg-primary);
+        border-radius: 4px;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+    }
+    .status-badge.connected {
+        background: rgba(34, 197, 94, 0.15);
+        color: var(--success);
+    }
+    .status-badge.disconnected {
+        background: var(--bg-tertiary);
+        color: var(--text-muted);
+    }
+    /* Toggle switch styling */
+    .toggle-option {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .toggle-label {
+        flex: 1;
+    }
+    .toggle-title {
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+    }
+    .toggle-description {
+        font-size: 0.875rem;
+    }
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 44px;
+        height: 24px;
+    }
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: var(--bg-tertiary);
+        transition: 0.3s;
+        border-radius: 24px;
+    }
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.3s;
+        border-radius: 50%;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: var(--accent);
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+    }
+    .toggle-switch input:disabled + .toggle-slider {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .status-box {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--bg-secondary);
+        border-radius: var(--radius);
+    }
+    .status-title {
+        font-weight: 500;
+    }
+    .loading-box {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        padding: 2rem;
+        color: var(--text-muted);
+    }
+    .success-box {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem;
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid var(--success);
+        border-radius: var(--radius);
+    }
+    .connected-status {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem;
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid var(--success);
+        border-radius: var(--radius);
+    }
+    .connected-status .btn {
+        margin-left: auto;
+    }
+    .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+    }
+    .preview-count {
+        font-weight: 500;
+    }
+    .table-container {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
     .data-table {
-        border-collapse: collapse;
         width: 100%;
+        border-collapse: collapse;
     }
     .data-table th,
     .data-table td {
@@ -175,7 +690,7 @@
         border-bottom: 1px solid var(--border);
     }
     .data-table th {
-        background: var(--bg-tertiary);
+        background: var(--bg-secondary);
         font-weight: 500;
         font-size: 0.875rem;
         color: var(--text-secondary);
@@ -185,6 +700,18 @@
     }
     .data-table tbody tr.disabled {
         opacity: 0.5;
+    }
+    .import-actions {
+        margin-top: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .import-action-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 1rem;
     }
     .poster-thumb {
         width: 35px;
@@ -209,6 +736,10 @@
         background: rgba(34, 197, 94, 0.2);
         color: var(--success);
     }
+    .type-badge.episode {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+    }
     .id-badges {
         display: flex;
         gap: 0.25rem;
@@ -217,7 +748,7 @@
     .id-badge {
         font-size: 0.7rem;
         padding: 0.125rem 0.375rem;
-        background: var(--bg-tertiary);
+        background: var(--bg-secondary);
         border-radius: 3px;
         color: var(--text-muted);
     }
@@ -226,31 +757,480 @@
         height: 16px;
         cursor: pointer;
     }
+    .text-muted {
+        color: var(--text-muted);
+    }
+    .form-group {
+        margin-bottom: 1rem;
+    }
+    .form-label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+    }
+    .form-input {
+        width: 100%;
+        max-width: 400px;
+        padding: 0.5rem 0.75rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        font-size: 0.875rem;
+    }
+    .form-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .btn-group {
+        display: flex;
+        gap: 0.5rem;
+    }
 </style>
 {{end}}
 
 {{define "scripts"}}
 <script>
-    // State
-    let plexToken = null;
-    let watchlistItems = [];
-    let selectedItems = new Set();
-    let pollInterval = null;
+    // ========== Section Toggle ==========
+    function toggleSection(header) {
+        const section = header.parentElement;
+        section.classList.toggle('open');
+    }
 
-    // Initialize
+    // ========== Plex State ==========
+    let plexToken = null;
+    let plexWatchlistItems = [];
+    let plexSelectedItems = new Set();
+    let plexPollInterval = null;
+
+    // ========== Trakt State ==========
+    let traktStatus = { hasCredentials: false, connected: false, username: '' };
+    let traktHistoryItems = [];
+    let traktHistorySelectedItems = new Set();
+    let traktDeviceCode = null;
+    let traktPollInterval = null;
+
+    // ========== Initialize ==========
     document.addEventListener('DOMContentLoaded', function() {
-        // Check if there's a stored token (for page refresh)
-        const storedToken = sessionStorage.getItem('plexToken');
-        const storedUsername = sessionStorage.getItem('plexUsername');
-        if (storedToken) {
-            plexToken = storedToken;
-            showAuthenticated(storedUsername || 'Plex User');
-        }
+        // Load Plex and Trakt status from backend
+        loadPlexStatus();
+        loadTraktStatus();
     });
 
-    // Step 1: Login with Plex
+    // ========== Plex Account Functions ==========
+    let plexStatus = { connected: false, username: '' };
+
+    async function loadPlexStatus() {
+        try {
+            const response = await fetch('/admin/api/plex/status');
+            const data = await response.json();
+            plexStatus = data;
+            updatePlexUI();
+        } catch (err) {
+            console.error('Failed to load Plex status:', err);
+        }
+    }
+
+    function updatePlexUI() {
+        const badge = document.getElementById('plexStatusBadge');
+        const notConnected = document.getElementById('plexNotConnected');
+        const connectedSection = document.getElementById('plexConnectedSection');
+        const watchlistNotConnected = document.getElementById('plexWatchlistNotConnected');
+        const watchlistConnected = document.getElementById('plexWatchlistConnected');
+
+        if (plexStatus.connected) {
+            badge.textContent = 'Connected';
+            badge.className = 'status-badge connected';
+            notConnected.style.display = 'none';
+            connectedSection.style.display = 'block';
+            document.getElementById('plexConnectedUsername').textContent = 'Logged in as ' + plexStatus.username;
+
+            // Update watchlist import section
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'none';
+            if (watchlistConnected) watchlistConnected.style.display = 'block';
+        } else {
+            badge.textContent = 'Not Connected';
+            badge.className = 'status-badge disconnected';
+            notConnected.style.display = 'block';
+            connectedSection.style.display = 'none';
+
+            // Update watchlist import section
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'block';
+            if (watchlistConnected) watchlistConnected.style.display = 'none';
+        }
+    }
+
+    async function disconnectPlex() {
+        try {
+            const response = await fetch('/admin/api/plex/disconnect', { method: 'POST' });
+            if (response.ok) {
+                plexStatus = { connected: false, username: '' };
+                updatePlexUI();
+            }
+        } catch (err) {
+            console.error('Failed to disconnect Plex:', err);
+        }
+    }
+
+    function cancelPlexAuth() {
+        if (plexPollInterval) {
+            clearInterval(plexPollInterval);
+            plexPollInterval = null;
+        }
+        document.getElementById('plexAuthWaiting').style.display = 'none';
+        document.getElementById('plexNotConnected').style.display = 'block';
+    }
+
+    // ========== Trakt Account Functions ==========
+    async function loadTraktStatus() {
+        try {
+            const response = await fetch('/admin/api/trakt/status');
+            const data = await response.json();
+            traktStatus = data;
+            updateTraktUI();
+        } catch (err) {
+            console.error('Failed to load Trakt status:', err);
+        }
+    }
+
+    function updateTraktUI() {
+        const badge = document.getElementById('traktStatusBadge');
+        const credentialsForm = document.getElementById('traktCredentialsForm');
+        const connectedSection = document.getElementById('traktConnectedSection');
+        const connectBtn = document.getElementById('traktConnectBtn');
+        const historyNotConnected = document.getElementById('traktHistoryNotConnected');
+        const historyConnected = document.getElementById('traktHistoryConnected');
+
+        if (traktStatus.connected) {
+            badge.textContent = 'Connected';
+            badge.className = 'status-badge connected';
+            credentialsForm.style.display = 'none';
+            connectedSection.style.display = 'block';
+            document.getElementById('traktConnectedUsername').textContent = 'Logged in as ' + traktStatus.username;
+
+            // Update history section
+            historyNotConnected.style.display = 'none';
+            historyConnected.style.display = 'block';
+            document.getElementById('traktHistoryUsername').textContent = 'Logged in as ' + traktStatus.username;
+        } else {
+            badge.textContent = 'Not Connected';
+            badge.className = 'status-badge disconnected';
+            credentialsForm.style.display = 'block';
+            connectedSection.style.display = 'none';
+            connectBtn.disabled = !traktStatus.hasCredentials;
+
+            // Update history section
+            historyNotConnected.style.display = 'block';
+            historyConnected.style.display = 'none';
+        }
+    }
+
+    async function saveTraktCredentials() {
+        const clientId = document.getElementById('traktClientId').value.trim();
+        const clientSecret = document.getElementById('traktClientSecret').value.trim();
+
+        if (!clientId || !clientSecret) {
+            showToast('Please enter both Client ID and Client Secret', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/admin/api/trakt/credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, clientSecret })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to save credentials');
+            }
+
+            showToast('Trakt credentials saved', 'success');
+            traktStatus.hasCredentials = true;
+            document.getElementById('traktConnectBtn').disabled = false;
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function connectTrakt() {
+        const connectBtn = document.getElementById('traktConnectBtn');
+        connectBtn.disabled = true;
+
+        try {
+            const response = await fetch('/admin/api/trakt/auth/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to start authentication');
+            }
+
+            const data = await response.json();
+            traktDeviceCode = data.deviceCode;
+
+            // Show waiting UI
+            document.getElementById('traktCredentialsForm').style.display = 'none';
+            document.getElementById('traktAuthWaiting').style.display = 'block';
+            document.getElementById('traktUserCode').textContent = data.userCode;
+            document.getElementById('traktAuthUrl').href = data.verificationUrl;
+            document.getElementById('traktAuthUrl').textContent = data.verificationUrl;
+
+            // Start polling
+            const pollInterval = (data.interval || 5) * 1000;
+            traktPollInterval = setInterval(() => pollTraktAuth(data.deviceCode), pollInterval);
+
+            // Timeout after expiry
+            setTimeout(() => {
+                if (traktPollInterval) {
+                    clearInterval(traktPollInterval);
+                    traktPollInterval = null;
+                    cancelTraktAuth();
+                    showToast('Authentication timed out', 'error');
+                }
+            }, data.expiresIn * 1000);
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            connectBtn.disabled = false;
+        }
+    }
+
+    async function pollTraktAuth(deviceCode) {
+        try {
+            const response = await fetch(`/admin/api/trakt/auth/check/${deviceCode}`);
+            const data = await response.json();
+
+            if (data.authenticated) {
+                clearInterval(traktPollInterval);
+                traktPollInterval = null;
+
+                document.getElementById('traktAuthWaiting').style.display = 'none';
+                traktStatus.connected = true;
+                traktStatus.username = data.username;
+                updateTraktUI();
+                showToast('Successfully connected to Trakt', 'success');
+            }
+        } catch (err) {
+            console.error('Poll error:', err);
+        }
+    }
+
+    function cancelTraktAuth() {
+        if (traktPollInterval) {
+            clearInterval(traktPollInterval);
+            traktPollInterval = null;
+        }
+        document.getElementById('traktAuthWaiting').style.display = 'none';
+        document.getElementById('traktCredentialsForm').style.display = 'block';
+        document.getElementById('traktConnectBtn').disabled = false;
+    }
+
+    async function disconnectTrakt() {
+        try {
+            const response = await fetch('/admin/api/trakt/disconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to disconnect');
+            }
+
+            traktStatus.connected = false;
+            traktStatus.username = '';
+            updateTraktUI();
+            showToast('Disconnected from Trakt', 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    // ========== Trakt History Import Functions ==========
+    async function fetchTraktHistory() {
+        const fetchBtn = document.getElementById('traktHistoryFetchBtn');
+        fetchBtn.disabled = true;
+        document.getElementById('traktHistoryLoading').style.display = 'block';
+        document.getElementById('traktHistoryPreview').style.display = 'none';
+        document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'none';
+
+        try {
+            const response = await fetch('/admin/api/trakt/history?all=true');
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch history');
+            }
+
+            const data = await response.json();
+            traktHistoryItems = data.items || [];
+
+            // Select all by default
+            traktHistorySelectedItems.clear();
+            traktHistoryItems.forEach((item, idx) => traktHistorySelectedItems.add(idx));
+
+            renderTraktHistoryTable();
+            document.getElementById('traktHistoryLoading').style.display = 'none';
+            document.getElementById('traktHistoryPreview').style.display = 'block';
+            document.getElementById('traktHistoryImportBtnWrapper').style.display = 'block';
+            updateTraktHistorySelectedCount();
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            document.getElementById('traktHistoryLoading').style.display = 'none';
+            document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'block';
+        } finally {
+            fetchBtn.disabled = false;
+        }
+    }
+
+    function renderTraktHistoryTable() {
+        const tbody = document.getElementById('traktHistoryTableBody');
+        const countEl = document.getElementById('traktHistoryCount');
+
+        countEl.textContent = `${traktHistoryItems.length} item${traktHistoryItems.length !== 1 ? 's' : ''}`;
+
+        if (traktHistoryItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">Your Trakt history is empty</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = traktHistoryItems.map((item, idx) => {
+            const isSelected = traktHistorySelectedItems.has(idx);
+            const watchedDate = new Date(item.watchedAt).toLocaleDateString();
+
+            return `
+                <tr class="${isSelected ? '' : 'disabled'}">
+                    <td>
+                        <input type="checkbox"
+                               ${isSelected ? 'checked' : ''}
+                               onchange="toggleTraktHistoryItem(${idx}, this.checked)">
+                    </td>
+                    <td style="font-weight: 500;">${escapeHtml(item.title)}</td>
+                    <td style="color: var(--text-muted);">${item.year || '-'}</td>
+                    <td><span class="type-badge ${item.type}">${item.type}</span></td>
+                    <td style="color: var(--text-muted);">${watchedDate}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function toggleTraktHistoryItem(idx, checked) {
+        if (checked) {
+            traktHistorySelectedItems.add(idx);
+        } else {
+            traktHistorySelectedItems.delete(idx);
+        }
+        updateTraktHistorySelectedCount();
+        updateTraktHistoryRowStyles();
+    }
+
+    function traktHistorySelectAll(checked) {
+        traktHistorySelectedItems.clear();
+        if (checked) {
+            traktHistoryItems.forEach((_, idx) => traktHistorySelectedItems.add(idx));
+        }
+
+        document.querySelectorAll('#traktHistoryTableBody input[type="checkbox"]').forEach(cb => {
+            cb.checked = checked;
+        });
+        document.getElementById('traktHistorySelectAllCheckbox').checked = checked;
+
+        updateTraktHistorySelectedCount();
+        updateTraktHistoryRowStyles();
+    }
+
+    function updateTraktHistorySelectedCount() {
+        document.getElementById('traktHistorySelectedCount').textContent = traktHistorySelectedItems.size;
+        document.getElementById('traktHistoryImportBtn').disabled = traktHistorySelectedItems.size === 0;
+
+        const selectAllCb = document.getElementById('traktHistorySelectAllCheckbox');
+        selectAllCb.checked = traktHistorySelectedItems.size === traktHistoryItems.length;
+        selectAllCb.indeterminate = traktHistorySelectedItems.size > 0 && traktHistorySelectedItems.size < traktHistoryItems.length;
+    }
+
+    function updateTraktHistoryRowStyles() {
+        document.querySelectorAll('#traktHistoryTableBody tr').forEach((row, idx) => {
+            if (traktHistoryItems[idx]) {
+                row.classList.toggle('disabled', !traktHistorySelectedItems.has(idx));
+            }
+        });
+    }
+
+    async function importTraktHistory() {
+        if (traktHistorySelectedItems.size === 0) {
+            showToast('Please select at least one item to import', 'error');
+            return;
+        }
+
+        const profileId = document.getElementById('traktHistoryProfileSelect').value;
+        if (!profileId) {
+            showToast('Please select a profile', 'error');
+            return;
+        }
+
+        const itemsToImport = Array.from(traktHistorySelectedItems).map(idx => traktHistoryItems[idx]);
+
+        document.getElementById('traktHistoryPreview').style.display = 'none';
+        document.getElementById('traktHistoryImporting').style.display = 'block';
+        document.getElementById('traktHistoryImportProgress').textContent = `0 of ${itemsToImport.length}`;
+
+        try {
+            const response = await fetch('/admin/api/trakt/import/history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    items: itemsToImport
+                })
+            });
+
+            const result = await response.json();
+
+            document.getElementById('traktHistoryImporting').style.display = 'none';
+            document.getElementById('traktHistoryComplete').style.display = 'block';
+
+            let summary = `Successfully imported ${result.imported} item${result.imported !== 1 ? 's' : ''}.`;
+            if (result.failed > 0) {
+                summary += ` ${result.failed} item${result.failed !== 1 ? 's' : ''} failed.`;
+            }
+            document.getElementById('traktHistoryImportSummary').textContent = summary;
+
+            if (result.success) {
+                showToast(`Imported ${result.imported} items to watch history`, 'success');
+            } else {
+                showToast(`Imported ${result.imported} items with ${result.failed} failures`, 'warning');
+            }
+
+        } catch (err) {
+            document.getElementById('traktHistoryImporting').style.display = 'none';
+            document.getElementById('traktHistoryPreview').style.display = 'block';
+            showToast('Import failed: ' + err.message, 'error');
+        }
+    }
+
+    function resetTraktHistoryImport() {
+        document.getElementById('traktHistoryComplete').style.display = 'none';
+        document.getElementById('traktHistoryImportBtnWrapper').style.display = 'none';
+        document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'block';
+        traktHistoryItems = [];
+        traktHistorySelectedItems.clear();
+    }
+
+    function resetTraktHistoryLoad() {
+        document.getElementById('traktHistoryPreview').style.display = 'none';
+        document.getElementById('traktHistoryImportBtnWrapper').style.display = 'none';
+        document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'block';
+        traktHistoryItems = [];
+        traktHistorySelectedItems.clear();
+    }
+
+    // ========== Plex Functions ==========
     async function loginWithPlex() {
-        const loginBtn = document.getElementById('loginBtn');
+        const loginBtn = document.getElementById('plexLoginBtn');
         loginBtn.disabled = true;
         loginBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div> Starting...';
 
@@ -266,49 +1246,42 @@
             }
 
             const data = await response.json();
-
-            // Open Plex auth in new window
             const authWindow = window.open(data.authUrl, 'plex_auth', 'width=800,height=600');
 
-            // Show waiting state
-            document.getElementById('loginSection').style.display = 'none';
-            document.getElementById('waitingSection').style.display = 'block';
+            document.getElementById('plexNotConnected').style.display = 'none';
+            document.getElementById('plexAuthWaiting').style.display = 'block';
 
-            // Poll for authentication
-            pollInterval = setInterval(async () => {
+            plexPollInterval = setInterval(async () => {
                 try {
                     const checkResponse = await fetch(`/admin/api/plex/pin/${data.id}`);
                     const checkData = await checkResponse.json();
 
                     if (checkData.authenticated) {
-                        clearInterval(pollInterval);
-                        plexToken = checkData.authToken;
+                        clearInterval(plexPollInterval);
+                        plexPollInterval = null;
 
-                        // Store in session for page refresh
-                        sessionStorage.setItem('plexToken', plexToken);
-                        sessionStorage.setItem('plexUsername', checkData.username || 'Plex User');
-
-                        // Close auth window if still open
                         if (authWindow && !authWindow.closed) {
                             authWindow.close();
                         }
 
-                        showAuthenticated(checkData.username || 'Plex User');
+                        // Reload Plex status from backend (token is saved automatically)
+                        await loadPlexStatus();
+                        document.getElementById('plexAuthWaiting').style.display = 'none';
                     }
                 } catch (err) {
                     console.error('Poll error:', err);
                 }
             }, 2000);
 
-            // Stop polling after 5 minutes
             setTimeout(() => {
-                if (pollInterval) {
-                    clearInterval(pollInterval);
-                    document.getElementById('waitingSection').style.display = 'none';
-                    document.getElementById('loginSection').style.display = 'block';
+                if (plexPollInterval) {
+                    clearInterval(plexPollInterval);
+                    plexPollInterval = null;
+                    document.getElementById('plexAuthWaiting').style.display = 'none';
+                    document.getElementById('plexNotConnected').style.display = 'block';
                     loginBtn.disabled = false;
                     loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
-                    showToast('Authentication timed out. Please try again.', 'error');
+                    showToast('Authentication timed out', 'error');
                 }
             }, 300000);
 
@@ -319,43 +1292,25 @@
         }
     }
 
-    function showAuthenticated(username) {
-        document.getElementById('waitingSection').style.display = 'none';
-        document.getElementById('loginSection').style.display = 'none';
-        document.getElementById('authenticatedSection').style.display = 'block';
-        document.getElementById('plexUsername').textContent = `Logged in as ${username}`;
+    function plexLogout() {
+        disconnectPlex();
+        plexWatchlistItems = [];
+        plexSelectedItems.clear();
+
+        // Reset watchlist import UI
+        document.getElementById('plexPreviewSection').style.display = 'none';
+        document.getElementById('plexCompleteSection').style.display = 'none';
     }
 
-    function logout() {
-        plexToken = null;
-        watchlistItems = [];
-        selectedItems.clear();
-        sessionStorage.removeItem('plexToken');
-        sessionStorage.removeItem('plexUsername');
-
-        document.getElementById('authenticatedSection').style.display = 'none';
-        document.getElementById('previewSection').style.display = 'none';
-        document.getElementById('completeSection').style.display = 'none';
-        document.getElementById('loginSection').style.display = 'block';
-
-        const loginBtn = document.getElementById('loginBtn');
-        loginBtn.disabled = false;
-        loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
-    }
-
-    // Step 2: Fetch Watchlist
-    async function fetchWatchlist() {
-        const fetchBtn = document.getElementById('fetchBtn');
+    async function fetchPlexWatchlist() {
+        const fetchBtn = document.getElementById('plexFetchBtn');
         fetchBtn.disabled = true;
-        document.getElementById('loadingWatchlist').style.display = 'block';
-        document.getElementById('previewSection').style.display = 'none';
+        document.getElementById('plexLoadingSection').style.display = 'block';
+        document.getElementById('plexPreviewSection').style.display = 'none';
+        document.getElementById('plexFetchBtnWrapper').style.display = 'none';
 
         try {
-            const response = await fetch('/admin/api/plex/watchlist', {
-                headers: {
-                    'X-Plex-Token': plexToken
-                }
-            });
+            const response = await fetch('/admin/api/plex/watchlist');
 
             if (!response.ok) {
                 const error = await response.json();
@@ -363,38 +1318,39 @@
             }
 
             const data = await response.json();
-            watchlistItems = data.items || [];
+            plexWatchlistItems = data.items || [];
 
-            // Select all by default
-            selectedItems.clear();
-            watchlistItems.forEach(item => selectedItems.add(item.ratingKey));
+            plexSelectedItems.clear();
+            plexWatchlistItems.forEach(item => plexSelectedItems.add(item.ratingKey));
 
-            renderWatchlistTable();
-            document.getElementById('loadingWatchlist').style.display = 'none';
-            document.getElementById('previewSection').style.display = 'block';
-            updateSelectedCount();
+            renderPlexWatchlistTable();
+            document.getElementById('plexLoadingSection').style.display = 'none';
+            document.getElementById('plexPreviewSection').style.display = 'block';
+            document.getElementById('plexImportBtnWrapper').style.display = 'block';
+            updatePlexSelectedCount();
 
         } catch (err) {
             showToast(err.message, 'error');
-            document.getElementById('loadingWatchlist').style.display = 'none';
+            document.getElementById('plexLoadingSection').style.display = 'none';
+            document.getElementById('plexFetchBtnWrapper').style.display = 'block';
         } finally {
             fetchBtn.disabled = false;
         }
     }
 
-    function renderWatchlistTable() {
-        const tbody = document.getElementById('watchlistTableBody');
-        const countEl = document.getElementById('watchlistCount');
+    function renderPlexWatchlistTable() {
+        const tbody = document.getElementById('plexWatchlistTableBody');
+        const countEl = document.getElementById('plexWatchlistCount');
 
-        countEl.textContent = `${watchlistItems.length} item${watchlistItems.length !== 1 ? 's' : ''}`;
+        countEl.textContent = `${plexWatchlistItems.length} item${plexWatchlistItems.length !== 1 ? 's' : ''}`;
 
-        if (watchlistItems.length === 0) {
+        if (plexWatchlistItems.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Your Plex watchlist is empty</td></tr>';
             return;
         }
 
-        tbody.innerHTML = watchlistItems.map(item => {
-            const isSelected = selectedItems.has(item.ratingKey);
+        tbody.innerHTML = plexWatchlistItems.map(item => {
+            const isSelected = plexSelectedItems.has(item.ratingKey);
             const ids = item.externalIds || {};
             const idBadges = Object.entries(ids)
                 .filter(([k, v]) => v && k !== 'plex')
@@ -406,7 +1362,7 @@
                     <td>
                         <input type="checkbox"
                                ${isSelected ? 'checked' : ''}
-                               onchange="toggleItem('${item.ratingKey}', this.checked)">
+                               onchange="togglePlexItem('${item.ratingKey}', this.checked)">
                     </td>
                     <td>
                         ${item.posterUrl
@@ -422,76 +1378,71 @@
         }).join('');
     }
 
-    function toggleItem(ratingKey, checked) {
+    function togglePlexItem(ratingKey, checked) {
         if (checked) {
-            selectedItems.add(ratingKey);
+            plexSelectedItems.add(ratingKey);
         } else {
-            selectedItems.delete(ratingKey);
+            plexSelectedItems.delete(ratingKey);
         }
-        updateSelectedCount();
-        updateRowStyles();
+        updatePlexSelectedCount();
+        updatePlexRowStyles();
     }
 
-    function selectAll(checked) {
-        selectedItems.clear();
+    function plexSelectAll(checked) {
+        plexSelectedItems.clear();
         if (checked) {
-            watchlistItems.forEach(item => selectedItems.add(item.ratingKey));
+            plexWatchlistItems.forEach(item => plexSelectedItems.add(item.ratingKey));
         }
 
-        // Update all checkboxes
-        document.querySelectorAll('#watchlistTableBody input[type="checkbox"]').forEach(cb => {
+        document.querySelectorAll('#plexWatchlistTableBody input[type="checkbox"]').forEach(cb => {
             cb.checked = checked;
         });
-        document.getElementById('selectAllCheckbox').checked = checked;
+        document.getElementById('plexSelectAllCheckbox').checked = checked;
 
-        updateSelectedCount();
-        updateRowStyles();
+        updatePlexSelectedCount();
+        updatePlexRowStyles();
     }
 
-    function updateSelectedCount() {
-        document.getElementById('selectedCount').textContent = selectedItems.size;
-        document.getElementById('importBtn').disabled = selectedItems.size === 0;
+    function updatePlexSelectedCount() {
+        document.getElementById('plexSelectedCount').textContent = plexSelectedItems.size;
+        document.getElementById('plexImportBtn').disabled = plexSelectedItems.size === 0;
 
-        // Update select all checkbox
-        const selectAllCb = document.getElementById('selectAllCheckbox');
-        selectAllCb.checked = selectedItems.size === watchlistItems.length;
-        selectAllCb.indeterminate = selectedItems.size > 0 && selectedItems.size < watchlistItems.length;
+        const selectAllCb = document.getElementById('plexSelectAllCheckbox');
+        selectAllCb.checked = plexSelectedItems.size === plexWatchlistItems.length;
+        selectAllCb.indeterminate = plexSelectedItems.size > 0 && plexSelectedItems.size < plexWatchlistItems.length;
     }
 
-    function updateRowStyles() {
-        document.querySelectorAll('#watchlistTableBody tr').forEach((row, index) => {
-            if (watchlistItems[index]) {
-                const isSelected = selectedItems.has(watchlistItems[index].ratingKey);
+    function updatePlexRowStyles() {
+        document.querySelectorAll('#plexWatchlistTableBody tr').forEach((row, index) => {
+            if (plexWatchlistItems[index]) {
+                const isSelected = plexSelectedItems.has(plexWatchlistItems[index].ratingKey);
                 row.classList.toggle('disabled', !isSelected);
             }
         });
     }
 
-    // Step 3: Import
-    async function importSelected() {
-        if (selectedItems.size === 0) {
+    async function importPlexWatchlist() {
+        if (plexSelectedItems.size === 0) {
             showToast('Please select at least one item to import', 'error');
             return;
         }
 
-        const profileId = document.getElementById('profileSelect').value;
+        const profileId = document.getElementById('plexProfileSelect').value;
         if (!profileId) {
             showToast('Please select a profile', 'error');
             return;
         }
 
-        const itemsToImport = watchlistItems.filter(item => selectedItems.has(item.ratingKey));
+        const itemsToImport = plexWatchlistItems.filter(item => plexSelectedItems.has(item.ratingKey));
 
-        document.getElementById('previewSection').style.display = 'none';
-        document.getElementById('importingSection').style.display = 'block';
-        document.getElementById('importProgress').textContent = `0 of ${itemsToImport.length}`;
+        document.getElementById('plexPreviewSection').style.display = 'none';
+        document.getElementById('plexImportingSection').style.display = 'block';
+        document.getElementById('plexImportProgress').textContent = `0 of ${itemsToImport.length}`;
 
         try {
             const response = await fetch('/admin/api/plex/import', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     profileId: profileId,
                     items: itemsToImport
@@ -500,14 +1451,14 @@
 
             const result = await response.json();
 
-            document.getElementById('importingSection').style.display = 'none';
-            document.getElementById('completeSection').style.display = 'block';
+            document.getElementById('plexImportingSection').style.display = 'none';
+            document.getElementById('plexCompleteSection').style.display = 'block';
 
             let summary = `Successfully imported ${result.imported} item${result.imported !== 1 ? 's' : ''}.`;
             if (result.failed > 0) {
                 summary += ` ${result.failed} item${result.failed !== 1 ? 's' : ''} failed.`;
             }
-            document.getElementById('importSummary').textContent = summary;
+            document.getElementById('plexImportSummary').textContent = summary;
 
             if (result.success) {
                 showToast(`Imported ${result.imported} items to watchlist`, 'success');
@@ -516,21 +1467,29 @@
             }
 
         } catch (err) {
-            document.getElementById('importingSection').style.display = 'none';
-            document.getElementById('previewSection').style.display = 'block';
+            document.getElementById('plexImportingSection').style.display = 'none';
+            document.getElementById('plexPreviewSection').style.display = 'block';
             showToast('Import failed: ' + err.message, 'error');
         }
     }
 
-    function resetImport() {
-        document.getElementById('completeSection').style.display = 'none';
-        document.getElementById('previewSection').style.display = 'block';
-
-        // Re-fetch watchlist to get fresh data
-        fetchWatchlist();
+    function resetPlexImport() {
+        document.getElementById('plexCompleteSection').style.display = 'none';
+        document.getElementById('plexImportBtnWrapper').style.display = 'none';
+        document.getElementById('plexFetchBtnWrapper').style.display = 'block';
+        plexWatchlistItems = [];
+        plexSelectedItems.clear();
     }
 
-    // Utility functions
+    function resetPlexWatchlistLoad() {
+        document.getElementById('plexPreviewSection').style.display = 'none';
+        document.getElementById('plexImportBtnWrapper').style.display = 'none';
+        document.getElementById('plexFetchBtnWrapper').style.display = 'block';
+        plexWatchlistItems = [];
+        plexSelectedItems.clear();
+    }
+
+    // ========== Utilities ==========
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;

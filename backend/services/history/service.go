@@ -1368,7 +1368,12 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	if update.Watched != nil {
 		item.Watched = *update.Watched
 		if *update.Watched {
-			item.WatchedAt = now
+			// Use provided timestamp if set, otherwise use now
+			if !update.WatchedAt.IsZero() {
+				item.WatchedAt = update.WatchedAt.UTC()
+			} else {
+				item.WatchedAt = now
+			}
 		}
 		// Clear playback progress when watched status changes (both marking as watched and unwatched)
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
@@ -1466,7 +1471,12 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 		if update.Watched != nil {
 			item.Watched = *update.Watched
 			if *update.Watched {
-				item.WatchedAt = now
+				// Use provided timestamp if set, otherwise use now
+				if !update.WatchedAt.IsZero() {
+					item.WatchedAt = update.WatchedAt.UTC()
+				} else {
+					item.WatchedAt = now
+				}
 			}
 			// Clear playback progress when watched status changes (both marking as watched and unwatched)
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {

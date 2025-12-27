@@ -414,11 +414,24 @@ func main() {
 	r.HandleFunc("/admin/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/history/continue", adminUIHandler.RequireAuth(adminUIHandler.GetContinueWatching)).Methods(http.MethodGet)
 
-	// Plex import endpoints
+	// Plex integration endpoints
+	r.HandleFunc("/admin/api/plex/status", adminUIHandler.RequireAuth(adminUIHandler.PlexGetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/plex/pin", adminUIHandler.RequireAuth(adminUIHandler.PlexCreatePIN)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/plex/pin/{id}", adminUIHandler.RequireAuth(adminUIHandler.PlexCheckPIN)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/disconnect", adminUIHandler.RequireAuth(adminUIHandler.PlexDisconnect)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/plex/watchlist", adminUIHandler.RequireAuth(adminUIHandler.PlexGetWatchlist)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/plex/import", adminUIHandler.RequireAuth(adminUIHandler.PlexImportWatchlist)).Methods(http.MethodPost)
+
+	// Trakt integration endpoints
+	r.HandleFunc("/admin/api/trakt/status", adminUIHandler.RequireAuth(adminUIHandler.TraktGetStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/credentials", adminUIHandler.RequireAuth(adminUIHandler.TraktSaveCredentials)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/auth/start", adminUIHandler.RequireAuth(adminUIHandler.TraktStartAuth)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/auth/check/{deviceCode}", adminUIHandler.RequireAuth(adminUIHandler.TraktCheckAuth)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/disconnect", adminUIHandler.RequireAuth(adminUIHandler.TraktDisconnect)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/watchlist", adminUIHandler.RequireAuth(adminUIHandler.TraktGetWatchlist)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/history", adminUIHandler.RequireAuth(adminUIHandler.TraktGetHistory)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/import/watchlist", adminUIHandler.RequireAuth(adminUIHandler.TraktImportWatchlist)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/trakt/import/history", adminUIHandler.RequireAuth(adminUIHandler.TraktImportHistory)).Methods(http.MethodPost)
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 

@@ -66,6 +66,7 @@ type WatchHistoryUpdate struct {
 	Name          string            `json:"name,omitempty"`
 	Year          int               `json:"year,omitempty"`
 	Watched       *bool             `json:"watched,omitempty"`
+	WatchedAt     time.Time         `json:"watchedAt,omitempty"` // Optional: use specific timestamp instead of now
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific

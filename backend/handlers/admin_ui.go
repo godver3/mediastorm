@@ -27,6 +27,7 @@ import (
 	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/plex"
+	"novastream/services/trakt"
 	"novastream/services/watchlist"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
@@ -400,6 +401,7 @@ type AdminUIHandler struct {
 	historyService      *history.Service
 	watchlistService    *watchlist.Service
 	plexClient          *plex.Client
+	traktClient         *trakt.Client
 	configManager       *config.Manager
 	metadataService     MetadataService
 	getPIN              func() string
@@ -549,6 +551,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		configManager:       configManager,
 		getPIN:              getPIN,
 		plexClient:          plex.NewClient(plex.GenerateClientID()),
+		traktClient:         trakt.NewClient("", ""), // Will be updated with credentials from settings
 	}
 }
 
@@ -2436,6 +2439,17 @@ func (h *AdminUIHandler) PlexCheckPIN(w http.ResponseWriter, r *http.Request) {
 	if pin.AuthToken != "" {
 		// Authentication successful, also get user info
 		userInfo, _ := h.plexClient.GetUserInfo(pin.AuthToken)
+
+		// Save auth token to settings for persistence
+		settings, err := h.configManager.Load()
+		if err == nil {
+			settings.Plex.AuthToken = pin.AuthToken
+			if userInfo != nil {
+				settings.Plex.Username = userInfo.Username
+			}
+			h.configManager.Save(settings)
+		}
+
 		response := map[string]interface{}{
 			"authenticated": true,
 			"authToken":     pin.AuthToken,
@@ -2453,6 +2467,72 @@ func (h *AdminUIHandler) PlexCheckPIN(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// PlexGetStatus returns the current Plex connection status
+func (h *AdminUIHandler) PlexGetStatus(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	response := map[string]interface{}{
+		"connected": settings.Plex.AuthToken != "",
+		"username":  settings.Plex.Username,
+	}
+
+	// If we have a token, verify it's still valid
+	if settings.Plex.AuthToken != "" && h.plexClient != nil {
+		userInfo, err := h.plexClient.GetUserInfo(settings.Plex.AuthToken)
+		if err != nil {
+			// Token is invalid, clear it
+			settings.Plex.AuthToken = ""
+			settings.Plex.Username = ""
+			h.configManager.Save(settings)
+			response["connected"] = false
+			response["username"] = ""
+		} else if userInfo != nil {
+			response["username"] = userInfo.Username
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// PlexDisconnect removes the saved Plex auth token
+func (h *AdminUIHandler) PlexDisconnect(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	settings.Plex.AuthToken = ""
+	settings.Plex.Username = ""
+
+	if err := h.configManager.Save(settings); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to save settings: " + err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
 // PlexGetWatchlist retrieves the user's Plex watchlist
 func (h *AdminUIHandler) PlexGetWatchlist(w http.ResponseWriter, r *http.Request) {
 	if h.plexClient == nil {
@@ -2464,12 +2544,19 @@ func (h *AdminUIHandler) PlexGetWatchlist(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Try header first, fall back to stored token
 	authToken := r.Header.Get("X-Plex-Token")
+	if authToken == "" {
+		settings, err := h.configManager.Load()
+		if err == nil && settings.Plex.AuthToken != "" {
+			authToken = settings.Plex.AuthToken
+		}
+	}
 	if authToken == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "X-Plex-Token header required",
+			"error": "Not connected to Plex",
 		})
 		return
 	}
@@ -2664,4 +2751,676 @@ func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, na
 	}
 
 	return ""
+}
+
+// --- Trakt Integration Handlers ---
+
+// ensureValidTraktToken checks if the Trakt access token is valid and refreshes it if needed.
+// Returns the valid access token or an error. Also updates client credentials.
+func (h *AdminUIHandler) ensureValidTraktToken() (string, error) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		return "", fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	if settings.Trakt.AccessToken == "" {
+		return "", fmt.Errorf("not connected to Trakt")
+	}
+
+	// Always update client with current credentials
+	h.traktClient.UpdateCredentials(settings.Trakt.ClientID, settings.Trakt.ClientSecret)
+
+	// Check if token is expired or will expire within 1 hour
+	if settings.Trakt.ExpiresAt > 0 {
+		expiresIn := settings.Trakt.ExpiresAt - time.Now().Unix()
+		if expiresIn < 3600 { // Less than 1 hour remaining
+			// Need to refresh the token
+			if settings.Trakt.RefreshToken == "" {
+				return "", fmt.Errorf("token expired and no refresh token available")
+			}
+
+			token, err := h.traktClient.RefreshAccessToken(settings.Trakt.RefreshToken)
+			if err != nil {
+				return "", fmt.Errorf("failed to refresh token: %w", err)
+			}
+
+			// Update settings with new tokens
+			settings.Trakt.AccessToken = token.AccessToken
+			settings.Trakt.RefreshToken = token.RefreshToken
+			settings.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+
+			if err := h.configManager.Save(settings); err != nil {
+				return "", fmt.Errorf("failed to save refreshed token: %w", err)
+			}
+
+			return token.AccessToken, nil
+		}
+	}
+
+	return settings.Trakt.AccessToken, nil
+}
+
+// TraktGetStatus returns the current Trakt connection status
+func (h *AdminUIHandler) TraktGetStatus(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	response := map[string]interface{}{
+		"hasCredentials": settings.Trakt.ClientID != "" && settings.Trakt.ClientSecret != "",
+		"connected":      settings.Trakt.AccessToken != "",
+		"username":       settings.Trakt.Username,
+	}
+
+	// Check if token is expired
+	if settings.Trakt.AccessToken != "" && settings.Trakt.ExpiresAt > 0 {
+		response["expiresAt"] = settings.Trakt.ExpiresAt
+		response["expired"] = time.Now().Unix() > settings.Trakt.ExpiresAt
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// TraktSaveCredentials saves Trakt API credentials to settings
+func (h *AdminUIHandler) TraktSaveCredentials(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	settings.Trakt.ClientID = req.ClientID
+	settings.Trakt.ClientSecret = req.ClientSecret
+
+	if err := h.configManager.Save(settings); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to save settings: " + err.Error(),
+		})
+		return
+	}
+
+	// Update the trakt client with new credentials
+	h.traktClient.UpdateCredentials(req.ClientID, req.ClientSecret)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
+// TraktStartAuth initiates the Trakt device code OAuth flow
+func (h *AdminUIHandler) TraktStartAuth(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	if settings.Trakt.ClientID == "" || settings.Trakt.ClientSecret == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Trakt credentials not configured. Please save your Client ID and Client Secret first.",
+		})
+		return
+	}
+
+	// Update client with current credentials
+	h.traktClient.UpdateCredentials(settings.Trakt.ClientID, settings.Trakt.ClientSecret)
+
+	deviceCode, err := h.traktClient.GetDeviceCode()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"deviceCode":      deviceCode.DeviceCode,
+		"userCode":        deviceCode.UserCode,
+		"verificationUrl": deviceCode.VerificationURL,
+		"expiresIn":       deviceCode.ExpiresIn,
+		"interval":        deviceCode.Interval,
+	})
+}
+
+// TraktCheckAuth polls for Trakt OAuth token
+func (h *AdminUIHandler) TraktCheckAuth(w http.ResponseWriter, r *http.Request) {
+	// Get device code from URL path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Device code required",
+		})
+		return
+	}
+
+	deviceCode := parts[len(parts)-1]
+	if deviceCode == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Device code required",
+		})
+		return
+	}
+
+	token, err := h.traktClient.PollForToken(deviceCode)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if token == nil {
+		// Still pending
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"authenticated": false,
+			"pending":       true,
+		})
+		return
+	}
+
+	// Token received, save to settings
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	settings.Trakt.AccessToken = token.AccessToken
+	settings.Trakt.RefreshToken = token.RefreshToken
+	settings.Trakt.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+
+	// Get user profile
+	profile, err := h.traktClient.GetUserProfile(token.AccessToken)
+	if err == nil && profile != nil {
+		settings.Trakt.Username = profile.Username
+	}
+
+	if err := h.configManager.Save(settings); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to save token: " + err.Error(),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"authenticated": true,
+		"username":      settings.Trakt.Username,
+	})
+}
+
+// TraktDisconnect removes Trakt OAuth tokens from settings
+func (h *AdminUIHandler) TraktDisconnect(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to load settings: " + err.Error(),
+		})
+		return
+	}
+
+	settings.Trakt.AccessToken = ""
+	settings.Trakt.RefreshToken = ""
+	settings.Trakt.ExpiresAt = 0
+	settings.Trakt.Username = ""
+
+	if err := h.configManager.Save(settings); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to save settings: " + err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
+// TraktGetWatchlist retrieves the user's Trakt watchlist
+func (h *AdminUIHandler) TraktGetWatchlist(w http.ResponseWriter, r *http.Request) {
+	accessToken, err := h.ensureValidTraktToken()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	items, err := h.traktClient.GetAllWatchlist(accessToken)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Convert to normalized format
+	normalizedItems := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		normalized := map[string]interface{}{
+			"type":     trakt.NormalizeMediaType(item.Type),
+			"listedAt": item.ListedAt,
+		}
+
+		if item.Movie != nil {
+			normalized["title"] = item.Movie.Title
+			normalized["year"] = item.Movie.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Movie.IDs)
+		} else if item.Show != nil {
+			normalized["title"] = item.Show.Title
+			normalized["year"] = item.Show.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Show.IDs)
+		}
+
+		normalizedItems = append(normalizedItems, normalized)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": normalizedItems,
+		"count": len(normalizedItems),
+	})
+}
+
+// normalizeTraktHistoryItems converts Trakt history items to normalized format
+func (h *AdminUIHandler) normalizeTraktHistoryItems(items []trakt.HistoryItem) []map[string]interface{} {
+	normalizedItems := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		normalized := map[string]interface{}{
+			"id":        item.ID,
+			"type":      trakt.NormalizeMediaType(item.Type),
+			"watchedAt": item.WatchedAt,
+			"action":    item.Action,
+		}
+
+		if item.Movie != nil {
+			normalized["title"] = item.Movie.Title
+			normalized["year"] = item.Movie.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Movie.IDs)
+		} else if item.Episode != nil && item.Show != nil {
+			normalized["title"] = fmt.Sprintf("%s - S%02dE%02d - %s", item.Show.Title, item.Episode.Season, item.Episode.Number, item.Episode.Title)
+			normalized["seriesTitle"] = item.Show.Title
+			normalized["episodeTitle"] = item.Episode.Title
+			normalized["season"] = item.Episode.Season
+			normalized["episode"] = item.Episode.Number
+			normalized["year"] = item.Show.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Show.IDs)
+			normalized["episodeIds"] = trakt.IDsToMap(item.Episode.IDs)
+		}
+
+		normalizedItems = append(normalizedItems, normalized)
+	}
+	return normalizedItems
+}
+
+// TraktGetHistory retrieves the user's Trakt watch history
+func (h *AdminUIHandler) TraktGetHistory(w http.ResponseWriter, r *http.Request) {
+	accessToken, err := h.ensureValidTraktToken()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Check if all items requested
+	if r.URL.Query().Get("all") == "true" {
+		items, err := h.traktClient.GetAllWatchHistory(accessToken)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		normalizedItems := h.normalizeTraktHistoryItems(items)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"items":      normalizedItems,
+			"count":      len(normalizedItems),
+			"totalCount": len(normalizedItems),
+		})
+		return
+	}
+
+	// Parse pagination params
+	page := 1
+	limit := 100
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+
+	items, totalCount, err := h.traktClient.GetWatchHistory(accessToken, page, limit, "")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	normalizedItems := h.normalizeTraktHistoryItems(items)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items":      normalizedItems,
+		"count":      len(normalizedItems),
+		"totalCount": totalCount,
+		"page":       page,
+		"limit":      limit,
+	})
+}
+
+// TraktImportWatchlist imports selected Trakt watchlist items to strmr watchlist
+func (h *AdminUIHandler) TraktImportWatchlist(w http.ResponseWriter, r *http.Request) {
+	if h.watchlistService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Watchlist service not initialized",
+		})
+		return
+	}
+
+	var req struct {
+		ProfileID string `json:"profileId"`
+		Items     []struct {
+			Title       string            `json:"title"`
+			MediaType   string            `json:"type"`
+			Year        int               `json:"year"`
+			ExternalIDs map[string]string `json:"externalIds"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if req.ProfileID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Profile ID required",
+		})
+		return
+	}
+
+	if len(req.Items) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "No items to import",
+		})
+		return
+	}
+
+	successCount := 0
+	errorCount := 0
+	var errors []string
+
+	ctx := r.Context()
+
+	for _, item := range req.Items {
+		// Determine the best ID to use - prefer TMDB, then IMDB, then Trakt
+		itemID := ""
+		if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		} else if traktID, ok := item.ExternalIDs["trakt"]; ok && traktID != "" {
+			itemID = traktID
+		}
+
+		if itemID == "" {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: no valid ID found", item.Title))
+			continue
+		}
+
+		// Fetch overview from metadata service if available
+		var overview string
+		if h.metadataService != nil {
+			overview = h.fetchOverviewForItem(ctx, item.MediaType, item.Title, item.Year, item.ExternalIDs)
+		}
+
+		input := models.WatchlistUpsert{
+			ID:          itemID,
+			MediaType:   item.MediaType,
+			Name:        item.Title,
+			Overview:    overview,
+			Year:        item.Year,
+			ExternalIDs: item.ExternalIDs,
+		}
+
+		_, err := h.watchlistService.AddOrUpdate(req.ProfileID, input)
+		if err != nil {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+		} else {
+			successCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"success":    errorCount == 0,
+		"imported":   successCount,
+		"failed":     errorCount,
+		"totalItems": len(req.Items),
+	}
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// TraktImportHistory imports Trakt watch history to local history
+func (h *AdminUIHandler) TraktImportHistory(w http.ResponseWriter, r *http.Request) {
+	if h.historyService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "History service not initialized",
+		})
+		return
+	}
+
+	var req struct {
+		ProfileID string `json:"profileId"`
+		Items     []struct {
+			ID           int64             `json:"id"`
+			Title        string            `json:"title"`
+			MediaType    string            `json:"type"`
+			Year         int               `json:"year"`
+			WatchedAt    time.Time         `json:"watchedAt"`
+			ExternalIDs  map[string]string `json:"externalIds"`
+			SeriesTitle  string            `json:"seriesTitle,omitempty"`
+			EpisodeTitle string            `json:"episodeTitle,omitempty"`
+			Season       int               `json:"season,omitempty"`
+			Episode      int               `json:"episode,omitempty"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if req.ProfileID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Profile ID required",
+		})
+		return
+	}
+
+	if len(req.Items) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "No items to import",
+		})
+		return
+	}
+
+	successCount := 0
+	errorCount := 0
+	var errors []string
+
+	watched := true
+	for _, item := range req.Items {
+		var itemID string
+		var seriesID string
+
+		if item.MediaType == "movie" {
+			// For movies, use TMDB > IMDB > TVDB
+			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+				itemID = tmdbID
+			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+				itemID = imdbID
+			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
+				itemID = tvdbID
+			}
+		} else if item.MediaType == "episode" {
+			// For episodes, construct composite ID like tmdb:tv:SHOWID:S01E02
+			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+				seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
+				itemID = fmt.Sprintf("tmdb:tv:%s:S%02dE%02d", tmdbID, item.Season, item.Episode)
+			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
+				seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
+				itemID = fmt.Sprintf("tvdb:series:%s:S%02dE%02d", tvdbID, item.Season, item.Episode)
+			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+				seriesID = fmt.Sprintf("imdb:%s", imdbID)
+				itemID = fmt.Sprintf("imdb:%s:S%02dE%02d", imdbID, item.Season, item.Episode)
+			}
+		}
+
+		if itemID == "" {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: no valid ID found", item.Title))
+			continue
+		}
+
+		historyItem := models.WatchHistoryUpdate{
+			MediaType:   item.MediaType,
+			ItemID:      itemID,
+			Watched:     &watched,
+			WatchedAt:   item.WatchedAt,
+			ExternalIDs: item.ExternalIDs,
+		}
+
+		// For movies, set the name
+		if item.MediaType == "movie" {
+			historyItem.Name = item.Title
+			historyItem.Year = item.Year
+		} else if item.MediaType == "episode" {
+			// For episodes, set series and episode info
+			historyItem.SeriesID = seriesID
+			historyItem.SeriesName = item.SeriesTitle
+			historyItem.Name = item.EpisodeTitle
+			historyItem.SeasonNumber = item.Season
+			historyItem.EpisodeNumber = item.Episode
+			historyItem.Year = item.Year
+		}
+
+		_, err := h.historyService.UpdateWatchHistory(req.ProfileID, historyItem)
+		if err != nil {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+		} else {
+			successCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"success":    errorCount == 0,
+		"imported":   successCount,
+		"failed":     errorCount,
+		"totalItems": len(req.Items),
+	}
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+	json.NewEncoder(w).Encode(response)
 }

@@ -30,6 +30,8 @@ type Settings struct {
 	Filtering       FilterSettings         `json:"filtering"`
 	UI              UISettings             `json:"ui"`
 	Subtitles       SubtitleSettings       `json:"subtitles"`
+	Trakt           TraktSettings          `json:"trakt,omitempty"`
+	Plex            PlexSettings           `json:"plex,omitempty"`
 	Log             LogConfig              `json:"log"`
 }
 
@@ -225,6 +227,23 @@ type SubtitleSettings struct {
 	OpenSubtitlesPassword string `json:"openSubtitlesPassword"`
 }
 
+// TraktSettings defines Trakt integration configuration.
+type TraktSettings struct {
+	ClientID        string `json:"clientId"`
+	ClientSecret    string `json:"clientSecret"`
+	AccessToken     string `json:"accessToken,omitempty"`
+	RefreshToken    string `json:"refreshToken,omitempty"`
+	ExpiresAt       int64  `json:"expiresAt,omitempty"` // Unix timestamp when access token expires
+	Username        string `json:"username,omitempty"`
+	ScrobblingEnabled bool `json:"scrobblingEnabled,omitempty"`
+}
+
+// PlexSettings defines Plex integration configuration.
+type PlexSettings struct {
+	AuthToken string `json:"authToken,omitempty"`
+	Username  string `json:"username,omitempty"`
+}
+
 // DefaultSettings returns sane defaults for a fresh install.
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
@@ -268,6 +287,8 @@ func DefaultSettings() Settings {
 			OpenSubtitlesUsername: "",
 			OpenSubtitlesPassword: "",
 		},
+		Trakt: TraktSettings{},
+		Plex:  PlexSettings{},
 		Log: LogConfig{
 			File:       "cache/logs/backend.log",
 			Level:      "info",
