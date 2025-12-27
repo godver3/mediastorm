@@ -149,6 +149,35 @@ index bb945fe..5be70b2 100644
  
          // Disable/enable scrubbing based on seekable
          val timeBar = playerView.findViewById<DefaultTimeBar?>(androidx.media3.ui.R.id.exo_progress)
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
+index f175dec..2c05cad 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
+@@ -17,6 +17,8 @@ import android.content.ComponentName;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.ServiceConnection;
++import android.content.res.Configuration;
++import android.app.UiModeManager;
+ import android.media.AudioManager;
+ import android.net.Uri;
+ import android.os.Build;
+@@ -709,8 +711,14 @@ public class ReactExoplayerView extends FrameLayout implements
+     private void initializePlayerCore(ReactExoplayerView self) {
+         ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
+         self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
++
++        // Enable tunneled playback on TV devices for smoother video with hardware frame rate matching
++        UiModeManager uiModeManager = (UiModeManager) getContext().getSystemService(Context.UI_MODE_SERVICE);
++        boolean isTv = uiModeManager != null && uiModeManager.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
++
+         self.trackSelector.setParameters(trackSelector.buildUponParameters()
+-                .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
++                .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate)
++                .setTunnelingEnabled(isTv));
+ 
+         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+         RNVLoadControl loadControl = new RNVLoadControl(
 diff --git a/node_modules/react-native-video/ios/Video/Features/RCTPictureInPicture.swift b/node_modules/react-native-video/ios/Video/Features/RCTPictureInPicture.swift
 index 21d321a..6907356 100644
 --- a/node_modules/react-native-video/ios/Video/Features/RCTPictureInPicture.swift

@@ -1,5 +1,6 @@
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
+import { Image } from '@/components/Image';
 import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useSearchTitles } from '@/hooks/useApi';
@@ -22,7 +23,6 @@ import { Stack, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Keyboard,
   Platform,
   Pressable,
@@ -409,7 +409,7 @@ export default function SearchScreen() {
               >
                 <View style={styles.cardImageContainer}>
                   {item.poster?.url ? (
-                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
+                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} contentFit="cover" transition={0} cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'} />
                   ) : (
                     <View style={styles.placeholder}>
                       <Text style={styles.placeholderImageText}>No Image</Text>
@@ -468,7 +468,7 @@ export default function SearchScreen() {
         scrollEnabled={Platform.isTV}
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}
-        removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
+        removeClippedSubviews={Platform.isTV}
         scrollEventThrottle={16}
         // Android TV: prevent native focus-based scrolling
         focusable={false}
@@ -507,13 +507,10 @@ export default function SearchScreen() {
                                       key={`img-${cardKey}`}
                                       source={{ uri: item.poster.url }}
                                       style={styles.cardImage}
-                                      resizeMode="cover"
-                                      fadeDuration={0}
-                                      // Optimize image rendering
-                                      {...(Platform.isTV && {
-                                        progressiveRenderingEnabled: true,
-                                        cache: 'force-cache' as const,
-                                      })}
+                                      contentFit="cover"
+                                      transition={0}
+                                      cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                                      recyclingKey={cardKey}
                                     />
                                   ) : (
                                     <View style={styles.placeholder}>

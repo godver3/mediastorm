@@ -20,8 +20,11 @@ import (
 const (
 	tmdbBaseURL      = "https://api.themoviedb.org/3"
 	tmdbImageBaseURL = "https://image.tmdb.org/t/p"
-	tmdbPosterSize   = "original"
-	tmdbBackdropSize = "original"
+	// Use optimized image sizes instead of "original" to reduce memory usage
+	// Posters: w500 = 500px wide (plenty for TV cards ~200-300px)
+	// Backdrops: w1280 = 1280px wide (good for 1080p backgrounds)
+	tmdbPosterSize   = "w500"
+	tmdbBackdropSize = "w1280"
 )
 
 type tmdbClient struct {

@@ -156,7 +156,9 @@ const FocusablePressable = ({
             style={viewStyle}
             onPress={!Platform.isTV ? onSelect : undefined}
             // Disable native tvOS parallax/motion effects - visual focus is managed by SpatialNavigationFocusableView
-            tvParallaxProperties={{ enabled: false }}>
+            tvParallaxProperties={{ enabled: false }}
+            // Use hardware texture on Android TV to improve compositing over SurfaceView video layer
+            renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}>
             {content}
             {showReadyPip && !loading && (
               <View

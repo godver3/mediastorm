@@ -1621,7 +1621,7 @@ function IndexScreen() {
             scrollEnabled={false}
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
-            removeClippedSubviews={Platform.isTV && Platform.OS === 'ios'}
+            removeClippedSubviews={Platform.isTV}
             scrollEventThrottle={16}
             onLayout={handleDesktopScrollLayout}
             onContentSizeChange={handleDesktopContentSizeChange}
@@ -1850,6 +1850,7 @@ function VirtualizedShelf({
                   contentFit="cover"
                   transition={0}
                   cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                  recyclingKey={cardKey}
                 />
                 {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
                   <View style={styles.progressBadge}>
@@ -1893,7 +1894,7 @@ function VirtualizedShelf({
   const rowHeight = cardHeight + cardSpacing;
 
   return (
-    <View ref={containerRef} style={styles.shelf}>
+    <View ref={containerRef} style={styles.shelf} renderToHardwareTextureAndroid={isAndroidTV}>
       <View style={styles.shelfTitleWrapper}>
         <Text style={styles.shelfTitle}>{title}</Text>
       </View>
@@ -1903,7 +1904,7 @@ function VirtualizedShelf({
         </View>
       ) : (
         <SpatialNavigationNode orientation="horizontal">
-          <View style={{ height: rowHeight }}>
+          <View style={{ height: rowHeight }} renderToHardwareTextureAndroid={isAndroidTV}>
             {autoFocus ? (
               <DefaultFocus>
                 <SpatialNavigationVirtualizedList
@@ -1911,8 +1912,8 @@ function VirtualizedShelf({
                   renderItem={renderItem}
                   itemSize={itemSize}
                   orientation="horizontal"
-                  numberOfRenderedItems={13}
-                  numberOfItemsVisibleOnScreen={7}
+                  numberOfRenderedItems={isAndroidTV ? 9 : 13}
+                  numberOfItemsVisibleOnScreen={isAndroidTV ? 5 : 7}
                   onEndReachedThresholdItemsNumber={3}
                 />
               </DefaultFocus>
@@ -1922,8 +1923,8 @@ function VirtualizedShelf({
                 renderItem={renderItem}
                 itemSize={itemSize}
                 orientation="horizontal"
-                numberOfRenderedItems={13}
-                numberOfItemsVisibleOnScreen={7}
+                numberOfRenderedItems={isAndroidTV ? 9 : 13}
+                numberOfItemsVisibleOnScreen={isAndroidTV ? 5 : 7}
                 onEndReachedThresholdItemsNumber={3}
               />
             )}
