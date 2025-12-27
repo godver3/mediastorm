@@ -71,8 +71,8 @@ export const GoBackConfiguration: React.FC = () => {
       // Handle drawer routes
       if (currentIsDrawerRoute) {
         if (currentIsMenuOpen) {
-          closeMenuRef.current();
-          return true; // Consume the event
+          // Drawer is open - let the back event propagate to minimize the app
+          return false;
         }
 
         openMenuRef.current();

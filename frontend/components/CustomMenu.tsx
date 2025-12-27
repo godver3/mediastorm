@@ -16,7 +16,6 @@ import {
   Animated,
   ScrollView,
   Pressable,
-  BackHandler,
   findNodeHandle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -125,11 +124,8 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   useEffect(() => {
     if (!isAndroidTV || !isVisible) return;
 
-    // Only handle back button to close menu
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      onClose();
-      return true;
-    });
+    // Back button is NOT intercepted here - it propagates to minimize the app
+    // (handled in GoBackConfiguration.tsx by returning false when drawer is open)
 
     // Handle left/right D-pad keys when drawer is open
     // Left: disabled (do nothing), Right: close drawer
@@ -143,7 +139,6 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     RemoteControlManager.addKeydownListener(handleKeyDown);
 
     return () => {
-      backHandler.remove();
       RemoteControlManager.removeKeydownListener(handleKeyDown);
     };
   }, [isVisible, onClose]);
