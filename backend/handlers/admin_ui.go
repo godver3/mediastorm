@@ -35,8 +35,9 @@ import (
 var adminTemplates embed.FS
 
 const (
-	adminSessionCookieName = "strmr_admin_session"
-	adminSessionDuration   = 24 * time.Hour
+	adminSessionCookieName         = "strmr_admin_session"
+	adminSessionDuration           = 24 * time.Hour
+	adminSessionDurationRememberMe = 30 * 24 * time.Hour // 30 days
 )
 
 // adminSessionStore manages admin session tokens
@@ -49,7 +50,7 @@ var adminSessions = &adminSessionStore{
 	sessions: make(map[string]time.Time),
 }
 
-func (s *adminSessionStore) create() string {
+func (s *adminSessionStore) create(duration time.Duration) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -58,7 +59,7 @@ func (s *adminSessionStore) create() string {
 	rand.Read(b)
 	token := hex.EncodeToString(b)
 
-	s.sessions[token] = time.Now().Add(adminSessionDuration)
+	s.sessions[token] = time.Now().Add(duration)
 
 	// Cleanup expired sessions
 	now := time.Now()
@@ -937,13 +938,20 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if "remember me" is checked
+	rememberMe := r.FormValue("remember") == "1"
+	sessionDuration := adminSessionDuration
+	if rememberMe {
+		sessionDuration = adminSessionDurationRememberMe
+	}
+
 	// Create session and set cookie
-	token := adminSessions.create()
+	token := adminSessions.create(sessionDuration)
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminSessionCookieName,
 		Value:    token,
 		Path:     "/admin",
-		MaxAge:   int(adminSessionDuration.Seconds()),
+		MaxAge:   int(sessionDuration.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
