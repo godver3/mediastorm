@@ -146,6 +146,27 @@
             margin-top: 0.5rem;
             text-align: center;
         }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .checkbox-input {
+            width: 1rem;
+            height: 1rem;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .checkbox-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -179,6 +200,11 @@
                 {{if .Error}}
                 <div class="form-error">{{.Error}}</div>
                 {{end}}
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="remember" name="remember" class="checkbox-input" value="1">
+                <label for="remember" class="checkbox-label">Remember me for 30 days</label>
             </div>
 
             <button type="submit" class="btn btn-primary btn-block">
