@@ -176,7 +176,9 @@ type PlaybackSettings struct {
 	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
 	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
 	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
-	SubtitleSize              float64 `json:"subtitleSize,omitempty"` // Scaling factor for subtitle size (1.0 = default)
+	SubtitleSize              float64 `json:"subtitleSize,omitempty"`    // Scaling factor for subtitle size (1.0 = default)
+	SeekForwardSeconds        int     `json:"seekForwardSeconds"`        // Seconds to skip forward (default 30)
+	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`       // Seconds to skip backward (default 10)
 }
 
 // LiveSettings controls Live TV playlist caching behavior.
@@ -312,7 +314,7 @@ func DefaultSettings() Settings {
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0},
+		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
 		Live:      LiveSettings{PlaylistURL: "", PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{
@@ -515,6 +517,14 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill SubtitleSize if not set (0 means unset since it's omitempty)
 	if s.Playback.SubtitleSize == 0 {
 		s.Playback.SubtitleSize = 1.0
+	}
+
+	// Backfill seek times if not set (0 means unset)
+	if s.Playback.SeekForwardSeconds == 0 {
+		s.Playback.SeekForwardSeconds = 30
+	}
+	if s.Playback.SeekBackwardSeconds == 0 {
+		s.Playback.SeekBackwardSeconds = 10
 	}
 
 	// Backfill WebDAV settings
