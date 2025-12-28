@@ -7,7 +7,7 @@ import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 interface ControlsProps {
@@ -257,6 +257,26 @@ const Controls: React.FC<ControlsProps> = ({
     return undefined;
   }, [activeMenu, audioSummary, subtitleSummary]);
 
+  // Memoize focus handlers to prevent re-renders of FocusablePressable on every Controls render
+  // This is critical for Android TV performance where re-creating these functions causes sluggish navigation
+  const handlePlayPauseFocus = useCallback(() => onFocusChange?.('play-pause-button'), [onFocusChange]);
+  const handleSkipBackFocus = useCallback(() => onFocusChange?.('skip-back-button'), [onFocusChange]);
+  const handleSkipForwardFocus = useCallback(() => onFocusChange?.('skip-forward-button'), [onFocusChange]);
+  const handleFullscreenFocus = useCallback(() => onFocusChange?.('fullscreen-button'), [onFocusChange]);
+  const handleAudioTrackFocus = useCallback(() => onFocusChange?.('audio-track-button'), [onFocusChange]);
+  const handleSubtitleTrackFocus = useCallback(() => onFocusChange?.('subtitle-track-button'), [onFocusChange]);
+  const handleSubtitleTrackSecondaryFocus = useCallback(() => onFocusChange?.('subtitle-track-button-secondary'), [onFocusChange]);
+  const handlePreviousEpisodeFocus = useCallback(() => onFocusChange?.('previous-episode-button'), [onFocusChange]);
+  const handleNextEpisodeFocus = useCallback(() => onFocusChange?.('next-episode-button'), [onFocusChange]);
+  const handleSubtitleOffsetEarlierFocus = useCallback(() => onFocusChange?.('subtitle-offset-earlier'), [onFocusChange]);
+  const handleSubtitleOffsetLaterFocus = useCallback(() => onFocusChange?.('subtitle-offset-later'), [onFocusChange]);
+  const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
+
+  // Memoize menu openers to stabilize onSelect props
+  const handleOpenAudioMenu = useCallback(() => openMenu('audio'), [openMenu]);
+  const handleOpenSubtitlesMenu = useCallback(() => openMenu('subtitles'), [openMenu]);
+  const handleOpenInfoMenu = useCallback(() => openMenu('info'), [openMenu]);
+
   return (
     <>
       {/* Mobile center controls */}
@@ -352,7 +372,7 @@ const Controls: React.FC<ControlsProps> = ({
                         icon={paused ? 'play' : 'pause'}
                         focusKey="play-pause-button"
                         onSelect={onPlayPause}
-                        onFocus={() => onFocusChange?.('play-pause-button')}
+                        onFocus={handlePlayPauseFocus}
                         style={styles.controlButton}
                         disabled={isSeeking}
                       />
@@ -362,7 +382,7 @@ const Controls: React.FC<ControlsProps> = ({
                         icon="play-skip-back"
                         focusKey="skip-back-button"
                         onSelect={onSkipBackward}
-                        onFocus={() => onFocusChange?.('skip-back-button')}
+                        onFocus={handleSkipBackFocus}
                         style={styles.controlButton}
                         disabled={isSeeking}
                       />
@@ -372,7 +392,7 @@ const Controls: React.FC<ControlsProps> = ({
                         icon="play-skip-forward"
                         focusKey="skip-forward-button"
                         onSelect={onSkipForward}
-                        onFocus={() => onFocusChange?.('skip-forward-button')}
+                        onFocus={handleSkipForwardFocus}
                         style={styles.controlButton}
                         disabled={isSeeking}
                       />
@@ -397,7 +417,7 @@ const Controls: React.FC<ControlsProps> = ({
                       icon={isFullscreen ? 'contract' : 'expand'}
                       focusKey="fullscreen-button"
                       onSelect={onToggleFullscreen}
-                      onFocus={() => onFocusChange?.('fullscreen-button')}
+                      onFocus={handleFullscreenFocus}
                       style={styles.controlButton}
                       disabled={isSeeking}
                     />
@@ -429,8 +449,8 @@ const Controls: React.FC<ControlsProps> = ({
                         <FocusablePressable
                           icon="musical-notes"
                           focusKey="audio-track-button"
-                          onSelect={() => openMenu('audio')}
-                          onFocus={() => onFocusChange?.('audio-track-button')}
+                          onSelect={handleOpenAudioMenu}
+                          onFocus={handleAudioTrackFocus}
                           style={[styles.controlButton, styles.trackButton]}
                           disabled={isSeeking || activeMenu !== null}
                         />
@@ -439,8 +459,8 @@ const Controls: React.FC<ControlsProps> = ({
                       <FocusablePressable
                         icon="musical-notes"
                         focusKey="audio-track-button"
-                        onSelect={() => openMenu('audio')}
-                        onFocus={() => onFocusChange?.('audio-track-button')}
+                        onSelect={handleOpenAudioMenu}
+                        onFocus={handleAudioTrackFocus}
                         style={[styles.controlButton, styles.trackButton]}
                         disabled={isSeeking || activeMenu !== null}
                       />
@@ -457,8 +477,8 @@ const Controls: React.FC<ControlsProps> = ({
                         <FocusablePressable
                           icon="chatbubble-ellipses"
                           focusKey="subtitle-track-button"
-                          onSelect={() => openMenu('subtitles')}
-                          onFocus={() => onFocusChange?.('subtitle-track-button')}
+                          onSelect={handleOpenSubtitlesMenu}
+                          onFocus={handleSubtitleTrackFocus}
                           style={[styles.controlButton, styles.trackButton]}
                           disabled={isSeeking || activeMenu !== null}
                         />
@@ -467,8 +487,8 @@ const Controls: React.FC<ControlsProps> = ({
                       <FocusablePressable
                         icon="chatbubble-ellipses"
                         focusKey="subtitle-track-button"
-                        onSelect={() => openMenu('subtitles')}
-                        onFocus={() => onFocusChange?.('subtitle-track-button')}
+                        onSelect={handleOpenSubtitlesMenu}
+                        onFocus={handleSubtitleTrackFocus}
                         style={[styles.controlButton, styles.trackButton]}
                         disabled={isSeeking || activeMenu !== null}
                       />
@@ -483,8 +503,8 @@ const Controls: React.FC<ControlsProps> = ({
                     <FocusablePressable
                       icon="chatbubble-ellipses"
                       focusKey="subtitle-track-button-secondary"
-                      onSelect={() => openMenu('subtitles')}
-                      onFocus={() => onFocusChange?.('subtitle-track-button-secondary')}
+                      onSelect={handleOpenSubtitlesMenu}
+                      onFocus={handleSubtitleTrackSecondaryFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
@@ -500,7 +520,7 @@ const Controls: React.FC<ControlsProps> = ({
                       icon="play-skip-back"
                       focusKey="previous-episode-button"
                       onSelect={onPreviousEpisode}
-                      onFocus={() => onFocusChange?.('previous-episode-button')}
+                      onFocus={handlePreviousEpisodeFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode}
                     />
@@ -515,7 +535,7 @@ const Controls: React.FC<ControlsProps> = ({
                       icon="play-skip-forward"
                       focusKey="next-episode-button"
                       onSelect={onNextEpisode}
-                      onFocus={() => onFocusChange?.('next-episode-button')}
+                      onFocus={handleNextEpisodeFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null || !hasNextEpisode}
                     />
@@ -531,7 +551,7 @@ const Controls: React.FC<ControlsProps> = ({
                       icon="remove-circle-outline"
                       focusKey="subtitle-offset-earlier"
                       onSelect={onSubtitleOffsetEarlier}
-                      onFocus={() => onFocusChange?.('subtitle-offset-earlier')}
+                      onFocus={handleSubtitleOffsetEarlierFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
@@ -543,7 +563,7 @@ const Controls: React.FC<ControlsProps> = ({
                       icon="add-circle-outline"
                       focusKey="subtitle-offset-later"
                       onSelect={onSubtitleOffsetLater}
-                      onFocus={() => onFocusChange?.('subtitle-offset-later')}
+                      onFocus={handleSubtitleOffsetLaterFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
@@ -554,8 +574,8 @@ const Controls: React.FC<ControlsProps> = ({
                   <FocusablePressable
                     icon="information-circle"
                     focusKey="info-button"
-                    onSelect={() => openMenu('info')}
-                    onFocus={() => onFocusChange?.('info-button')}
+                    onSelect={handleOpenInfoMenu}
+                    onFocus={handleInfoFocus}
                     style={[styles.controlButton, styles.trackButton]}
                     disabled={isSeeking || activeMenu !== null}
                   />
@@ -812,4 +832,6 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
   });
 };
 
-export default Controls;
+// Memoize Controls to prevent re-renders when only currentTime/duration change
+// The SeekBar inside will still update, but the control buttons won't re-render
+export default memo(Controls);

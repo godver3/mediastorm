@@ -3,7 +3,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { tvScale, isTV, isAndroidTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useRef } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -241,4 +241,6 @@ const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
   });
 };
 
-export default FocusablePressable;
+// Memoize to prevent re-renders when parent re-renders but props haven't changed
+// Critical for Android TV performance in the player controls
+export default memo(FocusablePressable);
