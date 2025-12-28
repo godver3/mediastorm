@@ -136,6 +136,7 @@ export default function SearchScreen() {
   const tempQueryRef = useRef('');
   const { lock, unlock } = useLockSpatialNavigation();
   const rowRefs = useRef<{ [key: string]: View | null }>({});
+  const rowPositionsRef = useRef<{ [key: string]: number }>({});
   const mainScrollViewRef = useRef<any>(null);
   const isNavigatingRef = useRef(false);
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
@@ -208,6 +209,11 @@ export default function SearchScreen() {
     }
     return items.filter((item) => item.mediaType === filter);
   }, [items, filter]);
+
+  // Clear row position cache when results change (positions will be different)
+  React.useEffect(() => {
+    rowPositionsRef.current = {};
+  }, [filteredItems]);
 
   const onDirectionHandledWithoutMovement = useCallback(
     (movement: Direction) => {
@@ -329,22 +335,38 @@ export default function SearchScreen() {
   const showClearButton = isCompact && query.trim().length > 0;
 
   // Scroll to row when it receives focus (for TV navigation) — match home index behavior
+  // Uses position caching to avoid expensive measureLayout calls on Android TV
   const scrollToRow = useCallback((rowKey: string) => {
     if (!Platform.isTV || !mainScrollViewRef.current) {
       return;
     }
 
+    const scrollView = mainScrollViewRef.current;
+
+    const performScroll = (targetY: number) => {
+      scrollView?.scrollTo({ y: targetY, animated: true });
+    };
+
+    // Check cache first (avoids expensive measureLayout on Android)
+    const cachedPosition = rowPositionsRef.current[rowKey];
+    if (cachedPosition !== undefined) {
+      performScroll(cachedPosition);
+      return;
+    }
+
+    // Fall back to measureLayout for first access, then cache
     const rowRef = rowRefs.current[rowKey];
     if (!rowRef) {
       return;
     }
 
-    const scrollView = mainScrollViewRef.current;
     rowRef.measureLayout(
       scrollView as any,
       (_left, top) => {
         const targetY = Math.max(0, top - 20);
-        scrollView?.scrollTo({ y: targetY, animated: true });
+        // Cache the position for future use
+        rowPositionsRef.current[rowKey] = targetY;
+        performScroll(targetY);
       },
       () => {
         // silently ignore failures
@@ -449,8 +471,8 @@ export default function SearchScreen() {
 
     // For TV/desktop/wide tablets, use focusable grid with spatial navigation
     // Split items into rows for proper grid navigation
-    // Column count based on screen width for better responsiveness
-    const columnsPerRow = screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4;
+    // Use 6 columns on TV, otherwise base on screen width
+    const columnsPerRow = Platform.isTV ? 6 : screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4;
     const rows: ResultTitle[][] = [];
     for (let i = 0; i < filteredItems.length; i += columnsPerRow) {
       rows.push(filteredItems.slice(i, i + columnsPerRow));
@@ -465,7 +487,7 @@ export default function SearchScreen() {
         style={styles.scrollView}
         bounces={false}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={Platform.isTV}
+        scrollEnabled={true}
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}
         removeClippedSubviews={Platform.isTV}
