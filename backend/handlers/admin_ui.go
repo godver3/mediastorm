@@ -396,6 +396,7 @@ type AdminUIHandler struct {
 	statusTemplate      *template.Template
 	historyTemplate     *template.Template
 	toolsTemplate       *template.Template
+	searchTemplate      *template.Template
 	loginTemplate       *template.Template
 	settingsPath        string
 	hlsManager          *HLSManager
@@ -546,6 +547,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		statusTemplate:      createPageTemplate("status.html"),
 		historyTemplate:     createPageTemplate("history.html"),
 		toolsTemplate:       createPageTemplate("tools.html"),
+		searchTemplate:      createPageTemplate("search.html"),
 		loginTemplate:       loginTmpl,
 		settingsPath:        settingsPath,
 		hlsManager:          hlsManager,
@@ -2412,6 +2414,32 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.toolsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Tools template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// SearchPage serves the search test page
+func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: "/admin/search",
+		Settings:    settings,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.searchTemplate == nil {
+		http.Error(w, "Search template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.searchTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Search template error: %v\n", err)
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }

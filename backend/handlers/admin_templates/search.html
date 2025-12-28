@@ -1,0 +1,551 @@
+{{template "base" .}}
+
+{{define "title"}}Search Test - strmr Admin{{end}}
+
+{{define "content"}}
+<div class="page-header" id="pageTop">
+    <h1>Search Test</h1>
+    <p>Search for content and test scraping results with filtering details</p>
+</div>
+
+<!-- Search Section -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            Content Search
+        </h2>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="form-label">Search Query</label>
+            <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="searchQuery" class="form-input" placeholder="e.g., Breaking Bad, The Matrix..." style="flex: 1;" onkeypress="if(event.key==='Enter')searchContent()">
+                <select id="searchType" class="form-select" style="width: auto;">
+                    <option value="series">TV Series</option>
+                    <option value="movie">Movies</option>
+                </select>
+                <button class="btn btn-primary" onclick="searchContent()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    Search
+                </button>
+            </div>
+            <p class="form-hint">Search for movies or TV shows by title</p>
+        </div>
+
+        <!-- Search Results -->
+        <div id="searchResults" style="display: none; margin-top: 1rem;">
+            <label class="form-label">Select Content</label>
+            <div id="searchResultsList" class="array-items"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Selected Content Section -->
+<div id="selectedContent" class="card" style="margin-bottom: 1.5rem; display: none;">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                <line x1="7" y1="2" x2="7" y2="22"/>
+                <line x1="17" y1="2" x2="17" y2="22"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <line x1="2" y1="7" x2="7" y2="7"/>
+                <line x1="2" y1="17" x2="7" y2="17"/>
+                <line x1="17" y1="7" x2="22" y2="7"/>
+                <line x1="17" y1="17" x2="22" y2="17"/>
+            </svg>
+            <span id="selectedTitle">Selected Content</span>
+        </h2>
+        <button class="btn btn-sm btn-secondary" onclick="clearSelection()">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            Clear
+        </button>
+    </div>
+    <div class="card-body">
+        <div id="contentDetails" style="display: flex; gap: 1.5rem; margin-bottom: 1rem;">
+            <div id="contentPoster" style="flex-shrink: 0;"></div>
+            <div id="contentInfo" style="flex: 1;"></div>
+        </div>
+
+        <!-- Episode Selection (for TV shows) -->
+        <div id="episodeSelector" style="display: none; margin-bottom: 1rem;">
+            <div style="display: flex; gap: 1rem; align-items: flex-end;">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label">Season</label>
+                    <select id="seasonSelect" class="form-select" style="width: 120px;" onchange="loadEpisodes()"></select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label">Episode</label>
+                    <select id="episodeSelect" class="form-select" style="width: 200px;"></select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scrape Button -->
+        <button id="scrapeBtn" class="btn btn-primary" onclick="runScrape()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Run Search
+        </button>
+    </div>
+</div>
+
+<!-- Scrape Results Section -->
+<div id="scrapeResultsCard" class="card" style="display: none;">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            Scrape Results
+            <span id="resultsCount" style="font-weight: 400; color: var(--text-muted); font-size: 0.875rem;"></span>
+        </h2>
+        <div style="display: flex; gap: 0.5rem;">
+            <select id="filterService" class="form-select" style="width: auto;" onchange="filterResults()">
+                <option value="">All Sources</option>
+                <option value="usenet">Usenet Only</option>
+                <option value="debrid">Debrid Only</option>
+            </select>
+            <select id="filterStatus" class="form-select" style="width: auto;" onchange="filterResults()">
+                <option value="">All Results</option>
+                <option value="passed">Passed Only</option>
+                <option value="filtered">Filtered Only</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="scrapeResultsLoading" style="display: none; text-align: center; padding: 2rem;">
+            <div class="spinner" style="margin: 0 auto 1rem;"></div>
+            <p style="color: var(--text-muted);">Searching indexers and scrapers...</p>
+        </div>
+        <div id="scrapeResultsList" class="table-container"></div>
+    </div>
+</div>
+
+<!-- Back to Top Button -->
+<button id="backToTopBtn" onclick="scrollToTop()" style="display: none; position: fixed; bottom: 2rem; right: 2rem; z-index: 100; padding: 0.75rem; background: var(--accent); color: white; border: none; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 12px var(--shadow); transition: all 0.2s;" title="Back to top">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="18 15 12 9 6 15"/>
+    </svg>
+</button>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    const pin = {{json .Settings.Server.PIN}};
+    let selectedContent = null;
+    let seriesDetails = null;
+    let allScrapeResults = [];
+
+    // Override the base apiCall to include PIN
+    async function apiCall(url, method = 'GET', data = null) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (pin) headers['X-PIN'] = pin;
+        const options = { method, headers };
+        if (data) options.body = JSON.stringify(data);
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            return { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        return response.json();
+    }
+
+    // Alternative fetch that uses query param for PIN (fallback)
+    async function fetchWithPin(url) {
+        const separator = url.includes('?') ? '&' : '?';
+        const fullUrl = pin ? `${url}${separator}pin=${pin}` : url;
+        const response = await fetch(fullUrl);
+        if (!response.ok) {
+            return { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        return response.json();
+    }
+
+    function scrollToElement(elementId) {
+        const el = document.getElementById(elementId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
+    function scrollToTop() {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Show/hide back to top button based on scroll position
+    window.addEventListener('scroll', function() {
+        const btn = document.getElementById('backToTopBtn');
+        if (window.scrollY > 300) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    });
+
+    async function searchContent() {
+        const query = document.getElementById('searchQuery').value.trim();
+        const type = document.getElementById('searchType').value;
+
+        if (!query) {
+            showToast('Please enter a search query', 'error');
+            return;
+        }
+
+        const resultsDiv = document.getElementById('searchResults');
+        const resultsList = document.getElementById('searchResultsList');
+
+        resultsList.innerHTML = '<div style="text-align: center; padding: 1rem;"><div class="spinner" style="margin: 0 auto;"></div></div>';
+        resultsDiv.style.display = 'block';
+
+        // Scroll to results
+        setTimeout(() => scrollToElement('searchResults'), 100);
+
+        try {
+            const results = await apiCall(`/api/search?q=${encodeURIComponent(query)}&type=${type}`);
+
+            if (results.error) {
+                resultsList.innerHTML = `<div style="text-align: center; padding: 1rem; color: var(--danger);">${results.error}</div>`;
+                return;
+            }
+
+            if (!results || results.length === 0) {
+                resultsList.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--text-muted);">No results found</div>';
+                return;
+            }
+
+            resultsList.innerHTML = results.slice(0, 10).map((result, idx) => {
+                const title = result.title || result;
+                const posterUrl = title.poster?.url || '';
+                const year = title.year || '';
+                const mediaType = title.mediaType || type;
+
+                return `
+                    <div class="array-item" style="cursor: pointer; transition: border-color 0.2s;" onclick="selectContent(${idx})" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                        <div style="display: flex; gap: 1rem; align-items: center;">
+                            ${posterUrl ? `<img src="${posterUrl}" style="width: 50px; height: 75px; object-fit: cover; border-radius: 4px;">` : '<div style="width: 50px; height: 75px; background: var(--bg-tertiary); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.75rem;">No Image</div>'}
+                            <div style="flex: 1;">
+                                <div style="font-weight: 500;">${title.name || 'Unknown'}</div>
+                                <div style="font-size: 0.875rem; color: var(--text-muted);">
+                                    ${year ? year + ' - ' : ''}${mediaType === 'series' ? 'TV Series' : 'Movie'}
+                                    ${title.imdbId ? ' - ' + title.imdbId : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Store results for selection
+            window.searchResultsData = results;
+        } catch (e) {
+            resultsList.innerHTML = `<div style="text-align: center; padding: 1rem; color: var(--danger);">Error: ${e.message}</div>`;
+        }
+    }
+
+    async function selectContent(idx) {
+        const results = window.searchResultsData;
+        if (!results || !results[idx]) return;
+
+        const result = results[idx];
+        selectedContent = result.title || result;
+
+        const selectedDiv = document.getElementById('selectedContent');
+        const episodeSelector = document.getElementById('episodeSelector');
+        const titleSpan = document.getElementById('selectedTitle');
+        const posterDiv = document.getElementById('contentPoster');
+        const infoDiv = document.getElementById('contentInfo');
+
+        titleSpan.textContent = selectedContent.name || 'Selected Content';
+
+        // Show poster
+        if (selectedContent.poster?.url) {
+            posterDiv.innerHTML = `<img src="${selectedContent.poster.url}" style="width: 120px; border-radius: 8px;">`;
+        } else {
+            posterDiv.innerHTML = '<div style="width: 120px; height: 180px; background: var(--bg-tertiary); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-muted);">No Poster</div>';
+        }
+
+        // Show info
+        infoDiv.innerHTML = `
+            <div style="margin-bottom: 0.5rem;">
+                <strong style="font-size: 1.25rem;">${selectedContent.name || 'Unknown'}</strong>
+                ${selectedContent.year ? `<span style="color: var(--text-muted);"> (${selectedContent.year})</span>` : ''}
+            </div>
+            <div style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                ${selectedContent.mediaType === 'series' ? 'TV Series' : 'Movie'}
+                ${selectedContent.tvdbId ? ` - TVDB: ${selectedContent.tvdbId}` : ''}
+                ${selectedContent.imdbId ? ` - IMDB: ${selectedContent.imdbId}` : ''}
+            </div>
+            ${selectedContent.overview ? `<div style="font-size: 0.875rem; color: var(--text-muted); max-height: 100px; overflow-y: auto;">${selectedContent.overview}</div>` : ''}
+        `;
+
+        selectedDiv.style.display = 'block';
+
+        // Hide scrape results
+        document.getElementById('scrapeResultsCard').style.display = 'none';
+
+        // If it's a series, load seasons/episodes
+        if (selectedContent.mediaType === 'series') {
+            episodeSelector.style.display = 'block';
+            await loadSeriesDetails();
+            // Scroll to episode selector
+            setTimeout(() => scrollToElement('episodeSelector'), 100);
+        } else {
+            episodeSelector.style.display = 'none';
+            seriesDetails = null;
+            // Scroll to scrape button for movies
+            setTimeout(() => scrollToElement('scrapeBtn'), 100);
+        }
+    }
+
+    async function loadSeriesDetails() {
+        const seasonSelect = document.getElementById('seasonSelect');
+        const episodeSelect = document.getElementById('episodeSelect');
+
+        seasonSelect.innerHTML = '<option>Loading...</option>';
+        episodeSelect.innerHTML = '<option>Select season first</option>';
+
+        try {
+            const params = new URLSearchParams();
+            if (selectedContent.tvdbId) params.set('tvdbId', selectedContent.tvdbId);
+            if (selectedContent.imdbId) params.set('imdbId', selectedContent.imdbId);
+
+            // Use fetchWithPin as fallback - passes PIN in query string
+            const details = await fetchWithPin(`/api/metadata/series/details?${params.toString()}`);
+
+            if (details.error) {
+                seasonSelect.innerHTML = `<option>Error: ${details.error}</option>`;
+                console.error('Series details error:', details.error);
+                return;
+            }
+
+            seriesDetails = details;
+
+            // Populate seasons
+            const seasons = details.seasons || [];
+            if (seasons.length === 0) {
+                seasonSelect.innerHTML = '<option>No seasons available</option>';
+                return;
+            }
+
+            // Filter to only regular seasons (number > 0)
+            const regularSeasons = seasons.filter(s => s.number > 0);
+            if (regularSeasons.length === 0) {
+                seasonSelect.innerHTML = '<option>No seasons available</option>';
+                return;
+            }
+
+            seasonSelect.innerHTML = regularSeasons
+                .map(s => `<option value="${s.number}">Season ${s.number}</option>`)
+                .join('');
+
+            await loadEpisodes();
+        } catch (e) {
+            seasonSelect.innerHTML = `<option>Error: ${e.message}</option>`;
+            console.error('Failed to load series details:', e);
+        }
+    }
+
+    async function loadEpisodes() {
+        const seasonNum = parseInt(document.getElementById('seasonSelect').value);
+        const episodeSelect = document.getElementById('episodeSelect');
+
+        if (!seriesDetails || isNaN(seasonNum)) {
+            episodeSelect.innerHTML = '<option>Select season first</option>';
+            return;
+        }
+
+        const season = seriesDetails.seasons?.find(s => s.number === seasonNum);
+        if (!season || !season.episodes || season.episodes.length === 0) {
+            episodeSelect.innerHTML = '<option>No episodes available</option>';
+            return;
+        }
+
+        episodeSelect.innerHTML = season.episodes.map(ep => {
+            const epNum = ep.episodeNumber || ep.number || 0;
+            return `<option value="${epNum}">E${epNum.toString().padStart(2, '0')} - ${ep.name || 'Episode ' + epNum}</option>`;
+        }).join('');
+    }
+
+    async function runScrape() {
+        if (!selectedContent) {
+            showToast('Please select content first', 'error');
+            return;
+        }
+
+        const scrapeCard = document.getElementById('scrapeResultsCard');
+        const loadingDiv = document.getElementById('scrapeResultsLoading');
+        const resultsList = document.getElementById('scrapeResultsList');
+        const resultsCount = document.getElementById('resultsCount');
+
+        scrapeCard.style.display = 'block';
+        loadingDiv.style.display = 'block';
+        resultsList.innerHTML = '';
+        resultsCount.textContent = '';
+
+        // Scroll to results
+        setTimeout(() => scrollToElement('scrapeResultsCard'), 100);
+
+        // Build search query
+        let searchQuery = selectedContent.name || '';
+        let mediaType = selectedContent.mediaType || 'movie';
+
+        if (mediaType === 'series') {
+            const season = parseInt(document.getElementById('seasonSelect').value);
+            const episode = parseInt(document.getElementById('episodeSelect').value);
+            if (season > 0 && episode > 0) {
+                searchQuery += ` S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`;
+            }
+        }
+
+        try {
+            const params = new URLSearchParams({
+                q: searchQuery,
+                mediaType: mediaType,
+                limit: '50'
+            });
+
+            if (selectedContent.imdbId) {
+                params.set('imdbId', selectedContent.imdbId);
+            }
+            if (selectedContent.year) {
+                params.set('year', selectedContent.year.toString());
+            }
+
+            const results = await fetchWithPin(`/api/indexers/search?${params.toString()}`);
+
+            loadingDiv.style.display = 'none';
+
+            if (results.error) {
+                resultsList.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);">${results.error}</div>`;
+                return;
+            }
+
+            if (!results || results.length === 0) {
+                resultsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);">No results found</div>';
+                return;
+            }
+
+            // Store all results for filtering
+            allScrapeResults = results.map((r, idx) => ({
+                ...r,
+                _idx: idx,
+                _filterStatus: 'passed', // Placeholder - would come from actual filter info
+                _score: 100 - idx // Placeholder score
+            }));
+
+            resultsCount.textContent = `(${results.length} results)`;
+            renderScrapeResults(allScrapeResults);
+        } catch (e) {
+            loadingDiv.style.display = 'none';
+            resultsList.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);">Error: ${e.message}</div>`;
+        }
+    }
+
+    function renderScrapeResults(results) {
+        const resultsList = document.getElementById('scrapeResultsList');
+
+        if (results.length === 0) {
+            resultsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);">No results match the filter</div>';
+            return;
+        }
+
+        resultsList.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">#</th>
+                        <th>Title</th>
+                        <th>Source</th>
+                        <th>Type</th>
+                        <th>Size</th>
+                        <th>Resolution</th>
+                        <th>HDR</th>
+                        <th>Score</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${results.map((r, displayIdx) => {
+                        const sizeGB = r.sizeBytes ? (r.sizeBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '-';
+                        const resolution = r.attributes?.resolution || '-';
+                        const hdr = r.attributes?.hdr || (r.attributes?.hasDV === 'true' ? 'DV' : '-');
+                        const serviceType = r.serviceType || 'unknown';
+                        const serviceBadge = serviceType === 'usenet'
+                            ? '<span class="status-badge online">Usenet</span>'
+                            : serviceType === 'debrid'
+                            ? '<span class="status-badge warning">Debrid</span>'
+                            : '<span class="status-badge">' + serviceType + '</span>';
+
+                        const statusBadge = r._filterStatus === 'passed'
+                            ? '<span class="status-badge online"><span class="status-dot"></span> Passed</span>'
+                            : '<span class="status-badge offline"><span class="status-dot"></span> Filtered</span>';
+
+                        return `
+                            <tr>
+                                <td style="color: var(--text-muted);">${displayIdx + 1}</td>
+                                <td>
+                                    <div style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${r.title || '-'}">
+                                        ${r.title || '-'}
+                                    </div>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted);">${r.indexer || '-'}</div>
+                                </td>
+                                <td>${serviceBadge}</td>
+                                <td style="font-size: 0.875rem;">${r.indexer || '-'}</td>
+                                <td style="font-size: 0.875rem;">${sizeGB}</td>
+                                <td style="font-size: 0.875rem;">${resolution}</td>
+                                <td style="font-size: 0.875rem;">${hdr !== '-' ? '<span style="color: var(--warning);">' + hdr + '</span>' : '-'}</td>
+                                <td style="font-weight: 500;">${r._score || '-'}</td>
+                                <td>${statusBadge}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    function filterResults() {
+        const serviceFilter = document.getElementById('filterService').value;
+        const statusFilter = document.getElementById('filterStatus').value;
+
+        let filtered = allScrapeResults;
+
+        if (serviceFilter) {
+            filtered = filtered.filter(r => r.serviceType === serviceFilter);
+        }
+
+        if (statusFilter) {
+            filtered = filtered.filter(r => r._filterStatus === statusFilter);
+        }
+
+        renderScrapeResults(filtered);
+
+        const resultsCount = document.getElementById('resultsCount');
+        resultsCount.textContent = `(${filtered.length} of ${allScrapeResults.length} results)`;
+    }
+
+    function clearSelection() {
+        selectedContent = null;
+        seriesDetails = null;
+        allScrapeResults = [];
+        document.getElementById('selectedContent').style.display = 'none';
+        document.getElementById('scrapeResultsCard').style.display = 'none';
+        scrollToTop();
+    }
+</script>
+{{end}}
