@@ -432,6 +432,7 @@ export interface UserProfile {
   name: string;
   color?: string;
   hasPin?: boolean; // Whether this profile has a PIN set (pinHash not exposed to frontend)
+  isKidsProfile?: boolean; // Whether this is a kids profile with content restrictions
   traktAccountId?: string; // ID of linked Trakt account
   createdAt: string;
   updatedAt: string;

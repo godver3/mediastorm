@@ -19,6 +19,7 @@ type User struct {
 	Color          string    `json:"color,omitempty"`
 	PinHash        string    `json:"-"`                        // bcrypt hash of PIN, excluded from JSON (security)
 	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
+	IsKidsProfile  bool      `json:"isKidsProfile"`            // Whether this is a kids profile with content restrictions
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }

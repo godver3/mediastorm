@@ -172,6 +172,8 @@ func Register(
 	api.HandleFunc("/users/{userID}/trakt", usersHandler.SetTraktAccount).Methods(http.MethodPut)
 	api.HandleFunc("/users/{userID}/trakt", usersHandler.ClearTraktAccount).Methods(http.MethodDelete)
 	api.HandleFunc("/users/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/users/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
+	api.HandleFunc("/users/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
 
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)

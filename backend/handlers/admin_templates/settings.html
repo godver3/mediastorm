@@ -923,6 +923,34 @@
         }
     }
 
+    async function setKidsProfile(profileId, isKids) {
+        try {
+            const response = await fetch('/admin/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isKidsProfile: isKids })
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                const idx = profilesData.findIndex(p => p.id === profileId);
+                if (idx >= 0) profilesData[idx] = updated;
+                showToast(isKids ? 'Kids profile enabled' : 'Kids profile disabled');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to update kids profile setting', 'error');
+            }
+        } catch (e) {
+            showToast('Error updating kids profile: ' + e.message, 'error');
+        }
+    }
+
+    function customizeKidsProfile(profileId) {
+        // Placeholder for kids profile customization
+        // This will be implemented later with content restrictions, etc.
+        showToast('Kids profile customization coming soon!', 'info');
+    }
+
     function handleCreateProfileSubmit(event) {
         event.preventDefault();
         const nameInput = document.getElementById('new-profile-name');
@@ -1080,12 +1108,21 @@
                 ? '<button class="btn btn-sm btn-icon btn-danger" onclick="deleteProfile(\'' + profile.id + '\')" title="Delete profile">' + icons.trash + '</button>'
                 : '<button class="btn btn-sm btn-icon" disabled title="Cannot delete last profile" style="opacity: 0.5; cursor: not-allowed;">' + icons.trash + '</button>';
 
+            const kidsToggle = '<label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">' +
+                '<input type="checkbox" ' + (profile.isKidsProfile ? 'checked' : '') + ' onchange="setKidsProfile(\'' + profile.id + '\', this.checked)" style="width: 16px; height: 16px;">' +
+                '<span style="font-size: 0.875rem;">This is a kids profile</span>' +
+                '</label>';
+
+            const kidsCustomizeBtn = profile.isKidsProfile
+                ? '<button class="btn btn-sm btn-primary" onclick="customizeKidsProfile(\'' + profile.id + '\')" style="margin-top: 0.5rem;">Customize Kids Settings</button>'
+                : '';
+
             return '<div class="array-item">' +
                 '<div class="array-item-header profile-header" style="flex-wrap: wrap; gap: 0.75rem;">' +
                 '<div class="array-item-title" style="display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 200px;">' +
                 '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + avatarColor + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1.125rem; flex-shrink: 0;">' + initial + '</div>' +
                 '<div style="flex: 1;">' +
-                '<div id="name-display-' + profile.id + '" style="font-weight: 600;">' + profile.name + '</div>' +
+                '<div id="name-display-' + profile.id + '" style="font-weight: 600;">' + profile.name + (profile.isKidsProfile ? ' <span style="background: var(--accent); color: white; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500;">Kids</span>' : '') + '</div>' +
                 '<form id="rename-form-' + profile.id + '" onsubmit="handleRenameProfileSubmit(event, \'' + profile.id + '\')" style="display: none; gap: 0.5rem; align-items: center;">' +
                 '<input type="text" id="rename-input-' + profile.id + '" class="form-input" value="' + profile.name + '" style="width: 150px; padding: 0.25rem 0.5rem;">' +
                 '<button type="submit" class="btn btn-sm btn-icon btn-primary" title="Save">' + icons.check + '</button>' +
@@ -1105,8 +1142,13 @@
                 renderColorPicker(profile.id, avatarColor) +
                 '</div>' +
                 '<div>' +
-                '<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">PIN Protection ' + pinStatus + '</div>' +
+                '<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">PIN Protection</div>' +
+                '<div style="margin-bottom: 0.5rem;">' + pinStatus + '</div>' +
                 '<div>' + pinActions + '</div>' +
+                '</div>' +
+                '<div>' +
+                '<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">Kids Profile</div>' +
+                '<div>' + kidsToggle + kidsCustomizeBtn + '</div>' +
                 '</div>' +
                 '</div>' +
                 '</div>';

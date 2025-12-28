@@ -1,14 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Keyboard,
   Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -26,8 +24,6 @@ import {
   SpatialNavigationRoot,
   SpatialNavigationScrollView,
   SpatialNavigationVirtualizedGrid,
-  useLockSpatialNavigation,
-  useSpatialNavigator,
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -35,7 +31,7 @@ import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 
-type PendingAction = null | 'create' | 'refresh' | `activate:${string}` | `color:${string}`;
+type PendingAction = null | 'refresh' | `activate:${string}` | `color:${string}`;
 
 // Predefined profile colors for TV
 const PROFILE_COLORS = [
@@ -49,10 +45,8 @@ const PROFILE_COLORS = [
   { name: 'Teal', value: '#14B8A6' },
 ];
 
-// Grid item types for TV virtualized grid
-type CreateProfileGridItem = { type: 'create' };
-type ProfileGridItem = { type: 'profile'; profile: UserProfile };
-type GridItem = CreateProfileGridItem | ProfileGridItem;
+// Grid item type for TV virtualized grid
+type GridItem = { profile: UserProfile };
 
 const formatErrorMessage = (err: unknown) => {
   if (err instanceof Error) {
@@ -70,69 +64,30 @@ export default function ProfilesScreen() {
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const {
     users,
     loading,
     error,
     activeUserId,
     selectUser,
-    createUser,
     updateColor,
     refresh,
     pendingPinUserId,
   } = useUserProfiles();
   const { showToast } = useToast();
 
-  const [newProfileName, setNewProfileName] = useState('');
   const [pending, setPending] = useState<PendingAction>(null);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
-  const [newlyCreatedProfileId, setNewlyCreatedProfileId] = useState<string | null>(null);
   const [openColorSelectorId, setOpenColorSelectorId] = useState<string | null>(null);
-  const newProfileInputRef = useRef<TextInput | null>(null);
-  const tempProfileNameRef = useRef('');
-  const { lock, unlock } = useLockSpatialNavigation();
-  const { grabFocus } = useSpatialNavigator();
 
   const isProfileModalVisible = selectedProfile !== null;
-  const isActive = isFocused && !isMenuOpen && !isCreateModalVisible && !isProfileModalVisible && !pendingPinUserId;
-
-  // Auto-focus newly created profile
-  useEffect(() => {
-    if (newlyCreatedProfileId && users.some((u) => u.id === newlyCreatedProfileId)) {
-      // Small delay to ensure the grid has rendered the new item
-      const timer = setTimeout(() => {
-        grabFocus(`profile-card-${newlyCreatedProfileId}`);
-        setNewlyCreatedProfileId(null);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [newlyCreatedProfileId, users, grabFocus]);
+  const isActive = isFocused && !isMenuOpen && !isProfileModalVisible && !pendingPinUserId;
 
   useEffect(() => {
     if (error) {
       showToast(error, { tone: 'danger', duration: 7000 });
     }
   }, [error, showToast]);
-
-  const handleCreateProfile = useCallback(async () => {
-    const trimmed = newProfileName.trim();
-    if (!trimmed) {
-      showToast('Profile name cannot be empty.', { tone: 'danger' });
-      return;
-    }
-
-    setPending('create');
-    try {
-      const created = await createUser(trimmed);
-      setNewProfileName('');
-      showToast(`Created profile "${created.name}".`, { tone: 'success' });
-    } catch (err) {
-      showToast(formatErrorMessage(err), { tone: 'danger' });
-    } finally {
-      setPending(null);
-    }
-  }, [createUser, newProfileName, showToast]);
 
   const handleActivateProfile = useCallback(
     async (id: string) => {
@@ -183,35 +138,6 @@ export default function ProfilesScreen() {
     }
   }, [refresh, showToast]);
 
-  const isCreateDisabled = pending === 'create' || !newProfileName.trim();
-
-  const handleFocus = useCallback(() => {
-    // Lock spatial navigation to prevent d-pad from navigating away while typing
-    lock();
-  }, [lock]);
-
-  const handleBlur = useCallback(() => {
-    // Unlock spatial navigation to re-enable d-pad navigation
-    unlock();
-    // On TV, sync the temp ref value to state on blur
-    if (Platform.isTV) {
-      const finalValue = tempProfileNameRef.current;
-      if (finalValue !== newProfileName) {
-        setNewProfileName(finalValue);
-      }
-    }
-  }, [unlock, newProfileName]);
-
-  const handleChangeText = useCallback((text: string) => {
-    if (Platform.isTV) {
-      // On tvOS, store in ref to avoid controlled input issues
-      tempProfileNameRef.current = text;
-    } else {
-      // On mobile, use normal controlled input
-      setNewProfileName(text);
-    }
-  }, []);
-
   const onDirectionHandledWithoutMovement = useCallback(
     (movement: Direction) => {
       if (movement === 'left') {
@@ -221,13 +147,9 @@ export default function ProfilesScreen() {
     [openMenu],
   );
 
-  // TV: Grid data combining create card and profile cards
+  // TV: Grid data for profile cards
   const gridData = useMemo<GridItem[]>(() => {
-    const items: GridItem[] = [{ type: 'create' }];
-    users.forEach((profile) => {
-      items.push({ type: 'profile', profile });
-    });
-    return items;
+    return users.map((profile) => ({ profile }));
   }, [users]);
 
   // TV: Handle selecting a profile card to show actions
@@ -240,70 +162,9 @@ export default function ProfilesScreen() {
     setSelectedProfile(null);
   }, []);
 
-  // TV: Open create modal
-  const handleOpenCreateModal = useCallback(() => {
-    setIsCreateModalVisible(true);
-  }, []);
-
-  // TV: Close create modal
-  const handleCloseCreateModal = useCallback(() => {
-    // Clean up keyboard on TV before closing
-    if (Platform.isTV) {
-      newProfileInputRef.current?.blur();
-      Keyboard.dismiss();
-    }
-    setIsCreateModalVisible(false);
-    setNewProfileName('');
-    tempProfileNameRef.current = '';
-  }, []);
-
-  // TV: Create profile from modal
-  const handleCreateFromModal = useCallback(async () => {
-    // On TV, use the temp ref value since we're using uncontrolled input
-    const nameValue = Platform.isTV ? tempProfileNameRef.current : newProfileName;
-    const trimmed = nameValue.trim();
-    if (!trimmed) {
-      showToast('Profile name cannot be empty.', { tone: 'danger' });
-      return;
-    }
-
-    // Clean up keyboard on TV before closing
-    if (Platform.isTV) {
-      newProfileInputRef.current?.blur();
-      Keyboard.dismiss();
-    }
-
-    setPending('create');
-    try {
-      const created = await createUser(trimmed);
-      setNewProfileName('');
-      tempProfileNameRef.current = '';
-      showToast(`Created profile "${created.name}".`, { tone: 'success' });
-      setIsCreateModalVisible(false);
-      setNewlyCreatedProfileId(created.id);
-    } catch (err) {
-      showToast(formatErrorMessage(err), { tone: 'danger' });
-    } finally {
-      setPending(null);
-    }
-  }, [createUser, newProfileName, showToast]);
-
   // TV: Render grid item
   const renderGridItem = useCallback(
     ({ item }: { item: GridItem }) => {
-      if (item.type === 'create') {
-        return (
-          <SpatialNavigationFocusableView focusKey="create-profile-card" onSelect={handleOpenCreateModal}>
-            {({ isFocused }: { isFocused: boolean }) => (
-              <View style={[styles.gridCard, styles.createCard, isFocused && styles.gridCardFocused]}>
-                <Text style={styles.createCardIcon}>+</Text>
-                <Text style={styles.createCardText}>Create Profile</Text>
-              </View>
-            )}
-          </SpatialNavigationFocusableView>
-        );
-      }
-
       const { profile } = item;
       const isProfileActive = activeUserId === profile.id;
       const avatarColor = profile.color || undefined;
@@ -324,6 +185,11 @@ export default function ProfilesScreen() {
                     <Text style={styles.pinIndicatorText}>PIN</Text>
                   </View>
                 )}
+                {profile.isKidsProfile && (
+                  <View style={styles.kidsIndicator}>
+                    <Text style={styles.kidsIndicatorText}>KIDS</Text>
+                  </View>
+                )}
               </View>
               <Text style={styles.gridCardName} numberOfLines={1}>
                 {profile.name}
@@ -334,7 +200,7 @@ export default function ProfilesScreen() {
         </SpatialNavigationFocusableView>
       );
     },
-    [activeUserId, styles, handleOpenCreateModal, handleProfileCardSelect],
+    [activeUserId, styles, handleProfileCardSelect],
   );
 
   // TV Layout
@@ -352,7 +218,7 @@ export default function ProfilesScreen() {
                 <View style={styles.headerRow}>
                   <View>
                     <Text style={styles.title}>Profiles</Text>
-                    <Text style={styles.description}>Select a profile or create a new one</Text>
+                    <Text style={styles.description}>Select a profile to switch or customize</Text>
                   </View>
                   <SpatialNavigationNode orientation="horizontal">
                     <FocusablePressable
@@ -389,99 +255,6 @@ export default function ProfilesScreen() {
             </View>
           </FixedSafeAreaView>
         </SpatialNavigationRoot>
-
-        {/* Create Profile Modal */}
-        <Modal
-          visible={isCreateModalVisible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={handleCloseCreateModal}
-        >
-          <SpatialNavigationRoot isActive={isCreateModalVisible}>
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                <Text style={styles.modalTitle}>Create Profile</Text>
-                <Text style={styles.modalSubtitle}>Enter a name for the new profile</Text>
-
-                <SpatialNavigationNode orientation="vertical">
-                  <SpatialNavigationFocusableView
-                    focusKey="create-modal-input"
-                    onSelect={() => {
-                      newProfileInputRef.current?.focus();
-                    }}
-                    onBlur={() => newProfileInputRef.current?.blur()}
-                  >
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <Pressable tvParallaxProperties={{ enabled: false }}>
-                        <TextInput
-                          ref={newProfileInputRef}
-                          {...(Platform.isTV ? { defaultValue: newProfileName } : { value: newProfileName })}
-                          onChangeText={handleChangeText}
-                          onFocus={handleFocus}
-                          onBlur={handleBlur}
-                          placeholder="Profile name"
-                          placeholderTextColor={theme.colors.text.muted}
-                          style={[styles.modalInput, isFocused && styles.modalInputFocused]}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          autoComplete="off"
-                          textContentType="none"
-                          spellCheck={false}
-                          clearButtonMode="never"
-                          enablesReturnKeyAutomatically={false}
-                          multiline={false}
-                          numberOfLines={1}
-                          underlineColorAndroid="transparent"
-                          importantForAutofill="no"
-                          disableFullscreenUI={true}
-                          returnKeyType="done"
-                          onSubmitEditing={() => {
-                            const nameValue = Platform.isTV ? tempProfileNameRef.current : newProfileName;
-                            if (nameValue.trim()) {
-                              void handleCreateFromModal();
-                            }
-                          }}
-                          showSoftInputOnFocus={true}
-                          editable={Platform.isTV ? isFocused : true}
-                          {...(Platform.OS === 'ios' &&
-                            Platform.isTV && {
-                              keyboardAppearance: 'dark',
-                            })}
-                        />
-                      </Pressable>
-                    )}
-                  </SpatialNavigationFocusableView>
-
-                  <SpatialNavigationNode orientation="horizontal">
-                    <View style={styles.modalActions}>
-                      <DefaultFocus>
-                        <FocusablePressable
-                          focusKey="create-modal-cancel"
-                          text="Cancel"
-                          onSelect={handleCloseCreateModal}
-                          style={[styles.modalButton, styles.modalButtonHorizontal]}
-                          focusedStyle={styles.modalButtonFocused}
-                          textStyle={styles.modalButtonText}
-                          focusedTextStyle={styles.modalButtonTextFocused}
-                        />
-                      </DefaultFocus>
-                      <FocusablePressable
-                        focusKey="create-modal-create"
-                        text={pending === 'create' ? 'Creating…' : 'Create'}
-                        onSelect={handleCreateFromModal}
-                        disabled={pending === 'create' || !newProfileName.trim()}
-                        style={[styles.modalButton, styles.modalButtonHorizontal]}
-                        focusedStyle={styles.modalButtonFocused}
-                        textStyle={styles.modalButtonText}
-                        focusedTextStyle={styles.modalButtonTextFocused}
-                      />
-                    </View>
-                  </SpatialNavigationNode>
-                </SpatialNavigationNode>
-              </View>
-            </View>
-          </SpatialNavigationRoot>
-        </Modal>
 
         {/* Profile Actions Modal */}
         <Modal
@@ -572,7 +345,7 @@ export default function ProfilesScreen() {
                     <View style={styles.adminInfoNote}>
                       <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
                       <Text style={styles.adminInfoNoteText}>
-                        To rename, set PIN, or delete profiles, use the Admin Web UI
+                        To create, rename, set PIN, or delete profiles, use the Admin Web UI
                       </Text>
                     </View>
                   </>
@@ -586,7 +359,7 @@ export default function ProfilesScreen() {
     );
   }
 
-  // Mobile Layout
+  // Mobile Layout - uses card grid similar to TV
   return (
     <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -597,147 +370,143 @@ export default function ProfilesScreen() {
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
           >
-            <View style={styles.header}>
-              <Text style={styles.title}>Profiles</Text>
-              <Text style={styles.description}>
-                Manage who is watching. Create profiles for each person, give them unique names, and switch between them
-                when needed.
-              </Text>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Create a profile</Text>
-              <DefaultFocus>
-                <SpatialNavigationFocusableView
-                  onSelect={() => {
-                    // Programmatically focus the TextInput to show keyboard on TV only on press
-                    newProfileInputRef.current?.focus();
-                  }}
-                  onBlur={() => {
-                    // Blur the TextInput when spatial navigation moves away
-                    newProfileInputRef.current?.blur();
-                  }}
-                >
-                  {({ isFocused }: { isFocused: boolean }) => (
-                    <TextInput
-                      ref={newProfileInputRef}
-                      value={newProfileName}
-                      onChangeText={setNewProfileName}
-                      onFocus={handleFocus}
-                      onBlur={handleBlur}
-                      placeholder="Profile name"
-                      placeholderTextColor={theme.colors.text.muted}
-                      style={[styles.input, isFocused && styles.inputFocused]}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                      returnKeyType="done"
-                      onSubmitEditing={() => (!isCreateDisabled ? void handleCreateProfile() : undefined)}
-                      showSoftInputOnFocus={true}
-                      editable={Platform.isTV ? isFocused : true}
-                    />
-                  )}
-                </SpatialNavigationFocusableView>
-              </DefaultFocus>
+            <View style={styles.headerRow}>
+              <View style={styles.headerContent}>
+                <Text style={styles.title}>Profiles</Text>
+                <Text style={styles.description}>Select a profile to switch or customize</Text>
+              </View>
               <FocusablePressable
-                text={pending === 'create' ? 'Creating…' : 'Create profile'}
-                onSelect={handleCreateProfile}
-                disabled={isCreateDisabled}
+                text={pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
+                onSelect={handleRefreshProfiles}
+                disabled={pending === 'refresh'}
               />
             </View>
 
-            <View style={styles.section}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderContent}>
-                  <Text style={styles.sectionTitle}>Existing profiles</Text>
-                  <Text style={styles.sectionDescription}>Switch between profiles or change colors.</Text>
-                </View>
-                <View style={styles.sectionHeaderAction}>
-                  <FocusablePressable
-                    text={pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
-                    onSelect={handleRefreshProfiles}
-                    disabled={pending === 'refresh'}
-                  />
-                </View>
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+                <Text style={styles.loadingText}>Loading profiles…</Text>
               </View>
+            ) : users.length === 0 ? (
+              <Text style={styles.emptyText}>No profiles yet. Create profiles in the Admin Web UI.</Text>
+            ) : (
+              <View style={styles.mobileCardGrid}>
+                {users.map((user) => {
+                  const isProfileActive = activeUserId === user.id;
+                  const avatarColor = user.color || undefined;
 
-              {loading ? (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-                  <Text style={styles.loadingText}>Loading profiles…</Text>
-                </View>
-              ) : users.length === 0 ? (
-                <Text style={styles.emptyText}>No profiles yet. Create your first profile to get started.</Text>
-              ) : (
-                <View style={styles.profileList}>
-                  {users.map((user) => {
-                    const isActive = activeUserId === user.id;
-                    const activateKey = `activate:${user.id}` as const;
-                    const avatarColor = user.color || undefined;
-                    const isColorPickerOpen = openColorSelectorId === user.id;
-
-                    return (
-                      <View key={user.id} style={[styles.profileCard, isActive && styles.profileCardActive]}>
-                        <View style={styles.profileHeader}>
-                          <Pressable
-                            onPress={() => setOpenColorSelectorId(isColorPickerOpen ? null : user.id)}
-                            style={[styles.mobileAvatar, avatarColor && { backgroundColor: avatarColor }]}
-                          >
-                            <Text style={styles.mobileAvatarText}>{user.name.charAt(0).toUpperCase()}</Text>
-                            {user.hasPin && (
-                              <View style={styles.mobilePinIndicator}>
-                                <Text style={styles.mobilePinIndicatorText}>PIN</Text>
-                              </View>
-                            )}
-                          </Pressable>
-                          <Text style={styles.profileName}>{user.name}</Text>
-                          {isActive && <Text style={styles.activeBadge}>Active</Text>}
-                        </View>
-
-                        {isColorPickerOpen && (
-                          <View style={styles.mobileColorPickerRow}>
-                            {PROFILE_COLORS.map((color) => {
-                              const isSelected = user.color === color.value;
-                              return (
-                                <Pressable
-                                  key={color.value}
-                                  onPress={() => handleUpdateColor(user.id, color.value)}
-                                  style={[
-                                    styles.colorSwatch,
-                                    { backgroundColor: color.value },
-                                    isSelected && styles.colorSwatchSelected,
-                                  ]}
-                                />
-                              );
-                            })}
+                  return (
+                    <Pressable
+                      key={user.id}
+                      onPress={() => handleProfileCardSelect(user)}
+                      style={[styles.mobileCard, isProfileActive && styles.mobileCardActive]}
+                    >
+                      <View style={[styles.mobileCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
+                        <Text style={styles.mobileCardAvatarText}>{user.name.charAt(0).toUpperCase()}</Text>
+                        {user.hasPin && (
+                          <View style={styles.mobileCardPinIndicator}>
+                            <Text style={styles.mobileCardPinIndicatorText}>PIN</Text>
                           </View>
                         )}
-
-                        <SpatialNavigationNode orientation="horizontal">
-                          <View style={styles.actionsRow}>
-                            <FocusablePressable
-                              text={isActive ? 'Active profile' : 'Set as active'}
-                              onSelect={() => handleActivateProfile(user.id)}
-                              disabled={isActive || pending === activateKey}
-                            />
+                        {user.isKidsProfile && (
+                          <View style={styles.mobileCardKidsIndicator}>
+                            <Text style={styles.mobileCardKidsIndicatorText}>KIDS</Text>
                           </View>
-                        </SpatialNavigationNode>
+                        )}
                       </View>
-                    );
-                  })}
-                </View>
-              )}
-
-              <View style={styles.adminInfoNoteMobile}>
-                <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
-                <Text style={styles.adminInfoNoteTextMobile}>
-                  To rename, set PIN, or delete profiles, use the Admin Web UI
-                </Text>
+                      <Text style={styles.mobileCardName} numberOfLines={1}>
+                        {user.name}
+                      </Text>
+                      {isProfileActive && <Text style={styles.mobileCardBadge}>Active</Text>}
+                    </Pressable>
+                  );
+                })}
               </View>
+            )}
+
+            <View style={styles.adminInfoNoteMobile}>
+              <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
+              <Text style={styles.adminInfoNoteTextMobile}>
+                To create, rename, set PIN, or delete profiles, use the Admin Web UI
+              </Text>
             </View>
           </SpatialNavigationScrollView>
         </View>
       </FixedSafeAreaView>
 
+      {/* Profile Actions Modal for Mobile */}
+      <Modal
+        visible={isProfileModalVisible && selectedProfile !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseProfileActions}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.mobileModalContainer}>
+            {selectedProfile && (
+              <>
+                <View style={styles.profileModalHeader}>
+                  <View
+                    style={[
+                      styles.profileModalAvatar,
+                      selectedProfile.color && { backgroundColor: selectedProfile.color },
+                    ]}
+                  >
+                    <Text style={styles.profileModalAvatarText}>
+                      {selectedProfile.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.mobileModalTitle}>{selectedProfile.name}</Text>
+                  {selectedProfile.isKidsProfile && (
+                    <View style={styles.mobileModalKidsBadge}>
+                      <Text style={styles.mobileModalKidsBadgeText}>Kids Profile</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.colorPickerSection}>
+                  <Text style={styles.colorPickerLabel}>Profile Color</Text>
+                  <View style={styles.mobileColorPickerRow}>
+                    {PROFILE_COLORS.map((color) => {
+                      const isSelected = selectedProfile.color === color.value;
+                      return (
+                        <Pressable
+                          key={color.value}
+                          onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
+                          style={[
+                            styles.colorSwatch,
+                            { backgroundColor: color.value },
+                            isSelected && styles.colorSwatchSelected,
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={styles.mobileModalActions}>
+                  {activeUserId !== selectedProfile.id && (
+                    <Pressable
+                      onPress={() => {
+                        handleActivateProfile(selectedProfile.id);
+                        handleCloseProfileActions();
+                      }}
+                      style={[styles.mobileModalButton, styles.mobileModalButtonPrimary]}
+                    >
+                      <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonPrimaryText]}>
+                        Set as Active
+                      </Text>
+                    </Pressable>
+                  )}
+                  <Pressable onPress={handleCloseProfileActions} style={styles.mobileModalButton}>
+                    <Text style={styles.mobileModalButtonText}>Close</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SpatialNavigationRoot>
   );
 }
@@ -791,12 +560,18 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     header: {
       gap: theme.spacing.sm,
     },
-    // TV header row
+    // Header row (shared TV/mobile)
     headerRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: theme.spacing.xl,
+      flexWrap: 'wrap',
+      gap: theme.spacing.md,
+    },
+    headerContent: {
+      flex: 1,
+      minWidth: 200,
     },
     headerButton: {
       paddingHorizontal: theme.spacing['2xl'],
@@ -813,67 +588,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.text.secondary,
       fontWeight: '400',
     },
-    section: {
-      gap: theme.spacing.md,
-      padding: theme.spacing.xl,
-      borderRadius: theme.radius.lg,
-      backgroundColor: theme.colors.background.base,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
-    },
-    sectionTitle: {
-      ...theme.typography.title.lg,
-      color: theme.colors.text.primary,
-    },
-    sectionDescription: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.secondary,
-    },
-    sectionHeaderRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: theme.spacing.lg,
-    },
-    sectionHeaderContent: {
-      flex: 1,
-      flexShrink: 1,
-      gap: theme.spacing.xs,
-    },
-    sectionHeaderAction: {
-      flexShrink: 0,
-    },
-    input: {
-      fontSize: isCompact ? theme.typography.body.lg.fontSize : 32,
-      borderWidth: 2,
-      borderColor: 'transparent',
-      backgroundColor: theme.colors.background.surface,
-      color: theme.colors.text.primary,
-      borderRadius: theme.radius.md,
-      paddingHorizontal: isCompact ? theme.spacing.md : theme.spacing.lg,
-      paddingVertical: isCompact ? theme.spacing.sm : theme.spacing.md,
-      minHeight: isCompact ? 44 : 60,
-    },
-    profileInput: {
-      flex: 1,
-    },
-    inputFocused: {
-      borderColor: theme.colors.accent.primary,
-      borderWidth: 3,
-      ...(isTV
-        ? {
-            shadowColor: theme.colors.accent.primary,
-            shadowOpacity: 0.4,
-            shadowOffset: { width: 0, height: 4 },
-            shadowRadius: 12,
-          }
-        : null),
-    },
-    loadingRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
-    },
     loadingContainer: {
       flex: 1,
       justifyContent: 'center',
@@ -887,74 +601,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     emptyText: {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
-    },
-    profileList: {
-      gap: theme.spacing.lg,
-    },
-    profileCard: {
-      gap: theme.spacing.md,
-      padding: theme.spacing.lg,
-      borderRadius: theme.radius.lg,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
-      backgroundColor: theme.colors.background.surface,
-    },
-    profileCardActive: {
-      borderColor: theme.colors.accent.primary,
-    },
-    profileHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.md,
-    },
-    profileMetaRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    profileMetaText: {
-      ...theme.typography.caption.sm,
-      color: theme.colors.text.muted,
-    },
-    actionsRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: theme.spacing.md,
-    },
-    activeBadge: {
-      ...theme.typography.label.md,
-      color: theme.colors.accent.primary,
-    },
-    mobileAvatar: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: theme.colors.background.elevated,
-      justifyContent: 'center',
-      alignItems: 'center',
-      position: 'relative',
-    },
-    mobilePinIndicator: {
-      position: 'absolute',
-      bottom: -2,
-      right: -2,
-      backgroundColor: theme.colors.accent.primary,
-      paddingHorizontal: 4,
-      paddingVertical: 1,
-      borderRadius: 3,
-      minWidth: 22,
-      alignItems: 'center',
-    },
-    mobilePinIndicatorText: {
-      fontSize: 8,
-      fontWeight: '700',
-      color: 'white',
-      letterSpacing: 0.3,
-    },
-    mobileAvatarText: {
-      fontSize: 20,
-      fontWeight: '600',
-      color: theme.colors.text.primary,
     },
     mobileColorPickerRow: {
       flexDirection: 'row',
@@ -1019,6 +665,23 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: 'white',
       letterSpacing: 0.5,
     },
+    kidsIndicator: {
+      position: 'absolute',
+      bottom: -4,
+      left: -4,
+      backgroundColor: '#22C55E',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      minWidth: 32,
+      alignItems: 'center',
+    },
+    kidsIndicatorText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: 'white',
+      letterSpacing: 0.5,
+    },
     gridCardAvatarText: {
       fontSize: cardWidth * 0.2,
       fontWeight: '600',
@@ -1038,18 +701,105 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       left: 0,
       right: 0,
     },
-    // Create profile card
-    createCard: {
-      borderStyle: 'dashed',
-      borderColor: theme.colors.border.subtle,
+
+    // Mobile card grid styles
+    mobileCardGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.md,
+      justifyContent: 'flex-start',
     },
-    createCardIcon: {
-      fontSize: 64,
-      fontWeight: '300',
-      color: theme.colors.text.muted,
+    mobileCard: {
+      width: (screenWidth - horizontalPadding * 2 - theme.spacing.md * 2) / 3,
+      aspectRatio: 0.85,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 2,
+      borderColor: 'transparent',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      padding: theme.spacing.md,
     },
-    createCardText: {
-      ...theme.typography.title.md,
+    mobileCardActive: {
+      borderColor: theme.colors.accent.primary,
+    },
+    mobileCardAvatar: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.colors.background.elevated,
+      justifyContent: 'center',
+      alignItems: 'center',
+      position: 'relative',
+    },
+    mobileCardAvatarText: {
+      fontSize: 24,
+      fontWeight: '600',
+      color: theme.colors.text.primary,
+    },
+    mobileCardPinIndicator: {
+      position: 'absolute',
+      bottom: -3,
+      right: -3,
+      backgroundColor: theme.colors.accent.primary,
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+      borderRadius: 3,
+      minWidth: 22,
+      alignItems: 'center',
+    },
+    mobileCardPinIndicatorText: {
+      fontSize: 8,
+      fontWeight: '700',
+      color: 'white',
+      letterSpacing: 0.3,
+    },
+    mobileCardKidsIndicator: {
+      position: 'absolute',
+      bottom: -3,
+      left: -3,
+      backgroundColor: '#22C55E',
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+      borderRadius: 3,
+      minWidth: 26,
+      alignItems: 'center',
+    },
+    mobileCardKidsIndicatorText: {
+      fontSize: 8,
+      fontWeight: '700',
+      color: 'white',
+      letterSpacing: 0.3,
+    },
+    mobileCardName: {
+      ...theme.typography.body.md,
+      fontWeight: '600',
+      color: theme.colors.text.primary,
+      textAlign: 'center',
+    },
+    mobileCardBadge: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.accent.primary,
+      textAlign: 'center',
+    },
+    mobileModalKidsBadge: {
+      backgroundColor: '#22C55E',
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+    },
+    mobileModalKidsBadgeText: {
+      ...theme.typography.label.md,
+      color: 'white',
+      fontWeight: '600',
+    },
+    colorPickerSection: {
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.lg,
+    },
+    colorPickerLabel: {
+      ...theme.typography.label.md,
       color: theme.colors.text.secondary,
     },
 
@@ -1075,11 +825,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
-    },
-    modalSubtitle: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.secondary,
-      fontWeight: '400',
     },
     pinErrorContainer: {
       backgroundColor: 'rgba(239, 68, 68, 0.15)',
@@ -1149,32 +894,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     mobileModalButtonDangerText: {
       color: 'white',
     },
-    modalInput: {
-      fontSize: 28,
-      borderWidth: 2,
-      borderColor: 'transparent',
-      backgroundColor: theme.colors.background.surface,
-      color: theme.colors.text.primary,
-      borderRadius: theme.radius.md,
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.md,
-      minHeight: 60,
-    },
-    modalInputFocused: {
-      borderColor: theme.colors.accent.primary,
-      borderWidth: 3,
-      shadowColor: theme.colors.accent.primary,
-      shadowOpacity: 0.4,
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 12,
-    },
-    modalActions: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: theme.spacing.lg,
-      marginTop: theme.spacing.lg,
-      marginBottom: theme.spacing.xl,
-    },
     modalButton: {
       minWidth: 280,
       minHeight: 64,
@@ -1186,10 +905,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
       borderColor: theme.colors.border.subtle,
-    },
-    modalButtonHorizontal: {
-      flex: 1,
-      minWidth: 0,
     },
     modalButtonFocused: {
       borderColor: theme.colors.accent.primary,
@@ -1240,17 +955,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     modalButtonDangerTextFocused: {
       color: theme.colors.status.danger,
     },
-    // Color picker styles
-    colorPickerSection: {
-      marginBottom: theme.spacing.lg,
-      gap: theme.spacing.md,
-    },
-    colorPickerLabel: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.secondary,
-      fontWeight: '400',
-      textAlign: 'center',
-    },
+    // Color picker styles (TV)
     colorPickerRow: {
       flexDirection: 'row',
       justifyContent: 'center',

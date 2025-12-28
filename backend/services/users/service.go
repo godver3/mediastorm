@@ -290,6 +290,32 @@ func (s *Service) HasPin(id string) bool {
 	return user.PinHash != ""
 }
 
+// SetKidsProfile sets whether this is a kids profile.
+func (s *Service) SetKidsProfile(id string, isKids bool) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.IsKidsProfile = isKids
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
 // SetTraktAccountID associates a Trakt account with the user.
 func (s *Service) SetTraktAccountID(id, traktAccountID string) (models.User, error) {
 	id = strings.TrimSpace(id)

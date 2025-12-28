@@ -1623,6 +1623,7 @@ type ProfileWithPinStatus struct {
 	Name           string    `json:"name"`
 	Color          string    `json:"color,omitempty"`
 	HasPin         bool      `json:"hasPin"`
+	IsKidsProfile  bool      `json:"isKidsProfile"`
 	TraktAccountID string    `json:"traktAccountId,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
@@ -1643,6 +1644,7 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 			Name:           u.Name,
 			Color:          u.Color,
 			HasPin:         u.HasPin(),
+			IsKidsProfile:  u.IsKidsProfile,
 			TraktAccountID: u.TraktAccountID,
 			CreatedAt:      u.CreatedAt,
 			UpdatedAt:      u.UpdatedAt,
@@ -1895,12 +1897,59 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:        user.ID,
-		Name:      user.Name,
-		Color:     user.Color,
-		HasPin:    user.HasPin(),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:            user.ID,
+		Name:          user.Name,
+		Color:         user.Color,
+		HasPin:        user.HasPin(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	})
+}
+
+// SetKidsProfileRequest represents a request to set a profile's kids mode
+type SetKidsProfileRequest struct {
+	IsKidsProfile bool `json:"isKidsProfile"`
+}
+
+// SetKidsProfile updates a profile's kids mode flag
+func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req SetKidsProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.SetKidsProfile(profileID, req.IsKidsProfile)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:            user.ID,
+		Name:          user.Name,
+		Color:         user.Color,
+		HasPin:        user.HasPin(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
 	})
 }
 
