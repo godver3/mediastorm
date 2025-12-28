@@ -52,6 +52,7 @@ type HomeShelvesSettings struct {
 type FilterSettings struct {
 	MaxSizeMovieGB   float64  `json:"maxSizeMovieGb"`
 	MaxSizeEpisodeGB float64  `json:"maxSizeEpisodeGb"`
+	MaxResolution    string   `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	ExcludeHdr       bool     `json:"excludeHdr"`
 	PrioritizeHdr    bool     `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
 	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (exact match in title)
