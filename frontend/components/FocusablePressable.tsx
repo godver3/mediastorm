@@ -1,7 +1,7 @@
 import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { tvScale, isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { tvScale, isTV, isAndroidTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useRef } from 'react';
 import {

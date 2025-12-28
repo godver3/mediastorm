@@ -160,7 +160,8 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const subtitleBottomOffset = useMemo(() => {
     // Small padding from video content edge (not screen edge)
     // This just provides a slight margin above the video's bottom border
-    const basePadding = Platform.isTV ? 20 : 10;
+    // Android TV: 40% lower positioning (25% + 20%)
+    const basePadding = isAndroidTV ? 12 : Platform.isTV ? 20 : 10;
 
     // If we don't have video or container dimensions, use default positioning
     if (!videoWidth || !videoHeight || !containerSize) {
@@ -171,8 +172,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     const isLandscape = containerWidth > containerHeight;
 
     // Extra offset when controls are visible to avoid overlap with control bar (landscape only)
-    // Control bar heights: ~120px mobile, ~180px TV (including padding and secondary row)
-    const controlsOffset = controlsVisible && isLandscape ? (Platform.isTV ? 180 : 120) : 0;
+    // Control bar heights: ~120px mobile, ~180px tvOS, ~72px Android TV (60% less shift)
+    const tvControlsOffset = isAndroidTV ? 72 : 180;
+    const controlsOffset = controlsVisible && isLandscape ? (Platform.isTV ? tvControlsOffset : 120) : 0;
 
     const videoAspectRatio = videoWidth / videoHeight;
     const containerAspectRatio = containerWidth / containerHeight;
@@ -188,8 +190,8 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
     // Video is taller than container: letterboxing on left/right
     // Video fills height, no bottom offset needed beyond base padding
-    // Add extra safe area padding in landscape mode
-    const landscapeExtra = isLandscape ? 20 : 0;
+    // Add extra safe area padding in landscape mode (Android TV: 40% less)
+    const landscapeExtra = isLandscape ? (isAndroidTV ? 12 : 20) : 0;
     return basePadding + landscapeExtra + controlsOffset;
   }, [videoWidth, videoHeight, containerSize, controlsVisible]);
 
@@ -349,8 +351,8 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Calculate scaled text styles based on sizeScale prop
   const scaledTextStyles = useMemo(() => {
     // Base font sizes per platform (these are the "1.0" scale values)
-    const baseFontSize = isAndroidTV ? 26 : Platform.isTV ? 52 : 24;
-    const baseLineHeight = isAndroidTV ? 36 : Platform.isTV ? 72 : 34;
+    const baseFontSize = isAndroidTV ? 26 : Platform.isTV ? 62 : 24;
+    const baseLineHeight = isAndroidTV ? 36 : Platform.isTV ? 86 : 34;
 
     // Apply scale factor
     const scaledFontSize = Math.round(baseFontSize * sizeScale);
@@ -427,10 +429,10 @@ const styles = StyleSheet.create({
     // tvOS: VLC uses scale=60 of default, roughly 24-26pt
     // Android TV: half of tvOS size
     // iOS mobile: reduced 30% for better fit
-    fontSize: isAndroidTV ? 26 : Platform.isTV ? 52 : 24,
+    fontSize: isAndroidTV ? 26 : Platform.isTV ? 62 : 24,
     fontWeight: '600',
     textAlign: 'center',
-    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 72 : 34,
+    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
     // VLC-style black outline effect
     // React Native only supports single shadow, so we use a tight radius
     // to approximate the outline effect VLC uses with freetype
@@ -449,10 +451,10 @@ const styles = StyleSheet.create({
   subtitleTextOutline: {
     position: 'absolute',
     color: '#000000',
-    fontSize: isAndroidTV ? 26 : Platform.isTV ? 52 : 24,
+    fontSize: isAndroidTV ? 26 : Platform.isTV ? 62 : 24,
     fontWeight: '600',
     textAlign: 'center',
-    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 72 : 34,
+    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
     paddingVertical: 2,
   },
 });

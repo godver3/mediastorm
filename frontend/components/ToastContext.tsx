@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
 import { NovaTheme, useTheme } from '../theme';
+import { isAndroidTV, tvScale } from '../theme/tokens/tvScale';
 import { useLoadingScreen } from './LoadingScreenContext';
 
 export type ToastTone = 'info' | 'success' | 'danger';
@@ -164,36 +165,53 @@ const createToastStyles = (
   shouldUseTabs: boolean,
   isTV: boolean,
 ) => {
-  // For tvOS, position at top with larger sizing
+  // For TV platforms, position at top with larger sizing
+  // Use tvScale for proper Android TV vs tvOS scaling
+  // Android TV gets 30% larger than default tvScale (0.55 * 1.3 = 0.715)
   if (isTV) {
+    const baseFontSize = theme.typography.body.lg.fontSize || 16;
+    const baseLineHeight = theme.typography.body.lg.lineHeight || 24;
+    // Scale font size appropriately - tvOS gets 1.5x, Android TV gets 0.715x of tvOS
+    const androidTvScale = 0.715; // 0.55 * 1.3 (30% larger than default)
+    const fontSize = isAndroidTV
+      ? Math.round(baseFontSize * 1.5 * androidTvScale)
+      : tvScale(baseFontSize * 1.5, baseFontSize);
+    const lineHeight = isAndroidTV
+      ? Math.round(baseLineHeight * 1.5 * androidTvScale)
+      : tvScale(baseLineHeight * 1.5, baseLineHeight);
+
+    // Helper for Android TV 30% boost
+    const atvScale = (tvosValue: number, mobileValue: number) =>
+      isAndroidTV ? Math.round(tvosValue * androidTvScale) : tvScale(tvosValue, mobileValue);
+
     return StyleSheet.create({
       viewport: {
         position: 'absolute',
-        top: theme.spacing.xl * 3,
-        left: theme.spacing.xl * 3,
-        right: theme.spacing.xl * 3,
-        gap: theme.spacing.lg,
+        top: atvScale(theme.spacing.xl * 3, theme.spacing.xl),
+        left: atvScale(theme.spacing.xl * 3, theme.spacing.xl),
+        right: atvScale(theme.spacing.xl * 3, theme.spacing.xl),
+        gap: atvScale(theme.spacing.lg, theme.spacing.md),
         zIndex: 1000,
       },
       toast: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderWidth: 3,
-        borderRadius: theme.radius.xl * 1.5,
+        borderWidth: isAndroidTV ? 2 : 3,
+        borderRadius: atvScale(theme.radius.xl * 1.5, theme.radius.lg),
         backgroundColor: theme.colors.background.elevated,
-        paddingVertical: theme.spacing.xl,
-        paddingHorizontal: theme.spacing.xl * 1.5,
+        paddingVertical: atvScale(theme.spacing.xl, theme.spacing.md),
+        paddingHorizontal: atvScale(theme.spacing.xl * 1.5, theme.spacing.lg),
         shadowOpacity: 0.4,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 12,
+        shadowRadius: atvScale(24, 12),
+        shadowOffset: { width: 0, height: atvScale(12, 6) },
+        elevation: atvScale(12, 6),
         maxWidth: '100%',
       },
       indicator: {
-        width: theme.spacing.md,
+        width: atvScale(theme.spacing.md, theme.spacing.sm),
         alignSelf: 'stretch',
-        borderRadius: theme.radius.lg,
-        marginRight: theme.spacing.xl,
+        borderRadius: atvScale(theme.radius.lg, theme.radius.md),
+        marginRight: atvScale(theme.spacing.xl, theme.spacing.md),
         flexShrink: 0,
       },
       message: {
@@ -201,7 +219,8 @@ const createToastStyles = (
         flexShrink: 1,
         color: theme.colors.text.primary,
         ...theme.typography.body.lg,
-        fontSize: (theme.typography.body.lg.fontSize || 16) * 1.5,
+        fontSize,
+        lineHeight,
       },
     });
   }
