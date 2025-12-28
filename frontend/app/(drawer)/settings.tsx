@@ -57,6 +57,7 @@ import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { APP_VERSION } from '@/version';
 import { router, Stack } from 'expo-router';
+import * as Updates from 'expo-updates';
 
 type SettingsTab = 'connection' | 'content' | 'playback' | 'home' | 'advanced' | 'live' | 'filtering';
 
@@ -923,6 +924,7 @@ function SettingsScreen() {
   const [isSubmittingLogs, setIsSubmittingLogs] = useState(false);
   const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
   const [logUrl, setLogUrl] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready'>('idle');
   const { releases: unplayableReleases, unmarkUnplayable, clearAll: clearUnplayableReleases } = useUnplayableReleases();
   const playbackOptions = useMemo<
     {
@@ -1315,6 +1317,41 @@ function SettingsScreen() {
       setIsSubmittingLogs(false);
     }
   }, [isSubmittingLogs, showToast]);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    if (__DEV__) {
+      showToast('Updates disabled in development mode', { tone: 'info' });
+      return;
+    }
+    if (updateStatus === 'checking' || updateStatus === 'downloading') return;
+
+    setUpdateStatus('checking');
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (update.isAvailable) {
+        setUpdateStatus('downloading');
+        showToast('Downloading update...', { tone: 'info' });
+        await Updates.fetchUpdateAsync();
+        setUpdateStatus('ready');
+        showToast('Update ready - tap to restart', { tone: 'success' });
+      } else {
+        showToast('App is up to date', { tone: 'success' });
+        setUpdateStatus('idle');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to check for updates';
+      showToast(message, { tone: 'danger' });
+      setUpdateStatus('idle');
+    }
+  }, [updateStatus, showToast]);
+
+  const handleApplyUpdate = useCallback(async () => {
+    try {
+      await Updates.reloadAsync();
+    } catch (err) {
+      showToast('Failed to restart app', { tone: 'danger' });
+    }
+  }, [showToast]);
 
   const _updateServerField = useCallback(
     (field: keyof EditableBackendSettings['server']) => (value: string) => {
@@ -2791,6 +2828,14 @@ function SettingsScreen() {
 
         case 'version-info': {
           const versionString = APP_VERSION;
+          const updateButtonText =
+            updateStatus === 'checking'
+              ? 'Checking...'
+              : updateStatus === 'downloading'
+                ? 'Downloading...'
+                : updateStatus === 'ready'
+                  ? 'Restart to Apply'
+                  : 'Check for Updates';
 
           return (
             <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing, styles.versionInfoContainer]}>
@@ -2801,6 +2846,14 @@ function SettingsScreen() {
               <View style={styles.versionInfoRow}>
                 <Text style={styles.versionInfoLabel}>Backend</Text>
                 <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
+              </View>
+              <View style={{ marginTop: 12 }}>
+                <FocusablePressable
+                  text={updateButtonText}
+                  onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
+                  disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                  style={styles.debugButton}
+                />
               </View>
             </View>
           );
@@ -2829,6 +2882,9 @@ function SettingsScreen() {
       setDirty,
       shelfPulses,
       backendVersion,
+      updateStatus,
+      handleCheckForUpdates,
+      handleApplyUpdate,
     ],
   );
 
@@ -2978,6 +3034,20 @@ function SettingsScreen() {
                         <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
                       </View>
                     </View>
+                    <FocusablePressable
+                      text={
+                        updateStatus === 'checking'
+                          ? 'Checking...'
+                          : updateStatus === 'downloading'
+                            ? 'Downloading...'
+                            : updateStatus === 'ready'
+                              ? 'Restart to Apply'
+                              : 'Check for Updates'
+                      }
+                      onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
+                      disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                      style={[styles.debugButton, { marginTop: 12 }]}
+                    />
                   </View>
                 )}
 
