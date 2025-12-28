@@ -591,6 +591,7 @@ func (s *Service) searchUsenet(ctx context.Context, settings config.Settings, op
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
+		MaxResolution:    settings.Filtering.MaxResolution,
 		ExcludeHdr:       settings.Filtering.ExcludeHdr,
 		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
@@ -705,6 +706,7 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 		IsMovie:          isMovie,
 		MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
+		MaxResolution:    filterSettings.MaxResolution,
 		ExcludeHdr:       filterSettings.ExcludeHdr,
 		PrioritizeHdr:    filterSettings.PrioritizeHdr,
 		AlternateTitles:  alternateTitles,
@@ -722,6 +724,7 @@ func (s *Service) applyUsenetFiltering(results []models.NZBResult, settings conf
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
+		MaxResolution:    settings.Filtering.MaxResolution,
 		ExcludeHdr:       settings.Filtering.ExcludeHdr,
 		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,

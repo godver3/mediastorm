@@ -286,6 +286,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			MediaType:        parsed.MediaType,
 			MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
 			MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
+			MaxResolution:    filterSettings.MaxResolution,
 			ExcludeHdr:       filterSettings.ExcludeHdr,
 			PrioritizeHdr:    filterSettings.PrioritizeHdr,
 			AlternateTitles:  opts.AlternateTitles,

@@ -28,6 +28,7 @@ type Options struct {
 	IsMovie          bool     // true for movies, false for TV shows
 	MaxSizeMovieGB   float64  // Maximum size in GB for movies (0 = no limit)
 	MaxSizeEpisodeGB float64  // Maximum size in GB for episodes (0 = no limit)
+	MaxResolution    string   // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	ExcludeHdr       bool     // Exclude HDR content from results
 	PrioritizeHdr    bool     // Prioritize HDR/DV content in results (when not excluded)
 	AlternateTitles  []string
@@ -36,9 +37,26 @@ type Options struct {
 
 // filteredResult holds a result with its HDR status for sorting
 type filteredResult struct {
-	result models.NZBResult
-	hasHDR bool
+	result     models.NZBResult
+	hasHDR     bool
 	hdrFormats []string
+}
+
+// resolutionToNumeric converts a resolution string to a numeric value for comparison.
+// Higher values = higher resolution. Returns 0 for unknown resolutions.
+func resolutionToNumeric(res string) int {
+	switch strings.ToLower(res) {
+	case "480p":
+		return 480
+	case "720p":
+		return 720
+	case "1080p":
+		return 1080
+	case "2160p", "4k":
+		return 2160
+	default:
+		return 0
+	}
 }
 
 // Results filters NZB search results based on parsed title information
@@ -160,6 +178,18 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 						result.Title, sizeGB, opts.MaxSizeEpisodeGB)
 					continue
 				}
+			}
+		}
+
+		// Check resolution limits if configured
+		if opts.MaxResolution != "" && parsed.Resolution != "" {
+			maxRes := resolutionToNumeric(opts.MaxResolution)
+			parsedRes := resolutionToNumeric(parsed.Resolution)
+			// Only filter if we can parse both resolutions
+			if maxRes > 0 && parsedRes > 0 && parsedRes > maxRes {
+				log.Printf("[filter] Rejecting %q: resolution %s > %s limit",
+					result.Title, parsed.Resolution, opts.MaxResolution)
+				continue
 			}
 		}
 
