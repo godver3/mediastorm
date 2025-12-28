@@ -91,6 +91,15 @@
             </div>
         </div>
 
+        <!-- User Filter Settings Selector -->
+        <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label">Test with User's Filter Settings</label>
+            <select id="userSelect" class="form-select" style="width: auto; min-width: 200px;">
+                <option value="">Global Settings (default)</option>
+            </select>
+            <p class="form-hint">Select a user to test their filtering preferences, or use global settings</p>
+        </div>
+
         <!-- Scrape Button -->
         <button id="scrapeBtn" class="btn btn-primary" onclick="runScrape()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -151,6 +160,29 @@
     let selectedContent = null;
     let seriesDetails = null;
     let allScrapeResults = [];
+
+    // Load users on page load
+    document.addEventListener('DOMContentLoaded', loadUsers);
+
+    async function loadUsers() {
+        try {
+            const users = await fetchWithPin('/api/users');
+            if (users.error || !Array.isArray(users)) {
+                console.warn('Could not load users:', users.error || 'invalid response');
+                return;
+            }
+
+            const userSelect = document.getElementById('userSelect');
+            users.forEach(user => {
+                const option = document.createElement('option');
+                option.value = user.id;
+                option.textContent = user.name || user.id;
+                userSelect.appendChild(option);
+            });
+        } catch (e) {
+            console.warn('Failed to load users:', e);
+        }
+    }
 
     // Override the base apiCall to include PIN
     async function apiCall(url, method = 'GET', data = null) {
@@ -424,6 +456,12 @@
             }
             if (selectedContent.year) {
                 params.set('year', selectedContent.year.toString());
+            }
+
+            // Add userId for per-user filtering settings
+            const selectedUserId = document.getElementById('userSelect').value;
+            if (selectedUserId) {
+                params.set('userId', selectedUserId);
             }
 
             const results = await fetchWithPin(`/api/indexers/search?${params.toString()}`);
