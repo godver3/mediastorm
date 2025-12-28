@@ -1,5 +1,6 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { CustomMenu } from '@/components/CustomMenu';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SpatialNavigationRoot } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -8,7 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import { Tabs } from 'expo-router/tabs';
-import { useCallback, type ComponentProps } from 'react';
+import { useCallback, useEffect, type ComponentProps } from 'react';
 import { Platform, StyleSheet, View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenuContext } from '../../components/MenuContext';
@@ -64,6 +65,18 @@ export default function DrawerLayout() {
       lockOrientation();
     }, []),
   );
+
+  // On tvOS, disable menu key handling when drawer is open so the Menu button
+  // will minimize the app instead of being captured by our event handler
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !Platform.isTV) {
+      return;
+    }
+
+    // When drawer is open, disable menu key so system handles it (minimizes app)
+    // When drawer is closed, enable menu key so we can use it for navigation
+    RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen);
+  }, [isMenuOpen]);
 
   const onDirectionHandledWithoutMovement = useCallback(
     (movement: Direction) => {

@@ -19,4 +19,7 @@ export interface RemoteControlManagerInterface {
   // Temporarily disable/enable TV event handling to allow spatial navigation to handle events
   disableTvEventHandling(): void;
   enableTvEventHandling(): void;
+
+  // Control tvOS menu key handling - disable to let menu button minimize app
+  setTvMenuKeyEnabled(enabled: boolean): void;
 }

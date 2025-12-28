@@ -198,6 +198,31 @@ class RemoteControlManager implements RemoteControlManagerInterface {
     }
   };
 
+  private disableTvMenuKey = () => {
+    if (!this.hasEnabledMenuKey) {
+      return;
+    }
+
+    if (Platform.OS === 'ios' && Platform.isTV && typeof TVMenuControl?.disableTVMenuKey === 'function') {
+      try {
+        TVMenuControl.disableTVMenuKey();
+        this.hasEnabledMenuKey = false;
+      } catch (error) {
+        console.warn('[remote-control] Failed to disable TV menu key:', error);
+      }
+    }
+  };
+
+  // Public methods for controlling tvOS menu key handling
+  // Used to let menu button minimize app when drawer is open
+  setTvMenuKeyEnabled = (enabled: boolean): void => {
+    if (enabled) {
+      this.enableTvMenuKey();
+    } else {
+      this.disableTvMenuKey();
+    }
+  };
+
   private enableTvPanGesture = () => {
     if (this.hasEnabledPanGesture) {
       return;
@@ -350,12 +375,15 @@ class RemoteControlManager implements RemoteControlManagerInterface {
 
   private handleHardwareBackPress = (): boolean => {
     if (this.shouldEmit(SupportedKeys.Back)) {
-      if (!this.interceptIfNeeded(SupportedKeys.Back)) {
-        this.eventEmitter.emit('keyDown', SupportedKeys.Back);
+      const handled = this.interceptIfNeeded(SupportedKeys.Back);
+      if (handled) {
+        // An interceptor handled the back press
+        return true;
       }
+      // No interceptor handled it - return false to let system minimize the app
+      return false;
     }
-    // Returning true prevents the default back behaviour so we can route it ourselves.
-    return true;
+    return false;
   };
 
   private shouldEmit = (key: SupportedKeys): boolean => {
