@@ -590,6 +590,9 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
   // Button widths: play (80) + 2x skip (60) + 2x episode (50) = 300px max
   // We want comfortable spacing that scales down on narrow screens
   const centerControlsGap = Math.max(theme.spacing.sm, Math.min(theme.spacing.xl, (screenWidth - 300) / 6));
+  const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+  // Android TV control buttons are 50% smaller (40% + 10%)
+  const controlButtonMinWidth = isAndroidTV ? 32 : 60;
 
   return StyleSheet.create({
     centerControls: {
@@ -704,7 +707,7 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     controlButton: {
       marginRight: theme.spacing.md,
-      minWidth: 60,
+      minWidth: controlButtonMinWidth,
     },
     trackButton: {
       marginRight: 0,
@@ -784,17 +787,17 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       fontWeight: '600',
       fontSize: 14,
     },
-    // TV subtitle offset styles
+    // TV subtitle offset styles - Android TV has 30% less padding
     subtitleOffsetTvGroup: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginRight: theme.spacing.xl,
-      marginBottom: theme.spacing.xs,
+      marginRight: isAndroidTV ? theme.spacing.xl * 0.7 : theme.spacing.xl,
+      marginBottom: isAndroidTV ? theme.spacing.xs * 0.7 : theme.spacing.xs,
     },
     subtitleOffsetTvDisplay: {
       alignItems: 'center',
-      marginHorizontal: theme.spacing.sm,
-      minWidth: 60,
+      marginHorizontal: isAndroidTV ? theme.spacing.sm * 0.7 : theme.spacing.sm,
+      minWidth: isAndroidTV ? 42 : 60,
     },
     subtitleOffsetTvLabel: {
       ...theme.typography.body.sm,
