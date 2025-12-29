@@ -105,6 +105,14 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 	if h.MetadataService != nil {
 		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language)
 		log.Printf("[settings] reloaded metadata service API keys")
+
+		// Reload MDBList settings (rating sources, API key, enabled state)
+		h.MetadataService.UpdateMDBListSettings(metadata.MDBListConfig{
+			APIKey:         s.MDBList.APIKey,
+			Enabled:        s.MDBList.Enabled,
+			EnabledRatings: s.MDBList.EnabledRatings,
+		})
+		log.Printf("[settings] reloaded MDBList settings (enabled=%v, ratings=%v)", s.MDBList.Enabled, s.MDBList.EnabledRatings)
 	}
 
 	// Reload debrid scrapers (Torrentio, Jackett, etc.)
