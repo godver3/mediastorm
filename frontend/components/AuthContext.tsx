@@ -5,6 +5,7 @@ import { apiService } from '@/services/api';
 
 const AUTH_TOKEN_KEY = 'strmr.authToken';
 const AUTH_ACCOUNT_KEY = 'strmr.authAccount';
+const BACKEND_URL_KEY = 'strmr.backendUrl';
 
 export interface AuthAccount {
   id: string;
@@ -51,10 +52,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const loadStoredAuth = async () => {
       try {
-        const [storedToken, storedAccountJson] = await Promise.all([
+        // Read backend URL, token, and account in parallel
+        const [storedBackendUrl, storedToken, storedAccountJson] = await Promise.all([
+          AsyncStorage.getItem(BACKEND_URL_KEY),
           AsyncStorage.getItem(AUTH_TOKEN_KEY),
           AsyncStorage.getItem(AUTH_ACCOUNT_KEY),
         ]);
+
+        // Apply stored backend URL before validating (avoids race with BackendSettingsProvider)
+        if (storedBackendUrl) {
+          apiService.setBaseUrl(storedBackendUrl);
+        }
 
         if (storedToken && storedAccountJson) {
           const storedAccount = JSON.parse(storedAccountJson) as AuthAccount;
@@ -67,28 +75,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setAccount(storedAccount);
           }
 
-          // Validate the session is still valid
-          try {
-            const response = await fetch(`${apiService.getBaseUrl()}/auth/me`, {
-              headers: {
-                Authorization: `Bearer ${storedToken}`,
-                'Content-Type': 'application/json',
-              },
-            });
+          // Validate the session is still valid (only if we have a backend URL)
+          if (storedBackendUrl) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            try {
+              const response = await fetch(`${apiService.getBaseUrl()}/auth/me`, {
+                headers: {
+                  Authorization: `Bearer ${storedToken}`,
+                  'Content-Type': 'application/json',
+                },
+                signal: controller.signal,
+              });
 
-            if (!response.ok) {
-              // Session expired or invalid - clear auth state
-              console.log('[Auth] Stored session is invalid, clearing auth state');
-              await clearStoredAuth();
-              if (mountedRef.current) {
-                setToken(null);
-                setAccount(null);
+              if (!response.ok) {
+                // Session expired or invalid - clear auth state
+                console.log('[Auth] Stored session is invalid, clearing auth state');
+                await clearStoredAuth();
+                if (mountedRef.current) {
+                  setToken(null);
+                  setAccount(null);
+                }
+                apiService.setAuthToken(null);
               }
-              apiService.setAuthToken(null);
+            } catch (err) {
+              // Network error or timeout - keep stored auth, will be validated on next request
+              console.warn('[Auth] Failed to validate stored session:', err);
+            } finally {
+              clearTimeout(timeoutId);
             }
-          } catch (err) {
-            // Network error - keep stored auth, will be validated on next request
-            console.warn('[Auth] Failed to validate stored session:', err);
           }
         }
       } catch (err) {
