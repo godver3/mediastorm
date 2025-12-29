@@ -3,6 +3,22 @@
 {{define "title"}}Watch History - strmr Admin{{end}}
 
 {{define "content"}}
+{{if .NoProfiles}}
+<div class="page-header">
+    <h1>Watch History</h1>
+    <p>View watch history by profile</p>
+</div>
+<div class="card" style="margin-top: 2rem;">
+    <div class="card-body" style="text-align: center; padding: 3rem;">
+        <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <h2 style="margin-bottom: 0.5rem;">No Profiles</h2>
+        <p style="color: var(--text-muted); margin-bottom: 1.5rem;">You don't have any profiles associated with your account yet. Create a profile to view this page.</p>
+    </div>
+</div>
+{{else}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
     <div>
         <h1>Watch History</h1>
@@ -94,8 +110,10 @@
     </div>
 </div>
 {{end}}
+{{end}}
 
 {{define "scripts"}}
+{{if not .NoProfiles}}
 <script>
     let currentPage = 1;
     let currentFilter = 'all';
@@ -331,7 +349,7 @@
             } else {
                 continueContainer.innerHTML = '<div class="table-container"><table><thead><tr><th>Series</th><th>Last Watched</th><th>Next Episode</th><th>Updated</th></tr></thead><tbody>' +
                     continueItems.map(item => {
-                        const lastWatched = item.lastWatched ? ('S' + String(item.lastWatched.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.lastWatched.episodeNumber || 0).padStart(2, '0')) : '-';
+                        const lastWatched = item.lastWatched && (item.lastWatched.seasonNumber > 0 || item.lastWatched.episodeNumber > 0) ? ('S' + String(item.lastWatched.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.lastWatched.episodeNumber || 0).padStart(2, '0')) : '-';
                         const nextEp = item.nextEpisode ? ('S' + String(item.nextEpisode.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.nextEpisode.episodeNumber || 0).padStart(2, '0')) : '-';
                         return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (item.seriesTitle || '-') + '">' + (item.seriesTitle || '-') + '</div><div style="font-size: 0.75rem; color: var(--text-muted);">' + (item.year || '') + '</div></td><td>' + lastWatched + '</td><td style="color: var(--accent);">' + nextEp + '</td><td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.updatedAt) + '</td></tr>';
                     }).join('') +
@@ -375,4 +393,5 @@
         loadHistory();
     });
 </script>
+{{end}}
 {{end}}

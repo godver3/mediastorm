@@ -3,6 +3,22 @@
 {{define "title"}}Settings - {{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}}{{end}}
 
 {{define "content"}}
+{{if .NoProfiles}}
+<div class="page-header">
+    <h1>Settings</h1>
+    <p>Configure profile settings</p>
+</div>
+<div class="card" style="margin-top: 2rem;">
+    <div class="card-body" style="text-align: center; padding: 3rem;">
+        <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <h2 style="margin-bottom: 0.5rem;">No Profiles</h2>
+        <p style="color: var(--text-muted); margin-bottom: 1.5rem;">You don't have any profiles associated with your account yet. Create a profile to view this page.</p>
+    </div>
+</div>
+{{else}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
         <h1>Settings</h1>
@@ -32,8 +48,10 @@
     </div>
 </div>
 {{end}}
+{{end}}
 
 {{define "scripts"}}
+{{if not .NoProfiles}}
 <script>
     let currentSettings = {{json .Settings}};
     let schema = {{json .Schema}};
@@ -85,7 +103,6 @@
         const serverErrors = { fields: {}, messages: [] };
         if (isEmpty(currentSettings.server?.host)) serverErrors.fields.host = 'Host is required';
         if (isEmpty(currentSettings.server?.port) && currentSettings.server?.port !== 0) serverErrors.fields.port = 'Port is required';
-        if (isEmpty(currentSettings.server?.pin)) serverErrors.fields.pin = 'PIN is required';
         if (Object.keys(serverErrors.fields).length > 0) errors.server = serverErrors;
 
         // Streaming - all required
@@ -599,9 +616,10 @@
                 }
             } else {
                 // Save global settings
-                const response = await fetch('/api/settings', {
+                const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-PIN': originalSettings.server?.pin || '' },
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify(currentSettings)
                 });
                 if (response.ok) {
@@ -1524,10 +1542,11 @@
                     showToast(result || 'Failed to save user settings', 'error');
                 }
             } else {
-                // Save global settings - use original PIN for auth since we might be changing it
-                const response = await fetch('/api/settings', {
+                // Save global settings
+                const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-PIN': originalSettings.server?.pin || '' },
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify(currentSettings)
                 });
                 if (response.ok) {
@@ -1576,4 +1595,5 @@
         }
     });
 </script>
+{{end}}
 {{end}}
