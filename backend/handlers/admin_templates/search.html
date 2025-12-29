@@ -156,7 +156,7 @@
 
 {{define "scripts"}}
 <script>
-    const pin = {{json .Settings.Server.PIN}};
+    const basePath = {{json .BasePath}};
     let selectedContent = null;
     let seriesDetails = null;
     let allScrapeResults = [];
@@ -166,7 +166,7 @@
 
     async function loadUsers() {
         try {
-            const users = await fetchWithPin('/api/users');
+            const users = await apiCall('/api/users');
             if (users.error || !Array.isArray(users)) {
                 console.warn('Could not load users:', users.error || 'invalid response');
                 return;
@@ -184,24 +184,14 @@
         }
     }
 
-    // Override the base apiCall to include PIN
+    // API call using session-based auth
     async function apiCall(url, method = 'GET', data = null) {
+        // Prepend basePath for /api/ routes to use admin session auth
+        const fullUrl = url.startsWith('/api/') ? basePath + url : url;
         const headers = { 'Content-Type': 'application/json' };
-        if (pin) headers['X-PIN'] = pin;
-        const options = { method, headers };
+        const options = { method, headers, credentials: 'same-origin' };
         if (data) options.body = JSON.stringify(data);
-        const response = await fetch(url, options);
-        if (!response.ok) {
-            return { error: `HTTP ${response.status}: ${response.statusText}` };
-        }
-        return response.json();
-    }
-
-    // Alternative fetch that uses query param for PIN (fallback)
-    async function fetchWithPin(url) {
-        const separator = url.includes('?') ? '&' : '?';
-        const fullUrl = pin ? `${url}${separator}pin=${pin}` : url;
-        const response = await fetch(fullUrl);
+        const response = await fetch(fullUrl, options);
         if (!response.ok) {
             return { error: `HTTP ${response.status}: ${response.statusText}` };
         }
@@ -356,8 +346,7 @@
             if (selectedContent.tvdbId) params.set('tvdbId', selectedContent.tvdbId);
             if (selectedContent.imdbId) params.set('imdbId', selectedContent.imdbId);
 
-            // Use fetchWithPin as fallback - passes PIN in query string
-            const details = await fetchWithPin(`/api/metadata/series/details?${params.toString()}`);
+            const details = await apiCall(`/api/metadata/series/details?${params.toString()}`);
 
             if (details.error) {
                 seasonSelect.innerHTML = `<option>Error: ${details.error}</option>`;
@@ -464,7 +453,7 @@
                 params.set('userId', selectedUserId);
             }
 
-            const results = await fetchWithPin(`/api/indexers/search?${params.toString()}`);
+            const results = await apiCall(`/api/indexers/search?${params.toString()}`);
 
             loadingDiv.style.display = 'none';
 

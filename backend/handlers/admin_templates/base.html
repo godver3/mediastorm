@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{block "title" .}}strmr Admin{{end}}</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/api/static/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/api/static/favicon-16.png">
     <style>
         :root {
             --bg-primary: #0f0f0f;
@@ -1021,13 +1023,9 @@
     <nav class="navbar">
         <div class="navbar-content">
             <a href="{{.BasePath}}" class="navbar-brand">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polygon points="12 2 2 7 12 12 22 7 12 2"/>
-                    <polyline points="2 17 12 22 22 17"/>
-                    <polyline points="2 12 12 17 22 12"/>
-                </svg>
+                <img src="/api/static/icon-rounded.png" alt="strmr" style="width: 32px; height: 32px; border-radius: 6px;">
                 <div style="display: flex; flex-direction: column; line-height: 1.2;">
-                    <span>{{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
+                    <span>{{if .IsAdmin}}strmr admin{{else}}strmr Account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
                     <span class="navbar-username" style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 400;">{{.Username}}</span>
                 </div>
             </a>

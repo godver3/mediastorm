@@ -221,22 +221,22 @@
                         <td id="health-time">-</td>
                     </tr>
                     <tr>
-                        <td>/api/settings</td>
+                        <td>Settings API</td>
                         <td>GET</td>
                         <td id="settings-status">-</td>
                         <td id="settings-time">-</td>
                     </tr>
                     <tr>
-                        <td>/api/discover/new</td>
+                        <td>Status API</td>
                         <td>GET</td>
-                        <td id="discover-status">-</td>
-                        <td id="discover-time">-</td>
+                        <td id="status-status">-</td>
+                        <td id="status-time">-</td>
                     </tr>
                     <tr>
-                        <td>/api/users</td>
+                        <td>Profiles API</td>
                         <td>GET</td>
-                        <td id="users-status">-</td>
-                        <td id="users-time">-</td>
+                        <td id="profiles-status">-</td>
+                        <td id="profiles-time">-</td>
                     </tr>
                 </tbody>
             </table>
@@ -245,7 +245,7 @@
 </div>
 
 <!-- Configuration Summary -->
-<div class="card">
+<div class="card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
         <h2>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -448,20 +448,17 @@
 
 {{define "scripts"}}
 <script>
-    const pin = {{json .Settings.Server.PIN}};
     const basePath = {{json .BasePath}};
     const isAdmin = {{json .IsAdmin}};
 
-    async function testEndpoint(endpoint, elementPrefix) {
+    async function testEndpoint(url, elementPrefix) {
         const statusEl = document.getElementById(elementPrefix+'-status');
         const timeEl = document.getElementById(elementPrefix+'-time');
         statusEl.innerHTML = '<div class="spinner" style="width: 14px; height: 14px;"></div>';
         timeEl.textContent = '-';
         try {
             const start = performance.now();
-            const headers = endpoint !== 'health' && pin ? {'X-PIN': pin} : {};
-            const url = endpoint === 'health' ? '/health' : '/api/' + endpoint.replace('settings', 'settings').replace('discover', 'discover/new');
-            const response = await fetch(url, {headers});
+            const response = await fetch(url, {credentials: 'same-origin'});
             const duration = Math.round(performance.now() - start);
             timeEl.textContent = duration + 'ms';
             if (response.ok) {
@@ -477,10 +474,10 @@
 
     async function testEndpoints() {
         await Promise.all([
-            testEndpoint('health', 'health'),
-            testEndpoint('settings', 'settings'),
-            testEndpoint('discover', 'discover'),
-            testEndpoint('users', 'users')
+            testEndpoint('/health', 'health'),
+            testEndpoint(basePath + '/api/settings', 'settings'),
+            testEndpoint(basePath + '/api/status', 'status'),
+            testEndpoint(basePath + '/api/profiles', 'profiles')
         ]);
     }
 
