@@ -128,11 +128,20 @@ func (h *TraktAccountsHandler) CreateAccount(w http.ResponseWriter, r *http.Requ
 		name = "Trakt Account"
 	}
 
+	// Get session to determine owner
+	session := adminSessionFromContext(r.Context())
+	var ownerAccountID string
+	if session != nil && !session.IsMaster {
+		// Non-master accounts own their created Trakt accounts
+		ownerAccountID = session.AccountID
+	}
+
 	newAccount := config.TraktAccount{
-		ID:           uuid.NewString(),
-		Name:         name,
-		ClientID:     strings.TrimSpace(req.ClientID),
-		ClientSecret: strings.TrimSpace(req.ClientSecret),
+		ID:             uuid.NewString(),
+		Name:           name,
+		OwnerAccountID: ownerAccountID,
+		ClientID:       strings.TrimSpace(req.ClientID),
+		ClientSecret:   strings.TrimSpace(req.ClientSecret),
 	}
 
 	settings.Trakt.Accounts = append(settings.Trakt.Accounts, newAccount)
