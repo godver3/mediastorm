@@ -22,10 +22,11 @@ import (
 )
 
 type Service struct {
-	client *tvdbClient
-	tmdb   *tmdbClient
-	cache  *fileCache
-	demo   bool
+	client  *tvdbClient
+	tmdb    *tmdbClient
+	mdblist *mdblistClient
+	cache   *fileCache
+	demo    bool
 
 	// In-flight request deduplication for TVDB ID resolution
 	inflightMu       sync.Mutex
@@ -40,13 +41,21 @@ type inflightRequest struct {
 
 const tvdbArtworkBaseURL = "https://artworks.thetvdb.com"
 
-func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool) *Service {
+// MDBListConfig holds configuration for the MDBList client
+type MDBListConfig struct {
+	APIKey         string
+	Enabled        bool
+	EnabledRatings []string
+}
+
+func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig) *Service {
 	// Use a dedicated subdirectory for metadata cache to avoid conflicts with
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
 	return &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}),
+		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
 		demo:             demo,
 		inflightRequests: make(map[string]*inflightRequest),
@@ -64,6 +73,14 @@ func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
 		log.Printf("[metadata] warning: failed to clear cache: %v", err)
 	} else {
 		log.Printf("[metadata] cleared metadata cache due to API key change")
+	}
+}
+
+// UpdateMDBListSettings updates the MDBList client configuration
+func (s *Service) UpdateMDBListSettings(cfg MDBListConfig) {
+	if s.mdblist != nil {
+		s.mdblist.UpdateSettings(cfg.APIKey, cfg.EnabledRatings, cfg.Enabled)
+		log.Printf("[metadata] updated MDBList settings (enabled=%v, ratings=%v)", cfg.Enabled, cfg.EnabledRatings)
 	}
 }
 
@@ -1722,6 +1739,15 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 	log.Printf("[metadata] series details artwork summary tvdbId=%d seasons=%d episodesWithImages=%d episodesWithoutImages=%d", tvdbID, len(seasons), episodesWithImage, episodesWithoutImage)
 
+	// Fetch ratings from MDBList if enabled and IMDB ID is available
+	if seriesTitle.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+		if ratings, err := s.mdblist.GetRatings(ctx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
+			seriesTitle.Ratings = ratings
+			details.Title = seriesTitle // Update the details with ratings
+			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
+		}
+	}
+
 	_ = s.cache.set(cacheID, details)
 
 	log.Printf("[metadata] series details complete tvdbId=%d seasons=%d", tvdbID, len(seasons))
@@ -1924,6 +1950,14 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 
 	// Apply additional artworks from the artworks array
 	applyTVDBArtworks(&seriesTitle, extended.Artworks)
+
+	// Fetch ratings from MDBList if enabled and IMDB ID is available
+	if seriesTitle.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+		if ratings, err := s.mdblist.GetRatings(ctx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
+			seriesTitle.Ratings = ratings
+			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
+		}
+	}
 
 	log.Printf("[metadata] series info complete tvdbId=%d name=%q hasPoster=%v hasBackdrop=%v",
 		tvdbID, finalName, seriesTitle.Poster != nil, seriesTitle.Backdrop != nil)
@@ -2130,6 +2164,18 @@ func (s *Service) MovieDetails(ctx context.Context, req models.MovieDetailsQuery
 	}
 	if s.enrichMovieReleases(ctx, &movieTitle, tmdbIDForReleases) && len(movieTitle.Releases) > 0 {
 		log.Printf("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForReleases, len(movieTitle.Releases))
+	}
+
+	// Fetch ratings from MDBList if enabled and IMDB ID is available
+	imdbIDForRatings := movieTitle.IMDBID
+	if imdbIDForRatings == "" {
+		imdbIDForRatings = req.IMDBID
+	}
+	if imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+		if ratings, err := s.mdblist.GetRatings(ctx, imdbIDForRatings, "movie"); err == nil && len(ratings) > 0 {
+			movieTitle.Ratings = ratings
+			log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
+		}
 	}
 
 	// Cache the result

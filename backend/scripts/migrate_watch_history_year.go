@@ -45,7 +45,7 @@ func main() {
 	}
 
 	// Initialize metadata service (it will use cacheDir/metadata subdirectory internally)
-	metadataService := metadata.NewService(tvdbAPIKey, tmdbAPIKey, "en", cacheDir, 24, false)
+	metadataService := metadata.NewService(tvdbAPIKey, tmdbAPIKey, "en", cacheDir, 24, false, metadata.MDBListConfig{})
 
 	ctx := context.Background()
 	updated := 0

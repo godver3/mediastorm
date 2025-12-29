@@ -26,6 +26,13 @@ type Trailer struct {
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
 }
 
+// Rating represents a single rating from a source
+type Rating struct {
+	Source string  `json:"source"` // imdb, tmdb, trakt, letterboxd, tomatoes, audience, metacritic
+	Value  float64 `json:"value"`  // Rating value (scale varies by source)
+	Max    float64 `json:"max"`    // Maximum possible value (e.g., 10 for IMDB, 100 for RT)
+}
+
 type Title struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
@@ -47,6 +54,7 @@ type Title struct {
 	Releases        []Release `json:"releases,omitempty"`
 	Theatrical      *Release  `json:"theatricalRelease,omitempty"`
 	HomeRelease     *Release  `json:"homeRelease,omitempty"`
+	Ratings         []Rating  `json:"ratings,omitempty"` // Aggregated ratings from MDBList
 }
 
 type TrendingItem struct {

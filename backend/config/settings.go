@@ -30,6 +30,7 @@ type Settings struct {
 	Filtering       FilterSettings         `json:"filtering"`
 	UI              UISettings             `json:"ui"`
 	Subtitles       SubtitleSettings       `json:"subtitles"`
+	MDBList         MDBListSettings        `json:"mdblist"`
 	Trakt           TraktSettings          `json:"trakt,omitempty"`
 	Plex            PlexSettings           `json:"plex,omitempty"`
 	Log             LogConfig              `json:"log"`
@@ -230,6 +231,13 @@ type SubtitleSettings struct {
 	OpenSubtitlesPassword string `json:"openSubtitlesPassword"`
 }
 
+// MDBListSettings defines MDBList integration for aggregated ratings.
+type MDBListSettings struct {
+	APIKey         string   `json:"apiKey"`
+	Enabled        bool     `json:"enabled"`
+	EnabledRatings []string `json:"enabledRatings"` // Which rating sources to display: trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic
+}
+
 // TraktAccount represents a registered Trakt account with its own credentials and OAuth tokens.
 type TraktAccount struct {
 	ID                string `json:"id"`                          // UUID for this account
@@ -383,6 +391,11 @@ func DefaultSettings() Settings {
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
 			OpenSubtitlesPassword: "",
+		},
+		MDBList: MDBListSettings{
+			APIKey:         "",
+			Enabled:        false,
+			EnabledRatings: []string{"imdb", "tomatoes", "audience"}, // Default to IMDB and Rotten Tomatoes
 		},
 		Trakt: TraktSettings{},
 		Plex:  PlexSettings{},
