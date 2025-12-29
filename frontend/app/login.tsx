@@ -1,19 +1,20 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
-  type TextStyle,
-  type ViewStyle,
 } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { useAuth } from '@/components/AuthContext';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
@@ -44,6 +45,48 @@ export default function LoginScreen() {
   const usernameRef = useRef<TextInput | null>(null);
   const passwordRef = useRef<TextInput | null>(null);
   const serverUrlRef = useRef<TextInput | null>(null);
+
+  // Track keyboard visibility with delay to prevent flicker when switching fields
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const keyboardHideTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardWillShow', () => {
+      // Cancel any pending hide timeout
+      if (keyboardHideTimeout.current) {
+        clearTimeout(keyboardHideTimeout.current);
+        keyboardHideTimeout.current = null;
+      }
+      setKeyboardVisible(true);
+    });
+
+    const hideSub = Keyboard.addListener('keyboardWillHide', () => {
+      // Delay hiding to prevent flicker when switching fields
+      keyboardHideTimeout.current = setTimeout(() => {
+        setKeyboardVisible(false);
+      }, 100);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+      if (keyboardHideTimeout.current) {
+        clearTimeout(keyboardHideTimeout.current);
+      }
+    };
+  }, []);
+
+  // Fixed translation when keyboard is visible
+  const KEYBOARD_OFFSET = 150;
+  const animatedContainerStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY: withTiming(keyboardVisible ? -KEYBOARD_OFFSET : 0, {
+          duration: 250,
+        }),
+      },
+    ],
+  }));
 
   const handleLogin = useCallback(async () => {
     Keyboard.dismiss();
@@ -209,6 +252,8 @@ export default function LoginScreen() {
             onChangeText={setPassword}
             placeholder="Enter password"
             secureTextEntry
+            autoComplete="off"
+            textContentType="oneTimeCode"
             returnKeyType="done"
             onSubmitEditing={handleLogin}
             styles={styles}
@@ -270,17 +315,11 @@ export default function LoginScreen() {
 
   return (
     <FixedSafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        style={styles.keyboardAvoid}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}>
+      <Pressable style={styles.dismissArea} onPress={Keyboard.dismiss}>
+        <Animated.View style={[styles.animatedContainer, animatedContainerStyle]}>
           {content}
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </Animated.View>
+      </Pressable>
     </FixedSafeAreaView>
   );
 }
@@ -294,7 +333,7 @@ interface LoginTextInputProps {
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   autoCorrect?: boolean;
   autoComplete?: 'off' | 'username' | 'password' | 'email';
-  textContentType?: 'none' | 'username' | 'password' | 'emailAddress';
+  textContentType?: 'none' | 'username' | 'password' | 'emailAddress' | 'oneTimeCode';
   returnKeyType?: 'done' | 'next';
   onSubmitEditing?: () => void;
   styles: ReturnType<typeof createStyles>;
@@ -396,11 +435,11 @@ const createStyles = (theme: NovaTheme) =>
       flex: 1,
       backgroundColor: theme.colors.background.base,
     },
-    keyboardAvoid: {
+    dismissArea: {
       flex: 1,
     },
-    scrollContent: {
-      flexGrow: 1,
+    animatedContainer: {
+      flex: 1,
     },
     container: {
       flex: 1,
