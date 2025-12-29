@@ -488,16 +488,16 @@ func (m *MP4BoxHLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Get API key from request for segment URLs
-	apiKey := r.URL.Query().Get("apiKey")
-	if apiKey == "" {
-		apiKey = r.Header.Get("X-API-Key")
-		if apiKey == "" {
-			apiKey = r.Header.Get("X-PIN")
+	// Get auth token from request for segment URLs
+	authToken := r.URL.Query().Get("token")
+	if authToken == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			authToken = strings.TrimPrefix(authHeader, "Bearer ")
 		}
 	}
 
-	// Rewrite segment URLs to include API key
+	// Rewrite segment URLs to include auth token
 	playlistContent := string(content)
 
 	// Inject HLS tags for HDR/DV
@@ -513,15 +513,15 @@ func (m *MP4BoxHLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request,
 		playlistContent = strings.Replace(playlistContent, "#EXTM3U\n", injection, 1)
 	}
 
-	if apiKey != "" {
+	if authToken != "" {
 		lines := strings.Split(playlistContent, "\n")
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasSuffix(trimmed, ".m4s") || strings.HasSuffix(trimmed, ".ts") {
-				lines[i] = line + "?apiKey=" + apiKey
+				lines[i] = line + "?token=" + authToken
 			} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
 				// Rewrite init segment URL
-				lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?apiKey=`+apiKey+`"`, 1)
+				lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?token=`+authToken+`"`, 1)
 			}
 		}
 		playlistContent = strings.Join(lines, "\n")

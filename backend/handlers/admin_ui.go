@@ -196,7 +196,6 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"host": map[string]interface{}{"type": "text", "label": "Host", "description": "Server bind address"},
 			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
-			"pin":  map[string]interface{}{"type": "password", "label": "PIN", "description": "6-digit authentication PIN"},
 		},
 	},
 	"streaming": map[string]interface{}{
@@ -421,7 +420,6 @@ var SettingsSchema = map[string]interface{}{
 
 // AdminUIHandler serves the admin dashboard UI
 type AdminUIHandler struct {
-	indexTemplate       *template.Template
 	settingsTemplate    *template.Template
 	statusTemplate      *template.Template
 	historyTemplate     *template.Template
@@ -441,9 +439,8 @@ type AdminUIHandler struct {
 	sessionsService     *sessions.Service
 	plexClient          *plex.Client
 	traktClient         *trakt.Client
-	configManager       *config.Manager
-	metadataService     MetadataService
-	getPIN              func() string
+	configManager   *config.Manager
+	metadataService MetadataService
 }
 
 // MetadataService interface for metadata operations
@@ -484,7 +481,7 @@ func (h *AdminUIHandler) SetSessionsService(ss *sessions.Service) {
 }
 
 // NewAdminUIHandler creates a new admin UI handler
-func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager, getPIN func() string) *AdminUIHandler {
+func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager) *AdminUIHandler {
 	funcMap := template.FuncMap{
 		"json": func(v interface{}) template.JS {
 			b, _ := json.Marshal(v)
@@ -607,7 +604,6 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 	}
 
 	return &AdminUIHandler{
-		indexTemplate:       createPageTemplate("index.html"),
 		settingsTemplate:    createPageTemplate("settings.html"),
 		statusTemplate:      createPageTemplate("status.html"),
 		historyTemplate:     createPageTemplate("history.html"),
@@ -621,7 +617,6 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		usersService:        usersService,
 		userSettingsService: userSettingsService,
 		configManager:       configManager,
-		getPIN:              getPIN,
 		plexClient:          plex.NewClient(plex.GenerateClientID()),
 		traktClient:         trakt.NewClient("", ""), // Will be updated with credentials from settings
 	}
@@ -640,6 +635,7 @@ type AdminPageData struct {
 	Status      AdminStatus
 	Users       []models.User
 	Version     string
+	NoProfiles  bool // true when non-admin user has no profiles
 }
 
 // AdminStatus holds backend status information
@@ -663,6 +659,9 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 
 	usersList := h.getScopedUsers(isAdmin, accountID)
 
+	// Check if non-admin user has no profiles
+	noProfiles := !isAdmin && len(usersList) == 0
+
 	data := AdminPageData{
 		CurrentPath: basePath + "/settings",
 		BasePath:    basePath,
@@ -674,6 +673,7 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 		Groups:      SettingsGroups,
 		Users:       usersList,
 		Version:     GetBackendVersion(),
+		NoProfiles:  noProfiles,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -720,6 +720,9 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
 	usersList := h.getScopedUsers(isAdmin, accountID)
 
+	// Check if non-admin user has no profiles
+	noProfiles := !isAdmin && len(usersList) == 0
+
 	data := AdminPageData{
 		CurrentPath: basePath + "/history",
 		BasePath:    basePath,
@@ -728,6 +731,7 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 		Username:    username,
 		Users:       usersList,
 		Version:     GetBackendVersion(),
+		NoProfiles:  noProfiles,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1341,11 +1345,6 @@ func (h *AdminUIHandler) renderLoginError(w http.ResponseWriter, errMsg string) 
 		fmt.Printf("Login template error: %v\n", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
-}
-
-// HasPIN returns true if a PIN is configured
-func (h *AdminUIHandler) HasPIN() bool {
-	return strings.TrimSpace(h.getPIN()) != ""
 }
 
 // TestIndexerRequest represents a request to test an indexer
@@ -2010,8 +2009,10 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 
 // CreateProfileRequest represents a request to create a profile
 type CreateProfileRequest struct {
-	Name  string `json:"name"`
-	Color string `json:"color,omitempty"`
+	Name          string `json:"name"`
+	Color         string `json:"color,omitempty"`
+	AccountId     string `json:"accountId,omitempty"`
+	IsKidsProfile bool   `json:"isKidsProfile,omitempty"`
 }
 
 // CreateProfile creates a new profile (admin can create for any account)
@@ -2027,7 +2028,7 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.usersService.Create(req.Name)
+	user, err := h.usersService.CreateForAccount(req.AccountId, req.Name)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") {
@@ -2046,14 +2047,24 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Set kids profile flag if requested
+	if req.IsKidsProfile {
+		user, err = h.usersService.SetKidsProfile(user.ID, true)
+		if err != nil {
+			log.Printf("[admin] failed to set kids profile for new profile %s: %v", user.ID, err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:        user.ID,
-		Name:      user.Name,
-		Color:     user.Color,
-		HasPin:    user.HasPin(),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:            user.ID,
+		AccountID:     user.AccountID,
+		Name:          user.Name,
+		Color:         user.Color,
+		HasPin:        user.HasPin(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
 	})
 }
 
