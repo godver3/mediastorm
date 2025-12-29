@@ -1,0 +1,61 @@
+{{define "login"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Login - strmr{{end}}
+
+{{define "content"}}
+<div style="min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem;">
+    <div style="width: 100%; max-width: 400px;">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width: 48px; height: 48px; margin-bottom: 1rem;">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                <polyline points="2 17 12 22 22 17"/>
+                <polyline points="2 12 12 17 22 12"/>
+            </svg>
+            <h1 style="font-size: 1.5rem; font-weight: 600;">Welcome to strmr</h1>
+            <p style="color: var(--text-secondary); font-size: 0.875rem;">Sign in to manage your profiles</p>
+        </div>
+
+        {{if .Error}}
+        <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; color: var(--danger); font-size: 0.875rem;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; flex-shrink: 0;">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            {{.Error}}
+        </div>
+        {{end}}
+
+        <div class="card">
+            <div class="card-body">
+                <form method="POST" action="/account/login">
+                    <div class="form-group">
+                        <label class="form-label" for="username">Username</label>
+                        <input type="text" id="username" name="username" class="form-input" placeholder="Enter your username" required autofocus>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="password">Password</label>
+                        <input type="password" id="password" name="password" class="form-input" placeholder="Enter your password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                            <polyline points="10 17 15 12 10 7"/>
+                            <line x1="15" y1="12" x2="3" y2="12"/>
+                        </svg>
+                        Sign In
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <p style="text-align: center; color: var(--text-muted); font-size: 0.75rem;">
+            Admin? <a href="/admin/login" style="color: var(--accent); text-decoration: none;">Sign in to admin panel</a>
+        </p>
+    </div>
+</div>
+{{end}}

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"crypto/tls"
 	"embed"
 	"encoding/hex"
@@ -23,10 +22,14 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/models"
+	"novastream/services/accounts"
 	"novastream/services/debrid"
 	"novastream/services/history"
+	"novastream/services/invitations"
 	"novastream/services/plex"
+	"novastream/services/sessions"
 	"novastream/services/trakt"
 	"novastream/services/watchlist"
 	user_settings "novastream/services/user_settings"
@@ -43,6 +46,17 @@ const (
 	adminSessionsDir               = "cache/sessions"
 	adminSessionsFile              = "cache/sessions/admin.json"
 )
+
+// sessionContextKey is used to store session in request context
+type adminSessionContextKey struct{}
+
+// adminSessionFromContext retrieves the session from request context
+func adminSessionFromContext(ctx context.Context) *models.Session {
+	if session, ok := ctx.Value(adminSessionContextKey{}).(*models.Session); ok {
+		return session
+	}
+	return nil
+}
 
 // adminSessionStore manages admin session tokens with file persistence
 type adminSessionStore struct {
@@ -166,7 +180,6 @@ func (s *adminSessionStore) revoke(token string) {
 // SettingsGroups defines the order and labels for settings groups
 var SettingsGroups = []map[string]string{
 	{"id": "server", "label": "Server"},
-	{"id": "accounts", "label": "Accounts"},
 	{"id": "providers", "label": "Providers"},
 	{"id": "sources", "label": "Sources"},
 	{"id": "experience", "label": "Experience"},
@@ -185,14 +198,6 @@ var SettingsSchema = map[string]interface{}{
 			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
 			"pin":  map[string]interface{}{"type": "password", "label": "PIN", "description": "6-digit authentication PIN"},
 		},
-	},
-	"profiles": map[string]interface{}{
-		"label":   "Profiles",
-		"icon":    "users",
-		"group":   "accounts",
-		"order":   0,
-		"custom":  true, // Custom rendered section
-		"fields":  map[string]interface{}{},
 	},
 	"streaming": map[string]interface{}{
 		"label": "Streaming",
@@ -398,12 +403,17 @@ type AdminUIHandler struct {
 	toolsTemplate       *template.Template
 	searchTemplate      *template.Template
 	loginTemplate       *template.Template
+	registerTemplate    *template.Template
+	accountsTemplate    *template.Template
 	settingsPath        string
 	hlsManager          *HLSManager
 	usersService        *users.Service
 	userSettingsService *user_settings.Service
 	historyService      *history.Service
 	watchlistService    *watchlist.Service
+	accountsService     *accounts.Service
+	invitationsService  *invitations.Service
+	sessionsService     *sessions.Service
 	plexClient          *plex.Client
 	traktClient         *trakt.Client
 	configManager       *config.Manager
@@ -433,12 +443,30 @@ func (h *AdminUIHandler) SetWatchlistService(ws *watchlist.Service) {
 	h.watchlistService = ws
 }
 
+// SetAccountsService sets the accounts service for account management
+func (h *AdminUIHandler) SetAccountsService(as *accounts.Service) {
+	h.accountsService = as
+}
+
+// SetInvitationsService sets the invitations service for invitation link management
+func (h *AdminUIHandler) SetInvitationsService(is *invitations.Service) {
+	h.invitationsService = is
+}
+
+// SetSessionsService sets the sessions service for session management
+func (h *AdminUIHandler) SetSessionsService(ss *sessions.Service) {
+	h.sessionsService = ss
+}
+
 // NewAdminUIHandler creates a new admin UI handler
 func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager, getPIN func() string) *AdminUIHandler {
 	funcMap := template.FuncMap{
 		"json": func(v interface{}) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)
+		},
+		"hasSuffix": func(s, suffix string) bool {
+			return strings.HasSuffix(s, suffix)
 		},
 		"countEnabled": func(items []interface{}) int {
 			count := 0
@@ -541,6 +569,18 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		}
 	}
 
+	// Create register template (standalone, no base)
+	var registerTmpl *template.Template
+	registerContent, err := adminTemplates.ReadFile("admin_templates/register.html")
+	if err != nil {
+		fmt.Printf("Error reading register.html: %v\n", err)
+	} else {
+		registerTmpl, err = template.New("register").Parse(string(registerContent))
+		if err != nil {
+			fmt.Printf("Error parsing register.html: %v\n", err)
+		}
+	}
+
 	return &AdminUIHandler{
 		indexTemplate:       createPageTemplate("index.html"),
 		settingsTemplate:    createPageTemplate("settings.html"),
@@ -549,6 +589,8 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		toolsTemplate:       createPageTemplate("tools.html"),
 		searchTemplate:      createPageTemplate("search.html"),
 		loginTemplate:       loginTmpl,
+		registerTemplate:    registerTmpl,
+		accountsTemplate:    createPageTemplate("accounts.html"),
 		settingsPath:        settingsPath,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
@@ -563,6 +605,10 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 // AdminPageData holds data for admin page templates
 type AdminPageData struct {
 	CurrentPath string
+	BasePath    string // "/admin" for master accounts, "/account" for regular accounts
+	IsAdmin     bool   // true for master accounts, false for regular accounts
+	AccountID   string // Account ID for scoping data (empty for master)
+	Username    string // Username of logged in account
 	Settings    config.Settings
 	Schema      map[string]interface{}
 	Groups      []map[string]string
@@ -581,6 +627,8 @@ type AdminStatus struct {
 
 // SettingsPage serves the settings management page
 func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
 	mgr := config.NewManager(h.settingsPath)
 	settings, err := mgr.Load()
 	if err != nil {
@@ -588,13 +636,14 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var usersList []models.User
-	if h.usersService != nil {
-		usersList = h.usersService.List()
-	}
+	usersList := h.getScopedUsers(isAdmin, accountID)
 
 	data := AdminPageData{
-		CurrentPath: "/admin/settings",
+		CurrentPath: basePath + "/settings",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
 		Settings:    settings,
 		Schema:      SettingsSchema,
 		Groups:      SettingsGroups,
@@ -611,6 +660,8 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 
 // StatusPage serves the server status page
 func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
 	mgr := config.NewManager(h.settingsPath)
 	settings, err := mgr.Load()
 	if err != nil {
@@ -621,7 +672,11 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	status := h.getStatus(settings)
 
 	data := AdminPageData{
-		CurrentPath: "/admin/status",
+		CurrentPath: basePath + "/status",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
 		Settings:    settings,
 		Schema:      SettingsSchema,
 		Status:      status,
@@ -637,13 +692,15 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 
 // HistoryPage serves the watch history page
 func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
-	var usersList []models.User
-	if h.usersService != nil {
-		usersList = h.usersService.List()
-	}
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	usersList := h.getScopedUsers(isAdmin, accountID)
 
 	data := AdminPageData{
-		CurrentPath: "/admin/history",
+		CurrentPath: basePath + "/history",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
 		Users:       usersList,
 		Version:     GetBackendVersion(),
 	}
@@ -677,6 +734,17 @@ func (h *AdminUIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 // GetStreams returns active streams as JSON
 func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+
+	// Get allowed profile IDs for this account (for filtering)
+	allowedProfileIDs := make(map[string]bool)
+	if !isAdmin {
+		scopedUsers := h.getScopedUsers(isAdmin, accountID)
+		for _, u := range scopedUsers {
+			allowedProfileIDs[u.ID] = true
+		}
+	}
+
 	streams := []map[string]interface{}{}
 
 	// Get HLS sessions
@@ -684,6 +752,11 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		h.hlsManager.mu.RLock()
 		for _, session := range h.hlsManager.sessions {
 			session.mu.RLock()
+			// Skip streams that don't belong to this account's profiles
+			if !isAdmin && !allowedProfileIDs[session.ProfileID] {
+				session.mu.RUnlock()
+				continue
+			}
 			filename := filepath.Base(session.Path)
 			if filename == "" || filename == "." {
 				filename = filepath.Base(session.OriginalPath)
@@ -713,6 +786,10 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 	// Get direct streams from the global tracker
 	tracker := GetStreamTracker()
 	for _, stream := range tracker.GetActiveStreams() {
+		// Skip streams that don't belong to this account's profiles
+		if !isAdmin && !allowedProfileIDs[stream.ProfileID] {
+			continue
+		}
 		streams = append(streams, map[string]interface{}{
 			"id":             stream.ID,
 			"type":           "direct",
@@ -957,39 +1034,150 @@ type LoginPageData struct {
 	Error string
 }
 
-// IsAuthenticated checks if the request has a valid admin session
+// IsAuthenticated checks if the request has a valid session (any account)
 func (h *AdminUIHandler) IsAuthenticated(r *http.Request) bool {
-	// If no PIN is configured, allow access
-	if strings.TrimSpace(h.getPIN()) == "" {
-		return true
+	if h.sessionsService == nil {
+		return false
 	}
 
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err != nil {
 		return false
 	}
-	return adminSessions.validate(cookie.Value)
+
+	_, err = h.sessionsService.Validate(cookie.Value)
+	return err == nil
 }
 
-// RequireAuth is middleware that redirects to login if not authenticated
+// IsMasterAuthenticated checks if the request has a valid master (admin) session
+func (h *AdminUIHandler) IsMasterAuthenticated(r *http.Request) bool {
+	if h.sessionsService == nil {
+		return false
+	}
+
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err != nil {
+		return false
+	}
+
+	session, err := h.sessionsService.Validate(cookie.Value)
+	if err != nil {
+		return false
+	}
+
+	return session.IsMaster
+}
+
+// getSession retrieves the session from the request cookie
+func (h *AdminUIHandler) getSession(r *http.Request) *models.Session {
+	if h.sessionsService == nil {
+		return nil
+	}
+
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err != nil {
+		return nil
+	}
+
+	session, err := h.sessionsService.Validate(cookie.Value)
+	if err != nil {
+		return nil
+	}
+
+	return &session
+}
+
+// getPageRoleInfo returns IsAdmin, AccountID, BasePath, and Username based on session and request path
+func (h *AdminUIHandler) getPageRoleInfo(r *http.Request) (isAdmin bool, accountID string, basePath string, username string) {
+	session := adminSessionFromContext(r.Context())
+	if session == nil {
+		return false, "", "/admin", ""
+	}
+
+	isAdmin = session.IsMaster
+	accountID = session.AccountID
+
+	// Get username from account
+	if h.accountsService != nil {
+		if account, ok := h.accountsService.Get(accountID); ok {
+			username = account.Username
+		}
+	}
+
+	// Determine base path from request URL
+	if strings.HasPrefix(r.URL.Path, "/account") {
+		basePath = "/account"
+	} else {
+		basePath = "/admin"
+	}
+
+	return isAdmin, accountID, basePath, username
+}
+
+// getScopedUsers returns users scoped to the account (all users for admin, filtered for regular accounts)
+func (h *AdminUIHandler) getScopedUsers(isAdmin bool, accountID string) []models.User {
+	if h.usersService == nil {
+		return nil
+	}
+
+	if isAdmin {
+		return h.usersService.List()
+	}
+
+	// For non-admin, filter to only their profiles
+	allUsers := h.usersService.List()
+	var scopedUsers []models.User
+	for _, u := range allUsers {
+		if u.AccountID == accountID {
+			scopedUsers = append(scopedUsers, u)
+		}
+	}
+	return scopedUsers
+}
+
+// profileBelongsToAccount checks if a profile belongs to the given account
+func (h *AdminUIHandler) profileBelongsToAccount(profileID, accountID string) bool {
+	if h.usersService == nil {
+		return false
+	}
+	return h.usersService.BelongsToAccount(profileID, accountID)
+}
+
+// RequireAuth is middleware that allows any authenticated account and passes session to context
 func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.IsAuthenticated(r) {
+		session := h.getSession(r)
+		if session == nil {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
-		next(w, r)
+		// Add session to context for handlers to use
+		ctx := context.WithValue(r.Context(), adminSessionContextKey{}, session)
+		// Also set auth context keys so shared handlers (e.g., usersHandler) can access account info
+		ctx = context.WithValue(ctx, auth.ContextKeyAccountID, session.AccountID)
+		ctx = context.WithValue(ctx, auth.ContextKeyIsMaster, session.IsMaster)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// RequireMasterAuth is middleware that only allows master (admin) accounts
+func (h *AdminUIHandler) RequireMasterAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session := h.getSession(r)
+		if session == nil || !session.IsMaster {
+			http.Error(w, "Admin access required", http.StatusForbidden)
+			return
+		}
+		ctx := context.WithValue(r.Context(), adminSessionContextKey{}, session)
+		// Also set auth context keys so shared handlers can access account info
+		ctx = context.WithValue(ctx, auth.ContextKeyAccountID, session.AccountID)
+		ctx = context.WithValue(ctx, auth.ContextKeyIsMaster, session.IsMaster)
+		next(w, r.WithContext(ctx))
 	}
 }
 
 // LoginPage serves the login page (GET)
 func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
-	// If no PIN configured, redirect to dashboard
-	if strings.TrimSpace(h.getPIN()) == "" {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
-		return
-	}
-
 	// If already authenticated, redirect to dashboard
 	if h.IsAuthenticated(r) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
@@ -1003,14 +1191,44 @@ func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// RegisterPageData holds data for the registration page
+type RegisterPageData struct {
+	Token string
+	Error string
+}
+
+// RegisterPage serves the registration page (GET)
+func (h *AdminUIHandler) RegisterPage(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+
+	// Validate the token if provided
+	var validationError string
+	if token != "" && h.invitationsService != nil {
+		if err := h.invitationsService.Validate(token); err != nil {
+			validationError = err.Error()
+		}
+	} else if token == "" {
+		validationError = "No invitation token provided"
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.registerTemplate == nil {
+		http.Error(w, "Registration page not available", http.StatusInternalServerError)
+		return
+	}
+	if err := h.registerTemplate.ExecuteTemplate(w, "register", RegisterPageData{
+		Token: token,
+		Error: validationError,
+	}); err != nil {
+		fmt.Printf("Register template error: %v\n", err)
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
 // LoginSubmit handles login form submission (POST)
 func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
-	// Get current PIN (supports hot reload)
-	expectedPIN := strings.TrimSpace(h.getPIN())
-
-	// If no PIN configured, redirect to dashboard
-	if expectedPIN == "" {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	if h.accountsService == nil || h.sessionsService == nil {
+		h.renderLoginError(w, "Authentication services not configured")
 		return
 	}
 
@@ -1019,15 +1237,22 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	submittedPIN := strings.TrimSpace(r.FormValue("pin"))
-	if submittedPIN == "" {
-		h.renderLoginError(w, "PIN is required")
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+
+	if username == "" {
+		h.renderLoginError(w, "Username is required")
+		return
+	}
+	if password == "" {
+		h.renderLoginError(w, "Password is required")
 		return
 	}
 
-	// Constant-time comparison to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(submittedPIN), []byte(expectedPIN)) != 1 {
-		h.renderLoginError(w, "Invalid PIN")
+	// Authenticate using accounts service
+	account, err := h.accountsService.Authenticate(username, password)
+	if err != nil {
+		h.renderLoginError(w, "Invalid username or password")
 		return
 	}
 
@@ -1038,32 +1263,46 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		sessionDuration = adminSessionDurationRememberMe
 	}
 
-	// Create session and set cookie
-	token := adminSessions.create(sessionDuration)
+	// Create session with appropriate duration
+	userAgent := r.Header.Get("User-Agent")
+	ipAddress := getClientIPAddress(r)
+	session, err := h.sessionsService.CreateWithDuration(account.ID, account.IsMaster, userAgent, ipAddress, sessionDuration)
+	if err != nil {
+		h.renderLoginError(w, "Failed to create session")
+		return
+	}
+
+	maxAge := int(sessionDuration.Seconds())
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminSessionCookieName,
-		Value:    token,
-		Path:     "/admin",
-		MaxAge:   int(sessionDuration.Seconds()),
+		Value:    session.Token,
+		Path:     "/",
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	// Redirect based on account type
+	if account.IsMaster {
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	} else {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+	}
 }
 
 // Logout handles logout requests
 func (h *AdminUIHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(adminSessionCookieName)
-	if err == nil {
-		adminSessions.revoke(cookie.Value)
+	if err == nil && h.sessionsService != nil {
+		h.sessionsService.Revoke(cookie.Value)
 	}
 
 	// Clear the cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminSessionCookieName,
 		Value:    "",
-		Path:     "/admin",
+		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 	})
@@ -1623,6 +1862,7 @@ type TestDebridProviderRequest struct {
 // ProfileWithPinStatus represents a profile with its PIN status
 type ProfileWithPinStatus struct {
 	ID             string    `json:"id"`
+	AccountID      string    `json:"accountId,omitempty"`
 	Name           string    `json:"name"`
 	Color          string    `json:"color,omitempty"`
 	HasPin         bool      `json:"hasPin"`
@@ -1632,18 +1872,22 @@ type ProfileWithPinStatus struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-// GetProfiles returns all profiles with their PIN status
+// GetProfiles returns all profiles with their PIN status (for admin dashboard)
 func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 	if h.usersService == nil {
 		http.Error(w, "Users service not available", http.StatusInternalServerError)
 		return
 	}
 
-	users := h.usersService.List()
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+
+	// Admin shows ALL profiles, regular accounts only see their own
+	users := h.getScopedUsers(isAdmin, accountID)
 	profiles := make([]ProfileWithPinStatus, len(users))
 	for i, u := range users {
 		profiles[i] = ProfileWithPinStatus{
 			ID:             u.ID,
+			AccountID:      u.AccountID,
 			Name:           u.Name,
 			Color:          u.Color,
 			HasPin:         u.HasPin(),
@@ -1745,7 +1989,7 @@ type CreateProfileRequest struct {
 	Color string `json:"color,omitempty"`
 }
 
-// CreateProfile creates a new profile
+// CreateProfile creates a new profile (admin can create for any account)
 func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	if h.usersService == nil {
 		http.Error(w, "Users service not available", http.StatusInternalServerError)
@@ -1953,6 +2197,508 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 		IsKidsProfile: user.IsKidsProfile,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
+	})
+}
+
+// ============================================
+// Account Management Handlers (Master Only)
+// ============================================
+
+// AdminAccountWithProfiles represents an account with its associated profiles for admin UI
+type AdminAccountWithProfiles struct {
+	ID        string        `json:"id"`
+	Username  string        `json:"username"`
+	IsMaster  bool          `json:"isMaster"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+	Profiles  []models.User `json:"profiles"`
+}
+
+// GetUserAccounts returns all user accounts with their profiles
+func (h *AdminUIHandler) GetUserAccounts(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	accountsList := h.accountsService.List()
+	result := make([]AdminAccountWithProfiles, 0, len(accountsList))
+	for _, acc := range accountsList {
+		profiles := h.usersService.ListForAccount(acc.ID)
+		result = append(result, AdminAccountWithProfiles{
+			ID:        acc.ID,
+			Username:  acc.Username,
+			IsMaster:  acc.IsMaster,
+			CreatedAt: acc.CreatedAt,
+			UpdatedAt: acc.UpdatedAt,
+			Profiles:  profiles,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"accounts": result,
+	})
+}
+
+// AdminCreateAccountRequest represents a request to create a new account
+type AdminCreateAccountRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// CreateUserAccount creates a new user account
+func (h *AdminUIHandler) CreateUserAccount(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	var req AdminCreateAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	account, err := h.accountsService.Create(req.Username, req.Password)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrUsernameExists {
+			status = http.StatusConflict
+		} else if err == accounts.ErrUsernameRequired || err == accounts.ErrPasswordRequired {
+			status = http.StatusBadRequest
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(AdminAccountWithProfiles{
+		ID:        account.ID,
+		Username:  account.Username,
+		IsMaster:  account.IsMaster,
+		CreatedAt: account.CreatedAt,
+		UpdatedAt: account.UpdatedAt,
+		Profiles:  []models.User{},
+	})
+}
+
+// DeleteUserAccount deletes an account
+func (h *AdminUIHandler) DeleteUserAccount(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		http.Error(w, "accountId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Revoke all sessions for this account
+	if h.sessionsService != nil {
+		h.sessionsService.RevokeAllForAccount(accountID)
+	}
+
+	if err := h.accountsService.Delete(accountID); err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrAccountNotFound {
+			status = http.StatusNotFound
+		} else if err == accounts.ErrCannotDeleteMaster || err == accounts.ErrCannotDeleteLastAcct {
+			status = http.StatusForbidden
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ResetPasswordRequest represents a request to reset an account's password
+type ResetPasswordRequest struct {
+	NewPassword string `json:"newPassword"`
+}
+
+// ResetUserAccountPassword resets an account's password
+func (h *AdminUIHandler) ResetUserAccountPassword(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		http.Error(w, "accountId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.accountsService.UpdatePassword(accountID, req.NewPassword); err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrAccountNotFound {
+			status = http.StatusNotFound
+		} else if err == accounts.ErrPasswordRequired {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	// Revoke all sessions for this account (force re-login)
+	if h.sessionsService != nil {
+		h.sessionsService.RevokeAllForAccount(accountID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "password reset"})
+}
+
+// RenameAccountRequest represents a request to rename an account
+type RenameAccountRequest struct {
+	Username string `json:"username"`
+}
+
+// RenameUserAccount changes an account's username
+func (h *AdminUIHandler) RenameUserAccount(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		http.Error(w, "accountId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req RenameAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.accountsService.Rename(accountID, req.Username); err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrAccountNotFound {
+			status = http.StatusNotFound
+		} else if err == accounts.ErrUsernameRequired {
+			status = http.StatusBadRequest
+		} else if err == accounts.ErrUsernameExists {
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Get the updated account
+	account, _ := h.accountsService.Get(accountID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":       account.ID,
+		"username": account.Username,
+		"isMaster": account.IsMaster,
+	})
+}
+
+// AdminReassignProfileRequest represents a request to reassign a profile to a different account
+type AdminReassignProfileRequest struct {
+	AccountID string `json:"accountId"`
+}
+
+// ReassignProfile moves a profile to a different account
+func (h *AdminUIHandler) ReassignProfile(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil || h.accountsService == nil {
+		http.Error(w, "Services not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req AdminReassignProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Verify target account exists
+	if _, ok := h.accountsService.Get(req.AccountID); !ok {
+		http.Error(w, "Target account not found", http.StatusNotFound)
+		return
+	}
+
+	profile, err := h.usersService.Reassign(profileID, req.AccountID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == users.ErrUserNotFound {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(profile)
+}
+
+// HasDefaultPassword returns whether the master account has the default password
+func (h *AdminUIHandler) HasDefaultPassword(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"hasDefaultPassword": false})
+		return
+	}
+
+	hasDefault := h.accountsService.HasDefaultPassword()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"hasDefaultPassword": hasDefault})
+}
+
+// InvitationResponse represents an invitation in API responses
+type InvitationResponse struct {
+	ID        string     `json:"id"`
+	Token     string     `json:"token"`
+	URL       string     `json:"url"`
+	ExpiresAt time.Time  `json:"expiresAt"`
+	UsedAt    *time.Time `json:"usedAt,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+}
+
+// CreateInvitationRequest represents a request to create an invitation
+type CreateInvitationRequest struct {
+	ExpiresInHours int `json:"expiresInHours"`
+}
+
+// ListInvitations returns all invitations
+func (h *AdminUIHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
+	if h.invitationsService == nil {
+		http.Error(w, "Invitations service not available", http.StatusInternalServerError)
+		return
+	}
+
+	invs := h.invitationsService.List()
+	result := make([]InvitationResponse, len(invs))
+
+	// Build base URL from request
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	if fwdProto := r.Header.Get("X-Forwarded-Proto"); fwdProto != "" {
+		scheme = fwdProto
+	}
+	host := r.Host
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+
+	for i, inv := range invs {
+		result[i] = InvitationResponse{
+			ID:        inv.ID,
+			Token:     inv.Token,
+			URL:       fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
+			ExpiresAt: inv.ExpiresAt,
+			UsedAt:    inv.UsedAt,
+			CreatedAt: inv.CreatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"invitations": result,
+	})
+}
+
+// CreateInvitation creates a new invitation link
+func (h *AdminUIHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+	if h.invitationsService == nil {
+		http.Error(w, "Invitations service not available", http.StatusInternalServerError)
+		return
+	}
+
+	session := h.getSession(r)
+	if session == nil {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	var req CreateInvitationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Default to 7 days if not specified
+		req.ExpiresInHours = 168
+	}
+
+	if req.ExpiresInHours <= 0 {
+		req.ExpiresInHours = 168 // 7 days
+	}
+
+	expiresIn := time.Duration(req.ExpiresInHours) * time.Hour
+	inv, err := h.invitationsService.Create(session.AccountID, expiresIn)
+	if err != nil {
+		http.Error(w, "Failed to create invitation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Build URL
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	if fwdProto := r.Header.Get("X-Forwarded-Proto"); fwdProto != "" {
+		scheme = fwdProto
+	}
+	host := r.Host
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(InvitationResponse{
+		ID:        inv.ID,
+		Token:     inv.Token,
+		URL:       fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
+		ExpiresAt: inv.ExpiresAt,
+		CreatedAt: inv.CreatedAt,
+	})
+}
+
+// DeleteInvitation deletes an invitation
+func (h *AdminUIHandler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
+	if h.invitationsService == nil {
+		http.Error(w, "Invitations service not available", http.StatusInternalServerError)
+		return
+	}
+
+	invitationID := r.URL.Query().Get("invitationId")
+	if invitationID == "" {
+		http.Error(w, "invitationId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.invitationsService.Delete(invitationID); err != nil {
+		status := http.StatusInternalServerError
+		if err == invitations.ErrInvitationNotFound {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ValidateInvitation checks if an invitation token is valid (public endpoint)
+func (h *AdminUIHandler) ValidateInvitation(w http.ResponseWriter, r *http.Request) {
+	if h.invitationsService == nil {
+		http.Error(w, "Invitations service not available", http.StatusInternalServerError)
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"valid": false, "error": "token parameter required"})
+		return
+	}
+
+	err := h.invitationsService.Validate(token)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"valid": false, "error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"valid": true})
+}
+
+// RegisterWithInvitationRequest represents a request to register using an invitation
+type RegisterWithInvitationRequest struct {
+	Token           string `json:"token"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+}
+
+// RegisterWithInvitation creates a new account using an invitation token (public endpoint)
+func (h *AdminUIHandler) RegisterWithInvitation(w http.ResponseWriter, r *http.Request) {
+	if h.invitationsService == nil || h.accountsService == nil {
+		http.Error(w, "Services not available", http.StatusInternalServerError)
+		return
+	}
+
+	var req RegisterWithInvitationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Validate passwords match
+	if req.Password != req.ConfirmPassword {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Passwords do not match"})
+		return
+	}
+
+	// Validate the invitation token
+	if err := h.invitationsService.Validate(req.Token); err != nil {
+		status := http.StatusBadRequest
+		if err == invitations.ErrInvitationNotFound {
+			status = http.StatusNotFound
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Create the account
+	account, err := h.accountsService.Create(req.Username, req.Password)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrUsernameExists {
+			status = http.StatusConflict
+		} else if err == accounts.ErrUsernameRequired || err == accounts.ErrPasswordRequired {
+			status = http.StatusBadRequest
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Mark the invitation as used
+	if err := h.invitationsService.MarkUsed(req.Token, account.ID); err != nil {
+		// Log the error but don't fail - account was already created
+		fmt.Printf("Warning: failed to mark invitation as used: %v\n", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Account created successfully. You can now log in.",
 	})
 }
 
@@ -2396,13 +3142,15 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 
 // ToolsPage serves the tools page
 func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
-	var usersList []models.User
-	if h.usersService != nil {
-		usersList = h.usersService.List()
-	}
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	usersList := h.getScopedUsers(isAdmin, accountID)
 
 	data := AdminPageData{
-		CurrentPath: "/admin/tools",
+		CurrentPath: basePath + "/tools",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
 		Users:       usersList,
 		Version:     GetBackendVersion(),
 	}
@@ -2420,6 +3168,8 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 
 // SearchPage serves the search test page
 func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
 	mgr := config.NewManager(h.settingsPath)
 	settings, err := mgr.Load()
 	if err != nil {
@@ -2427,9 +3177,16 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usersList := h.getScopedUsers(isAdmin, accountID)
+
 	data := AdminPageData{
-		CurrentPath: "/admin/search",
+		CurrentPath: basePath + "/search",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
 		Settings:    settings,
+		Users:       usersList,
 		Version:     GetBackendVersion(),
 	}
 
@@ -2440,6 +3197,38 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.searchTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Search template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// AccountsPage serves the account management page
+func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/accounts",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Settings:    settings,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.accountsTemplate == nil {
+		http.Error(w, "Accounts template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.accountsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Accounts template error: %v\n", err)
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }

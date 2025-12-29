@@ -31,6 +31,7 @@ import {
   type TrendingMovieSource,
 } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
+import { useAuth } from '@/components/AuthContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useLiveHiddenChannels, useLiveFavorites, useLiveCategories } from '@/components/LiveContext';
@@ -791,6 +792,7 @@ const AnimatedShelfItem = ({
 function SettingsScreen() {
   const theme = useTheme();
   const { showToast } = useToast();
+  const { account, logout } = useAuth();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const styles = useMemo(
     () => createStyles(theme, screenWidth, screenHeight) as unknown as CompatibleStyles,
@@ -1058,15 +1060,14 @@ function SettingsScreen() {
 
   const handleBackendConnectionApply = useCallback(async () => {
     try {
-      await setBackendApiKey(backendApiKeyInput);
       await setBackendUrl(backendUrlInput);
       await refreshSettings();
-      showToast('Backend connection saved and settings reloaded.', { tone: 'success' });
+      showToast('Backend connection saved.', { tone: 'success' });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update backend connection';
       showToast(message, { tone: 'danger' });
     }
-  }, [backendApiKeyInput, backendUrlInput, setBackendApiKey, setBackendUrl, refreshSettings, showToast]);
+  }, [backendUrlInput, setBackendUrl, refreshSettings, showToast]);
 
   // TV Text Input Modal handlers
   const openTextInputModal = useCallback(
@@ -2070,37 +2071,8 @@ function SettingsScreen() {
       {
         type: 'header',
         id: 'connection-header',
-        title: 'Backend Connection',
-        description: 'Enter the backend URL and the 6-digit PIN shown when the backend starts. Make sure to append /api to the URL.',
-      },
-      {
-        type: 'header',
-        id: 'connection-admin-note',
-        title: '',
-        description: `All other settings can be configured via the web UI at ${backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'} using your API PIN to login.`,
-      },
-      {
-        type: 'text-field',
-        id: 'backend-url',
-        label: 'Backend URL',
-        value: backendUrlInput,
-        fieldKey: 'backendUrl',
-        options: { placeholder: 'http://localhost:7777/api' },
-      },
-      {
-        type: 'text-field',
-        id: 'backend-pin',
-        label: 'API PIN (6 digits)',
-        value: backendApiKeyInput,
-        fieldKey: 'backendApiKey',
-        options: { keyboardType: 'numeric', placeholder: '123456' },
-      },
-      {
-        type: 'button-row',
-        id: 'connection-buttons',
-        buttons: [
-          { label: 'Apply', action: 'connection-apply' },
-        ],
+        title: 'Server',
+        description: `Connected to ${backendUrl || 'backend'}. Server settings can be configured via the web UI at ${backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}.`,
       },
       {
         type: 'header',
@@ -2125,7 +2097,7 @@ function SettingsScreen() {
         disabled: isSubmittingLogs,
       },
     ],
-    [backendUrl, backendUrlInput, backendApiKeyInput, isReady, busy, isSubmittingLogs],
+    [backendUrl, isSubmittingLogs],
   );
 
   const playbackGridData = useMemo<SettingsGridItem[]>(() => {
@@ -2982,39 +2954,14 @@ function SettingsScreen() {
                 {/* Connection Tab */}
                 {!Platform.isTV && activeTab === 'connection' && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Backend Connection</Text>
+                    <Text style={styles.sectionTitle}>Server</Text>
                     <Text style={styles.sectionDescription}>
-                      Enter the backend URL and the 6-digit PIN shown when the backend starts. Make sure to append /api
-                      to the URL.
+                      Connected to {backendUrl || 'backend'}.
                     </Text>
                     <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
-                      All other settings can be configured via the web UI at{' '}
-                      {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'} using your API
-                      PIN to login.
+                      Server settings can be configured via the web UI at{' '}
+                      {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}.
                     </Text>
-                    <TextInputField
-                      label="Backend URL"
-                      value={backendUrlInput}
-                      onChange={setBackendUrlInput}
-                      options={{ placeholder: 'http://localhost:7777/api' }}
-                      styles={styles}
-                    />
-                    <TextInputField
-                      label="API PIN (6 digits)"
-                      value={backendApiKeyInput}
-                      onChange={setBackendApiKeyInput}
-                      options={{ secureTextEntry: false, placeholder: '123456', keyboardType: 'numeric' }}
-                      styles={styles}
-                    />
-                    <SpatialNavigationNode orientation="horizontal">
-                      <View style={styles.buttonRow}>
-                        <FocusablePressable
-                          text="Apply"
-                          onSelect={handleBackendConnectionApply}
-                        />
-                      </View>
-                    </SpatialNavigationNode>
-                    {error && <Text style={[styles.statusText, styles.statusError]}>{error}</Text>}
                   </View>
                 )}
 
@@ -3093,6 +3040,31 @@ function SettingsScreen() {
                         </Text>
                       </View>
                     )}
+                  </View>
+                )}
+
+                {/* Account section - shown on Connection tab */}
+                {!Platform.isTV && activeTab === 'connection' && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Account</Text>
+                    {account && (
+                      <Text style={styles.sectionDescription}>
+                        Signed in as {account.username}
+                        {account.isMaster ? ' (Admin)' : ''}
+                      </Text>
+                    )}
+                    <FocusablePressable
+                      text="Sign Out"
+                      onSelect={async () => {
+                        try {
+                          await logout();
+                          showToast('Signed out successfully', { tone: 'success' });
+                        } catch (err) {
+                          showToast('Failed to sign out', { tone: 'danger' });
+                        }
+                      }}
+                      style={[styles.debugButton, { marginTop: 12 }]}
+                    />
                   </View>
                 )}
 

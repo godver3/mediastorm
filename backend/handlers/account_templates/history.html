@@ -1,0 +1,284 @@
+{{define "history"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Watch History - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header">
+        <h1>Watch History</h1>
+        <p>View and manage watch history for your profiles</p>
+    </div>
+
+    <!-- Profile Selector -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                </svg>
+                Select Profile
+            </h2>
+        </div>
+        <div class="card-body">
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                {{range $index, $profile := .Profiles}}
+                <button class="profile-selector-btn {{if eq $index 0}}active{{end}}"
+                        data-profile-id="{{$profile.ID}}"
+                        onclick="selectProfile('{{$profile.ID}}', this)">
+                    <div class="profile-avatar-sm" style="background: {{if $profile.Color}}{{$profile.Color}}{{else}}#3B82F6{{end}};">
+                        {{slice $profile.Name 0 1}}
+                    </div>
+                    <span>{{$profile.Name}}</span>
+                </button>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Continue Watching -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Continue Watching
+            </h2>
+        </div>
+        <div class="card-body" id="continueWatching">
+            <div class="loading">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recently Watched -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Recently Watched
+            </h2>
+        </div>
+        <div class="card-body" id="recentHistory">
+            <div class="loading">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+
+<style>
+    .profile-selector-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--bg-tertiary);
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .profile-selector-btn:hover {
+        border-color: var(--accent);
+    }
+
+    .profile-selector-btn.active {
+        border-color: var(--accent);
+        background: rgba(99, 102, 241, 0.1);
+    }
+
+    .profile-avatar-sm {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .history-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+
+    .history-item {
+        background: var(--bg-tertiary);
+        border-radius: var(--radius);
+        overflow: hidden;
+        transition: transform 0.2s;
+    }
+
+    .history-item:hover {
+        transform: translateY(-2px);
+    }
+
+    .history-poster {
+        width: 100%;
+        aspect-ratio: 2/3;
+        background: var(--bg-hover);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+    }
+
+    .history-poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .history-poster svg {
+        width: 48px;
+        height: 48px;
+        opacity: 0.3;
+    }
+
+    .progress-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: rgba(0, 0, 0, 0.5);
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: var(--accent);
+    }
+
+    .history-info {
+        padding: 0.75rem;
+    }
+
+    .history-info h4 {
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .history-info p {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .history-item .actions {
+        padding: 0 0.75rem 0.75rem;
+        display: flex;
+        gap: 0.5rem;
+    }
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    const profiles = {{json .Profiles}};
+    let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
+
+    function selectProfile(profileId, btn) {
+        currentProfileId = profileId;
+        document.querySelectorAll('.profile-selector-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadHistory(profileId);
+    }
+
+    async function loadHistory(profileId) {
+        loadContinueWatching(profileId);
+        loadRecentHistory(profileId);
+    }
+
+    async function loadContinueWatching(profileId) {
+        const container = document.getElementById('continueWatching');
+        container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        try {
+            const response = await fetch(`/account/api/history/${profileId}/continue`);
+            if (!response.ok) throw new Error('Failed to load');
+
+            const items = await response.json();
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No items to continue watching</p></div>';
+                return;
+            }
+
+            container.innerHTML = `<div class="history-grid">${items.map(item => renderHistoryItem(item, true)).join('')}</div>`;
+        } catch (err) {
+            container.innerHTML = '<div class="empty-state"><p>Failed to load continue watching</p></div>';
+        }
+    }
+
+    async function loadRecentHistory(profileId) {
+        const container = document.getElementById('recentHistory');
+        container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        try {
+            const response = await fetch(`/account/api/history/${profileId}/watched`);
+            if (!response.ok) throw new Error('Failed to load');
+
+            const items = await response.json();
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No watch history yet</p></div>';
+                return;
+            }
+
+            container.innerHTML = `<div class="history-grid">${items.map(item => renderHistoryItem(item, false)).join('')}</div>`;
+        } catch (err) {
+            container.innerHTML = '<div class="empty-state"><p>Failed to load history</p></div>';
+        }
+    }
+
+    function renderHistoryItem(item, showProgress) {
+        const progress = item.progress || 0;
+        const posterUrl = item.posterUrl || '';
+
+        return `
+            <div class="history-item">
+                <div class="history-poster">
+                    ${posterUrl ? `<img src="${posterUrl}" alt="${item.title}">` : `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                            <line x1="7" y1="2" x2="7" y2="22"/>
+                            <line x1="17" y1="2" x2="17" y2="22"/>
+                            <line x1="2" y1="12" x2="22" y2="12"/>
+                            <line x1="2" y1="7" x2="7" y2="7"/>
+                            <line x1="2" y1="17" x2="7" y2="17"/>
+                            <line x1="17" y1="17" x2="22" y2="17"/>
+                            <line x1="17" y1="7" x2="22" y2="7"/>
+                        </svg>
+                    `}
+                    ${showProgress && progress > 0 ? `
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="history-info">
+                    <h4>${item.title || 'Unknown'}</h4>
+                    <p>${item.subtitle || (item.type === 'movie' ? 'Movie' : 'TV Show')}</p>
+                </div>
+            </div>
+        `;
+    }
+
+    // Load history for first profile on page load
+    if (currentProfileId) {
+        loadHistory(currentProfileId);
+    }
+</script>
+{{end}}

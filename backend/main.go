@@ -22,11 +22,15 @@ import (
 	"novastream/internal/integration"
 	"novastream/internal/pool"
 	"novastream/internal/webdav"
+	"novastream/services/accounts"
 	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/indexer"
+	"novastream/services/invitations"
 	"novastream/services/metadata"
 	"novastream/services/playback"
+	"novastream/services/plex"
+	"novastream/services/sessions"
 	"novastream/services/trakt"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
@@ -258,6 +262,25 @@ func main() {
 		log.Fatalf("failed to initialise users: %v", err)
 	}
 	usersHandler := handlers.NewUsersHandler(userService)
+
+	// Initialize accounts, sessions, and invitations services
+	accountsService, err := accounts.NewService(settings.Cache.Directory)
+	if err != nil {
+		log.Fatalf("failed to initialise accounts: %v", err)
+	}
+	sessionsService, err := sessions.NewService(settings.Cache.Directory, 0) // Use default session duration (30 days)
+	if err != nil {
+		log.Fatalf("failed to initialise sessions: %v", err)
+	}
+	invitationsService, err := invitations.NewService(settings.Cache.Directory)
+	if err != nil {
+		log.Fatalf("failed to initialise invitations: %v", err)
+	}
+
+	// Log warning if master account has default password
+	if accountsService.HasDefaultPassword() {
+		log.Println("WARNING: Master account 'admin' still has default password. Please change it!")
+	}
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
 	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
 
@@ -371,18 +394,28 @@ func main() {
 		debugVideoHandler,
 		userSettingsHandler,
 		subtitlesHandler,
+		accountsService,
+		sessionsService,
+		userService,
 		getPIN,
 	)
 
 	// Register Trakt accounts API routes
-	traktAccountsHandler := handlers.NewTraktAccountsHandler(cfgManager, traktClient, userService)
-	api.RegisterTraktRoutes(r, traktAccountsHandler, getPIN)
+	traktAccountsHandler := handlers.NewTraktAccountsHandler(cfgManager, traktClient, userService, accountsService)
+	api.RegisterTraktRoutes(r, traktAccountsHandler, sessionsService, getPIN)
+
+	// Create Plex client and register Plex accounts handler
+	plexClient := plex.NewClient(plex.GenerateClientID())
+	plexAccountsHandler := handlers.NewPlexAccountsHandler(cfgManager, plexClient, userService, accountsService)
 
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, getPIN)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 	adminUIHandler.SetWatchlistService(watchlistService)
+	adminUIHandler.SetAccountsService(accountsService)
+	adminUIHandler.SetInvitationsService(invitationsService)
+	adminUIHandler.SetSessionsService(sessionsService)
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
@@ -397,6 +430,7 @@ func main() {
 	r.HandleFunc("/admin/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/search", adminUIHandler.RequireAuth(adminUIHandler.SearchPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
@@ -420,6 +454,25 @@ func main() {
 	r.HandleFunc("/admin/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/color", adminUIHandler.RequireAuth(adminUIHandler.SetProfileColor)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+
+	// User account management endpoints (master account only)
+	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetUserAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.CreateUserAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.RenameUserAccount)).Methods(http.MethodPatch)
+	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.DeleteUserAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/accounts/password", adminUIHandler.RequireAuth(adminUIHandler.ResetUserAccountPassword)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/accounts/default-password", adminUIHandler.RequireAuth(adminUIHandler.HasDefaultPassword)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/profiles/reassign", adminUIHandler.RequireAuth(adminUIHandler.ReassignProfile)).Methods(http.MethodPut)
+
+	// Invitation link management endpoints (master account only)
+	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.ListInvitations)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.CreateInvitation)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.DeleteInvitation)).Methods(http.MethodDelete)
+
+	// Public registration endpoints (no auth required)
+	r.HandleFunc("/register", adminUIHandler.RegisterPage).Methods(http.MethodGet)
+	r.HandleFunc("/api/register/validate", adminUIHandler.ValidateInvitation).Methods(http.MethodGet)
+	r.HandleFunc("/api/register", adminUIHandler.RegisterWithInvitation).Methods(http.MethodPost)
 
 	// Cache management endpoints
 	r.HandleFunc("/admin/api/cache/clear", adminUIHandler.RequireAuth(adminUIHandler.ClearMetadataCache)).Methods(http.MethodPost)
@@ -464,7 +517,68 @@ func main() {
 	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.SetTraktAccount)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.ClearTraktAccount)).Methods(http.MethodDelete)
 
+	// Plex multi-account management (admin routes)
+	r.HandleFunc("/admin/api/plex/accounts", adminUIHandler.RequireAuth(plexAccountsHandler.ListAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/accounts", adminUIHandler.RequireAuth(plexAccountsHandler.CreateAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}", adminUIHandler.RequireAuth(plexAccountsHandler.DeleteAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/pin", adminUIHandler.RequireAuth(plexAccountsHandler.CreatePIN)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/pin/{pinID}", adminUIHandler.RequireAuth(plexAccountsHandler.CheckPIN)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/disconnect", adminUIHandler.RequireAuth(plexAccountsHandler.Disconnect)).Methods(http.MethodPost)
+
+	// Profile Plex linking (admin routes)
+	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.SetPlexAccount)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.ClearPlexAccount)).Methods(http.MethodDelete)
+
 	fmt.Println("📊 Admin dashboard available at /admin")
+
+	// Register account UI routes (for regular/non-master accounts)
+	accountUIHandler := handlers.NewAccountUIHandler(accountsService, sessionsService, userService, userSettingsService, videoHandler.GetHLSManager(), cfgManager, traktClient)
+
+	// Account login/logout routes (no auth required)
+	r.HandleFunc("/account/login", accountUIHandler.LoginPage).Methods(http.MethodGet)
+	r.HandleFunc("/account/login", accountUIHandler.LoginSubmit).Methods(http.MethodPost)
+	r.HandleFunc("/account/logout", accountUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
+
+	// Protected account routes - Pages (use adminUIHandler with unified templates)
+	r.HandleFunc("/account", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/status", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet) // Shows as "Profiles" for non-admin
+
+	// Protected account routes - Status APIs
+	r.HandleFunc("/account/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
+
+	// Protected account routes - Profile APIs
+	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.CreateProfile)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.RenameProfile)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.DeleteProfile)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/profiles/color", adminUIHandler.RequireAuth(adminUIHandler.SetProfileColor)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.SetProfilePin)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/password", accountUIHandler.RequireAuth(accountUIHandler.ChangePassword)).Methods(http.MethodPut)
+
+	// Protected account routes - User Settings API
+	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
+
+	// Protected account routes - History API
+	r.HandleFunc("/account/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/history/continue", adminUIHandler.RequireAuth(adminUIHandler.GetContinueWatching)).Methods(http.MethodGet)
+
+	// Protected account routes - Trakt API (using account-scoped handler)
+	r.HandleFunc("/account/api/trakt/accounts", accountUIHandler.RequireAuth(accountUIHandler.GetTraktAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/trakt/accounts", accountUIHandler.RequireAuth(accountUIHandler.CreateTraktAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/trakt/accounts/delete", accountUIHandler.RequireAuth(accountUIHandler.DeleteTraktAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/trakt/accounts/auth/start", accountUIHandler.RequireAuth(accountUIHandler.StartTraktAuth)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/trakt/accounts/auth/check", accountUIHandler.RequireAuth(accountUIHandler.CheckTraktAuth)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/trakt/accounts/disconnect", accountUIHandler.RequireAuth(accountUIHandler.DisconnectTraktAccount)).Methods(http.MethodPost)
+
+	fmt.Println("👤 Account management available at /account")
 
 	// Redirect root to admin dashboard
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

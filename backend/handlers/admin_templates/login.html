@@ -98,14 +98,6 @@
             border-color: var(--accent);
         }
 
-        .pin-input {
-            text-align: center;
-            font-size: 1.5rem;
-            letter-spacing: 0.5rem;
-            padding: 1rem;
-            font-family: monospace;
-        }
-
         .btn {
             display: inline-flex;
             align-items: center;
@@ -141,9 +133,13 @@
         }
 
         .form-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
             color: var(--danger);
             font-size: 0.875rem;
-            margin-top: 0.5rem;
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            border-radius: var(--radius);
             text-align: center;
         }
 
@@ -167,6 +163,7 @@
             cursor: pointer;
             user-select: none;
         }
+
     </style>
 </head>
 <body>
@@ -177,29 +174,40 @@
                 <polyline points="2 17 12 22 22 17"/>
                 <polyline points="2 12 12 17 22 12"/>
             </svg>
-            <h1>strmr Admin</h1>
-            <p>Enter your PIN to continue</p>
+            <h1>strmr</h1>
+            <p>Sign in to your account</p>
         </div>
+
+        {{if .Error}}
+        <div class="form-error">{{.Error}}</div>
+        {{end}}
 
         <form id="loginForm" method="POST" action="/admin/login">
             <div class="form-group">
-                <label class="form-label" for="pin">PIN</label>
+                <label class="form-label" for="username">Username</label>
                 <input
-                    type="password"
-                    id="pin"
-                    name="pin"
-                    class="form-input pin-input"
-                    placeholder="------"
-                    maxlength="6"
-                    pattern="[0-9]{6}"
-                    inputmode="numeric"
-                    autocomplete="off"
+                    type="text"
+                    id="username"
+                    name="username"
+                    class="form-input"
+                    placeholder="Enter username"
+                    autocomplete="username"
                     required
                     autofocus
                 >
-                {{if .Error}}
-                <div class="form-error">{{.Error}}</div>
-                {{end}}
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    class="form-input"
+                    placeholder="Enter password"
+                    autocomplete="current-password"
+                    required
+                >
             </div>
 
             <div class="checkbox-group">
@@ -209,25 +217,15 @@
 
             <button type="submit" class="btn btn-primary btn-block">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                    <polyline points="10 17 15 12 10 7"/>
+                    <line x1="15" y1="12" x2="3" y2="12"/>
                 </svg>
-                Login
+                Sign In
             </button>
         </form>
+
     </div>
-
-    <script>
-        // Auto-submit when 6 digits are entered
-        document.getElementById('pin').addEventListener('input', function(e) {
-            // Only allow digits
-            this.value = this.value.replace(/[^0-9]/g, '');
-
-            if (this.value.length === 6) {
-                document.getElementById('loginForm').submit();
-            }
-        });
-    </script>
 </body>
 </html>
 {{end}}

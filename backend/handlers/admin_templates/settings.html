@@ -1,16 +1,16 @@
 {{template "base" .}}
 
-{{define "title"}}Settings - strmr Admin{{end}}
+{{define "title"}}Settings - {{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}}{{end}}
 
 {{define "content"}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
         <h1>Settings</h1>
-        <p>Configure your strmr server</p>
+        <p>{{if .IsAdmin}}Configure your strmr server{{else}}Configure profile settings{{end}}</p>
     </div>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
         <select id="userSelector" class="form-select" style="min-width: 180px;" onchange="handleUserChange(this.value)">
-            <option value="">Global Defaults</option>
+            {{if .IsAdmin}}<option value="">Global Defaults</option>{{end}}
             {{range .Users}}
             <option value="{{.ID}}">{{.Name}}</option>
             {{end}}
@@ -43,6 +43,10 @@
     let userSettings = null;
     let originalUserSettings = null;
     let profilesData = []; // Profiles with PIN status
+    let accountsData = []; // User accounts with profiles
+    let hasDefaultPassword = false; // Whether admin has default password
+    const isAdmin = {{json .IsAdmin}};
+    const basePath = {{json .BasePath}};
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
@@ -70,8 +74,8 @@
     function validateSettings() {
         const errors = {};
 
-        // Skip validation for user-specific settings
-        if (selectedUserId) return errors;
+        // Skip validation for user-specific settings or non-admin users
+        if (selectedUserId || !isAdmin) return errors;
 
         const serviceMode = currentSettings.streaming?.serviceMode || 'debrid';
         const needsDebrid = serviceMode === 'debrid' || serviceMode === 'hybrid';
@@ -189,7 +193,7 @@
         if (userId) {
             // Load user-specific settings
             try {
-                const response = await fetch('/admin/api/user-settings?userId=' + encodeURIComponent(userId));
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId));
                 if (response.ok) {
                     userSettings = await response.json();
                     originalUserSettings = JSON.parse(JSON.stringify(userSettings));
@@ -237,6 +241,8 @@
         'plus': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
         'check': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
         'x': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+        'shield': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+        'key': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>',
     };
 
     function getIcon(name) { return icons[name] || icons['server']; }
@@ -554,7 +560,7 @@
         try {
             if (selectedUserId && userSettings) {
                 // Save user-specific settings
-                const response = await fetch('/admin/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(userSettings)
@@ -744,10 +750,12 @@
             ).join('');
         }
 
-        // Handle custom sections (like profiles)
+        // Handle custom sections (like profiles, userAccounts)
         let contentHtml;
         if (sectionDef.custom && sectionKey === 'profiles') {
             contentHtml = renderProfilesSection();
+        } else if (sectionDef.custom && sectionKey === 'userAccounts') {
+            contentHtml = renderUserAccountsSection();
         } else {
             contentHtml = sectionDef.is_array ? renderArraySection(sectionKey, sectionDef) : '<div class="grid grid-2">'+renderObjectSection(sectionKey, sectionDef)+'</div>';
         }
@@ -770,7 +778,7 @@
     // Profile management functions
     async function loadProfiles() {
         try {
-            const response = await fetch('/admin/api/profiles');
+            const response = await fetch(basePath + '/api/profiles');
             if (response.ok) {
                 profilesData = await response.json();
             } else {
@@ -783,9 +791,270 @@
         }
     }
 
+    // Account management functions
+    async function loadAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/accounts');
+            if (response.ok) {
+                accountsData = await response.json();
+            } else {
+                console.error('Failed to load accounts');
+                accountsData = [];
+            }
+        } catch (e) {
+            console.error('Error loading accounts:', e);
+            accountsData = [];
+        }
+    }
+
+    async function checkDefaultPassword() {
+        try {
+            const response = await fetch(basePath + '/api/accounts/default-password');
+            if (response.ok) {
+                const data = await response.json();
+                hasDefaultPassword = data.hasDefaultPassword;
+            }
+        } catch (e) {
+            console.error('Error checking default password:', e);
+        }
+    }
+
+    async function createAccount(username, password) {
+        try {
+            const response = await fetch(basePath + '/api/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            if (response.ok) {
+                const created = await response.json();
+                accountsData.push(created);
+                showToast('Account created successfully');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to create account', 'error');
+            }
+        } catch (e) {
+            showToast('Error creating account: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteAccount(accountId) {
+        if (!confirm('Delete this account? All associated profiles will be reassigned to the default account.')) {
+            return;
+        }
+        try {
+            const response = await fetch(basePath + '/api/accounts?accountId=' + encodeURIComponent(accountId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                accountsData = accountsData.filter(a => a.id !== accountId);
+                await loadAccounts(); // Reload to get updated profile assignments
+                showToast('Account deleted');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to delete account', 'error');
+            }
+        } catch (e) {
+            showToast('Error deleting account: ' + e.message, 'error');
+        }
+    }
+
+    async function resetAccountPassword(accountId, newPassword) {
+        try {
+            const response = await fetch(basePath + '/api/accounts/password?accountId=' + encodeURIComponent(accountId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: newPassword })
+            });
+            if (response.ok) {
+                showToast('Password reset successfully');
+                if (accountsData.find(a => a.id === accountId)?.isMaster) {
+                    hasDefaultPassword = false;
+                }
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to reset password', 'error');
+            }
+        } catch (e) {
+            showToast('Error resetting password: ' + e.message, 'error');
+        }
+    }
+
+    async function reassignProfile(profileId, newAccountId) {
+        try {
+            const response = await fetch(basePath + '/api/profiles/reassign?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accountId: newAccountId })
+            });
+            if (response.ok) {
+                await loadAccounts(); // Reload to get updated assignments
+                showToast('Profile reassigned');
+                renderSettings();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to reassign profile', 'error');
+            }
+        } catch (e) {
+            showToast('Error reassigning profile: ' + e.message, 'error');
+        }
+    }
+
+    function handleCreateAccountSubmit(event) {
+        event.preventDefault();
+        const usernameInput = document.getElementById('new-account-username');
+        const passwordInput = document.getElementById('new-account-password');
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        if (!username) {
+            showToast('Username is required', 'error');
+            return;
+        }
+        if (password.length < 4) {
+            showToast('Password must be at least 4 characters', 'error');
+            return;
+        }
+        createAccount(username, password);
+        usernameInput.value = '';
+        passwordInput.value = '';
+        document.getElementById('add-account-form').style.display = 'none';
+    }
+
+    function handleResetPasswordSubmit(event, accountId) {
+        event.preventDefault();
+        const input = document.getElementById('password-input-' + accountId);
+        const password = input.value;
+        if (password.length < 4) {
+            showToast('Password must be at least 4 characters', 'error');
+            return;
+        }
+        resetAccountPassword(accountId, password);
+        input.value = '';
+    }
+
+    function toggleAddAccountForm() {
+        const form = document.getElementById('add-account-form');
+        if (form) {
+            const isHidden = form.style.display === 'none';
+            form.style.display = isHidden ? 'block' : 'none';
+            if (isHidden) {
+                const input = document.getElementById('new-account-username');
+                if (input) input.focus();
+            }
+        }
+    }
+
+    function togglePasswordResetForm(accountId) {
+        const formEl = document.getElementById('password-form-' + accountId);
+        if (formEl) {
+            const isHidden = formEl.style.display === 'none';
+            formEl.style.display = isHidden ? 'flex' : 'none';
+            if (isHidden) {
+                const input = document.getElementById('password-input-' + accountId);
+                if (input) input.focus();
+            }
+        }
+    }
+
+    function renderUserAccountsSection() {
+        // Show warning if admin has default password
+        let warningHtml = '';
+        if (hasDefaultPassword) {
+            warningHtml = '<div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger, #ef4444); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.75rem;">' +
+                '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--danger, #ef4444)" stroke-width="2" style="flex-shrink: 0;">' +
+                '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+                '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+                '<div><strong style="color: var(--danger, #ef4444);">Security Warning</strong>' +
+                '<p style="margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">The admin account is using the default password. Please change it immediately.</p></div></div>';
+        }
+
+        const accountsHtml = accountsData.map(account => {
+            const isMaster = account.isMaster;
+            const profileCount = (account.profiles || []).length;
+            const initial = (account.username || 'A').charAt(0).toUpperCase();
+
+            // Render profiles for this account
+            const profilesListHtml = (account.profiles || []).map(profile => {
+                const avatarColor = profile.color || '#3B82F6';
+                const profileInitial = (profile.name || 'P').charAt(0).toUpperCase();
+
+                // Account selector for reassignment
+                const accountOptions = accountsData.map(a =>
+                    '<option value="' + a.id + '"' + (a.id === account.id ? ' selected' : '') + '>' +
+                    a.username + (a.isMaster ? ' (Master)' : '') + '</option>'
+                ).join('');
+
+                return '<div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 6px;">' +
+                    '<div style="width: 28px; height: 28px; border-radius: 50%; background: ' + avatarColor + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 0.75rem; flex-shrink: 0;">' + profileInitial + '</div>' +
+                    '<span style="flex: 1; font-size: 0.875rem;">' + profile.name + '</span>' +
+                    '<select class="form-select" style="width: 150px; padding: 0.25rem 0.5rem; font-size: 0.75rem;" onchange="reassignProfile(\'' + profile.id + '\', this.value)">' + accountOptions + '</select>' +
+                    '</div>';
+            }).join('');
+
+            const profilesSection = profileCount > 0
+                ? '<div style="margin-top: 0.75rem;"><div style="font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem;">Profiles (' + profileCount + ')</div><div style="display: flex; flex-direction: column; gap: 0.5rem;">' + profilesListHtml + '</div></div>'
+                : '<div style="margin-top: 0.75rem; color: var(--text-secondary); font-size: 0.875rem;">No profiles assigned</div>';
+
+            const deleteBtn = !isMaster
+                ? '<button class="btn btn-sm btn-icon btn-danger" onclick="deleteAccount(\'' + account.id + '\')" title="Delete account">' + icons.trash + '</button>'
+                : '<button class="btn btn-sm btn-icon" disabled title="Cannot delete master account" style="opacity: 0.5; cursor: not-allowed;">' + icons.trash + '</button>';
+
+            const masterBadge = isMaster ? '<span style="background: var(--accent); color: white; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin-left: 0.5rem;">Master</span>' : '';
+
+            return '<div class="array-item">' +
+                '<div class="array-item-header" style="flex-wrap: wrap; gap: 0.75rem;">' +
+                '<div class="array-item-title" style="display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 200px;">' +
+                '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + (isMaster ? 'var(--accent)' : '#6B7280') + '; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1.125rem; flex-shrink: 0;">' + initial + '</div>' +
+                '<div style="flex: 1;">' +
+                '<div style="font-weight: 600;">' + account.username + masterBadge + '</div>' +
+                '</div>' +
+                '</div>' +
+                '<div style="display: flex; align-items: center; gap: 0.5rem;">' +
+                '<button class="btn btn-sm" onclick="togglePasswordResetForm(\'' + account.id + '\')" title="Reset password">' + icons.key + ' Reset Password</button>' +
+                deleteBtn +
+                '</div>' +
+                '</div>' +
+                '<div style="padding: 0 1rem 1rem;">' +
+                '<form id="password-form-' + account.id + '" onsubmit="handleResetPasswordSubmit(event, \'' + account.id + '\')" style="display: none; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem;">' +
+                '<input type="password" id="password-input-' + account.id + '" class="form-input" placeholder="New password" style="width: 200px;">' +
+                '<button type="submit" class="btn btn-sm btn-primary">Set</button>' +
+                '<button type="button" class="btn btn-sm" onclick="togglePasswordResetForm(\'' + account.id + '\')">Cancel</button>' +
+                '</form>' +
+                profilesSection +
+                '</div>' +
+                '</div>';
+        }).join('');
+
+        const addButton = '<button class="btn btn-primary" onclick="toggleAddAccountForm()" style="margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem;">' +
+            icons.plus + ' Add Account</button>';
+
+        const addAccountForm = '<div id="add-account-form" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border);">' +
+            '<form onsubmit="handleCreateAccountSubmit(event)">' +
+            '<div style="margin-bottom: 1rem;">' +
+            '<label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem;">Username</label>' +
+            '<input type="text" id="new-account-username" class="form-input" placeholder="Enter username" style="width: 100%;">' +
+            '</div>' +
+            '<div style="margin-bottom: 1rem;">' +
+            '<label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem;">Password</label>' +
+            '<input type="password" id="new-account-password" class="form-input" placeholder="Enter password" style="width: 100%;">' +
+            '</div>' +
+            '<div style="display: flex; gap: 0.5rem;">' +
+            '<button type="submit" class="btn btn-sm btn-primary">Create Account</button>' +
+            '<button type="button" class="btn btn-sm" onclick="toggleAddAccountForm()">Cancel</button>' +
+            '</div>' +
+            '</form>' +
+            '</div>';
+
+        return warningHtml + '<div class="array-items">' + accountsHtml + '</div>' + addButton + addAccountForm;
+    }
+
     async function setProfilePin(profileId, pin) {
         try {
-            const response = await fetch('/admin/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pin: pin })
@@ -807,7 +1076,7 @@
 
     async function clearProfilePin(profileId) {
         try {
-            const response = await fetch('/admin/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
                 method: 'DELETE'
             });
             if (response.ok) {
@@ -839,7 +1108,7 @@
 
     async function createProfile(name, color) {
         try {
-            const response = await fetch('/admin/api/profiles', {
+            const response = await fetch(basePath + '/api/profiles', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name, color: color })
@@ -860,7 +1129,7 @@
 
     async function renameProfile(profileId, newName) {
         try {
-            const response = await fetch('/admin/api/profiles?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: newName })
@@ -885,7 +1154,7 @@
             return;
         }
         try {
-            const response = await fetch('/admin/api/profiles?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles?profileId=' + encodeURIComponent(profileId), {
                 method: 'DELETE'
             });
             if (response.ok) {
@@ -903,7 +1172,7 @@
 
     async function setProfileColor(profileId, color) {
         try {
-            const response = await fetch('/admin/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ color: color })
@@ -925,7 +1194,7 @@
 
     async function setKidsProfile(profileId, isKids) {
         try {
-            const response = await fetch('/admin/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ isKidsProfile: isKids })
@@ -1015,7 +1284,7 @@
         btn.innerHTML = '<span class="spinner-small"></span> Clearing...';
 
         try {
-            const response = await fetch('/admin/api/cache/clear', {
+            const response = await fetch(basePath + '/api/cache/clear', {
                 method: 'POST'
             });
             const result = await response.json();
@@ -1221,7 +1490,7 @@
         try {
             if (selectedUserId && userSettings) {
                 // Save user-specific settings
-                const response = await fetch('/admin/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(userSettings)
@@ -1262,7 +1531,19 @@
         }
     }
     document.addEventListener('DOMContentLoaded', async () => {
-        await loadProfiles();
+        if (isAdmin) {
+            await Promise.all([loadProfiles(), loadAccounts(), checkDefaultPassword()]);
+        } else {
+            await loadProfiles();
+            // For non-admin, auto-select the first profile
+            const selector = document.getElementById('userSelector');
+            if (selector && selector.options.length > 0) {
+                selectedUserId = selector.options[0].value;
+                selector.value = selectedUserId;
+                await handleUserChange(selectedUserId);
+                return; // handleUserChange will call renderSettings
+            }
+        }
         renderSettings();
     });
     window.addEventListener('hashchange', () => {

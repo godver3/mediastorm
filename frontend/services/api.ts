@@ -565,6 +565,7 @@ class ApiService {
   private baseUrl!: string;
   private fallbackUrls!: string[];
   private apiKey: string | null = null;
+  private authToken: string | null = null;
   private readonly playbackQueuePollIntervalMs = 1500;
   private readonly playbackQueueTimeoutMs = 120000;
   private readonly allowedInProgressStatuses = new Set(['queued', 'processing', 'pending', 'retrying']);
@@ -590,6 +591,14 @@ class ApiService {
   setApiKey(nextKey?: string | null) {
     const trimmed = nextKey?.trim() ?? '';
     this.apiKey = trimmed ? trimmed : null;
+  }
+
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  setAuthToken(token: string | null) {
+    this.authToken = token?.trim() || null;
   }
 
   /**
@@ -686,14 +695,20 @@ class ApiService {
       headerMap['Accept'] = 'application/json';
     }
 
+    // Use auth token for session-based authentication (accounts system)
+    if (this.authToken && !headerMap['Authorization']) {
+      headerMap['Authorization'] = `Bearer ${this.authToken}`;
+    }
+
+    // Fallback to API key for backward compatibility (legacy PIN auth)
     if (this.apiKey) {
-      // Use PIN header for new authentication, fallback to API key for backward compatibility
       if (!headerMap['X-PIN']) {
         headerMap['X-PIN'] = this.apiKey;
       }
       if (!headerMap['X-API-Key']) {
         headerMap['X-API-Key'] = this.apiKey;
       }
+      // Only set Bearer token from apiKey if authToken wasn't set
       if (!headerMap['Authorization']) {
         headerMap['Authorization'] = `Bearer ${this.apiKey}`;
       }

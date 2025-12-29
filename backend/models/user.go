@@ -15,10 +15,12 @@ const (
 // User models a NovaStream profile capable of holding watchlist data.
 type User struct {
 	ID             string    `json:"id"`
+	AccountID      string    `json:"accountId"`                // ID of the owning account
 	Name           string    `json:"name"`
 	Color          string    `json:"color,omitempty"`
 	PinHash        string    `json:"-"`                        // bcrypt hash of PIN, excluded from JSON (security)
 	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
+	PlexAccountID  string    `json:"plexAccountId,omitempty"`  // ID of the linked Plex account (from config.PlexAccount)
 	IsKidsProfile  bool      `json:"isKidsProfile"`            // Whether this is a kids profile with content restrictions
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
@@ -36,9 +38,11 @@ func (u User) MarshalJSON() ([]byte, error) {
 		UserAlias
 		HasPin         bool   `json:"hasPin"`
 		TraktAccountID string `json:"traktAccountId,omitempty"`
+		PlexAccountID  string `json:"plexAccountId,omitempty"`
 	}{
 		UserAlias:      UserAlias(u),
 		HasPin:         u.HasPin(),
 		TraktAccountID: u.TraktAccountID,
+		PlexAccountID:  u.PlexAccountID,
 	})
 }

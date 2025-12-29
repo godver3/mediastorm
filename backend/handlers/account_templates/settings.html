@@ -1,0 +1,620 @@
+{{define "settings"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Profile Settings - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Profile Settings</h1>
+    <p>Manage playback and filtering preferences for your profiles</p>
+</div>
+
+<!-- Profile Selector -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+            </svg>
+            Select Profile
+        </h2>
+    </div>
+    <div class="card-body">
+        <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+            {{range $index, $profile := .Profiles}}
+            <button class="profile-selector-btn {{if eq $index 0}}active{{end}}"
+                    data-profile-id="{{$profile.ID}}"
+                    onclick="selectProfile('{{$profile.ID}}', this)">
+                <div class="profile-avatar-sm" style="background: {{if $profile.Color}}{{$profile.Color}}{{else}}#3B82F6{{end}};">
+                    {{slice $profile.Name 0 1}}
+                </div>
+                <span>{{$profile.Name}}</span>
+            </button>
+            {{end}}
+        </div>
+    </div>
+</div>
+
+<!-- Settings Form -->
+<div id="settingsContainer">
+    <div class="loading">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<style>
+.profile-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--bg-tertiary);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.profile-selector-btn:hover {
+    border-color: var(--accent);
+}
+
+.profile-selector-btn.active {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.profile-avatar-sm {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.settings-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.settings-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+
+.settings-section-header:hover {
+    background: var(--bg-hover);
+}
+
+.settings-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 600;
+}
+
+.settings-section-title svg {
+    width: 20px;
+    height: 20px;
+    color: var(--accent);
+}
+
+.settings-section-toggle {
+    width: 20px;
+    height: 20px;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+
+.settings-section.open .settings-section-toggle {
+    transform: rotate(180deg);
+}
+
+.settings-section-content {
+    padding: 0 1.25rem 1.25rem;
+    display: none;
+}
+
+.settings-section.open .settings-section-content {
+    display: block;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-row:last-child {
+    border-bottom: none;
+}
+
+.setting-label {
+    flex: 1;
+}
+
+.setting-label h4 {
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 0.125rem;
+}
+
+.setting-label p {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.setting-control {
+    flex-shrink: 0;
+    margin-left: 1rem;
+}
+
+.setting-control input[type="number"],
+.setting-control input[type="text"],
+.setting-control select {
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    min-width: 120px;
+}
+
+.setting-control input[type="number"]:focus,
+.setting-control input[type="text"]:focus,
+.setting-control select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.toggle-switch {
+    position: relative;
+    width: 48px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    transition: 0.2s;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    border-radius: 50%;
+    transition: 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+.tags-input {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-height: 42px;
+}
+
+.tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--accent);
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+.tag button {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.tags-input input {
+    flex: 1;
+    min-width: 100px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    outline: none;
+}
+
+.save-bar {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    padding: 1rem;
+    margin: 0 -1.5rem -1.5rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+@media (max-width: 600px) {
+    .setting-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .setting-control {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .setting-control input,
+    .setting-control select {
+        width: 100%;
+    }
+}
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const profiles = {{json .Profiles}};
+let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
+let currentSettings = null;
+let hasChanges = false;
+
+function selectProfile(profileId, btn) {
+    if (hasChanges && !confirm('You have unsaved changes. Discard them?')) {
+        return;
+    }
+    currentProfileId = profileId;
+    hasChanges = false;
+    document.querySelectorAll('.profile-selector-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadSettings();
+}
+
+async function loadSettings() {
+    const container = document.getElementById('settingsContainer');
+    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    if (!currentProfileId) {
+        container.innerHTML = '<div class="card"><div class="card-body" style="text-align: center; color: var(--text-muted);">No profile selected</div></div>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`/account/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`);
+        if (!response.ok) throw new Error('Failed to load settings');
+        currentSettings = await response.json();
+        renderSettings();
+    } catch (err) {
+        container.innerHTML = `<div class="card"><div class="card-body" style="text-align: center; color: var(--danger);">Failed to load settings: ${err.message}</div></div>`;
+    }
+}
+
+function renderSettings() {
+    const container = document.getElementById('settingsContainer');
+    const s = currentSettings;
+
+    container.innerHTML = `
+        <!-- Playback Settings -->
+        <div class="settings-section open">
+            <div class="settings-section-header" onclick="toggleSection(this)">
+                <div class="settings-section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Playback
+                </div>
+                <svg class="settings-section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </div>
+            <div class="settings-section-content">
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Preferred Player</h4>
+                        <p>Default player for video playback</p>
+                    </div>
+                    <div class="setting-control">
+                        <select id="preferredPlayer" onchange="markChanged()">
+                            <option value="native" ${s.playback.preferredPlayer === 'native' ? 'selected' : ''}>Native Player</option>
+                            <option value="infuse" ${s.playback.preferredPlayer === 'infuse' ? 'selected' : ''}>Infuse</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Subtitle Language</h4>
+                        <p>Preferred language for subtitles</p>
+                    </div>
+                    <div class="setting-control">
+                        <select id="subtitleLanguage" onchange="markChanged()">
+                            <option value="" ${!s.playback.preferredSubtitleLanguage ? 'selected' : ''}>None</option>
+                            <option value="en" ${s.playback.preferredSubtitleLanguage === 'en' ? 'selected' : ''}>English</option>
+                            <option value="es" ${s.playback.preferredSubtitleLanguage === 'es' ? 'selected' : ''}>Spanish</option>
+                            <option value="fr" ${s.playback.preferredSubtitleLanguage === 'fr' ? 'selected' : ''}>French</option>
+                            <option value="de" ${s.playback.preferredSubtitleLanguage === 'de' ? 'selected' : ''}>German</option>
+                            <option value="it" ${s.playback.preferredSubtitleLanguage === 'it' ? 'selected' : ''}>Italian</option>
+                            <option value="pt" ${s.playback.preferredSubtitleLanguage === 'pt' ? 'selected' : ''}>Portuguese</option>
+                            <option value="nl" ${s.playback.preferredSubtitleLanguage === 'nl' ? 'selected' : ''}>Dutch</option>
+                            <option value="pl" ${s.playback.preferredSubtitleLanguage === 'pl' ? 'selected' : ''}>Polish</option>
+                            <option value="ru" ${s.playback.preferredSubtitleLanguage === 'ru' ? 'selected' : ''}>Russian</option>
+                            <option value="ja" ${s.playback.preferredSubtitleLanguage === 'ja' ? 'selected' : ''}>Japanese</option>
+                            <option value="ko" ${s.playback.preferredSubtitleLanguage === 'ko' ? 'selected' : ''}>Korean</option>
+                            <option value="zh" ${s.playback.preferredSubtitleLanguage === 'zh' ? 'selected' : ''}>Chinese</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Subtitle Mode</h4>
+                        <p>When to show subtitles</p>
+                    </div>
+                    <div class="setting-control">
+                        <select id="subtitleMode" onchange="markChanged()">
+                            <option value="" ${!s.playback.preferredSubtitleMode ? 'selected' : ''}>Off</option>
+                            <option value="auto" ${s.playback.preferredSubtitleMode === 'auto' ? 'selected' : ''}>Auto</option>
+                            <option value="always" ${s.playback.preferredSubtitleMode === 'always' ? 'selected' : ''}>Always On</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Subtitle Size</h4>
+                        <p>Scale factor for subtitle text (1.0 = default)</p>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="subtitleSize" value="${s.playback.subtitleSize || 1.0}" min="0.5" max="3" step="0.1" onchange="markChanged()">
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Use Loading Screen</h4>
+                        <p>Show a loading animation while buffering</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useLoadingScreen" ${s.playback.useLoadingScreen ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtering Settings -->
+        <div class="settings-section open">
+            <div class="settings-section-header" onclick="toggleSection(this)">
+                <div class="settings-section-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                    </svg>
+                    Content Filtering
+                </div>
+                <svg class="settings-section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </div>
+            <div class="settings-section-content">
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Max Movie Size (GB)</h4>
+                        <p>Maximum file size for movies (0 = no limit)</p>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="maxSizeMovieGb" value="${s.filtering.maxSizeMovieGb || 0}" min="0" step="1" onchange="markChanged()">
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Max Episode Size (GB)</h4>
+                        <p>Maximum file size for TV episodes (0 = no limit)</p>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="maxSizeEpisodeGb" value="${s.filtering.maxSizeEpisodeGb || 0}" min="0" step="0.5" onchange="markChanged()">
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Maximum Resolution</h4>
+                        <p>Limit results to this resolution or lower</p>
+                    </div>
+                    <div class="setting-control">
+                        <select id="maxResolution" onchange="markChanged()">
+                            <option value="" ${!s.filtering.maxResolution ? 'selected' : ''}>No Limit</option>
+                            <option value="720p" ${s.filtering.maxResolution === '720p' ? 'selected' : ''}>720p</option>
+                            <option value="1080p" ${s.filtering.maxResolution === '1080p' ? 'selected' : ''}>1080p</option>
+                            <option value="2160p" ${s.filtering.maxResolution === '2160p' ? 'selected' : ''}>4K (2160p)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Prioritize HDR/Dolby Vision</h4>
+                        <p>Show HDR and Dolby Vision content first in results</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="prioritizeHdr" ${s.filtering.prioritizeHdr ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Exclude HDR Content</h4>
+                        <p>Hide HDR and Dolby Vision content from results</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="excludeHdr" ${s.filtering.excludeHdr ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-row" style="flex-direction: column; align-items: flex-start;">
+                    <div class="setting-label" style="margin-bottom: 0.5rem;">
+                        <h4>Excluded Terms</h4>
+                        <p>Filter out results containing these terms (press Enter to add)</p>
+                    </div>
+                    <div class="tags-input" id="filterOutTermsContainer" style="width: 100%;">
+                        ${(s.filtering.filterOutTerms || []).map(term => `
+                            <span class="tag">
+                                ${escapeHtml(term)}
+                                <button type="button" onclick="removeTag('${escapeHtml(term)}')">&times;</button>
+                            </span>
+                        `).join('')}
+                        <input type="text" id="filterOutTermsInput" placeholder="Type and press Enter..." onkeydown="handleTagInput(event)">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Bar -->
+        <div class="save-bar" id="saveBar" style="display: none;">
+            <button class="btn btn-secondary" onclick="loadSettings()">Discard</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+        </div>
+    `;
+}
+
+function toggleSection(header) {
+    header.closest('.settings-section').classList.toggle('open');
+}
+
+function markChanged() {
+    hasChanges = true;
+    document.getElementById('saveBar').style.display = 'flex';
+}
+
+function handleTagInput(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const input = e.target;
+        const term = input.value.trim();
+        if (term && !currentSettings.filtering.filterOutTerms.includes(term)) {
+            currentSettings.filtering.filterOutTerms.push(term);
+            input.value = '';
+            renderSettings();
+            markChanged();
+        }
+    }
+}
+
+function removeTag(term) {
+    const index = currentSettings.filtering.filterOutTerms.indexOf(term);
+    if (index > -1) {
+        currentSettings.filtering.filterOutTerms.splice(index, 1);
+        renderSettings();
+        markChanged();
+    }
+}
+
+function collectSettings() {
+    return {
+        playback: {
+            preferredPlayer: document.getElementById('preferredPlayer').value,
+            preferredSubtitleLanguage: document.getElementById('subtitleLanguage').value,
+            preferredSubtitleMode: document.getElementById('subtitleMode').value,
+            subtitleSize: parseFloat(document.getElementById('subtitleSize').value) || 1.0,
+            useLoadingScreen: document.getElementById('useLoadingScreen').checked,
+        },
+        homeShelves: currentSettings.homeShelves || { shelves: [], trendingMovieSource: 'released' },
+        filtering: {
+            maxSizeMovieGb: parseFloat(document.getElementById('maxSizeMovieGb').value) || 0,
+            maxSizeEpisodeGb: parseFloat(document.getElementById('maxSizeEpisodeGb').value) || 0,
+            maxResolution: document.getElementById('maxResolution').value,
+            prioritizeHdr: document.getElementById('prioritizeHdr').checked,
+            excludeHdr: document.getElementById('excludeHdr').checked,
+            filterOutTerms: currentSettings.filtering.filterOutTerms || [],
+        },
+        liveTV: currentSettings.liveTV || { hiddenChannels: [], favoriteChannels: [], selectedCategories: [] },
+    };
+}
+
+async function saveSettings() {
+    const settings = collectSettings();
+
+    try {
+        const response = await fetch(`/account/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || 'Failed to save');
+        }
+
+        currentSettings = await response.json();
+        hasChanges = false;
+        document.getElementById('saveBar').style.display = 'none';
+        showToast('Settings saved successfully');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+// Load settings for first profile
+if (currentProfileId) {
+    loadSettings();
+}
+</script>
+{{end}}

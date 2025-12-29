@@ -1,12 +1,12 @@
 package api
 
 import (
-	"crypto/subtle"
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	"novastream/handlers"
+	"novastream/services/accounts"
+	"novastream/services/sessions"
+	"novastream/services/users"
 
 	"github.com/gorilla/mux"
 )
@@ -54,283 +54,247 @@ func Register(
 	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
+	accountsSvc *accounts.Service,
+	sessionsSvc *sessions.Service,
+	usersSvc *users.Service,
 	getPIN func() string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 
 	// Add CORS middleware to API subrouter
 	api.Use(corsMiddleware)
-	api.Use(pinMiddleware(getPIN))
 
-	api.HandleFunc("/settings", settingsHandler.GetSettings).Methods(http.MethodGet)
-	api.HandleFunc("/settings", settingsHandler.PutSettings).Methods(http.MethodPut)
-	api.HandleFunc("/settings", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/settings/cache/clear", settingsHandler.ClearMetadataCache).Methods(http.MethodPost)
-	api.HandleFunc("/settings/cache/clear", handleOptions).Methods(http.MethodOptions)
+	// Auth routes (no authentication required)
+	authHandler := handlers.NewAuthHandler(accountsSvc, sessionsSvc)
+	api.HandleFunc("/auth/login", authHandler.Login).Methods(http.MethodPost)
+	api.HandleFunc("/auth/login", authHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
+	api.HandleFunc("/auth/logout", authHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/auth/me", authHandler.Me).Methods(http.MethodGet)
+	api.HandleFunc("/auth/me", authHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/auth/refresh", authHandler.Refresh).Methods(http.MethodPost)
+	api.HandleFunc("/auth/refresh", authHandler.Options).Methods(http.MethodOptions)
+	api.HandleFunc("/auth/password", authHandler.ChangePassword).Methods(http.MethodPut)
+	api.HandleFunc("/auth/password", authHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/discover/new", metadataHandler.DiscoverNew).Methods(http.MethodGet)
-	api.HandleFunc("/discover/new", handleOptions).Methods(http.MethodOptions)
+	// Check if master account has default password (public endpoint for warning)
+	accountsHandler := handlers.NewAccountsHandler(accountsSvc, sessionsSvc, usersSvc)
+	api.HandleFunc("/auth/default-password", accountsHandler.HasDefaultPassword).Methods(http.MethodGet)
+	api.HandleFunc("/auth/default-password", accountsHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/search", metadataHandler.Search).Methods(http.MethodGet)
-	api.HandleFunc("/search", handleOptions).Methods(http.MethodOptions)
+	// Protected routes - require authentication
+	protected := api.PathPrefix("").Subrouter()
+	protected.Use(AccountAuthMiddleware(sessionsSvc, getPIN))
 
-	api.HandleFunc("/metadata/series/details", metadataHandler.SeriesDetails).Methods(http.MethodGet)
-	api.HandleFunc("/metadata/series/details", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/metadata/series/batch", metadataHandler.BatchSeriesDetails).Methods(http.MethodPost)
-	api.HandleFunc("/metadata/series/batch", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/metadata/movies/details", metadataHandler.MovieDetails).Methods(http.MethodGet)
-	api.HandleFunc("/metadata/movies/details", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/metadata/trailers", metadataHandler.Trailers).Methods(http.MethodGet)
-	api.HandleFunc("/metadata/trailers", handleOptions).Methods(http.MethodOptions)
+	// Account management routes (master only)
+	masterOnly := protected.PathPrefix("/accounts").Subrouter()
+	masterOnly.Use(MasterOnlyMiddleware())
+	masterOnly.HandleFunc("", accountsHandler.List).Methods(http.MethodGet)
+	masterOnly.HandleFunc("", accountsHandler.Create).Methods(http.MethodPost)
+	masterOnly.HandleFunc("", accountsHandler.Options).Methods(http.MethodOptions)
+	masterOnly.HandleFunc("/{accountID}", accountsHandler.Get).Methods(http.MethodGet)
+	masterOnly.HandleFunc("/{accountID}", accountsHandler.Rename).Methods(http.MethodPatch)
+	masterOnly.HandleFunc("/{accountID}", accountsHandler.Delete).Methods(http.MethodDelete)
+	masterOnly.HandleFunc("/{accountID}", accountsHandler.Options).Methods(http.MethodOptions)
+	masterOnly.HandleFunc("/{accountID}/password", accountsHandler.ResetPassword).Methods(http.MethodPut)
+	masterOnly.HandleFunc("/{accountID}/password", accountsHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/indexers/search", indexerHandler.Search).Methods(http.MethodGet)
-	api.HandleFunc("/indexers/search", indexerHandler.Options).Methods(http.MethodOptions)
+	// Profile reassignment (master only)
+	masterOnly2 := protected.PathPrefix("/profiles").Subrouter()
+	masterOnly2.Use(MasterOnlyMiddleware())
+	masterOnly2.HandleFunc("/{profileID}/reassign", accountsHandler.ReassignProfile).Methods(http.MethodPost)
+	masterOnly2.HandleFunc("/{profileID}/reassign", accountsHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/playback/resolve", playbackHandler.Resolve).Methods(http.MethodPost)
-	api.HandleFunc("/playback/resolve", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/playback/queue/{queueID}", playbackHandler.QueueStatus).Methods(http.MethodGet)
-	api.HandleFunc("/playback/queue/{queueID}", handleOptions).Methods(http.MethodOptions)
+	// Profile ownership middleware for user routes
+	profileProtected := protected.PathPrefix("/users").Subrouter()
+	profileProtected.Use(ProfileOwnershipMiddleware(usersSvc))
+
+	// Settings routes - GET for all authenticated, PUT/POST for master only
+	protected.HandleFunc("/settings", settingsHandler.GetSettings).Methods(http.MethodGet)
+	protected.HandleFunc("/settings", handleOptions).Methods(http.MethodOptions)
+
+	settingsWriteRouter := protected.PathPrefix("/settings").Subrouter()
+	settingsWriteRouter.Use(MasterOnlyMiddleware())
+	settingsWriteRouter.HandleFunc("", settingsHandler.PutSettings).Methods(http.MethodPut)
+	settingsWriteRouter.HandleFunc("/cache/clear", settingsHandler.ClearMetadataCache).Methods(http.MethodPost)
+	settingsWriteRouter.HandleFunc("/cache/clear", handleOptions).Methods(http.MethodOptions)
+
+	// Content discovery and metadata (all authenticated users)
+	protected.HandleFunc("/discover/new", metadataHandler.DiscoverNew).Methods(http.MethodGet)
+	protected.HandleFunc("/discover/new", handleOptions).Methods(http.MethodOptions)
+
+	protected.HandleFunc("/search", metadataHandler.Search).Methods(http.MethodGet)
+	protected.HandleFunc("/search", handleOptions).Methods(http.MethodOptions)
+
+	protected.HandleFunc("/metadata/series/details", metadataHandler.SeriesDetails).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/series/details", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/series/batch", metadataHandler.BatchSeriesDetails).Methods(http.MethodPost)
+	protected.HandleFunc("/metadata/series/batch", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/movies/details", metadataHandler.MovieDetails).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/movies/details", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/trailers", metadataHandler.Trailers).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/trailers", handleOptions).Methods(http.MethodOptions)
+
+	protected.HandleFunc("/indexers/search", indexerHandler.Search).Methods(http.MethodGet)
+	protected.HandleFunc("/indexers/search", indexerHandler.Options).Methods(http.MethodOptions)
+
+	protected.HandleFunc("/playback/resolve", playbackHandler.Resolve).Methods(http.MethodPost)
+	protected.HandleFunc("/playback/resolve", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/playback/queue/{queueID}", playbackHandler.QueueStatus).Methods(http.MethodGet)
+	protected.HandleFunc("/playback/queue/{queueID}", handleOptions).Methods(http.MethodOptions)
 
 	// Prequeue endpoints for pre-loading playback streams
 	if prequeueHandler != nil {
-		api.HandleFunc("/playback/prequeue", prequeueHandler.Prequeue).Methods(http.MethodPost)
-		api.HandleFunc("/playback/prequeue", prequeueHandler.Options).Methods(http.MethodOptions)
-		api.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.GetStatus).Methods(http.MethodGet)
-		api.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/playback/prequeue", prequeueHandler.Prequeue).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/prequeue", prequeueHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.GetStatus).Methods(http.MethodGet)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.Options).Methods(http.MethodOptions)
 	}
 
-	api.HandleFunc("/usenet/health", usenetHandler.CheckHealth).Methods(http.MethodPost)
-	api.HandleFunc("/usenet/health", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/usenet/health", usenetHandler.CheckHealth).Methods(http.MethodPost)
+	protected.HandleFunc("/usenet/health", handleOptions).Methods(http.MethodOptions)
 
-	api.HandleFunc("/debrid/proxy", debridHandler.Proxy).Methods(http.MethodGet, http.MethodHead)
-	api.HandleFunc("/debrid/proxy", debridHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/debrid/cached", debridHandler.CheckCached).Methods(http.MethodPost)
-	api.HandleFunc("/debrid/cached", debridHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/debrid/proxy", debridHandler.Proxy).Methods(http.MethodGet, http.MethodHead)
+	protected.HandleFunc("/debrid/proxy", debridHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/debrid/cached", debridHandler.CheckCached).Methods(http.MethodPost)
+	protected.HandleFunc("/debrid/cached", debridHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
-	api.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
-	api.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
+	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
+	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
 
 	// Video streaming endpoints
-	api.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
-	api.HandleFunc("/video/metadata", videoHandler.ProbeVideo).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
+	protected.HandleFunc("/video/metadata", videoHandler.ProbeVideo).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
 
 	// HLS streaming endpoints for Dolby Vision
-	api.HandleFunc("/video/hls/start", videoHandler.StartHLSSession).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/hls/{sessionID}/stream.m3u8", videoHandler.ServeHLSPlaylist).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/hls/{sessionID}/subtitles.vtt", videoHandler.ServeHLSSubtitles).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/hls/{sessionID}/keepalive", videoHandler.KeepAliveHLSSession).Methods(http.MethodPost, http.MethodOptions)
-	api.HandleFunc("/video/hls/{sessionID}/status", videoHandler.GetHLSSessionStatus).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/hls/{sessionID}/{segment}", videoHandler.ServeHLSSegment).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/start", videoHandler.StartHLSSession).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/stream.m3u8", videoHandler.ServeHLSPlaylist).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/subtitles.vtt", videoHandler.ServeHLSSubtitles).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/keepalive", videoHandler.KeepAliveHLSSession).Methods(http.MethodPost, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/status", videoHandler.GetHLSSessionStatus).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/{segment}", videoHandler.ServeHLSSegment).Methods(http.MethodGet, http.MethodOptions)
 
 	// Standalone subtitle extraction endpoints (for non-HLS streams)
-	api.HandleFunc("/video/subtitles/tracks", videoHandler.ProbeSubtitleTracks).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/subtitles/start", videoHandler.StartSubtitleExtract).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/subtitles/{sessionID}/subtitles.vtt", videoHandler.ServeExtractedSubtitles).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/subtitles/tracks", videoHandler.ProbeSubtitleTracks).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/subtitles/start", videoHandler.StartSubtitleExtract).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/subtitles/{sessionID}/subtitles.vtt", videoHandler.ServeExtractedSubtitles).Methods(http.MethodGet, http.MethodOptions)
 
 	// Subtitle search endpoints (using subliminal)
-	api.HandleFunc("/subtitles/search", subtitlesHandler.Search).Methods(http.MethodGet)
-	api.HandleFunc("/subtitles/search", subtitlesHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/subtitles/download", subtitlesHandler.Download).Methods(http.MethodGet)
-	api.HandleFunc("/subtitles/download", subtitlesHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/subtitles/search", subtitlesHandler.Search).Methods(http.MethodGet)
+	protected.HandleFunc("/subtitles/search", subtitlesHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/subtitles/download", subtitlesHandler.Download).Methods(http.MethodGet)
+	protected.HandleFunc("/subtitles/download", subtitlesHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/debug/log", debugHandler.Capture).Methods(http.MethodPost, http.MethodOptions)
+	protected.HandleFunc("/debug/log", debugHandler.Capture).Methods(http.MethodPost, http.MethodOptions)
 
 	// Log submission endpoint
-	api.HandleFunc("/logs/submit", logsHandler.Submit).Methods(http.MethodPost)
-	api.HandleFunc("/logs/submit", logsHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/logs/submit", logsHandler.Submit).Methods(http.MethodPost)
+	protected.HandleFunc("/logs/submit", logsHandler.Options).Methods(http.MethodOptions)
 
-	// Version endpoint
+	// Version endpoint (public)
 	versionHandler := handlers.NewVersionHandler()
 	api.HandleFunc("/version", versionHandler.GetVersion).Methods(http.MethodGet, http.MethodOptions)
 
-	// Admin endpoints for monitoring
+	// Admin endpoints for monitoring (master only)
 	adminHandler := handlers.NewAdminHandler(videoHandler.GetHLSManager())
-	api.HandleFunc("/admin/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)
+	adminRouter := protected.PathPrefix("/admin").Subrouter()
+	adminRouter.Use(MasterOnlyMiddleware())
+	adminRouter.HandleFunc("/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)
 
-	// MP4Box debug endpoints for DV/HDR testing (bypasses normal streaming pipeline)
-	api.HandleFunc("/video/debug/mp4box/start", debugVideoHandler.StartMP4BoxHLSSession).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/debug/mp4box/probe", debugVideoHandler.ProbeVideoURL).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/debug/mp4box/{sessionID}/stream.m3u8", debugVideoHandler.ServeMP4BoxPlaylist).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/video/debug/mp4box/{sessionID}/{segment}", debugVideoHandler.ServeMP4BoxSegment).Methods(http.MethodGet, http.MethodOptions)
+	// MP4Box debug endpoints for DV/HDR testing (master only)
+	debugRouter := protected.PathPrefix("/video/debug").Subrouter()
+	debugRouter.Use(MasterOnlyMiddleware())
+	debugRouter.HandleFunc("/mp4box/start", debugVideoHandler.StartMP4BoxHLSSession).Methods(http.MethodGet, http.MethodOptions)
+	debugRouter.HandleFunc("/mp4box/probe", debugVideoHandler.ProbeVideoURL).Methods(http.MethodGet, http.MethodOptions)
+	debugRouter.HandleFunc("/mp4box/{sessionID}/stream.m3u8", debugVideoHandler.ServeMP4BoxPlaylist).Methods(http.MethodGet, http.MethodOptions)
+	debugRouter.HandleFunc("/mp4box/{sessionID}/{segment}", debugVideoHandler.ServeMP4BoxSegment).Methods(http.MethodGet, http.MethodOptions)
 
-	api.HandleFunc("/users", usersHandler.List).Methods(http.MethodGet)
-	api.HandleFunc("/users", usersHandler.Create).Methods(http.MethodPost)
-	api.HandleFunc("/users", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}", usersHandler.Rename).Methods(http.MethodPatch)
-	api.HandleFunc("/users/{userID}", usersHandler.Delete).Methods(http.MethodDelete)
-	api.HandleFunc("/users/{userID}", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/color", usersHandler.SetColor).Methods(http.MethodPut)
-	api.HandleFunc("/users/{userID}/color", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/pin", usersHandler.SetPin).Methods(http.MethodPut)
-	api.HandleFunc("/users/{userID}/pin", usersHandler.ClearPin).Methods(http.MethodDelete)
-	api.HandleFunc("/users/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.VerifyPin).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/pin/verify", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/trakt", usersHandler.SetTraktAccount).Methods(http.MethodPut)
-	api.HandleFunc("/users/{userID}/trakt", usersHandler.ClearTraktAccount).Methods(http.MethodDelete)
-	api.HandleFunc("/users/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
-	api.HandleFunc("/users/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
+	// User profile routes (with ownership validation)
+	profileProtected.HandleFunc("", usersHandler.List).Methods(http.MethodGet)
+	profileProtected.HandleFunc("", usersHandler.Create).Methods(http.MethodPost)
+	profileProtected.HandleFunc("", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}", usersHandler.Rename).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}", usersHandler.Delete).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/color", usersHandler.SetColor).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/color", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/pin", usersHandler.SetPin).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/pin", usersHandler.ClearPin).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/pin/verify", usersHandler.VerifyPin).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/pin/verify", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.SetTraktAccount).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.ClearTraktAccount).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
-	api.HandleFunc("/users/{userID}/settings", userSettingsHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/users/{userID}/watchlist", watchlistHandler.List).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/watchlist", watchlistHandler.Add).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/watchlist", watchlistHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.UpdateState).Methods(http.MethodPatch)
-	api.HandleFunc("/users/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Remove).Methods(http.MethodDelete)
-	api.HandleFunc("/users/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.List).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Add).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.UpdateState).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Remove).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Options).Methods(http.MethodOptions)
 
-	api.HandleFunc("/users/{userID}/history/continue", historyHandler.ListContinueWatching).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/continue", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/continue/{seriesID}/hide", historyHandler.HideFromContinueWatching).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/continue/{seriesID}/hide", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/series/{seriesID}", historyHandler.GetSeriesWatchState).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/series/{seriesID}", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/episodes", historyHandler.RecordEpisode).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/episodes", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/continue", historyHandler.ListContinueWatching).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/continue", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/continue/{seriesID}/hide", historyHandler.HideFromContinueWatching).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/continue/{seriesID}/hide", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/series/{seriesID}", historyHandler.GetSeriesWatchState).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/series/{seriesID}", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/episodes", historyHandler.RecordEpisode).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/episodes", historyHandler.Options).Methods(http.MethodOptions)
 
 	// Watch History endpoints (unified watch tracking for all media)
-	api.HandleFunc("/users/{userID}/history/watched", historyHandler.ListWatchHistory).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/watched", historyHandler.UpdateWatchHistory).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/watched", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/watched/bulk", historyHandler.BulkUpdateWatchHistory).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/watched/bulk", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/watched/{mediaType}/{id}", historyHandler.GetWatchHistoryItem).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/watched/{mediaType}/{id}", historyHandler.UpdateWatchHistory).Methods(http.MethodPatch)
-	api.HandleFunc("/users/{userID}/history/watched/{mediaType}/{id}/toggle", historyHandler.ToggleWatched).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/watched/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/watched", historyHandler.ListWatchHistory).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/watched", historyHandler.UpdateWatchHistory).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/watched", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/watched/bulk", historyHandler.BulkUpdateWatchHistory).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/watched/bulk", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.GetWatchHistoryItem).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.UpdateWatchHistory).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}/toggle", historyHandler.ToggleWatched).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
 
 	// Playback Progress endpoints (continuous progress tracking for native player)
-	api.HandleFunc("/users/{userID}/history/progress", historyHandler.ListPlaybackProgress).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/progress", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPost)
-	api.HandleFunc("/users/{userID}/history/progress", historyHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.GetPlaybackProgress).Methods(http.MethodGet)
-	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPatch)
-	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.DeletePlaybackProgress).Methods(http.MethodDelete)
-	api.HandleFunc("/users/{userID}/history/progress/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.ListPlaybackProgress).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.GetPlaybackProgress).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.DeletePlaybackProgress).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
 }
 
 // RegisterTraktRoutes registers Trakt account management API endpoints.
-func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, getPIN func() string) {
-	api := r.PathPrefix("/api").Subrouter()
+func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, sessionsSvc *sessions.Service, getPIN func() string) {
+	api := r.PathPrefix("/api/trakt").Subrouter()
 	api.Use(corsMiddleware)
-	api.Use(pinMiddleware(getPIN))
+	api.Use(AccountAuthMiddleware(sessionsSvc, getPIN))
 
 	// Trakt accounts management
-	api.HandleFunc("/trakt/accounts", traktHandler.ListAccounts).Methods(http.MethodGet)
-	api.HandleFunc("/trakt/accounts", traktHandler.CreateAccount).Methods(http.MethodPost)
-	api.HandleFunc("/trakt/accounts", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.GetAccount).Methods(http.MethodGet)
-	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.UpdateAccount).Methods(http.MethodPatch)
-	api.HandleFunc("/trakt/accounts/{accountID}", traktHandler.DeleteAccount).Methods(http.MethodDelete)
-	api.HandleFunc("/trakt/accounts/{accountID}", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}/auth/start", traktHandler.StartAuth).Methods(http.MethodPost)
-	api.HandleFunc("/trakt/accounts/{accountID}/auth/start", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}/auth/check/{deviceCode}", traktHandler.CheckAuth).Methods(http.MethodGet)
-	api.HandleFunc("/trakt/accounts/{accountID}/auth/check/{deviceCode}", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}/disconnect", traktHandler.Disconnect).Methods(http.MethodPost)
-	api.HandleFunc("/trakt/accounts/{accountID}/disconnect", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}/scrobbling", traktHandler.SetScrobbling).Methods(http.MethodPost)
-	api.HandleFunc("/trakt/accounts/{accountID}/scrobbling", handleOptions).Methods(http.MethodOptions)
-	api.HandleFunc("/trakt/accounts/{accountID}/history", traktHandler.GetHistory).Methods(http.MethodGet)
-	api.HandleFunc("/trakt/accounts/{accountID}/history", handleOptions).Methods(http.MethodOptions)
-}
-
-func pinMiddleware(getPIN func() string) mux.MiddlewareFunc {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodOptions {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Get current PIN (supports hot reload)
-			expectedPIN := strings.TrimSpace(getPIN())
-			if expectedPIN == "" {
-				// No PIN configured, allow access
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			receivedPIN := strings.TrimSpace(r.Header.Get("X-PIN"))
-			if receivedPIN == "" {
-				authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-				if len(authHeader) > 0 {
-					lower := strings.ToLower(authHeader)
-					switch {
-					case strings.HasPrefix(lower, "bearer "):
-						receivedPIN = strings.TrimSpace(authHeader[7:])
-					case strings.HasPrefix(lower, "pin "):
-						receivedPIN = strings.TrimSpace(authHeader[4:])
-					}
-				}
-			}
-
-			if receivedPIN == "" {
-				query := r.URL.Query()
-				for _, pinParam := range []string{"pin", "PIN"} {
-					candidate := strings.TrimSpace(query.Get(pinParam))
-					if candidate != "" {
-						receivedPIN = candidate
-						break
-					}
-				}
-			}
-
-			// Legacy support: also check for old API key parameters
-			if receivedPIN == "" {
-				receivedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-				if receivedKey == "" {
-					authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-					if len(authHeader) > 0 {
-						lower := strings.ToLower(authHeader)
-						switch {
-						case strings.HasPrefix(lower, "bearer "):
-							receivedKey = strings.TrimSpace(authHeader[7:])
-						case strings.HasPrefix(lower, "apikey "):
-							receivedKey = strings.TrimSpace(authHeader[7:])
-						}
-					}
-				}
-
-				if receivedKey == "" {
-					query := r.URL.Query()
-					for _, keyParam := range []string{"apiKey", "apikey", "api_key", "key"} {
-						candidate := strings.TrimSpace(query.Get(keyParam))
-						if candidate != "" {
-							receivedKey = candidate
-							break
-						}
-					}
-				}
-
-				// If we found a legacy API key, treat it as a PIN for backward compatibility
-				if receivedKey != "" {
-					receivedPIN = receivedKey
-				}
-			}
-
-			if receivedPIN == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "missing PIN"})
-				return
-			}
-
-			if subtle.ConstantTimeCompare([]byte(receivedPIN), []byte(expectedPIN)) != 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "invalid PIN"})
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
+	api.HandleFunc("/accounts", traktHandler.ListAccounts).Methods(http.MethodGet)
+	api.HandleFunc("/accounts", traktHandler.CreateAccount).Methods(http.MethodPost)
+	api.HandleFunc("/accounts", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}", traktHandler.GetAccount).Methods(http.MethodGet)
+	api.HandleFunc("/accounts/{accountID}", traktHandler.UpdateAccount).Methods(http.MethodPatch)
+	api.HandleFunc("/accounts/{accountID}", traktHandler.DeleteAccount).Methods(http.MethodDelete)
+	api.HandleFunc("/accounts/{accountID}", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}/auth/start", traktHandler.StartAuth).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{accountID}/auth/start", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}/auth/check/{deviceCode}", traktHandler.CheckAuth).Methods(http.MethodGet)
+	api.HandleFunc("/accounts/{accountID}/auth/check/{deviceCode}", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}/disconnect", traktHandler.Disconnect).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{accountID}/disconnect", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}/scrobbling", traktHandler.SetScrobbling).Methods(http.MethodPost)
+	api.HandleFunc("/accounts/{accountID}/scrobbling", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/accounts/{accountID}/history", traktHandler.GetHistory).Methods(http.MethodGet)
+	api.HandleFunc("/accounts/{accountID}/history", handleOptions).Methods(http.MethodOptions)
 }

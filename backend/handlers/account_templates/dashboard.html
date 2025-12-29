@@ -1,0 +1,431 @@
+{{define "dashboard"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}My Profiles - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h1>My Profiles</h1>
+            <p>Manage your viewing profiles</p>
+        </div>
+        <button class="btn btn-primary" onclick="toggleAddProfileForm()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Add Profile
+        </button>
+    </div>
+
+    <!-- Add Profile Form (hidden by default) -->
+    <div id="addProfileForm" class="card" style="display: none;">
+        <div class="card-header">
+            <h2>Create New Profile</h2>
+        </div>
+        <div class="card-body">
+            <form id="createProfileForm" onsubmit="createProfile(event)">
+                <div class="form-group">
+                    <label class="form-label">Profile Name</label>
+                    <input type="text" id="newProfileName" class="form-input" placeholder="Enter profile name" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Color</label>
+                    <div class="color-picker" id="newProfileColor">
+                        <div class="color-dot selected" style="background: #3B82F6;" data-color="#3B82F6" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #8B5CF6;" data-color="#8B5CF6" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #EC4899;" data-color="#EC4899" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #EF4444;" data-color="#EF4444" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #F97316;" data-color="#F97316" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #EAB308;" data-color="#EAB308" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #22C55E;" data-color="#22C55E" onclick="selectColor(this)"></div>
+                        <div class="color-dot" style="background: #14B8A6;" data-color="#14B8A6" onclick="selectColor(this)"></div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button type="submit" class="btn btn-primary">Create Profile</button>
+                    <button type="button" class="btn btn-secondary" onclick="toggleAddProfileForm()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Profiles Grid -->
+    <div class="profile-grid" id="profilesGrid">
+        {{range .Profiles}}
+        <div class="profile-card" data-profile-id="{{.ID}}">
+            <div class="profile-header">
+                <div class="profile-avatar" style="background: {{if .Color}}{{.Color}}{{else}}#3B82F6{{end}};">
+                    {{slice .Name 0 1}}
+                </div>
+                <div class="profile-info">
+                    <h3>{{.Name}}</h3>
+                    <p>{{if .IsKidsProfile}}<span class="badge badge-accent">Kids</span>{{else}}Standard Profile{{end}}</p>
+                </div>
+            </div>
+
+            <div class="profile-actions">
+                <button class="btn btn-sm btn-secondary" onclick="editProfile('{{.ID}}')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                    Edit
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="togglePin('{{.ID}}')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    PIN
+                </button>
+            </div>
+        </div>
+        {{end}}
+    </div>
+
+    <!-- Change Password Section -->
+    <div class="card" style="margin-top: 2rem;">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; color: var(--accent);">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                </svg>
+                Change Password
+            </h2>
+        </div>
+        <div class="card-body">
+            <form id="changePasswordForm" onsubmit="changePassword(event)">
+                <div style="display: grid; gap: 1rem; max-width: 400px;">
+                    <div class="form-group">
+                        <label class="form-label">Current Password</label>
+                        <input type="password" id="currentPassword" class="form-input" placeholder="Enter current password" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">New Password</label>
+                        <input type="password" id="newPassword" class="form-input" placeholder="Enter new password" required minlength="4">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Confirm New Password</label>
+                        <input type="password" id="confirmPassword" class="form-input" placeholder="Confirm new password" required minlength="4">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+<!-- Edit Profile Modal -->
+<div id="editModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: var(--bg-secondary); border-radius: var(--radius-lg); width: 100%; max-width: 400px; border: 1px solid var(--border);">
+        <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+            <h3>Edit Profile</h3>
+            <button class="btn btn-icon btn-secondary" onclick="closeEditModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div style="padding: 1.25rem;">
+            <form id="editProfileForm" onsubmit="saveProfile(event)">
+                <input type="hidden" id="editProfileId">
+                <div class="form-group">
+                    <label class="form-label">Profile Name</label>
+                    <input type="text" id="editProfileName" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Color</label>
+                    <div class="color-picker" id="editProfileColor">
+                        <div class="color-dot" style="background: #3B82F6;" data-color="#3B82F6" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #8B5CF6;" data-color="#8B5CF6" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #EC4899;" data-color="#EC4899" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #EF4444;" data-color="#EF4444" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #F97316;" data-color="#F97316" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #EAB308;" data-color="#EAB308" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #22C55E;" data-color="#22C55E" onclick="selectEditColor(this)"></div>
+                        <div class="color-dot" style="background: #14B8A6;" data-color="#14B8A6" onclick="selectEditColor(this)"></div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="editKidsProfile" style="width: 16px; height: 16px;">
+                        <span>Kids Profile</span>
+                    </label>
+                    <p class="form-hint">Enable content restrictions for children</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    <button type="button" class="btn btn-danger" onclick="deleteProfile()">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- PIN Modal -->
+<div id="pinModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: var(--bg-secondary); border-radius: var(--radius-lg); width: 100%; max-width: 360px; border: 1px solid var(--border);">
+        <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+            <h3 id="pinModalTitle">Set PIN</h3>
+            <button class="btn btn-icon btn-secondary" onclick="closePinModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div style="padding: 1.25rem;">
+            <form id="pinForm" onsubmit="savePin(event)">
+                <input type="hidden" id="pinProfileId">
+                <div class="form-group">
+                    <label class="form-label">Enter PIN (4+ characters)</label>
+                    <input type="password" id="pinInput" class="form-input" placeholder="Enter PIN" minlength="4" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button type="submit" class="btn btn-primary">Set PIN</button>
+                    <button type="button" class="btn btn-secondary" id="clearPinBtn" onclick="clearPin()" style="display: none;">Remove PIN</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    let profiles = {{json .Profiles}};
+    let selectedColor = '#3B82F6';
+    let editSelectedColor = '#3B82F6';
+
+    function toggleAddProfileForm() {
+        const form = document.getElementById('addProfileForm');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        if (form.style.display === 'block') {
+            document.getElementById('newProfileName').focus();
+        }
+    }
+
+    function selectColor(el) {
+        document.querySelectorAll('#newProfileColor .color-dot').forEach(d => d.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedColor = el.dataset.color;
+    }
+
+    function selectEditColor(el) {
+        document.querySelectorAll('#editProfileColor .color-dot').forEach(d => d.classList.remove('selected'));
+        el.classList.add('selected');
+        editSelectedColor = el.dataset.color;
+    }
+
+    async function createProfile(e) {
+        e.preventDefault();
+        const name = document.getElementById('newProfileName').value.trim();
+        if (!name) return;
+
+        try {
+            const response = await fetch('/account/api/profiles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, color: selectedColor })
+            });
+            if (response.ok) {
+                showToast('Profile created successfully');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to create profile', 'error');
+            }
+        } catch (err) {
+            showToast('Error creating profile: ' + err.message, 'error');
+        }
+    }
+
+    function editProfile(profileId) {
+        const profile = profiles.find(p => p.id === profileId);
+        if (!profile) return;
+
+        document.getElementById('editProfileId').value = profileId;
+        document.getElementById('editProfileName').value = profile.name;
+        document.getElementById('editKidsProfile').checked = profile.isKidsProfile;
+        editSelectedColor = profile.color || '#3B82F6';
+
+        document.querySelectorAll('#editProfileColor .color-dot').forEach(d => {
+            d.classList.toggle('selected', d.dataset.color === editSelectedColor);
+        });
+
+        document.getElementById('editModal').style.display = 'flex';
+    }
+
+    function closeEditModal() {
+        document.getElementById('editModal').style.display = 'none';
+    }
+
+    async function saveProfile(e) {
+        e.preventDefault();
+        const profileId = document.getElementById('editProfileId').value;
+        const name = document.getElementById('editProfileName').value.trim();
+        const isKidsProfile = document.getElementById('editKidsProfile').checked;
+
+        try {
+            let response = await fetch('/account/api/profiles?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            if (!response.ok) {
+                const error = await response.text();
+                showToast(error || 'Failed to update name', 'error');
+                return;
+            }
+
+            response = await fetch('/account/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ color: editSelectedColor })
+            });
+
+            response = await fetch('/account/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isKidsProfile })
+            });
+
+            showToast('Profile updated');
+            location.reload();
+        } catch (err) {
+            showToast('Error updating profile: ' + err.message, 'error');
+        }
+    }
+
+    async function deleteProfile() {
+        const profileId = document.getElementById('editProfileId').value;
+        if (!confirm('Delete this profile? This action cannot be undone.')) return;
+
+        try {
+            const response = await fetch('/account/api/profiles?profileId=' + encodeURIComponent(profileId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                showToast('Profile deleted');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to delete profile', 'error');
+            }
+        } catch (err) {
+            showToast('Error deleting profile: ' + err.message, 'error');
+        }
+    }
+
+    function togglePin(profileId) {
+        const profile = profiles.find(p => p.id === profileId);
+        if (!profile) return;
+
+        document.getElementById('pinProfileId').value = profileId;
+        document.getElementById('pinInput').value = '';
+        document.getElementById('pinModalTitle').textContent = profile.hasPin ? 'Change PIN' : 'Set PIN';
+        document.getElementById('clearPinBtn').style.display = profile.hasPin ? 'inline-flex' : 'none';
+        document.getElementById('pinModal').style.display = 'flex';
+        document.getElementById('pinInput').focus();
+    }
+
+    function closePinModal() {
+        document.getElementById('pinModal').style.display = 'none';
+    }
+
+    async function savePin(e) {
+        e.preventDefault();
+        const profileId = document.getElementById('pinProfileId').value;
+        const pin = document.getElementById('pinInput').value;
+
+        try {
+            const response = await fetch('/account/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin })
+            });
+            if (response.ok) {
+                showToast('PIN set successfully');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to set PIN', 'error');
+            }
+        } catch (err) {
+            showToast('Error setting PIN: ' + err.message, 'error');
+        }
+    }
+
+    async function clearPin() {
+        const profileId = document.getElementById('pinProfileId').value;
+        if (!confirm('Remove PIN protection from this profile?')) return;
+
+        try {
+            const response = await fetch('/account/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                showToast('PIN removed');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to remove PIN', 'error');
+            }
+        } catch (err) {
+            showToast('Error removing PIN: ' + err.message, 'error');
+        }
+    }
+
+    async function changePassword(e) {
+        e.preventDefault();
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+
+        if (newPassword !== confirmPassword) {
+            showToast('New passwords do not match', 'error');
+            return;
+        }
+
+        if (newPassword.length < 4) {
+            showToast('Password must be at least 4 characters', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/account/api/password', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPassword, newPassword })
+            });
+            if (response.ok) {
+                showToast('Password changed successfully');
+                document.getElementById('changePasswordForm').reset();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to change password', 'error');
+            }
+        } catch (err) {
+            showToast('Error changing password: ' + err.message, 'error');
+        }
+    }
+
+    // Close modals on escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeEditModal();
+            closePinModal();
+        }
+    });
+
+    // Close modals on backdrop click
+    document.getElementById('editModal').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('editModal')) closeEditModal();
+    });
+    document.getElementById('pinModal').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('pinModal')) closePinModal();
+    });
+</script>
+{{end}}
