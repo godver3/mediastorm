@@ -31,13 +31,78 @@ type tmdbClient struct {
 	apiKey   string
 	language string
 	httpc    *http.Client
+
+	// Rate limiting
+	throttleMu  sync.Mutex
+	lastRequest time.Time
+	minInterval time.Duration
 }
 
 func newTMDBClient(apiKey, language string, httpc *http.Client) *tmdbClient {
 	if httpc == nil {
 		httpc = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &tmdbClient{apiKey: strings.TrimSpace(apiKey), language: language, httpc: httpc}
+	return &tmdbClient{
+		apiKey:      strings.TrimSpace(apiKey),
+		language:    language,
+		httpc:       httpc,
+		minInterval: 50 * time.Millisecond, // TMDB has generous rate limits
+	}
+}
+
+// doGET performs an HTTP GET with rate limiting and retry with exponential backoff
+func (c *tmdbClient) doGET(ctx context.Context, endpoint string, v any) error {
+	var lastErr error
+	backoff := 300 * time.Millisecond
+
+	for attempt := 0; attempt < 3; attempt++ {
+		// Rate limiting
+		c.throttleMu.Lock()
+		since := time.Since(c.lastRequest)
+		if since < c.minInterval {
+			time.Sleep(c.minInterval - since)
+		}
+		c.lastRequest = time.Now()
+		c.throttleMu.Unlock()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.httpc.Do(req)
+		if err != nil {
+			lastErr = err
+			log.Printf("[tmdb] http error (attempt %d/3): %v", attempt+1, err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		// Handle rate limiting and server errors
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			log.Printf("[tmdb] rate limited or server error (attempt %d/3): status %d", attempt+1, resp.StatusCode)
+			lastErr = fmt.Errorf("tmdb request failed: %s", resp.Status)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return fmt.Errorf("tmdb request failed: %s", resp.Status)
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(v)
+		resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return lastErr
 }
 
 func (c *tmdbClient) isConfigured() bool {
@@ -511,32 +576,60 @@ func (c *tmdbClient) fetchExternalID(ctx context.Context, mediaType string, tmdb
 	if err != nil {
 		return "", err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-
-	q := req.URL.Query()
-	q.Set("api_key", c.apiKey)
-	req.URL.RawQuery = q.Encode()
-
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("tmdb external_ids for %s/%d failed: %s", apiMediaType, tmdbID, resp.Status)
-	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
 
 	var payload tmdbExternalIDsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+	var lastErr error
+	backoff := 300 * time.Millisecond
+
+	for attempt := 0; attempt < 3; attempt++ {
+		// Rate limiting
+		c.throttleMu.Lock()
+		since := time.Since(c.lastRequest)
+		if since < c.minInterval {
+			time.Sleep(c.minInterval - since)
+		}
+		c.lastRequest = time.Now()
+		c.throttleMu.Unlock()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return "", err
+		}
+
+		resp, err := c.httpc.Do(req)
+		if err != nil {
+			lastErr = err
+			log.Printf("[tmdb] fetchExternalID http error (attempt %d/3): %v", attempt+1, err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		// Handle rate limiting and server errors with retry
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			log.Printf("[tmdb] fetchExternalID rate limited (attempt %d/3): status %d", attempt+1, resp.StatusCode)
+			lastErr = fmt.Errorf("tmdb external_ids for %s/%d failed: %s", apiMediaType, tmdbID, resp.Status)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return "", fmt.Errorf("tmdb external_ids for %s/%d failed: %s", apiMediaType, tmdbID, resp.Status)
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&payload)
+		resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(payload.IMDBID), nil
 	}
 
-	return strings.TrimSpace(payload.IMDBID), nil
+	return "", lastErr
 }
 
 func mapTMDBReleaseType(releaseType int) string {
