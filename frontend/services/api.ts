@@ -44,6 +44,12 @@ export interface ReleaseWindow {
   released?: boolean;
 }
 
+export interface Rating {
+  source: string; // imdb, tmdb, trakt, letterboxd, tomatoes, audience, metacritic
+  value: number;
+  max: number;
+}
+
 export interface Title {
   id: string;
   name: string;
@@ -65,6 +71,7 @@ export interface Title {
   releases?: ReleaseWindow[];
   theatricalRelease?: ReleaseWindow;
   homeRelease?: ReleaseWindow;
+  ratings?: Rating[];
 }
 
 export interface TrendingItem {
@@ -564,16 +571,14 @@ export interface PrequeueStatusResponse {
 class ApiService {
   private baseUrl!: string;
   private fallbackUrls!: string[];
-  private apiKey: string | null = null;
   private authToken: string | null = null;
   private readonly playbackQueuePollIntervalMs = 1500;
   private readonly playbackQueueTimeoutMs = 120000;
   private readonly allowedInProgressStatuses = new Set(['queued', 'processing', 'pending', 'retrying']);
   private readonly allowedFinalStatuses = new Set(['healthy', 'partial', 'cached']);
 
-  constructor(baseUrl?: string, apiKey?: string) {
+  constructor(baseUrl?: string) {
     this.configure(baseUrl);
-    this.setApiKey(apiKey);
   }
 
   getBaseUrl() {
@@ -582,15 +587,6 @@ class ApiService {
 
   setBaseUrl(nextBaseUrl?: string | null) {
     this.configure(nextBaseUrl ?? undefined);
-  }
-
-  getApiKey() {
-    return this.apiKey ?? '';
-  }
-
-  setApiKey(nextKey?: string | null) {
-    const trimmed = nextKey?.trim() ?? '';
-    this.apiKey = trimmed ? trimmed : null;
   }
 
   getAuthToken(): string | null {
@@ -604,16 +600,16 @@ class ApiService {
   /**
    * Get the full URL for a relative API path
    * @param relativePath - Relative path starting with /
-   * @returns Full URL with base URL and API key
+   * @returns Full URL with base URL and auth token for streaming
    */
   getFullUrl(relativePath: string): string {
     // Remove /api prefix from baseUrl if present, since relativePath already includes /api
     const baseWithoutApi = this.baseUrl.replace(/\/api\/?$/, '');
     const url = `${baseWithoutApi}${relativePath}`;
-    // Add API key if present
-    if (this.apiKey) {
+    // Add auth token if present (for streaming URLs that can't use headers)
+    if (this.authToken) {
       const separator = url.includes('?') ? '&' : '?';
-      return `${url}${separator}apiKey=${encodeURIComponent(this.apiKey)}`;
+      return `${url}${separator}token=${encodeURIComponent(this.authToken)}`;
     }
     return url;
   }
@@ -695,22 +691,14 @@ class ApiService {
       headerMap['Accept'] = 'application/json';
     }
 
-    // Use auth token for session-based authentication (accounts system)
-    if (this.authToken && !headerMap['Authorization']) {
-      headerMap['Authorization'] = `Bearer ${this.authToken}`;
-    }
-
-    // Fallback to API key for backward compatibility (legacy PIN auth)
-    if (this.apiKey) {
-      if (!headerMap['X-PIN']) {
-        headerMap['X-PIN'] = this.apiKey;
-      }
-      if (!headerMap['X-API-Key']) {
-        headerMap['X-API-Key'] = this.apiKey;
-      }
-      // Only set Bearer token from apiKey if authToken wasn't set
+    // Use auth token for session-based authentication
+    // Send both Authorization and X-PIN headers for reverse proxy compatibility (e.g., Traefik)
+    if (this.authToken) {
       if (!headerMap['Authorization']) {
-        headerMap['Authorization'] = `Bearer ${this.apiKey}`;
+        headerMap['Authorization'] = `Bearer ${this.authToken}`;
+      }
+      if (!headerMap['X-PIN']) {
+        headerMap['X-PIN'] = this.authToken;
       }
     }
 
@@ -961,9 +949,8 @@ class ApiService {
 
   buildLiveStreamUrl(sourceUrl: string): string {
     const params = new URLSearchParams({ url: sourceUrl });
-    const key = this.getApiKey().trim();
-    if (key) {
-      params.set('pin', key);
+    if (this.authToken) {
+      params.set('token', this.authToken);
     }
     return `${this.baseUrl}/live/stream?${params.toString()}`;
   }
@@ -1558,11 +1545,8 @@ class ApiService {
     // Build URL manually to ensure proper encoding of special chars like semicolons
     // URLSearchParams doesn't encode semicolons which breaks some parsers
     const queryParts: string[] = [`path=${encodeURIComponent(path)}`];
-    const authKey = this.getApiKey().trim();
-    if (!authKey) {
-      console.warn('[api] getVideoMetadata missing authentication key; metadata request may fail');
-    } else {
-      queryParts.push(`pin=${encodeURIComponent(authKey)}`);
+    if (this.authToken) {
+      queryParts.push(`token=${encodeURIComponent(this.authToken)}`);
     }
     return this.request<VideoMetadata>(`/video/metadata?${queryParts.join('&')}`);
   }
@@ -1576,9 +1560,8 @@ class ApiService {
     // Build URL manually to ensure proper encoding of special chars like semicolons
     // URLSearchParams doesn't encode semicolons which breaks some parsers
     const queryParts: string[] = [`path=${encodeURIComponent(path)}`];
-    const authKey = this.getApiKey().trim();
-    if (authKey) {
-      queryParts.push(`apiKey=${encodeURIComponent(authKey)}`);
+    if (this.authToken) {
+      queryParts.push(`token=${encodeURIComponent(this.authToken)}`);
     }
     return this.request<{ url: string }>(`/video/direct-url?${queryParts.join('&')}`);
   }
@@ -1592,7 +1575,6 @@ class ApiService {
     start?: number;
     audioTrack?: number;
     subtitleTrack?: number;
-    apiKey?: string;
     profileId?: string;
     profileName?: string;
   }): Promise<HlsSessionStartResponse> {
@@ -1606,9 +1588,8 @@ class ApiService {
     const queryParts: string[] = [];
     queryParts.push(`path=${encodeURIComponent(trimmedPath)}`);
 
-    const authKey = params.apiKey?.trim() || this.apiKey?.trim() || '';
-    if (authKey) {
-      queryParts.push(`apiKey=${encodeURIComponent(authKey)}`);
+    if (this.authToken) {
+      queryParts.push(`token=${encodeURIComponent(this.authToken)}`);
     }
 
     if (params.dv) {
@@ -1819,7 +1800,7 @@ class ApiService {
     if (params.season !== undefined) query.set('season', String(params.season));
     if (params.episode !== undefined) query.set('episode', String(params.episode));
     if (params.language) query.set('language', params.language);
-    if (this.apiKey) query.set('apiKey', this.apiKey);
+    if (this.authToken) query.set('token', this.authToken);
 
     return `${this.baseUrl}/subtitles/download?${query.toString()}`;
   }
@@ -1839,7 +1820,6 @@ class ApiService {
 
 export { ApiService };
 
-// Default instance - API key can be set via EXPO_PUBLIC_API_KEY env var or settings screen
-const defaultApiKey = process.env.EXPO_PUBLIC_API_KEY || undefined;
-export const apiService = new ApiService(undefined, defaultApiKey);
+// Default instance
+export const apiService = new ApiService();
 export default apiService;

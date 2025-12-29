@@ -208,8 +208,6 @@ interface EditableBackendSettings {
   server: {
     host: string;
     port: string;
-    apiKey: string; // Deprecated: kept for migration compatibility
-    pin: string; // 6-digit PIN for authentication
   };
   usenet: EditableUsenetProvider[];
   indexers: EditableIndexer[];
@@ -512,8 +510,6 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
     server: {
       host: settings.server.host ?? '',
       port: settings.server.port != null ? String(settings.server.port) : '',
-      apiKey: settings.server.apiKey ?? '',
-      pin: settings.server.pin ?? '',
     },
     usenet: (settings.usenet ?? []).map((provider) => ({
       name: provider.name ?? '',
@@ -625,8 +621,6 @@ const toBackendPayload = (editable: EditableBackendSettings, baseline: BackendSe
     server: {
       host: editable.server.host.trim(),
       port: toNumber(editable.server.port, baseline.server.port, 'Server port'),
-      apiKey: editable.server.apiKey.trim(),
-      pin: editable.server.pin.trim(),
     },
     usenet: editable.usenet.map((provider, idx) => ({
       name: provider.name.trim(),
@@ -838,7 +832,6 @@ function SettingsScreen() {
   );
   const {
     backendUrl,
-    backendApiKey,
     isReady,
     loading,
     saving,
@@ -846,7 +839,6 @@ function SettingsScreen() {
     settings,
     refreshSettings,
     setBackendUrl,
-    setBackendApiKey,
     updateBackendSettings,
     userSettings,
     userSettingsLoading,
@@ -859,12 +851,10 @@ function SettingsScreen() {
   const { channels } = useLiveChannels();
 
   const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
-  const [backendApiKeyInput, setBackendApiKeyInput] = useState(backendApiKey);
 
   // TV inline text input refs and state
   const { lock: lockNavigation, unlock: unlockNavigation } = useLockSpatialNavigation();
   const backendUrlInputRef = useRef<TextInput>(null);
-  const backendPinInputRef = useRef<TextInput>(null);
   const audioLangInputRef = useRef<TextInput>(null);
   const subtitleLangInputRef = useRef<TextInput>(null);
   const playlistUrlInputRef = useRef<TextInput>(null);
@@ -872,7 +862,6 @@ function SettingsScreen() {
   const maxEpisodeSizeInputRef = useRef<TextInput>(null);
   const filterTermsInputRef = useRef<TextInput>(null);
   const tempBackendUrlRef = useRef(backendUrl);
-  const tempBackendPinRef = useRef(backendApiKey);
   const tempAudioLangRef = useRef('');
   const tempSubtitleLangRef = useRef('');
   const tempPlaylistUrlRef = useRef('');
@@ -888,10 +877,6 @@ function SettingsScreen() {
   useEffect(() => {
     tempBackendUrlRef.current = backendUrlInput;
   }, [backendUrlInput]);
-
-  useEffect(() => {
-    tempBackendPinRef.current = backendApiKeyInput;
-  }, [backendApiKeyInput]);
 
   const [editableSettings, setEditableSettings] = useState<EditableBackendSettings | null>(
     settings ? toEditableSettings(settings) : null,
@@ -993,10 +978,6 @@ function SettingsScreen() {
     setBackendUrlInput(backendUrl);
   }, [backendUrl]);
 
-  useEffect(() => {
-    setBackendApiKeyInput(backendApiKey);
-  }, [backendApiKey]);
-
   const isBackendReachable = !!settings;
 
   // Load user settings when active user changes
@@ -1087,8 +1068,6 @@ function SettingsScreen() {
       // Handle different field keys
       if (fieldKey === 'backendUrl') {
         setBackendUrlInput(newValue);
-      } else if (fieldKey === 'backendApiKey') {
-        setBackendApiKeyInput(newValue);
       } else if (fieldKey.startsWith('playback.') && editableSettings) {
         const subKey = fieldKey.replace('playback.', '');
         setEditableSettings({
@@ -2470,11 +2449,6 @@ function SettingsScreen() {
               tempRef: tempBackendUrlRef,
               setValue: setBackendUrlInput,
             },
-            backendApiKey: {
-              inputRef: backendPinInputRef,
-              tempRef: tempBackendPinRef,
-              setValue: setBackendApiKeyInput,
-            },
             'playback.preferredAudioLanguage': {
               inputRef: audioLangInputRef,
               tempRef: tempAudioLangRef,
@@ -2849,7 +2823,6 @@ function SettingsScreen() {
       unlockNavigation,
       activeInlineInput,
       setBackendUrlInput,
-      setBackendApiKeyInput,
       editableSettings,
       setDirty,
       shelfPulses,

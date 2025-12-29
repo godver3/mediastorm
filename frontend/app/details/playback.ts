@@ -143,9 +143,9 @@ export const sanitizeStreamUrlForExternalPlayers = (urlString: string) => {
   try {
     const parsed = new URL(urlString);
 
-    // Only sanitize URLs that go through our video stream proxy (have apiKey or path params)
+    // Only sanitize URLs that go through our video stream proxy (have token or path params)
     // Don't modify direct debrid/CDN URLs
-    const isProxyUrl = parsed.searchParams.has('apiKey') || parsed.searchParams.has('path');
+    const isProxyUrl = parsed.searchParams.has('token') || parsed.searchParams.has('path');
     if (!isProxyUrl) {
       return urlString;
     }
@@ -205,7 +205,6 @@ export const detectAnyHDR = (
 
 export const buildStreamUrl = (
   webdavPath: string,
-  backendApiKey: string | null,
   settings: any,
   options: {
     forceTransmux?: boolean;
@@ -244,9 +243,9 @@ export const buildStreamUrl = (
 
     queryParams.path = normalizedPath;
 
-    const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
-    if (trimmedApiKey) {
-      queryParams.apiKey = trimmedApiKey;
+    const authToken = apiService.getAuthToken();
+    if (authToken) {
+      queryParams.token = authToken;
     }
 
     // Signal HDR type to backend
@@ -371,9 +370,9 @@ export const buildStreamUrl = (
 
   queryParams.path = normalizedPath;
 
-  const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
-  if (trimmedApiKey) {
-    queryParams.apiKey = trimmedApiKey;
+  const authToken = apiService.getAuthToken();
+  if (authToken) {
+    queryParams.token = authToken;
   }
 
   if (options.disableTransmux) {
@@ -440,7 +439,6 @@ export const buildStreamUrl = (
 export const buildDirectUrlForExternalPlayer = async (
   playback: { webdavPath: string; sourceNzbPath?: string },
   settings: any,
-  backendApiKey?: string | null,
   options?: { profileId?: string; profileName?: string },
 ): Promise<string | null> => {
   const isDebridPath = playback.webdavPath.includes('/debrid/');
@@ -456,9 +454,9 @@ export const buildDirectUrlForExternalPlayer = async (
     const queryParts: string[] = [];
     queryParts.push(`path=${encodeURIComponent(playback.webdavPath)}`);
     queryParts.push('transmux=0'); // No transmuxing needed for external players
-    const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
-    if (trimmedApiKey) {
-      queryParts.push(`apiKey=${encodeURIComponent(trimmedApiKey)}`);
+    const authToken = apiService.getAuthToken();
+    if (authToken) {
+      queryParts.push(`token=${encodeURIComponent(authToken)}`);
     }
     // Add profile info for stream tracking
     if (options?.profileId) {
@@ -628,7 +626,6 @@ export const launchNativePlayer = (
 export const initiatePlayback = async (
   result: NZBResult,
   playbackPreference: PlaybackPreference,
-  backendApiKey: string | null,
   settings: any,
   headerImage: string,
   title: string,
@@ -695,7 +692,7 @@ export const initiatePlayback = async (
 
     // Build direct URL for external player
     setSelectionInfo(`Preparing stream for ${label}…`);
-    const directExternalUrl = await buildDirectUrlForExternalPlayer(playback, settings, backendApiKey, {
+    const directExternalUrl = await buildDirectUrlForExternalPlayer(playback, settings, {
       profileId: options.profileId,
       profileName: options.profileName,
     });
@@ -880,7 +877,7 @@ export const initiatePlayback = async (
   // For non-HDR: Disable transmuxing on mobile since VLC/native players support MKV natively
   const shouldDisableTransmux = Platform.OS !== 'web' && !hasAnyHDR;
   let streamUrl = hasAnyHDR
-    ? buildStreamUrl(playback.webdavPath, backendApiKey, settings, {
+    ? buildStreamUrl(playback.webdavPath, settings, {
         hasDolbyVision,
         dolbyVisionProfile,
         hasHDR10,
@@ -891,13 +888,13 @@ export const initiatePlayback = async (
         profileName: options.profileName,
       })
     : shouldDisableTransmux
-      ? buildStreamUrl(playback.webdavPath, backendApiKey, settings, {
+      ? buildStreamUrl(playback.webdavPath, settings, {
           disableTransmux: true,
           startOffset: options.startOffset,
           profileId: options.profileId,
           profileName: options.profileName,
         })
-      : buildStreamUrl(playback.webdavPath, backendApiKey, settings, {
+      : buildStreamUrl(playback.webdavPath, settings, {
           startOffset: options.startOffset,
           profileId: options.profileId,
           profileName: options.profileName,
@@ -931,10 +928,10 @@ export const initiatePlayback = async (
         console.log('🎬 HLS session duration:', hlsDuration, 'seconds');
       }
 
-      // Build playlist URL with API key
+      // Build playlist URL with auth token
       const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-      const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
-      streamUrl = `${baseUrl}${hlsData.playlistUrl}${trimmedApiKey ? `?apiKey=${trimmedApiKey}` : ''}`;
+      const authToken = apiService.getAuthToken();
+      streamUrl = `${baseUrl}${hlsData.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
 
       console.log('🎬 HLS playlist URL:', streamUrl);
 

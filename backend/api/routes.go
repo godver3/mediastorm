@@ -57,7 +57,6 @@ func Register(
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
-	getPIN func() string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 
@@ -84,7 +83,7 @@ func Register(
 
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
-	protected.Use(AccountAuthMiddleware(sessionsSvc, getPIN))
+	protected.Use(AccountAuthMiddleware(sessionsSvc))
 
 	// Account management routes (master only)
 	masterOnly := protected.PathPrefix("/accounts").Subrouter()
@@ -198,6 +197,10 @@ func Register(
 	versionHandler := handlers.NewVersionHandler()
 	api.HandleFunc("/version", versionHandler.GetVersion).Methods(http.MethodGet, http.MethodOptions)
 
+	// Static assets endpoint (public - rating icons, etc.)
+	staticHandler := handlers.NewStaticHandler()
+	api.PathPrefix("/static/").Handler(http.StripPrefix("/api/static/", staticHandler))
+
 	// Admin endpoints for monitoring (master only)
 	adminHandler := handlers.NewAdminHandler(videoHandler.GetHLSManager())
 	adminRouter := protected.PathPrefix("/admin").Subrouter()
@@ -274,10 +277,10 @@ func Register(
 }
 
 // RegisterTraktRoutes registers Trakt account management API endpoints.
-func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, sessionsSvc *sessions.Service, getPIN func() string) {
+func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, sessionsSvc *sessions.Service) {
 	api := r.PathPrefix("/api/trakt").Subrouter()
 	api.Use(corsMiddleware)
-	api.Use(AccountAuthMiddleware(sessionsSvc, getPIN))
+	api.Use(AccountAuthMiddleware(sessionsSvc))
 
 	// Trakt accounts management
 	api.HandleFunc("/accounts", traktHandler.ListAccounts).Methods(http.MethodGet)

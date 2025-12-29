@@ -2874,17 +2874,17 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	// Since we only delete segments the player has already watched (based on keepalive reports),
 	// the player won't request them anyway. If it does (e.g., seek back), it gets a 404 which is fine.
 
-	// Get API key from request
-	apiKey := r.URL.Query().Get("apiKey")
-	if apiKey == "" {
-		// Try other auth methods
-		apiKey = r.Header.Get("X-API-Key")
-		if apiKey == "" {
-			apiKey = r.Header.Get("X-PIN")
+	// Get auth token from request
+	authToken := r.URL.Query().Get("token")
+	if authToken == "" {
+		// Try Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			authToken = strings.TrimPrefix(authHeader, "Bearer ")
 		}
 	}
 
-	// Rewrite segment URLs to include API key and inject HLS tags
+	// Rewrite segment URLs to include auth token and inject HLS tags
 	playlistContent := string(content)
 
 	// Build header tags to inject after #EXTM3U
@@ -2910,24 +2910,24 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		playlistContent = strings.Replace(playlistContent, "#EXTM3U\n", injection, 1)
 	}
 
-	if apiKey != "" {
+	if authToken != "" {
 		lines := strings.Split(playlistContent, "\n")
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			// If line is a segment file (ends with .ts, .m4s, .vtt, or .webvtt)
 			if strings.HasSuffix(trimmed, ".ts") || strings.HasSuffix(trimmed, ".m4s") ||
 				strings.HasSuffix(trimmed, ".vtt") || strings.HasSuffix(trimmed, ".webvtt") {
-				// Append API key as query parameter
-				lines[i] = line + "?apiKey=" + apiKey
+				// Append auth token as query parameter
+				lines[i] = line + "?token=" + authToken
 			} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
 				// Rewrite init segment URL in EXT-X-MAP tag
 				// Format: #EXT-X-MAP:URI="init.mp4"
-				lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?apiKey=`+apiKey+`"`, 1)
+				lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?token=`+authToken+`"`, 1)
 			} else if strings.Contains(line, "URI=") && (strings.Contains(line, ".vtt") || strings.Contains(line, ".webvtt")) {
 				// Rewrite subtitle URLs in #EXT-X-MEDIA tags
 				// Format: #EXT-X-MEDIA:TYPE=SUBTITLES,...,URI="subtitle.webvtt"
-				lines[i] = strings.ReplaceAll(line, ".vtt\"", ".vtt?apiKey="+apiKey+"\"")
-				lines[i] = strings.ReplaceAll(lines[i], ".webvtt\"", ".webvtt?apiKey="+apiKey+"\"")
+				lines[i] = strings.ReplaceAll(line, ".vtt\"", ".vtt?token="+authToken+"\"")
+				lines[i] = strings.ReplaceAll(lines[i], ".webvtt\"", ".webvtt?token="+authToken+"\"")
 			}
 		}
 		playlistContent = strings.Join(lines, "\n")
@@ -2944,7 +2944,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	if session.HasDV || session.HasHDR {
 		videoRange = "PQ"
 	}
-	log.Printf("[hls] served playlist for session %s, VIDEO-RANGE=%s, API key=%v", sessionID, videoRange, apiKey != "")
+	log.Printf("[hls] served playlist for session %s, VIDEO-RANGE=%s, auth token=%v", sessionID, videoRange, authToken != "")
 }
 
 // ServeSegment serves an HLS segment file

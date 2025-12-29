@@ -16,6 +16,7 @@ import {
   type EpisodeWatchPayload,
   type NZBResult,
   type PrequeueStatusResponse,
+  type Rating,
   type SeriesEpisode,
   type SeriesSeason,
   type Title,
@@ -33,6 +34,7 @@ import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -96,6 +98,113 @@ interface LocalParams extends Record<string, any> {
   initialSeason?: string;
   initialEpisode?: string;
 }
+
+// Helper to get rating display configuration with service-specific icons
+const getRatingConfig = (
+  source: string,
+  baseUrl: string,
+  value?: number,
+  max?: number,
+): { label: string; color: string; iconUrl: string | null } => {
+  const iconBase = `${baseUrl}/static/rating_icons`;
+  switch (source) {
+    case 'imdb':
+      return { label: 'IMDb', color: '#F5C518', iconUrl: `${iconBase}/imdb.png` };
+    case 'tmdb':
+      return { label: 'TMDb', color: '#01D277', iconUrl: `${iconBase}/tmdb.png` };
+    case 'trakt':
+      return { label: 'Trakt', color: '#ED1C24', iconUrl: `${iconBase}/trakt.png` };
+    case 'letterboxd':
+      return { label: 'Letterboxd', color: '#00E054', iconUrl: `${iconBase}/letterboxd.png` };
+    case 'tomatoes': {
+      // RT Critics: fresh (>= 60%) vs rotten (< 60%)
+      const percent = max === 100 ? value : value !== undefined ? value * 10 : 60;
+      const isFresh = (percent ?? 60) >= 60;
+      return {
+        label: isFresh ? 'Fresh' : 'Rotten',
+        color: isFresh ? '#FA320A' : '#6B8E23',
+        iconUrl: `${iconBase}/${isFresh ? 'rt_critics' : 'rt_rotten'}.png`,
+      };
+    }
+    case 'audience':
+      return { label: 'RT Audience', color: '#FA320A', iconUrl: `${iconBase}/rt_audience.png` };
+    case 'metacritic':
+      return { label: 'Metacritic', color: '#FFCC34', iconUrl: `${iconBase}/metacritic.png` };
+    default:
+      return { label: source, color: '#888888', iconUrl: null };
+  }
+};
+
+// Define the order for rating sources (lower = displayed first)
+const RATING_ORDER: Record<string, number> = {
+  imdb: 1,
+  tmdb: 2,
+  trakt: 3,
+  tomatoes: 4, // RT Critics before Audience
+  audience: 5,
+  metacritic: 6,
+  letterboxd: 7,
+};
+
+// Format rating value based on source and scale
+const formatRating = (rating: Rating): string => {
+  switch (rating.source) {
+    case 'imdb':
+      // IMDb: display as decimal (e.g., 7.5)
+      return rating.value.toFixed(1);
+    case 'letterboxd':
+      // Letterboxd: display as decimal stars (e.g., 3.5)
+      return rating.value.toFixed(1);
+    case 'tmdb':
+    case 'trakt':
+      // TMDb/Trakt: already percentages
+      return `${Math.round(rating.value)}%`;
+    case 'tomatoes':
+    case 'audience':
+    case 'metacritic':
+      // Already percentages
+      return `${Math.round(rating.value)}%`;
+    default:
+      if (rating.max === 10) {
+        return rating.value.toFixed(1);
+      }
+      return `${Math.round(rating.value)}%`;
+  }
+};
+
+// Rating badge component with image fallback (no labels - icons are self-explanatory)
+const RatingBadge = ({
+  rating,
+  config,
+  iconSize,
+  styles,
+}: {
+  rating: Rating;
+  config: { label: string; color: string; iconUrl: string | null };
+  iconSize: number;
+  styles: ReturnType<typeof createDetailsStyles>;
+}) => {
+  const [imageError, setImageError] = useState(false);
+
+  return (
+    <View style={styles.ratingBadge}>
+      {config.iconUrl && !imageError ? (
+        <Image
+          source={{ uri: config.iconUrl }}
+          style={{ width: iconSize, height: iconSize }}
+          resizeMode="contain"
+          onError={() => {
+            console.warn(`Rating icon failed to load: ${config.iconUrl}`);
+            setImageError(true);
+          }}
+        />
+      ) : (
+        <Ionicons name="star" size={iconSize} color={config.color} />
+      )}
+      <Text style={[styles.ratingValue, { color: config.color }]}>{formatRating(rating)}</Text>
+    </View>
+  );
+};
 
 export default function DetailsScreen() {
   const params = useLocalSearchParams<LocalParams>();
@@ -496,7 +605,7 @@ export default function DetailsScreen() {
     return result;
   }, [initialEpisodeParam, nextEpisodeFromPlayback]);
 
-  const { backendApiKey, settings, userSettings } = useBackendSettings();
+  const { settings, userSettings } = useBackendSettings();
   const { addToWatchlist, removeFromWatchlist, getItem } = useWatchlist();
   const {
     isWatched: isItemWatched,
@@ -1393,6 +1502,16 @@ export default function DetailsScreen() {
   const releaseErrorMessage =
     !isSeries && movieDetailsError && !movieDetailsLoading && releaseRows.length === 0 ? movieDetailsError : null;
 
+  // Get ratings from movie or series details, sorted by RATING_ORDER
+  const ratings = useMemo(() => {
+    const rawRatings = isSeries ? (seriesDetailsForBackdrop?.ratings ?? []) : (movieDetails?.ratings ?? []);
+    return [...rawRatings].sort((a, b) => {
+      const orderA = RATING_ORDER[a.source] ?? 99;
+      const orderB = RATING_ORDER[b.source] ?? 99;
+      return orderA - orderB;
+    });
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
   const handleInitiatePlayback = useCallback(
     async (result: NZBResult, signal?: AbortSignal, overrides?: { useDebugPlayer?: boolean }) => {
       // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
@@ -1409,7 +1528,6 @@ export default function DetailsScreen() {
       await initiatePlayback(
         result,
         playbackPreference,
-        backendApiKey,
         settings,
         headerImage,
         displayTitle,
@@ -1459,7 +1577,6 @@ export default function DetailsScreen() {
       hideLoadingScreen,
       initiatePlayback,
       playbackPreference,
-      backendApiKey,
       settings,
       userSettings,
       activeUserId,
@@ -1565,12 +1682,12 @@ export default function DetailsScreen() {
         // Use manual encoding to ensure semicolons and other special chars are properly encoded
         // URLSearchParams doesn't encode semicolons which breaks some parsers
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const apiKey = apiService.getApiKey().trim();
+        const authToken = apiService.getAuthToken();
         const queryParts: string[] = [];
         queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
         queryParts.push('transmux=0'); // No transmuxing needed for external players
-        if (apiKey) {
-          queryParts.push(`apiKey=${encodeURIComponent(apiKey)}`);
+        if (authToken) {
+          queryParts.push(`token=${encodeURIComponent(authToken)}`);
         }
         // Add profile info for stream tracking
         if (activeUserId) {
@@ -1632,8 +1749,8 @@ export default function DetailsScreen() {
       if (needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number') {
         // HDR/TrueHD content with HLS session already created by backend (no resume position)
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const apiKey = apiService.getApiKey().trim();
-        streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${apiKey ? `?apiKey=${apiKey}` : ''}`;
+        const authToken = apiService.getAuthToken();
+        streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
         console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl);
       } else if (needsHLS && Platform.OS !== 'web') {
         // HDR/TrueHD content - create HLS session with start offset
@@ -1728,8 +1845,8 @@ export default function DetailsScreen() {
           });
 
           const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-          const apiKey = apiService.getApiKey().trim();
-          streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${apiKey ? `?apiKey=${apiKey}` : ''}`;
+          const authToken = apiService.getAuthToken();
+          streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
           hlsDuration = hlsResponse.duration;
           console.log('[prequeue] Created HLS session, using URL:', streamUrl);
         } catch (hlsError) {
@@ -1739,13 +1856,13 @@ export default function DetailsScreen() {
       } else {
         // SDR content - build direct stream URL
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const apiKey = apiService.getApiKey().trim();
+        const authToken = apiService.getAuthToken();
         // Build URL manually to ensure proper encoding of special chars like semicolons
         // URLSearchParams doesn't encode semicolons which breaks some parsers
         const queryParts: string[] = [];
         queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
-        if (apiKey) {
-          queryParts.push(`apiKey=${encodeURIComponent(apiKey)}`);
+        if (authToken) {
+          queryParts.push(`token=${encodeURIComponent(authToken)}`);
         }
         queryParts.push('transmux=0'); // Let native player handle it
         // Add profile info for stream tracking
@@ -3325,6 +3442,24 @@ export default function DetailsScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>{title}</Text>
         </View>
+        {ratings.length > 0 && (
+          <View style={styles.ratingsRow}>
+            {ratings.map((rating) => {
+              const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+              const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
+              const iconSize = isTV ? 18 : 14;
+              return (
+                <RatingBadge
+                  key={rating.source}
+                  rating={rating}
+                  config={config}
+                  iconSize={iconSize}
+                  styles={styles}
+                />
+              );
+            })}
+          </View>
+        )}
         {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
           <View style={styles.releaseInfoRow}>
             {releaseRows.map((row) => (
@@ -3949,6 +4084,29 @@ const createDetailsStyles = (theme: NovaTheme) => {
             lineHeight: Math.round((theme.typography.title.xl.lineHeight + 8) * tvScale * 1.25),
           }
         : null),
+    },
+    ratingsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+    },
+    ratingBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: isTV ? 6 : 4,
+      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+      paddingHorizontal: isTV ? 12 : 8,
+      paddingVertical: isTV ? 6 : 4,
+      borderRadius: 6,
+    },
+    ratingValue: {
+      fontSize: Math.round((isTV ? 16 : 14) * tvTextScale),
+      fontWeight: '700',
+    },
+    ratingLabel: {
+      fontSize: Math.round((isTV ? 14 : 12) * tvTextScale),
+      color: theme.colors.text.secondary,
     },
     releaseInfoRow: {
       flexDirection: 'row',

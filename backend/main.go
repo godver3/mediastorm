@@ -96,42 +96,6 @@ func main() {
 		settings.Server.Port = *portOverride
 	}
 
-	// Handle PIN generation and legacy API key migration
-	settings.Server.APIKey = strings.TrimSpace(settings.Server.APIKey)
-	settings.Server.PIN = strings.TrimSpace(settings.Server.PIN)
-
-	pinGenerated := false
-	legacyKeyFound := false
-
-	// Check if we have a legacy API key but no PIN
-	if settings.Server.APIKey != "" && settings.Server.PIN == "" {
-		legacyKeyFound = true
-		fmt.Println("🔄 Legacy API key detected, generating new 6-digit PIN...")
-	}
-
-	// Generate PIN if missing
-	if settings.Server.PIN == "" {
-		pin, err := utils.GeneratePIN()
-		if err != nil {
-			log.Fatalf("failed to generate PIN: %v", err)
-		}
-		settings.Server.PIN = pin
-		if err := cfgManager.Save(settings); err != nil {
-			log.Fatalf("failed to persist generated PIN: %v", err)
-		}
-		pinGenerated = true
-	}
-
-	fmt.Printf("🔑 strmr PIN: %s\n", settings.Server.PIN)
-	if pinGenerated {
-		if legacyKeyFound {
-			fmt.Println("✅ Legacy API key has been replaced with a 6-digit PIN.")
-			fmt.Println("📱 Update your frontend configuration to use the PIN instead of the API key.")
-		} else {
-			fmt.Println("📱 Configure your frontend to use this 6-digit PIN for authentication.")
-		}
-	}
-
 	// Construct router
 	var r *mux.Router = utils.NewRouter()
 
@@ -282,10 +246,6 @@ func main() {
 		log.Fatalf("failed to initialise invitations: %v", err)
 	}
 
-	// Log warning if master account has default password
-	if accountsService.HasDefaultPassword() {
-		log.Println("WARNING: Master account 'admin' still has default password. Please change it!")
-	}
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
 	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
 
@@ -371,15 +331,6 @@ func main() {
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
 
-	// Create PIN getter function for hot reload support
-	getPIN := func() string {
-		s, err := cfgManager.Load()
-		if err != nil {
-			return settings.Server.PIN // fallback to initial value on error
-		}
-		return s.Server.PIN
-	}
-
 	api.Register(
 		r,
 		settingsHandler,
@@ -402,19 +353,18 @@ func main() {
 		accountsService,
 		sessionsService,
 		userService,
-		getPIN,
 	)
 
 	// Register Trakt accounts API routes
 	traktAccountsHandler := handlers.NewTraktAccountsHandler(cfgManager, traktClient, userService, accountsService)
-	api.RegisterTraktRoutes(r, traktAccountsHandler, sessionsService, getPIN)
+	api.RegisterTraktRoutes(r, traktAccountsHandler, sessionsService)
 
 	// Create Plex client and register Plex accounts handler
 	plexClient := plex.NewClient(plex.GenerateClientID())
 	plexAccountsHandler := handlers.NewPlexAccountsHandler(cfgManager, plexClient, userService, accountsService)
 
 	// Register admin UI routes
-	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager, getPIN)
+	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 	adminUIHandler.SetWatchlistService(watchlistService)
@@ -427,7 +377,7 @@ func main() {
 	r.HandleFunc("/admin/login", adminUIHandler.LoginSubmit).Methods(http.MethodPost)
 	r.HandleFunc("/admin/logout", adminUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
-	// Protected admin routes (require PIN authentication)
+	// Protected admin routes (require session authentication)
 	r.HandleFunc("/admin", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
@@ -442,6 +392,16 @@ func main() {
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
+
+	// Global settings endpoint (master only)
+	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.GetSettings)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.PutSettings)).Methods(http.MethodPut)
+
+	// Search and metadata endpoints (for admin search page)
+	r.HandleFunc("/admin/api/users", adminUIHandler.RequireAuth(usersHandler.List)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/search", adminUIHandler.RequireAuth(metadataHandler.Search)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/metadata/series/details", adminUIHandler.RequireAuth(metadataHandler.SeriesDetails)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/indexers/search", adminUIHandler.RequireAuth(indexerHandler.Search)).Methods(http.MethodGet)
 
 	// Provider test endpoints
 	r.HandleFunc("/admin/api/test/indexer", adminUIHandler.RequireAuth(adminUIHandler.TestIndexer)).Methods(http.MethodPost)
@@ -598,6 +558,24 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", settings.Server.Host, settings.Server.Port)
 	fmt.Printf("Server starting on %s\n", addr)
+
+	// Log warning if master account has default password
+	if accountsService.HasDefaultPassword() {
+		fmt.Println("")
+		fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")
+		fmt.Println("║                      ⚠️  SECURITY WARNING ⚠️                          ║")
+		fmt.Println("╠══════════════════════════════════════════════════════════════════════╣")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   The master account 'admin' still has the DEFAULT PASSWORD.        ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   Please change it immediately at:                                  ║")
+		fmt.Println("║     → Admin UI → Accounts → Change Password                         ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   Default credentials:  admin / admin                               ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("╚══════════════════════════════════════════════════════════════════════╝")
+		fmt.Println("")
+	}
 
 	// Create HTTP server with timeouts
 	srv := &http.Server{
