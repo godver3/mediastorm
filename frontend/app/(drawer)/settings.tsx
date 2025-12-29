@@ -2075,8 +2075,20 @@ function SettingsScreen() {
         action: 'submit-logs',
         disabled: isSubmittingLogs,
       },
+      {
+        type: 'header',
+        id: 'account-header',
+        title: 'Account',
+        description: account ? `Signed in as ${account.username}${account.isMaster ? ' (Admin)' : ''}` : undefined,
+      },
+      {
+        type: 'button',
+        id: 'sign-out',
+        label: 'Sign Out',
+        action: 'sign-out',
+      },
     ],
-    [backendUrl, isSubmittingLogs],
+    [backendUrl, isSubmittingLogs, account],
   );
 
   const playbackGridData = useMemo<SettingsGridItem[]>(() => {
@@ -2354,9 +2366,19 @@ function SettingsScreen() {
         case 'submit-logs':
           void handleSubmitLogs();
           break;
+        case 'sign-out':
+          void (async () => {
+            try {
+              await logout();
+              showToast('Signed out successfully', { tone: 'success' });
+            } catch (err) {
+              showToast('Failed to sign out', { tone: 'danger' });
+            }
+          })();
+          break;
       }
     },
-    [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, clearUnplayableReleases, showToast],
+    [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, clearUnplayableReleases, showToast, logout],
   );
 
   // TV Grid field update handler
