@@ -59,7 +59,14 @@ function AuthGate() {
   if (!isAuthenticated) {
     return (
       <NovaThemeProvider>
-        <LoginScreen />
+        <LoadingScreenProvider>
+          <ToastProvider>
+            <SpatialNavigationDeviceTypeProvider>
+              <ConfigureRemoteControl />
+              <LoginScreen />
+            </SpatialNavigationDeviceTypeProvider>
+          </ToastProvider>
+        </LoadingScreenProvider>
       </NovaThemeProvider>
     );
   }
