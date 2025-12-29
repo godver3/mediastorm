@@ -3515,7 +3515,11 @@ export default function DetailsScreen() {
               {/* Visible animated container */}
               <Animated.View
                 style={[{ overflow: 'hidden' }, collapsedHeight > 0 ? { height: descriptionHeight } : undefined]}>
-                <Text style={[styles.description, { marginBottom: 0 }]}>{description}</Text>
+                <Text
+                  style={[styles.description, { marginBottom: 0 }]}
+                  numberOfLines={isDescriptionExpanded ? undefined : 4}>
+                  {description}
+                </Text>
               </Animated.View>
             </View>
             {expandedHeight > collapsedHeight && (
