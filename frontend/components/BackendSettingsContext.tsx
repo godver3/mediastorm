@@ -338,16 +338,17 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     await AsyncStorage.setItem(API_KEY_STORAGE_KEY, trimmed);
   }, []);
 
-  const refreshSettingsInternal = useCallback(async (): Promise<boolean> => {
+  // Returns: { success: boolean, authRequired: boolean }
+  const refreshSettingsInternal = useCallback(async (): Promise<{ success: boolean; authRequired: boolean }> => {
     if (!mountedRef.current) {
-      return false;
+      return { success: false, authRequired: false };
     }
 
     setLoading(true);
     try {
       const result = (await apiService.getSettings()) as BackendSettings;
       if (!mountedRef.current) {
-        return false;
+        return { success: false, authRequired: false };
       }
       console.log('[BackendSettings] Successfully connected to backend');
       setSettings(result);
@@ -363,19 +364,31 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       } catch (storageError) {
         console.warn('Failed to persist backend authentication key.', storageError);
       }
-      return true;
+      return { success: true, authRequired: false };
     } catch (err) {
       const message = formatErrorMessage(err);
       const networkFailure = isNetworkError(err);
-      console.warn('[BackendSettings] Failed to connect:', message);
+      // Check if this is an auth error (401) - if so, don't treat as a connection error
+      // The user just needs to log in first, settings will be fetched after authentication
+      const isAuthError = message.includes('401') || message.toLowerCase().includes('unauthorized');
+      console.warn('[BackendSettings] Failed to connect:', message, isAuthError ? '(auth required)' : '');
       if (mountedRef.current) {
         setSettings(null);
-        setError(message);
+        // Don't set error for auth failures - this is expected before login
+        if (!isAuthError) {
+          setError(message);
+        } else {
+          // Clear any previous error when we detect auth is required
+          setError(null);
+        }
         if (networkFailure) {
           setIsBackendReachable(false);
+        } else if (isAuthError) {
+          // Server is reachable, just needs auth
+          setIsBackendReachable(true);
         }
       }
-      return false;
+      return { success: false, authRequired: isAuthError };
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -386,17 +399,24 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   // Keep the retry function ref in sync with the latest version
   useEffect(() => {
     if (retryTimerRef.current) {
-      retryFnRef.current = refreshSettingsInternal;
+      retryFnRef.current = async () => {
+        const result = await refreshSettingsInternal();
+        return result.success;
+      };
     }
   }, [refreshSettingsInternal]);
 
   const refreshSettings = useCallback(async () => {
-    const success = await refreshSettingsInternal();
-    if (!success && !retryTimerRef.current && mountedRef.current) {
-      // Start retry timer if refresh failed and no timer is running
-      startRetryTimer(refreshSettingsInternal);
+    const result = await refreshSettingsInternal();
+    // Don't start retry timer or throw for auth errors - user just needs to log in
+    if (!result.success && !result.authRequired && !retryTimerRef.current && mountedRef.current) {
+      // Start retry timer only for non-auth failures
+      startRetryTimer(async () => {
+        const r = await refreshSettingsInternal();
+        return r.success;
+      });
     }
-    if (!success) {
+    if (!result.success && !result.authRequired) {
       throw new Error('Failed to refresh settings');
     }
   }, [refreshSettingsInternal, startRetryTimer]);
@@ -461,10 +481,13 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       await persistBackendUrl(normalised);
       applyApiBaseUrl(normalised || undefined);
 
+      // Try to refresh settings but don't fail if it requires auth
+      // Settings will be fetched properly after login
       try {
         await refreshSettings();
       } catch (err) {
-        throw err;
+        console.log('[BackendSettings] Settings fetch skipped (may require auth)');
+        // Don't throw - we just want to verify the URL is saved
       }
     },
     [applyApiBaseUrl, persistBackendUrl, refreshSettings],

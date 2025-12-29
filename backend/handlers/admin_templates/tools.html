@@ -108,14 +108,14 @@
         </div>
     </div>
 
-    <!-- Plex Account Section -->
+    <!-- Plex Accounts Section -->
     <div class="section" id="plexAccountSection">
         <div class="section-header" onclick="toggleSection(this)">
             <div class="section-title">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
                     <polygon points="5 3 19 12 5 21 5 3"/>
                 </svg>
-                Plex Account
+                Plex Accounts
             </div>
             <span id="plexStatusBadge" class="status-badge"></span>
             <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -124,49 +124,50 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Connect your Plex account to import your watchlist.
+                Register Plex accounts and link them to profiles for watchlist imports.
             </p>
 
-            <!-- Not Connected State -->
-            <div id="plexNotConnected">
-                <button class="btn btn-primary" onclick="loginWithPlex()" id="plexLoginBtn">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-                        <polyline points="10 17 15 12 10 7"/>
-                        <line x1="15" y1="12" x2="3" y2="12"/>
-                    </svg>
-                    Login with Plex
-                </button>
+            <!-- Plex Accounts List -->
+            <div id="plexAccountsList" style="margin-bottom: 1.5rem;">
+                <!-- Accounts will be rendered here -->
             </div>
 
-            <!-- Waiting for auth -->
-            <div id="plexAuthWaiting" style="display: none;">
-                <div class="status-box">
-                    <div class="spinner"></div>
-                    <div>
-                        <div class="status-title">Waiting for authorization...</div>
-                        <div class="text-muted">Complete the login in the Plex window</div>
-                    </div>
+            <!-- Add New Account Button -->
+            <button class="btn btn-primary" onclick="showAddPlexAccountForm()" id="addPlexAccountBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Plex Account
+            </button>
+
+            <!-- Add Account Form (hidden by default) -->
+            <div id="plexAddAccountForm" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 1rem;">Add New Plex Account</h4>
+                <div class="form-group">
+                    <label class="form-label">Account Name</label>
+                    <input type="text" class="form-input" id="newPlexAccountName" placeholder="e.g., Family Account">
                 </div>
-                <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="cancelPlexAuth()">Cancel</button>
+                <div class="btn-group" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="hidePlexAddAccountForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createPlexAccount()">Create Account</button>
+                </div>
             </div>
 
-            <!-- Connected State -->
-            <div id="plexConnectedSection" style="display: none;">
-                <div class="connected-status">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                        <polyline points="22 4 12 14.01 9 11.01"/>
-                    </svg>
-                    <div>
-                        <div class="status-title" style="color: var(--success);">Connected to Plex</div>
-                        <div class="text-muted" id="plexConnectedUsername"></div>
-                    </div>
-                    <button class="btn btn-secondary btn-sm" onclick="disconnectPlex()">Disconnect</button>
+            <!-- OAuth Waiting Modal -->
+            <div id="plexAuthModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                    <h3 style="margin-bottom: 0.5rem;">Waiting for authorization...</h3>
+                    <p class="text-muted" style="margin-bottom: 1rem;">
+                        Complete the login in the Plex popup window.<br>
+                        <small>If the popup was blocked, go to <a href="https://plex.tv/link" target="_blank" style="color: var(--accent);">plex.tv/link</a> and enter code: <strong id="plexUserCode" style="color: var(--accent);"></strong></small>
+                    </p>
+                    <button class="btn btn-secondary" onclick="cancelPlexAuth()">Cancel</button>
                 </div>
             </div>
         </div>
     </div>
+
 </div>
 
 <!-- IMPORT CATEGORY -->
@@ -819,10 +820,11 @@
     }
 
     // ========== Plex State ==========
-    let plexToken = null;
+    let plexAccounts = [];
     let plexWatchlistItems = [];
     let plexSelectedItems = new Set();
     let plexPollInterval = null;
+    let plexAuthAccountId = null;
 
     // ========== Trakt State ==========
     let traktAccounts = [];
@@ -833,65 +835,186 @@
     let userProfiles = [];
 
     // ========== Initialize ==========
-    document.addEventListener('DOMContentLoaded', function() {
-        // Load Plex and Trakt status from backend
-        loadPlexStatus();
-        loadTraktAccounts();
-        loadUserProfiles();
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Load accounts first, then profiles (to avoid race condition in rendering)
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts()]);
+        await loadUserProfiles();
     });
 
     // ========== Plex Account Functions ==========
-    let plexStatus = { connected: false, username: '' };
-
-    async function loadPlexStatus() {
+    async function loadPlexAccounts() {
         try {
-            const response = await fetch('/admin/api/plex/status');
+            const response = await fetch('/admin/api/plex/accounts');
             const data = await response.json();
-            plexStatus = data;
-            updatePlexUI();
+            plexAccounts = data.accounts || [];
+            renderPlexAccountsList();
+            updatePlexStatusBadge();
+            updatePlexWatchlistSection();
         } catch (err) {
-            console.error('Failed to load Plex status:', err);
+            console.error('Failed to load Plex accounts:', err);
         }
     }
 
-    function updatePlexUI() {
+    function updatePlexStatusBadge() {
         const badge = document.getElementById('plexStatusBadge');
-        const notConnected = document.getElementById('plexNotConnected');
-        const connectedSection = document.getElementById('plexConnectedSection');
-        const watchlistNotConnected = document.getElementById('plexWatchlistNotConnected');
-        const watchlistConnected = document.getElementById('plexWatchlistConnected');
-
-        if (plexStatus.connected) {
-            badge.textContent = 'Connected';
+        const connectedCount = plexAccounts.filter(a => a.connected).length;
+        if (connectedCount > 0) {
+            badge.textContent = `${connectedCount} Connected`;
             badge.className = 'status-badge connected';
-            notConnected.style.display = 'none';
-            connectedSection.style.display = 'block';
-            document.getElementById('plexConnectedUsername').textContent = 'Logged in as ' + plexStatus.username;
-
-            // Update watchlist import section
-            if (watchlistNotConnected) watchlistNotConnected.style.display = 'none';
-            if (watchlistConnected) watchlistConnected.style.display = 'block';
-        } else {
+        } else if (plexAccounts.length > 0) {
             badge.textContent = 'Not Connected';
             badge.className = 'status-badge disconnected';
-            notConnected.style.display = 'block';
-            connectedSection.style.display = 'none';
-
-            // Update watchlist import section
-            if (watchlistNotConnected) watchlistNotConnected.style.display = 'block';
-            if (watchlistConnected) watchlistConnected.style.display = 'none';
+        } else {
+            badge.textContent = 'No Accounts';
+            badge.className = 'status-badge';
         }
     }
 
-    async function disconnectPlex() {
+    function renderPlexAccountsList() {
+        const container = document.getElementById('plexAccountsList');
+        if (plexAccounts.length === 0) {
+            container.innerHTML = '<p class="text-muted">No Plex accounts configured. Add one to get started.</p>';
+            return;
+        }
+
+        container.innerHTML = plexAccounts.map(account => `
+            <div class="plex-account-card" style="padding: 1rem; margin-bottom: 0.75rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem;">
+                    <div style="flex: 1; min-width: 150px;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                            <strong style="word-break: break-word;">${escapeHtml(account.name || 'Unnamed Account')}</strong>
+                            ${account.connected ?
+                                `<span class="status-badge connected" style="font-size: 0.75rem;">Connected</span>` :
+                                `<span class="status-badge disconnected" style="font-size: 0.75rem;">Not Connected</span>`
+                            }
+                        </div>
+                        ${account.connected && account.username ?
+                            `<div class="text-muted" style="font-size: 0.875rem;">Logged in as ${escapeHtml(account.username)}</div>` :
+                            ''
+                        }
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-shrink: 0; align-items: center;">
+                        ${account.connected ? `
+                            <button class="btn btn-secondary btn-sm" onclick="disconnectPlexAccount('${account.id}')">Disconnect</button>
+                        ` : `
+                            <button class="btn btn-primary btn-sm" onclick="connectPlexAccount('${account.id}')">Connect</button>
+                        `}
+                        <button class="btn btn-secondary btn-sm" onclick="deletePlexAccount('${account.id}')" style="color: var(--danger);">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function showAddPlexAccountForm() {
+        document.getElementById('plexAddAccountForm').style.display = 'block';
+        document.getElementById('addPlexAccountBtn').style.display = 'none';
+    }
+
+    function hidePlexAddAccountForm() {
+        document.getElementById('plexAddAccountForm').style.display = 'none';
+        document.getElementById('addPlexAccountBtn').style.display = 'inline-flex';
+        document.getElementById('newPlexAccountName').value = '';
+    }
+
+    async function createPlexAccount() {
+        const name = document.getElementById('newPlexAccountName').value.trim();
+
         try {
-            const response = await fetch('/admin/api/plex/disconnect', { method: 'POST' });
-            if (response.ok) {
-                plexStatus = { connected: false, username: '' };
-                updatePlexUI();
+            const response = await fetch('/admin/api/plex/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name || 'Plex Account' })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to create account');
+            }
+
+            showToast('Plex account created', 'success');
+            hidePlexAddAccountForm();
+            await loadPlexAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function deletePlexAccount(accountId) {
+        if (!confirm('Delete this Plex account? Any linked profiles will be unlinked.')) return;
+
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}`, { method: 'DELETE' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete account');
+            }
+            showToast('Plex account deleted', 'success');
+            await loadPlexAccounts();
+            await loadUserProfiles();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    let plexAuthWindow = null;
+
+    async function connectPlexAccount(accountId) {
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/pin`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to start auth');
+            }
+
+            const data = await response.json();
+            plexAuthAccountId = accountId;
+
+            // Open Plex auth in popup window
+            plexAuthWindow = window.open(data.authUrl, 'plex_auth', 'width=800,height=600');
+
+            // Show waiting modal
+            document.getElementById('plexAuthModal').style.display = 'flex';
+            document.getElementById('plexUserCode').textContent = data.code;
+
+            // Start polling
+            plexPollInterval = setInterval(() => pollPlexAuth(accountId, data.id), 2000);
+
+            // Set timeout (5 minutes)
+            setTimeout(() => {
+                if (plexPollInterval) {
+                    clearInterval(plexPollInterval);
+                    plexPollInterval = null;
+                    cancelPlexAuth();
+                    showToast('Authorization timed out', 'error');
+                }
+            }, 300000);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function pollPlexAuth(accountId, pinId) {
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/pin/${pinId}`);
+            const data = await response.json();
+
+            if (data.authenticated) {
+                clearInterval(plexPollInterval);
+                plexPollInterval = null;
+
+                // Close popup window if still open
+                if (plexAuthWindow && !plexAuthWindow.closed) {
+                    plexAuthWindow.close();
+                }
+                plexAuthWindow = null;
+
+                document.getElementById('plexAuthModal').style.display = 'none';
+                showToast('Successfully connected to Plex', 'success');
+                await loadPlexAccounts();
             }
         } catch (err) {
-            console.error('Failed to disconnect Plex:', err);
+            console.error('Poll error:', err);
         }
     }
 
@@ -900,8 +1023,50 @@
             clearInterval(plexPollInterval);
             plexPollInterval = null;
         }
-        document.getElementById('plexAuthWaiting').style.display = 'none';
-        document.getElementById('plexNotConnected').style.display = 'block';
+        // Close popup window if still open
+        if (plexAuthWindow && !plexAuthWindow.closed) {
+            plexAuthWindow.close();
+        }
+        plexAuthWindow = null;
+        document.getElementById('plexAuthModal').style.display = 'none';
+        plexAuthAccountId = null;
+    }
+
+    async function disconnectPlexAccount(accountId) {
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/disconnect`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to disconnect');
+            }
+            showToast('Disconnected from Plex', 'success');
+            await loadPlexAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    function updatePlexWatchlistSection() {
+        const watchlistNotConnected = document.getElementById('plexWatchlistNotConnected');
+        const watchlistConnected = document.getElementById('plexWatchlistConnected');
+        const accountSelect = document.getElementById('plexAccountSelect');
+
+        const connectedAccounts = plexAccounts.filter(a => a.connected);
+
+        if (connectedAccounts.length > 0) {
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'none';
+            if (watchlistConnected) watchlistConnected.style.display = 'block';
+
+            // Populate account select for watchlist import
+            if (accountSelect) {
+                accountSelect.innerHTML = connectedAccounts.map(acc =>
+                    `<option value="${acc.id}">${escapeHtml(acc.name || acc.username || 'Unnamed')}</option>`
+                ).join('');
+            }
+        } else {
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'block';
+            if (watchlistConnected) watchlistConnected.style.display = 'none';
+        }
     }
 
     // ========== User Profiles Functions ==========
@@ -1436,80 +1601,7 @@
         traktHistorySelectedItems.clear();
     }
 
-    // ========== Plex Functions ==========
-    async function loginWithPlex() {
-        const loginBtn = document.getElementById('plexLoginBtn');
-        loginBtn.disabled = true;
-        loginBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div> Starting...';
-
-        try {
-            const response = await fetch('/admin/api/plex/pin', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to create PIN');
-            }
-
-            const data = await response.json();
-            const authWindow = window.open(data.authUrl, 'plex_auth', 'width=800,height=600');
-
-            document.getElementById('plexNotConnected').style.display = 'none';
-            document.getElementById('plexAuthWaiting').style.display = 'block';
-
-            plexPollInterval = setInterval(async () => {
-                try {
-                    const checkResponse = await fetch(`/admin/api/plex/pin/${data.id}`);
-                    const checkData = await checkResponse.json();
-
-                    if (checkData.authenticated) {
-                        clearInterval(plexPollInterval);
-                        plexPollInterval = null;
-
-                        if (authWindow && !authWindow.closed) {
-                            authWindow.close();
-                        }
-
-                        // Reload Plex status from backend (token is saved automatically)
-                        await loadPlexStatus();
-                        document.getElementById('plexAuthWaiting').style.display = 'none';
-                    }
-                } catch (err) {
-                    console.error('Poll error:', err);
-                }
-            }, 2000);
-
-            setTimeout(() => {
-                if (plexPollInterval) {
-                    clearInterval(plexPollInterval);
-                    plexPollInterval = null;
-                    document.getElementById('plexAuthWaiting').style.display = 'none';
-                    document.getElementById('plexNotConnected').style.display = 'block';
-                    loginBtn.disabled = false;
-                    loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
-                    showToast('Authentication timed out', 'error');
-                }
-            }, 300000);
-
-        } catch (err) {
-            showToast(err.message, 'error');
-            loginBtn.disabled = false;
-            loginBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Plex';
-        }
-    }
-
-    function plexLogout() {
-        disconnectPlex();
-        plexWatchlistItems = [];
-        plexSelectedItems.clear();
-
-        // Reset watchlist import UI
-        document.getElementById('plexPreviewSection').style.display = 'none';
-        document.getElementById('plexCompleteSection').style.display = 'none';
-    }
-
+    // ========== Plex Watchlist Functions ==========
     async function fetchPlexWatchlist() {
         const fetchBtn = document.getElementById('plexFetchBtn');
         fetchBtn.disabled = true;
@@ -1695,13 +1787,6 @@
         document.getElementById('plexFetchBtnWrapper').style.display = 'block';
         plexWatchlistItems = [];
         plexSelectedItems.clear();
-    }
-
-    // ========== Utilities ==========
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 </script>
 {{end}}

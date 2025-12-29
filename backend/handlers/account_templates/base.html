@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{block "title" .}}strmr Admin{{end}}</title>
+    <title>{{block "title" .}}strmr{{end}}</title>
     <style>
         :root {
             --bg-primary: #0f0f0f;
@@ -215,13 +215,6 @@
             color: var(--warning);
         }
 
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-
         .form-group {
             margin-bottom: 1rem;
         }
@@ -264,55 +257,6 @@
 
         .form-input::placeholder {
             color: var(--text-muted);
-        }
-
-        .form-input[type="password"] {
-            font-family: monospace;
-        }
-
-        .toggle {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            cursor: pointer;
-        }
-
-        .toggle input {
-            position: absolute;
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .toggle-slider {
-            width: 44px;
-            height: 24px;
-            background: var(--bg-tertiary);
-            border-radius: 9999px;
-            position: relative;
-            transition: background 0.2s;
-        }
-
-        .toggle-slider::before {
-            content: '';
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: var(--text-secondary);
-            top: 3px;
-            left: 3px;
-            transition: all 0.2s;
-        }
-
-        .toggle input:checked + .toggle-slider {
-            background: var(--accent);
-        }
-
-        .toggle input:checked + .toggle-slider::before {
-            background: white;
-            transform: translateX(20px);
         }
 
         .btn {
@@ -381,12 +325,6 @@
             margin: 0;
         }
 
-        /* Color picker radio button styling */
-        input[name="new-profile-color"]:checked + .color-option {
-            border-color: white !important;
-            box-shadow: 0 0 0 2px var(--accent);
-        }
-
         .stat-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -445,21 +383,6 @@
             background: var(--bg-hover);
         }
 
-        /* Settings groups */
-        .settings-group {
-            margin-bottom: 2rem;
-        }
-
-        .group-title {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            margin-bottom: 0.75rem;
-            padding-left: 0.25rem;
-        }
-
         .section {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -506,49 +429,6 @@
             transform: rotate(180deg);
         }
 
-        .section-header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .section-save-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
-            padding: 0.375rem 0.75rem;
-            background: var(--accent);
-            color: white;
-            border: none;
-            border-radius: var(--radius);
-            font-size: 0.8125rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .section-save-btn:hover {
-            background: var(--accent-hover);
-        }
-
-        .section-save-btn:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-        }
-
-        .section-save-btn svg {
-            width: 14px;
-            height: 14px;
-        }
-
-        .section.has-changes {
-            border-color: var(--accent);
-        }
-
-        .section.has-changes .section-title svg {
-            color: var(--accent);
-        }
-
         .section-content {
             padding: 0 1.25rem 1.25rem;
             display: none;
@@ -586,119 +466,116 @@
             gap: 0.5rem;
         }
 
-        .array-item-actions {
-            display: flex;
-            gap: 0.5rem;
+        .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
         }
 
-        .array-item .form-input,
-        .array-item .form-select {
-            background: var(--bg-secondary);
-        }
-
-        .profile-pin-section {
-            padding: 0.75rem 1rem;
-            border-top: 1px solid var(--border);
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .profile-pin-label {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
-
-        .profile-pin-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            align-items: center;
-        }
-
-        .profile-pin-actions form {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            align-items: center;
-        }
-
-        .profile-pin-actions .form-input {
-            width: 160px;
-            min-width: 120px;
+        .profile-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.25rem;
         }
 
         .profile-header {
-            flex-wrap: wrap;
-        }
-
-        .profile-pin-status {
             display: flex;
             align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
         }
 
-        .add-item-btn {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px dashed var(--border);
-            border-radius: var(--radius);
-            background: transparent;
-            color: var(--text-muted);
-            cursor: pointer;
+        .profile-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
-            transition: all 0.2s;
+            color: white;
+            font-weight: 600;
+            font-size: 1.25rem;
+            flex-shrink: 0;
         }
 
-        .add-item-btn:hover {
-            border-color: var(--accent);
-            color: var(--accent);
+        .profile-info h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.125rem;
         }
 
-        .tags-input {
+        .profile-info p {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .profile-actions {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.375rem;
-            padding: 0.5rem;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            min-height: 42px;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
         }
 
-        .tag {
+        .badge {
             display: inline-flex;
             align-items: center;
             gap: 0.25rem;
-            padding: 0.25rem 0.5rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-accent {
             background: var(--accent);
             color: white;
-            border-radius: 4px;
-            font-size: 0.8125rem;
         }
 
-        .tag-remove {
+        .badge-success {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--success);
+        }
+
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .color-picker {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .color-dot {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
             cursor: pointer;
-            opacity: 0.7;
-            transition: opacity 0.2s;
+            border: 2px solid transparent;
+            transition: all 0.2s;
         }
 
-        .tag-remove:hover {
-            opacity: 1;
+        .color-dot:hover,
+        .color-dot.selected {
+            border-color: white;
+            box-shadow: 0 0 0 2px var(--accent);
         }
 
-        .tags-input input {
-            flex: 1;
-            min-width: 100px;
-            background: transparent;
-            border: none;
-            color: var(--text-primary);
-            font-size: 0.875rem;
-            outline: none;
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-muted);
+        }
+
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
         }
 
         .toast-container {
@@ -755,102 +632,11 @@
             to { transform: rotate(360deg); }
         }
 
-        .spinner-small {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid var(--border);
-            border-top-color: currentColor;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        /* Test result styles */
-        .test-result {
-            font-size: 0.75rem;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            max-width: 200px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .test-result.success {
-            background: rgba(34, 197, 94, 0.1);
-            color: var(--success);
-        }
-
-        .test-result.error {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--danger);
-        }
-
-        .array-item-actions {
+        .loading {
             display: flex;
-            gap: 0.5rem;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        /* Validation styles */
-        .form-input.invalid,
-        .form-select.invalid {
-            border-color: var(--danger);
-            background: rgba(239, 68, 68, 0.05);
-        }
-
-        .form-group.invalid .form-label {
-            color: var(--danger);
-        }
-
-        .section-warning {
-            display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-width: 20px;
-            height: 20px;
-            padding: 0 6px;
-            background: var(--danger);
-            color: white;
-            border-radius: 10px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-left: 0.5rem;
-        }
-
-        .validation-message {
-            font-size: 0.75rem;
-            color: var(--danger);
-            margin-top: 0.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-
-        .validation-message svg {
-            width: 12px;
-            height: 12px;
-            flex-shrink: 0;
-        }
-
-        .section-validation-msg {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            border-radius: var(--radius);
-            padding: 0.75rem 1rem;
-            margin-bottom: 1rem;
-            font-size: 0.875rem;
-            color: var(--danger);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .section-validation-msg svg {
-            width: 16px;
-            height: 16px;
-            flex-shrink: 0;
+            padding: 2rem;
         }
 
         @media (max-width: 1024px) {
@@ -858,24 +644,7 @@
             .grid-3 { grid-template-columns: repeat(2, 1fr); }
         }
 
-        /* Username visibility: show in nav on desktop, show in brand on mobile */
-        .navbar-username {
-            display: none;
-        }
-
-        .nav-username {
-            display: flex;
-        }
-
         @media (max-width: 768px) {
-            .navbar-username {
-                display: block;
-            }
-
-            .nav-username {
-                display: none !important;
-            }
-
             .menu-toggle {
                 display: block;
             }
@@ -918,14 +687,14 @@
                 font-size: 1.5rem;
             }
 
+            .profile-grid {
+                grid-template-columns: 1fr;
+            }
+
             .card-header {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 0.5rem;
-            }
-
-            .array-item {
-                padding: 0.75rem;
             }
         }
 
@@ -946,54 +715,19 @@
             .btn-primary {
                 border-color: var(--accent);
             }
-
-            .form-select {
-                padding: 0.5rem 0.75rem;
-            }
-
-            .profile-pin-section {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .profile-pin-actions {
-                width: 100%;
-            }
-
-            .profile-pin-actions form {
-                width: 100%;
-            }
-
-            .profile-pin-actions .form-input {
-                flex: 1;
-                width: auto;
-            }
-
-            .profile-header {
-                gap: 0.5rem;
-            }
-
-            .profile-pin-status {
-                width: 100%;
-                order: 3;
-                margin-top: 0.25rem;
-            }
         }
     </style>
 </head>
 <body>
     <nav class="navbar">
         <div class="navbar-content">
-            <a href="{{.BasePath}}" class="navbar-brand">
+            <a href="/account" class="navbar-brand">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polygon points="12 2 2 7 12 12 22 7 12 2"/>
                     <polyline points="2 17 12 22 22 17"/>
                     <polyline points="2 12 12 17 22 12"/>
                 </svg>
-                <div style="display: flex; flex-direction: column; line-height: 1.2;">
-                    <span>{{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
-                    <span class="navbar-username" style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 400;">{{.Username}}</span>
-                </div>
+                strmr
             </a>
 
             <button class="menu-toggle" onclick="toggleMenu()">
@@ -1005,61 +739,51 @@
             </button>
 
             <div class="navbar-nav" id="navMenu">
-                <a href="{{.BasePath}}" class="nav-link {{if or (hasSuffix .CurrentPath "/status") (eq .CurrentPath .BasePath)}}active{{end}}">
+                <a href="/account" class="nav-link {{if eq .ActivePage "profiles"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                        <polyline points="9 22 9 12 15 12 15 22"/>
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                     </svg>
-                    Dashboard
+                    Profiles
                 </a>
-                <a href="{{.BasePath}}/settings" class="nav-link {{if hasSuffix .CurrentPath "/settings"}}active{{end}}">
+                <a href="/account/status" class="nav-link {{if eq .ActivePage "status"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <line x1="3" y1="9" x2="21" y2="9"/>
+                        <line x1="9" y1="21" x2="9" y2="9"/>
                     </svg>
-                    Settings
+                    Status
                 </a>
-                <a href="{{.BasePath}}/history" class="nav-link {{if hasSuffix .CurrentPath "/history"}}active{{end}}">
+                <a href="/account/history" class="nav-link {{if eq .ActivePage "history"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
                         <polyline points="12 6 12 12 16 14"/>
                     </svg>
                     History
                 </a>
-                <a href="{{.BasePath}}/tools" class="nav-link {{if hasSuffix .CurrentPath "/tools"}}active{{end}}">
+                <a href="/account/tools" class="nav-link {{if eq .ActivePage "tools"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                     </svg>
                     Tools
                 </a>
-                {{if .IsAdmin}}
-                <a href="{{.BasePath}}/search" class="nav-link {{if hasSuffix .CurrentPath "/search"}}active{{end}}">
+                <a href="/account/search" class="nav-link {{if eq .ActivePage "search"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"/>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
                     Search
                 </a>
-                {{end}}
-                <a href="{{.BasePath}}/accounts" class="nav-link {{if hasSuffix .CurrentPath "/accounts"}}active{{end}}">
+                <a href="/account/settings" class="nav-link {{if eq .ActivePage "settings"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        {{if .IsAdmin}}
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                        {{end}}
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
                     </svg>
-                    {{if .IsAdmin}}Accounts{{else}}Profiles{{end}}
+                    Settings
                 </a>
-                <span class="nav-username" style="align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; color: var(--text-secondary); font-size: 0.875rem; border-left: 1px solid var(--border); margin-left: 0.5rem;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
-                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-                        <circle cx="12" cy="7" r="4"/>
-                    </svg>
-                    {{.Username}}
-                </span>
-                <a href="{{.BasePath}}/logout" class="nav-link">
+                <a href="/account/logout" class="nav-link">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
                         <polyline points="16 17 21 12 16 7"/>

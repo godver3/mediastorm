@@ -1,0 +1,689 @@
+{{define "tools"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Tools - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header">
+        <h1>Tools</h1>
+        <p>Connect services and manage integrations for your profiles</p>
+    </div>
+
+    <!-- Profile Selector -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                </svg>
+                Select Profile
+            </h2>
+        </div>
+        <div class="card-body">
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                {{range $index, $profile := .Profiles}}
+                <button class="profile-selector-btn {{if eq $index 0}}active{{end}}"
+                        data-profile-id="{{$profile.ID}}"
+                        data-profile-name="{{$profile.Name}}"
+                        data-trakt-account="{{$profile.TraktAccountID}}"
+                        onclick="selectProfile('{{$profile.ID}}', '{{$profile.TraktAccountID}}', this)">
+                    <div class="profile-avatar-sm" style="background: {{if $profile.Color}}{{$profile.Color}}{{else}}#3B82F6{{end}};">
+                        {{slice $profile.Name 0 1}}
+                    </div>
+                    <span>{{$profile.Name}}</span>
+                    {{if $profile.TraktAccountID}}
+                    <span class="badge badge-success" style="margin-left: 0.25rem;">Trakt</span>
+                    {{end}}
+                </button>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Trakt Integration -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                    <path d="M12 4v1M12 19v1M4 12h1M19 12h1M6.3 6.3l.7.7M17 17l.7.7M6.3 17.7l.7-.7M17 7l.7-.7"/>
+                </svg>
+                Trakt Integration
+            </h2>
+        </div>
+        <div class="card-body">
+            <div id="traktStatus">
+                <div class="loading">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trakt Accounts List -->
+    <div class="card" id="traktAccountsCard">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <line x1="19" y1="8" x2="19" y2="14"/>
+                    <line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+                Your Trakt Accounts
+            </h2>
+            <button class="btn btn-primary btn-sm" onclick="showCreateTraktModal()">
+                + Add Account
+            </button>
+        </div>
+        <div class="card-body" id="traktAccountsList">
+            <div class="loading">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Trakt Account Modal -->
+    <div id="createTraktModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick="hideCreateTraktModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Trakt Account</h3>
+                <button class="modal-close" onclick="hideCreateTraktModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.875rem;">
+                    Create a Trakt application at <a href="https://trakt.tv/oauth/applications" target="_blank" style="color: var(--accent);">trakt.tv/oauth/applications</a> to get your Client ID and Client Secret.
+                </p>
+                <div class="form-group">
+                    <label>Account Name</label>
+                    <input type="text" id="traktAccountName" placeholder="My Trakt Account" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Client ID</label>
+                    <input type="text" id="traktClientId" placeholder="Your Trakt Client ID" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Client Secret</label>
+                    <input type="password" id="traktClientSecret" placeholder="Your Trakt Client Secret" class="form-control">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideCreateTraktModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createTraktAccount()">Create Account</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trakt Auth Modal -->
+    <div id="traktAuthModal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Connect to Trakt</h3>
+            </div>
+            <div class="modal-body" id="traktAuthContent">
+                <div class="loading">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<style>
+    .profile-selector-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--bg-tertiary);
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .profile-selector-btn:hover {
+        border-color: var(--accent);
+    }
+
+    .profile-selector-btn.active {
+        border-color: var(--accent);
+        background: rgba(99, 102, 241, 0.1);
+    }
+
+    .profile-avatar-sm {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .integration-status {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius);
+    }
+
+    .integration-icon {
+        width: 48px;
+        height: 48px;
+        background: linear-gradient(135deg, #ed1c24, #ff5722);
+        border-radius: var(--radius);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 1.25rem;
+    }
+
+    .integration-info {
+        flex: 1;
+    }
+
+    .integration-info h4 {
+        font-size: 1rem;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+    }
+
+    .integration-info p {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .trakt-account-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius);
+        margin-bottom: 0.5rem;
+    }
+
+    .trakt-account-item:last-child {
+        margin-bottom: 0;
+    }
+
+    .trakt-account-info {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .trakt-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--bg-hover);
+    }
+
+    .trakt-account-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-content {
+        position: relative;
+        background: var(--bg-secondary);
+        border-radius: var(--radius);
+        max-width: 500px;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        font-size: 1.125rem;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 1.5rem;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .modal-close:hover {
+        color: var(--text-primary);
+    }
+
+    .modal-body {
+        padding: 1.5rem;
+    }
+
+    .modal-footer {
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 0.75rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        font-size: 0.875rem;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .auth-code-display {
+        text-align: center;
+        padding: 2rem;
+    }
+
+    .auth-code {
+        font-size: 2.5rem;
+        font-weight: bold;
+        font-family: monospace;
+        color: var(--accent);
+        letter-spacing: 0.5rem;
+        margin: 1rem 0;
+    }
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    const profiles = {{json .Profiles}};
+    let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
+    let currentTraktAccountId = profiles.length > 0 ? profiles[0].traktAccountId : null;
+    let traktAccounts = [];
+    let authPollingInterval = null;
+
+    function selectProfile(profileId, traktAccountId, btn) {
+        currentProfileId = profileId;
+        currentTraktAccountId = traktAccountId || null;
+        document.querySelectorAll('.profile-selector-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateTraktStatus();
+        loadTraktAccounts();
+    }
+
+    function updateTraktStatus() {
+        const container = document.getElementById('traktStatus');
+
+        if (currentTraktAccountId) {
+            container.innerHTML = `
+                <div class="integration-status">
+                    <div class="integration-icon">T</div>
+                    <div class="integration-info">
+                        <h4>Connected to Trakt</h4>
+                        <p>This profile is linked to a Trakt account for syncing watch history.</p>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="unlinkTrakt()">
+                        Disconnect
+                    </button>
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="integration-status">
+                    <div class="integration-icon">T</div>
+                    <div class="integration-info">
+                        <h4>Not Connected</h4>
+                        <p>Link a Trakt account to sync your watch history and get personalized recommendations.</p>
+                    </div>
+                </div>
+                <p style="margin-top: 1rem; color: var(--text-secondary); font-size: 0.875rem;">
+                    Select a Trakt account below to link to this profile, or create a new one.
+                </p>
+            `;
+        }
+    }
+
+    async function loadTraktAccounts() {
+        const container = document.getElementById('traktAccountsList');
+
+        try {
+            const response = await fetch('/account/api/trakt/accounts');
+            if (!response.ok) throw new Error('Failed to load');
+
+            traktAccounts = await response.json();
+
+            if (!traktAccounts || traktAccounts.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No Trakt accounts yet.</p>
+                        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
+                            Click "Add Account" above to create your first Trakt account.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = traktAccounts.map(account => `
+                <div class="trakt-account-item">
+                    <div class="trakt-account-info">
+                        <div class="trakt-avatar" style="display: flex; align-items: center; justify-content: center; color: var(--text-muted);">
+                            ${account.username ? account.username[0].toUpperCase() : 'T'}
+                        </div>
+                        <div>
+                            <h4 style="font-size: 0.875rem; font-weight: 500;">${account.username || account.name || 'Trakt Account'}</h4>
+                            <p style="font-size: 0.75rem; color: var(--text-muted);">
+                                ${account.isConnected ? '<span style="color: var(--success);">Connected</span>' : '<span style="color: var(--warning);">Not authenticated</span>'}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="trakt-account-actions">
+                        ${!account.isConnected ? `
+                            <button class="btn btn-sm btn-secondary" onclick="startTraktAuth('${account.id}')">
+                                Authenticate
+                            </button>
+                        ` : `
+                            <button class="btn btn-sm btn-secondary" onclick="disconnectTrakt('${account.id}')">
+                                Revoke
+                            </button>
+                        `}
+                        <button class="btn btn-sm ${currentTraktAccountId === account.id ? 'btn-secondary' : 'btn-primary'}"
+                                onclick="linkTrakt('${account.id}')"
+                                ${currentTraktAccountId === account.id || !account.isConnected ? 'disabled' : ''}>
+                            ${currentTraktAccountId === account.id ? 'Linked' : 'Link to Profile'}
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteTraktAccount('${account.id}')" title="Delete account">
+                            &times;
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (err) {
+            container.innerHTML = '<div class="empty-state"><p>Failed to load Trakt accounts</p></div>';
+        }
+    }
+
+    function showCreateTraktModal() {
+        document.getElementById('traktAccountName').value = '';
+        document.getElementById('traktClientId').value = '';
+        document.getElementById('traktClientSecret').value = '';
+        document.getElementById('createTraktModal').style.display = 'flex';
+    }
+
+    function hideCreateTraktModal() {
+        document.getElementById('createTraktModal').style.display = 'none';
+    }
+
+    async function createTraktAccount() {
+        const name = document.getElementById('traktAccountName').value.trim();
+        const clientId = document.getElementById('traktClientId').value.trim();
+        const clientSecret = document.getElementById('traktClientSecret').value.trim();
+
+        if (!clientId || !clientSecret) {
+            showToast('Client ID and Client Secret are required', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/account/api/trakt/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, clientId, clientSecret })
+            });
+
+            if (response.ok) {
+                hideCreateTraktModal();
+                showToast('Trakt account created successfully');
+                loadTraktAccounts();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to create account', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    async function deleteTraktAccount(accountId) {
+        if (!confirm('Delete this Trakt account? This will unlink it from any profiles.')) return;
+
+        try {
+            const response = await fetch(`/account/api/trakt/accounts/delete?id=${encodeURIComponent(accountId)}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showToast('Trakt account deleted');
+                if (currentTraktAccountId === accountId) {
+                    currentTraktAccountId = null;
+                    updateTraktStatus();
+                }
+                loadTraktAccounts();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to delete account', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    async function startTraktAuth(accountId) {
+        const modal = document.getElementById('traktAuthModal');
+        const content = document.getElementById('traktAuthContent');
+
+        modal.style.display = 'flex';
+        content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        try {
+            const response = await fetch(`/account/api/trakt/accounts/auth/start?id=${encodeURIComponent(accountId)}`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error || 'Failed to start authentication');
+            }
+
+            const data = await response.json();
+
+            content.innerHTML = `
+                <div class="auth-code-display">
+                    <p>Go to <a href="${data.verificationUrl}" target="_blank" style="color: var(--accent);">${data.verificationUrl}</a> and enter this code:</p>
+                    <div class="auth-code">${data.userCode}</div>
+                    <p style="color: var(--text-muted); font-size: 0.875rem;">Waiting for authorization...</p>
+                    <button class="btn btn-secondary" onclick="cancelTraktAuth()" style="margin-top: 1rem;">Cancel</button>
+                </div>
+            `;
+
+            // Start polling for authorization
+            startAuthPolling(accountId, data.deviceCode, data.interval);
+        } catch (err) {
+            content.innerHTML = `
+                <div style="text-align: center; padding: 2rem;">
+                    <p style="color: var(--danger);">${err.message}</p>
+                    <button class="btn btn-secondary" onclick="hideTraktAuthModal()" style="margin-top: 1rem;">Close</button>
+                </div>
+            `;
+        }
+    }
+
+    function startAuthPolling(accountId, deviceCode, interval) {
+        if (authPollingInterval) clearInterval(authPollingInterval);
+
+        authPollingInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/account/api/trakt/accounts/auth/check?id=${encodeURIComponent(accountId)}&deviceCode=${encodeURIComponent(deviceCode)}`);
+
+                if (!response.ok) {
+                    throw new Error('Authentication failed');
+                }
+
+                const data = await response.json();
+
+                if (data.authenticated) {
+                    clearInterval(authPollingInterval);
+                    authPollingInterval = null;
+                    hideTraktAuthModal();
+                    showToast(`Connected to Trakt as ${data.username}`);
+                    loadTraktAccounts();
+                }
+                // If pending, continue polling
+            } catch (err) {
+                clearInterval(authPollingInterval);
+                authPollingInterval = null;
+                document.getElementById('traktAuthContent').innerHTML = `
+                    <div style="text-align: center; padding: 2rem;">
+                        <p style="color: var(--danger);">${err.message}</p>
+                        <button class="btn btn-secondary" onclick="hideTraktAuthModal()" style="margin-top: 1rem;">Close</button>
+                    </div>
+                `;
+            }
+        }, (interval || 5) * 1000);
+    }
+
+    function cancelTraktAuth() {
+        if (authPollingInterval) {
+            clearInterval(authPollingInterval);
+            authPollingInterval = null;
+        }
+        hideTraktAuthModal();
+    }
+
+    function hideTraktAuthModal() {
+        if (authPollingInterval) {
+            clearInterval(authPollingInterval);
+            authPollingInterval = null;
+        }
+        document.getElementById('traktAuthModal').style.display = 'none';
+    }
+
+    async function disconnectTrakt(accountId) {
+        if (!confirm('Revoke Trakt authentication? You will need to re-authenticate to use this account.')) return;
+
+        try {
+            const response = await fetch(`/account/api/trakt/accounts/disconnect?id=${encodeURIComponent(accountId)}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showToast('Trakt account disconnected');
+                loadTraktAccounts();
+            } else {
+                showToast('Failed to disconnect', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    async function linkTrakt(accountId) {
+        if (!currentProfileId) {
+            showToast('Select a profile first', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/account/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ traktAccountId: accountId })
+            });
+
+            if (response.ok) {
+                currentTraktAccountId = accountId;
+                showToast('Trakt account linked successfully');
+                updateTraktStatus();
+                loadTraktAccounts();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to link Trakt account', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    async function unlinkTrakt() {
+        if (!currentProfileId) return;
+
+        if (!confirm('Disconnect Trakt from this profile?')) return;
+
+        try {
+            const response = await fetch(`/account/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                currentTraktAccountId = null;
+                showToast('Trakt account disconnected');
+                updateTraktStatus();
+                loadTraktAccounts();
+            } else {
+                showToast('Failed to disconnect', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    // Initialize
+    updateTraktStatus();
+    loadTraktAccounts();
+</script>
+{{end}}

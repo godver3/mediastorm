@@ -1,0 +1,279 @@
+{{define "status"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Status - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Status</h1>
+    <p>Monitor active streams for your profiles</p>
+</div>
+
+<!-- Backend Status -->
+<div class="grid grid-2" style="margin-bottom: 1rem;">
+    <div class="stat-card">
+        <div class="stat-label">Backend Status</div>
+        <div class="stat-value" id="backendStatus">
+            <div class="spinner" style="width: 24px; height: 24px;"></div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Active Streams</div>
+        <div class="stat-value" id="streamCount">-</div>
+        <div class="stat-subtext" id="streamSubtext">Loading...</div>
+    </div>
+</div>
+
+<!-- Active Streams -->
+<div class="card">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="23 7 16 12 23 17 23 7"/>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+            </svg>
+            Active Streams
+        </h2>
+        <button class="btn btn-sm btn-secondary" onclick="refreshStreams()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            Refresh
+        </button>
+    </div>
+    <div class="card-body" id="streamsContainer">
+        <div class="loading">
+            <div class="spinner"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+.stream-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+}
+
+.stream-item:last-child {
+    margin-bottom: 0;
+}
+
+.stream-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--accent);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.stream-icon svg {
+    width: 20px;
+    height: 20px;
+    color: white;
+}
+
+.stream-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.stream-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.stream-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.stream-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.stream-badges {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+    .stream-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .stream-badges {
+        margin-top: 0.5rem;
+    }
+}
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const profiles = {{json .Profiles}};
+const profileIds = new Set(profiles.map(p => p.id));
+
+async function checkBackendStatus() {
+    const el = document.getElementById('backendStatus');
+    try {
+        const response = await fetch('/account/api/status');
+        if (response.ok) {
+            const data = await response.json();
+            el.innerHTML = data.reachable
+                ? '<span style="color: var(--success);">Online</span>'
+                : '<span style="color: var(--danger);">Offline</span>';
+        } else {
+            el.innerHTML = '<span style="color: var(--danger);">Error</span>';
+        }
+    } catch (err) {
+        el.innerHTML = '<span style="color: var(--danger);">Unreachable</span>';
+    }
+}
+
+async function refreshStreams() {
+    const container = document.getElementById('streamsContainer');
+    const countEl = document.getElementById('streamCount');
+    const subtextEl = document.getElementById('streamSubtext');
+
+    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    try {
+        const response = await fetch('/account/api/streams');
+        if (!response.ok) throw new Error('Failed to load streams');
+
+        const data = await response.json();
+        const streams = data.streams || [];
+
+        countEl.textContent = streams.length;
+        subtextEl.textContent = streams.length === 1 ? '1 active stream' : streams.length + ' active streams';
+
+        if (streams.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="23 7 16 12 23 17 23 7"/>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                    </svg>
+                    <p>No active streams</p>
+                    <p style="font-size: 0.75rem; color: var(--text-muted);">
+                        Streams for your profiles will appear here when playing content.
+                    </p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = streams.map(stream => {
+            const duration = formatDuration(stream.created_at);
+            const bytes = formatBytes(stream.bytes_streamed || 0);
+            const type = stream.type === 'hls' ? 'HLS' : 'Direct';
+            const badges = [];
+
+            if (stream.has_dv) badges.push('<span class="status-badge online">Dolby Vision</span>');
+            else if (stream.has_hdr) badges.push('<span class="status-badge warning">HDR</span>');
+
+            return `
+                <div class="stream-item">
+                    <div class="stream-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            ${stream.type === 'hls'
+                                ? '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>'
+                                : '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>'}
+                        </svg>
+                    </div>
+                    <div class="stream-info">
+                        <div class="stream-title">${escapeHtml(stream.filename || stream.path || 'Unknown')}</div>
+                        <div class="stream-meta">
+                            <span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                                    <circle cx="12" cy="7" r="4"/>
+                                </svg>
+                                ${escapeHtml(stream.profile_name || 'Unknown')}
+                            </span>
+                            <span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polyline points="12 6 12 12 16 14"/>
+                                </svg>
+                                ${duration}
+                            </span>
+                            <span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;">
+                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                                </svg>
+                                ${bytes}
+                            </span>
+                            <span class="status-badge">${type}</span>
+                        </div>
+                    </div>
+                    <div class="stream-badges">
+                        ${badges.join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state"><p style="color: var(--danger);">Failed to load streams: ${err.message}</p></div>`;
+    }
+}
+
+function formatDuration(startTime) {
+    if (!startTime) return 'Unknown';
+    const start = new Date(startTime);
+    const now = new Date();
+    const diff = Math.floor((now - start) / 1000);
+
+    if (diff < 60) return diff + 's';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ' + (diff % 60) + 's';
+    const hours = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    return hours + 'h ' + mins + 'm';
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Initial load
+checkBackendStatus();
+refreshStreams();
+
+// Auto-refresh every 10 seconds
+setInterval(() => {
+    checkBackendStatus();
+    refreshStreams();
+}, 10000);
+</script>
+{{end}}

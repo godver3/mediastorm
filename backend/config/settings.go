@@ -234,6 +234,7 @@ type SubtitleSettings struct {
 type TraktAccount struct {
 	ID                string `json:"id"`                          // UUID for this account
 	Name              string `json:"name"`                        // Display name (defaults to Trakt username)
+	OwnerAccountID    string `json:"ownerAccountId,omitempty"`    // Login account that owns this Trakt account (empty = master/shared)
 	ClientID          string `json:"clientId"`                    // Trakt API client ID
 	ClientSecret      string `json:"clientSecret"`                // Trakt API client secret
 	AccessToken       string `json:"accessToken,omitempty"`       // OAuth access token
@@ -291,9 +292,53 @@ func (t *TraktSettings) RemoveAccount(id string) bool {
 }
 
 // PlexSettings defines Plex integration configuration.
+// PlexAccount represents a registered Plex account with its auth token.
+type PlexAccount struct {
+	ID             string `json:"id"`                       // UUID for this account
+	Name           string `json:"name"`                     // Display name
+	OwnerAccountID string `json:"ownerAccountId,omitempty"` // Login account that owns this Plex account
+	AuthToken      string `json:"authToken,omitempty"`      // Plex auth token
+	Username       string `json:"username,omitempty"`       // Plex username
+}
+
 type PlexSettings struct {
+	// Accounts is the list of registered Plex accounts
+	Accounts []PlexAccount `json:"accounts,omitempty"`
+
+	// Legacy fields - kept for migration
 	AuthToken string `json:"authToken,omitempty"`
 	Username  string `json:"username,omitempty"`
+}
+
+// GetAccountByID returns a Plex account by its ID.
+func (p *PlexSettings) GetAccountByID(id string) *PlexAccount {
+	for i := range p.Accounts {
+		if p.Accounts[i].ID == id {
+			return &p.Accounts[i]
+		}
+	}
+	return nil
+}
+
+// UpdateAccount updates an existing Plex account.
+func (p *PlexSettings) UpdateAccount(account PlexAccount) {
+	for i := range p.Accounts {
+		if p.Accounts[i].ID == account.ID {
+			p.Accounts[i] = account
+			return
+		}
+	}
+}
+
+// RemoveAccount removes a Plex account by ID.
+func (p *PlexSettings) RemoveAccount(id string) bool {
+	for i := range p.Accounts {
+		if p.Accounts[i].ID == id {
+			p.Accounts = append(p.Accounts[:i], p.Accounts[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultSettings returns sane defaults for a fresh install.

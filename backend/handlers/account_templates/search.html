@@ -1,0 +1,274 @@
+{{define "search"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Search - strmr{{end}}
+
+{{define "content"}}
+<div class="page-header">
+        <h1>Search</h1>
+        <p>Find movies and TV shows</p>
+    </div>
+
+    <!-- Search Box -->
+    <div class="card">
+        <div class="card-body">
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <input type="text" id="searchQuery" class="form-input" placeholder="Search for movies or shows..." style="flex: 1; min-width: 200px;" onkeypress="if(event.key==='Enter') performSearch()">
+                <select id="searchType" class="form-select" style="width: auto;">
+                    <option value="all">All</option>
+                    <option value="movie">Movies</option>
+                    <option value="series">TV Shows</option>
+                </select>
+                <button class="btn btn-primary" onclick="performSearch()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    Search
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Filter -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                </svg>
+                Add to Profile
+            </h2>
+        </div>
+        <div class="card-body">
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                {{range $index, $profile := .Profiles}}
+                <button class="profile-selector-btn {{if eq $index 0}}active{{end}}"
+                        data-profile-id="{{$profile.ID}}"
+                        onclick="selectProfile('{{$profile.ID}}', this)">
+                    <div class="profile-avatar-sm" style="background: {{if $profile.Color}}{{$profile.Color}}{{else}}#3B82F6{{end}};">
+                        {{slice $profile.Name 0 1}}
+                    </div>
+                    <span>{{$profile.Name}}</span>
+                </button>
+                {{end}}
+            </div>
+            <p class="form-hint" style="margin-top: 0.5rem;">Select which profile to add items to watchlist</p>
+        </div>
+    </div>
+
+    <!-- Search Results -->
+    <div id="searchResults"></div>
+
+<style>
+    .profile-selector-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--bg-tertiary);
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .profile-selector-btn:hover {
+        border-color: var(--accent);
+    }
+
+    .profile-selector-btn.active {
+        border-color: var(--accent);
+        background: rgba(99, 102, 241, 0.1);
+    }
+
+    .profile-avatar-sm {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .results-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-top: 1.5rem;
+    }
+
+    .result-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+        cursor: pointer;
+    }
+
+    .result-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .result-poster {
+        width: 100%;
+        aspect-ratio: 2/3;
+        background: var(--bg-tertiary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .result-poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .result-poster svg {
+        width: 48px;
+        height: 48px;
+        opacity: 0.3;
+    }
+
+    .result-info {
+        padding: 0.75rem;
+    }
+
+    .result-info h4 {
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .result-info p {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .result-actions {
+        padding: 0 0.75rem 0.75rem;
+        display: flex;
+        gap: 0.5rem;
+    }
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    const profiles = {{json .Profiles}};
+    let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
+
+    function selectProfile(profileId, btn) {
+        currentProfileId = profileId;
+        document.querySelectorAll('.profile-selector-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+
+    async function performSearch() {
+        const query = document.getElementById('searchQuery').value.trim();
+        if (!query) {
+            showToast('Enter a search query', 'error');
+            return;
+        }
+
+        const type = document.getElementById('searchType').value;
+        const container = document.getElementById('searchResults');
+        container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        try {
+            let url = `/api/search?query=${encodeURIComponent(query)}`;
+            if (type !== 'all') {
+                url += `&type=${type}`;
+            }
+
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Search failed');
+
+            const results = await response.json();
+            if (!results || results.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No results found</p></div>';
+                return;
+            }
+
+            container.innerHTML = `<div class="results-grid">${results.map(renderResult).join('')}</div>`;
+        } catch (err) {
+            container.innerHTML = '<div class="empty-state"><p>Search failed</p></div>';
+        }
+    }
+
+    function renderResult(item) {
+        const posterUrl = item.posterUrl || item.poster || '';
+        const year = item.year || '';
+        const type = item.type === 'movie' ? 'Movie' : 'TV Show';
+
+        return `
+            <div class="result-card" onclick="showDetails('${item.id}', '${item.type}')">
+                <div class="result-poster">
+                    ${posterUrl ? `<img src="${posterUrl}" alt="${item.title}">` : `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                            <line x1="7" y1="2" x2="7" y2="22"/>
+                            <line x1="17" y1="2" x2="17" y2="22"/>
+                            <line x1="2" y1="12" x2="22" y2="12"/>
+                        </svg>
+                    `}
+                </div>
+                <div class="result-info">
+                    <h4>${item.title || 'Unknown'}</h4>
+                    <p>${year ? year + ' • ' : ''}${type}</p>
+                </div>
+                <div class="result-actions">
+                    <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); addToWatchlist('${item.id}', '${item.type}', '${item.title.replace(/'/g, "\\'")}')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Watchlist
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function showDetails(id, type) {
+        // Could open a modal or navigate to details page
+        showToast(`View details for ${type} ${id}`);
+    }
+
+    async function addToWatchlist(id, type, title) {
+        if (!currentProfileId) {
+            showToast('Select a profile first', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/account/api/watchlist/${currentProfileId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, type })
+            });
+
+            if (response.ok) {
+                showToast(`Added "${title}" to watchlist`);
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to add to watchlist', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+</script>
+{{end}}

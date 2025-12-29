@@ -12,23 +12,26 @@ import (
 	"github.com/gorilla/mux"
 
 	"novastream/config"
+	"novastream/services/accounts"
 	"novastream/services/trakt"
 	"novastream/services/users"
 )
 
 // TraktAccountsHandler handles Trakt account management API endpoints.
 type TraktAccountsHandler struct {
-	configManager *config.Manager
-	traktClient   *trakt.Client
-	usersService  *users.Service
+	configManager   *config.Manager
+	traktClient     *trakt.Client
+	usersService    *users.Service
+	accountsService *accounts.Service
 }
 
 // NewTraktAccountsHandler creates a new Trakt accounts handler.
-func NewTraktAccountsHandler(configManager *config.Manager, traktClient *trakt.Client, usersService *users.Service) *TraktAccountsHandler {
+func NewTraktAccountsHandler(configManager *config.Manager, traktClient *trakt.Client, usersService *users.Service, accountsService *accounts.Service) *TraktAccountsHandler {
 	return &TraktAccountsHandler{
-		configManager: configManager,
-		traktClient:   traktClient,
-		usersService:  usersService,
+		configManager:   configManager,
+		traktClient:     traktClient,
+		usersService:    usersService,
+		accountsService: accountsService,
 	}
 }
 
@@ -43,13 +46,25 @@ type TraktAccountResponse struct {
 	LinkedProfiles    []string `json:"linkedProfiles,omitempty"` // Profile IDs using this account
 }
 
-// ListAccounts returns all registered Trakt accounts.
+// ListAccounts returns registered Trakt accounts.
+// For master accounts, returns all accounts.
+// For non-master accounts, only returns accounts they own.
 // GET /api/trakt/accounts
 func (h *TraktAccountsHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.configManager.Load()
 	if err != nil {
 		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Check if the logged-in user is a master account
+	session := adminSessionFromContext(r.Context())
+	var isMaster bool
+	var sessionAccountID string
+	if session != nil {
+		sessionAccountID = session.AccountID
+		// Use session.IsMaster directly instead of looking up again
+		isMaster = session.IsMaster
 	}
 
 	// Get all users to build linked profiles mapping
@@ -63,15 +78,18 @@ func (h *TraktAccountsHandler) ListAccounts(w http.ResponseWriter, r *http.Reque
 
 	accounts := make([]TraktAccountResponse, 0, len(settings.Trakt.Accounts))
 	for _, acc := range settings.Trakt.Accounts {
-		accounts = append(accounts, TraktAccountResponse{
-			ID:                acc.ID,
-			Name:              acc.Name,
-			Username:          acc.Username,
-			Connected:         acc.AccessToken != "",
-			ScrobblingEnabled: acc.ScrobblingEnabled,
-			ExpiresAt:         acc.ExpiresAt,
-			LinkedProfiles:    profilesByAccount[acc.ID],
-		})
+		// Master accounts see all; non-master only see their own accounts
+		if isMaster || acc.OwnerAccountID == sessionAccountID {
+			accounts = append(accounts, TraktAccountResponse{
+				ID:                acc.ID,
+				Name:              acc.Name,
+				Username:          acc.Username,
+				Connected:         acc.AccessToken != "",
+				ScrobblingEnabled: acc.ScrobblingEnabled,
+				ExpiresAt:         acc.ExpiresAt,
+				LinkedProfiles:    profilesByAccount[acc.ID],
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

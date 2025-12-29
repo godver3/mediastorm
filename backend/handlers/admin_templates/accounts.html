@@ -1,0 +1,787 @@
+{{define "accounts"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}{{if .IsAdmin}}Accounts{{else}}Profiles{{end}} - {{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}}{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>{{if .IsAdmin}}Account Management{{else}}Profile Management{{end}}</h1>
+    <p>{{if .IsAdmin}}Manage user accounts and profiles{{else}}Manage your profiles{{end}}</p>
+</div>
+
+{{if .IsAdmin}}
+<!-- Tabs (admin only) -->
+<div class="tabs" style="margin-bottom: 1.5rem;">
+    <button class="tab active" onclick="switchTab('profiles')" id="tab-profiles">Profiles</button>
+    <button class="tab" onclick="switchTab('accounts')" id="tab-accounts">Accounts</button>
+    <button class="tab" onclick="switchTab('invitations')" id="tab-invitations">Invitations</button>
+</div>
+{{end}}
+
+<style>
+.tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+.tab { background: transparent; border: none; color: var(--text-secondary); padding: 0.75rem 1.5rem; cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; }
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: var(--radius); margin-bottom: 0.5rem; }
+.profile-row:hover { background: var(--bg-tertiary); }
+.profile-avatar { width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1.25rem; }
+.profile-info { flex: 1; min-width: 150px; }
+.profile-name { font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.profile-meta { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+.profile-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.account-badge { display: inline-flex; align-items: center; gap: 0.25rem; background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; color: var(--text-secondary); }
+.account-badge.none { background: var(--danger); color: white; opacity: 0.7; }
+@media (max-width: 600px) {
+    .profile-row { padding: 0.75rem; gap: 0.75rem; }
+    .profile-avatar { width: 40px; height: 40px; font-size: 1rem; }
+    .profile-actions { width: 100%; justify-content: flex-start; margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+}
+</style>
+
+<!-- Profiles Tab -->
+<div id="content-profiles" class="tab-content active">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <span id="profiles-count" style="color: var(--text-muted);"></span>
+        <button class="btn btn-primary" onclick="showCreateProfileModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Create Profile
+        </button>
+    </div>
+    <div id="profiles-list">
+        <div style="display: flex; justify-content: center; padding: 2rem;">
+            <div class="spinner"></div>
+        </div>
+    </div>
+</div>
+
+{{if .IsAdmin}}
+<!-- Accounts Tab (admin only) -->
+<div id="content-accounts" class="tab-content">
+    <div id="default-password-warning"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <span id="accounts-count" style="color: var(--text-muted);"></span>
+        <button class="btn btn-primary" onclick="showCreateAccountModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Create Account
+        </button>
+    </div>
+    <div id="accounts-list"></div>
+</div>
+
+<!-- Invitations Tab (admin only) -->
+<div id="content-invitations" class="tab-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <span id="invitations-count" style="color: var(--text-muted);"></span>
+            <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 0.25rem;">
+                Invitation links allow users to create their own accounts
+            </p>
+        </div>
+        <button class="btn btn-primary" onclick="createInvitation()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+            Create Invitation Link
+        </button>
+    </div>
+    <div id="invitations-list"></div>
+</div>
+{{end}}
+
+<!-- Modals -->
+<div id="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+    <div id="modal-content" class="card" style="max-width: 450px; width: 90%; max-height: 90vh; overflow-y: auto;"></div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+let accounts = [];
+let profiles = [];
+let invitations = [];
+let hasDefaultPassword = false;
+const isAdmin = {{json .IsAdmin}};
+const basePath = {{json .BasePath}};
+const accountId = {{json .AccountID}}; // For non-admin, auto-assign profiles to this account
+
+const PROFILE_COLORS = [
+    '#EF4444', '#F97316', '#EAB308', '#22C55E',
+    '#14B8A6', '#3B82F6', '#8B5CF6', '#EC4899'
+];
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    document.getElementById('content-' + tab).classList.add('active');
+}
+
+async function loadData() {
+    try {
+        if (isAdmin) {
+            const [accountsRes, profilesRes, defaultPwdRes, invitationsRes] = await Promise.all([
+                fetch(basePath + '/api/accounts').then(r => r.json()),
+                fetch(basePath + '/api/profiles').then(r => r.json()),
+                fetch(basePath + '/api/accounts/default-password').then(r => r.json()),
+                fetch(basePath + '/api/invitations').then(r => r.json())
+            ]);
+            accounts = accountsRes.accounts || [];
+            profiles = profilesRes || [];
+            hasDefaultPassword = defaultPwdRes.hasDefaultPassword || false;
+            invitations = invitationsRes.invitations || [];
+            renderProfiles();
+            renderAccounts();
+            renderInvitations();
+        } else {
+            // Non-admin: only load profiles (already scoped to their account)
+            const profilesRes = await fetch(basePath + '/api/profiles').then(r => r.json());
+            profiles = profilesRes || [];
+            renderProfiles();
+        }
+    } catch (err) {
+        console.error('Failed to load data:', err);
+        document.getElementById('profiles-list').innerHTML = `<p style="color: var(--danger);">Failed to load: ${err.message}</p>`;
+    }
+}
+
+function getAccountName(accountId) {
+    if (!accountId) return null;
+    const account = accounts.find(a => a.id === accountId);
+    return account ? account.username : null;
+}
+
+function renderProfiles() {
+    const container = document.getElementById('profiles-list');
+    document.getElementById('profiles-count').textContent = profiles.length + ' profile' + (profiles.length !== 1 ? 's' : '');
+
+    if (profiles.length === 0) {
+        container.innerHTML = `<div class="card"><div class="card-body" style="text-align: center; color: var(--text-muted);">No profiles yet. Create one to get started.</div></div>`;
+        return;
+    }
+
+    container.innerHTML = profiles.map(p => {
+        const accountName = getAccountName(p.accountId);
+        const initial = (p.name || 'P').charAt(0).toUpperCase();
+        const badges = [];
+        if (p.isKidsProfile) badges.push('<span class="status-badge warning" style="font-size: 0.65rem;">Kids</span>');
+        if (p.hasPin) badges.push('<span class="status-badge" style="font-size: 0.65rem;">PIN</span>');
+
+        return `
+            <div class="profile-row">
+                <div class="profile-avatar" style="background: ${p.color || '#6366f1'};">${initial}</div>
+                <div class="profile-info">
+                    <div class="profile-name">
+                        ${escapeHtml(p.name)}
+                        ${badges.join('')}
+                    </div>
+                    ${isAdmin ? `<div class="profile-meta">
+                        Account: ${accountName
+                            ? `<span class="account-badge">${escapeHtml(accountName)}</span>`
+                            : `<span class="account-badge none">Unassigned</span>`}
+                    </div>` : ''}
+                </div>
+                <div class="profile-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="showEditProfileModal('${p.id}')">Edit</button>
+                    ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showReassignModal('${p.id}')">Reassign</button>` : ''}
+                    <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.id}', '${escapeHtml(p.name)}')">Delete</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderAccounts() {
+    const container = document.getElementById('accounts-list');
+    document.getElementById('accounts-count').textContent = accounts.length + ' account' + (accounts.length !== 1 ? 's' : '');
+
+    // Default password warning
+    const warningEl = document.getElementById('default-password-warning');
+    if (hasDefaultPassword) {
+        warningEl.innerHTML = `
+            <div class="card" style="margin-bottom: 1rem; border-color: var(--warning);">
+                <div class="card-body" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" style="width: 24px; height: 24px; flex-shrink: 0;">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <div style="flex: 1; min-width: 200px;">
+                        <strong style="color: var(--warning);">Default Password Warning</strong>
+                        <p style="color: var(--text-secondary); margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+                            The admin account is using the default password. Please change it.
+                        </p>
+                    </div>
+                    <button class="btn btn-warning btn-sm" onclick="showChangePasswordModal('master', 'admin')">Change Now</button>
+                </div>
+            </div>`;
+    } else {
+        warningEl.innerHTML = '';
+    }
+
+    container.innerHTML = accounts.map(a => {
+        const profileCount = profiles.filter(p => p.accountId === a.id).length;
+        return `
+            <div class="card" style="margin-bottom: 0.75rem;">
+                <div class="card-body" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 24px; height: 24px;">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                        </svg>
+                    </div>
+                    <div style="flex: 1; min-width: 150px;">
+                        <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
+                            ${escapeHtml(a.username)}
+                            ${a.isMaster ? '<span class="status-badge online" style="font-size: 0.65rem;">Admin</span>' : ''}
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">
+                            ${profileCount} profile${profileCount !== 1 ? 's' : ''}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="showRenameAccountModal('${a.id}', '${escapeHtml(a.username)}')">Rename</button>
+                        <button class="btn btn-secondary btn-sm" onclick="showChangePasswordModal('${a.id}', '${escapeHtml(a.username)}')">Password</button>
+                        ${!a.isMaster ? `<button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}', '${escapeHtml(a.username)}')">Delete</button>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function showModal(html) {
+    document.getElementById('modal-content').innerHTML = html;
+    document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+function hideModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+}
+
+document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) hideModal();
+});
+
+// Profile functions
+function showCreateProfileModal(defaultAccountId) {
+    const accountOptions = isAdmin ? accounts.map(a =>
+        `<option value="${a.id}" ${a.id === (defaultAccountId || 'master') ? 'selected' : ''}>${escapeHtml(a.username)}</option>`
+    ).join('') : '';
+
+    const colorOptions = PROFILE_COLORS.map((c, i) =>
+        `<label style="cursor: pointer;"><input type="radio" name="color" value="${c}" ${i === 0 ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid transparent;" class="color-opt"></div></label>`
+    ).join('');
+
+    showModal(`
+        <div class="card-header"><h2>Create Profile</h2></div>
+        <div class="card-body">
+            <form onsubmit="createProfile(event)">
+                <div class="form-group">
+                    <label class="form-label">Profile Name</label>
+                    <input type="text" name="name" class="form-input" required autofocus>
+                </div>
+                ${isAdmin ? `<div class="form-group">
+                    <label class="form-label">Account</label>
+                    <select name="accountId" class="form-select">${accountOptions}</select>
+                </div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Color</label>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">${colorOptions}</div>
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" name="isKids"> Kids Profile
+                    </label>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    `);
+    setupColorPicker();
+}
+
+function setupColorPicker() {
+    document.querySelectorAll('.color-opt').forEach(opt => {
+        const radio = opt.previousElementSibling;
+        if (radio.checked) opt.style.borderColor = 'white';
+        opt.onclick = () => {
+            document.querySelectorAll('.color-opt').forEach(o => o.style.borderColor = 'transparent');
+            opt.style.borderColor = 'white';
+        };
+    });
+}
+
+async function createProfile(e) {
+    e.preventDefault();
+    const form = e.target;
+    const data = {
+        name: form.name.value,
+        accountId: isAdmin ? form.accountId.value : accountId, // Non-admin: auto-assign to their account
+        color: form.querySelector('input[name="color"]:checked').value,
+        isKidsProfile: form.isKids.checked
+    };
+    try {
+        const res = await fetch(basePath + '/api/profiles', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hideModal();
+        showToast('Profile created');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showEditProfileModal(profileId) {
+    const p = profiles.find(x => x.id === profileId);
+    if (!p) return;
+
+    const colorOptions = PROFILE_COLORS.map(c =>
+        `<label style="cursor: pointer;"><input type="radio" name="color" value="${c}" ${c === p.color ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid ${c === p.color ? 'white' : 'transparent'};" class="color-opt"></div></label>`
+    ).join('');
+
+    showModal(`
+        <div class="card-header"><h2>Edit Profile</h2></div>
+        <div class="card-body">
+            <form onsubmit="updateProfile(event, '${profileId}')">
+                <div class="form-group">
+                    <label class="form-label">Profile Name</label>
+                    <input type="text" name="name" class="form-input" value="${escapeHtml(p.name)}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Color</label>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">${colorOptions}</div>
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" name="isKids" ${p.isKidsProfile ? 'checked' : ''}> Kids Profile
+                    </label>
+                </div>
+                <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
+                    <label class="form-label">Profile PIN</label>
+                    ${p.hasPin
+                        ? `<p style="color: var(--text-muted); font-size: 0.875rem;">PIN is set. <button type="button" class="btn btn-sm btn-danger" onclick="clearPin('${profileId}')">Remove PIN</button></p>`
+                        : `<div style="display: flex; gap: 0.5rem;"><input type="password" name="pin" class="form-input" placeholder="Set a PIN" style="width: 120px;"><button type="button" class="btn btn-sm btn-secondary" onclick="setPin('${profileId}', this.form.pin.value)">Set PIN</button></div>`
+                    }
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    `);
+    setupColorPicker();
+}
+
+async function updateProfile(e, profileId) {
+    e.preventDefault();
+    const form = e.target;
+    try {
+        // Update name
+        await fetch(basePath + '/api/profiles?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name: form.name.value })
+        });
+        // Update color
+        await fetch(basePath + '/api/profiles/color?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ color: form.querySelector('input[name="color"]:checked').value })
+        });
+        // Update kids mode
+        await fetch(basePath + '/api/profiles/kids?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ isKidsProfile: form.isKids.checked })
+        });
+        hideModal();
+        showToast('Profile updated');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function setPin(profileId, pin) {
+    if (!pin || pin.length < 4) { showToast('PIN must be at least 4 characters', 'error'); return; }
+    try {
+        const res = await fetch(basePath + '/api/profiles/pin?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ pin })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('PIN set');
+        loadData();
+        hideModal();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function clearPin(profileId) {
+    try {
+        const res = await fetch(basePath + '/api/profiles/pin?profileId=' + profileId, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('PIN removed');
+        loadData();
+        hideModal();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showReassignModal(profileId) {
+    const p = profiles.find(x => x.id === profileId);
+    if (!p) return;
+
+    const accountOptions = accounts.map(a =>
+        `<option value="${a.id}" ${a.id === p.accountId ? 'selected' : ''}>${escapeHtml(a.username)}</option>`
+    ).join('');
+
+    showModal(`
+        <div class="card-header"><h2>Reassign Profile</h2></div>
+        <div class="card-body">
+            <p style="margin-bottom: 1rem;">Move <strong>${escapeHtml(p.name)}</strong> to a different account:</p>
+            <form onsubmit="reassignProfile(event, '${profileId}')">
+                <div class="form-group">
+                    <label class="form-label">Account</label>
+                    <select name="accountId" class="form-select">${accountOptions}</select>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Reassign</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function reassignProfile(e, profileId) {
+    e.preventDefault();
+    const accountId = e.target.accountId.value;
+    try {
+        const res = await fetch(basePath + '/api/profiles/reassign?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ accountId })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hideModal();
+        showToast('Profile reassigned');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function deleteProfile(profileId, name) {
+    if (!confirm(`Delete profile "${name}"? This cannot be undone.`)) return;
+    try {
+        const res = await fetch(basePath + '/api/profiles?profileId=' + profileId, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Profile deleted');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+// Account functions
+function showCreateAccountModal() {
+    showModal(`
+        <div class="card-header"><h2>Create Account</h2></div>
+        <div class="card-body">
+            <form onsubmit="createAccount(event)">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-input" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Confirm Password</label>
+                    <input type="password" name="confirmPassword" class="form-input" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function createAccount(e) {
+    e.preventDefault();
+    const form = e.target;
+    if (form.password.value !== form.confirmPassword.value) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    try {
+        const res = await fetch(basePath + '/api/accounts', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                username: form.username.value,
+                password: form.password.value
+            })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hideModal();
+        showToast('Account created');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showChangePasswordModal(accountId, username) {
+    showModal(`
+        <div class="card-header"><h2>Change Password</h2></div>
+        <div class="card-body">
+            <p style="margin-bottom: 1rem; color: var(--text-muted);">Changing password for <strong>${escapeHtml(username)}</strong></p>
+            <form onsubmit="changePassword(event, '${accountId}')">
+                <div class="form-group">
+                    <label class="form-label">New Password</label>
+                    <input type="password" name="password" class="form-input" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Confirm Password</label>
+                    <input type="password" name="confirm" class="form-input" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Change Password</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function changePassword(e, accountId) {
+    e.preventDefault();
+    const form = e.target;
+    if (form.password.value !== form.confirm.value) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    try {
+        const res = await fetch(basePath + '/api/accounts/password?accountId=' + accountId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ newPassword: form.password.value })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hideModal();
+        showToast('Password changed');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function deleteAccount(accountId, username) {
+    if (!confirm(`Delete account "${username}"? Profiles will be reassigned to the admin account.`)) return;
+    try {
+        const res = await fetch(basePath + '/api/accounts?accountId=' + accountId, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Account deleted');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showRenameAccountModal(accountId, currentUsername) {
+    showModal(`
+        <div class="card-header"><h2>Rename Account</h2></div>
+        <div class="card-body">
+            <form onsubmit="renameAccount(event, '${accountId}')">
+                <div class="form-group">
+                    <label class="form-label">New Username</label>
+                    <input type="text" name="username" class="form-input" value="${escapeHtml(currentUsername)}" required autofocus>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Rename</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function renameAccount(e, accountId) {
+    e.preventDefault();
+    const form = e.target;
+    try {
+        const res = await fetch(basePath + '/api/accounts?accountId=' + accountId, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ username: form.username.value })
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to rename account');
+        }
+        hideModal();
+        showToast('Account renamed');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+// Invitation functions
+function renderInvitations() {
+    const container = document.getElementById('invitations-list');
+    if (!container) return;
+
+    const validInvites = invitations.filter(i => !i.usedAt);
+    const usedInvites = invitations.filter(i => i.usedAt);
+    document.getElementById('invitations-count').textContent = validInvites.length + ' active invitation' + (validInvites.length !== 1 ? 's' : '');
+
+    if (invitations.length === 0) {
+        container.innerHTML = `<div class="card"><div class="card-body" style="text-align: center; color: var(--text-muted);">No invitations yet. Create one to invite users.</div></div>`;
+        return;
+    }
+
+    function formatDate(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    }
+
+    function getExpiryStatus(expiresAt, usedAt) {
+        if (usedAt) return '<span class="status-badge" style="font-size: 0.65rem;">Used</span>';
+        const now = new Date();
+        const expires = new Date(expiresAt);
+        if (expires < now) return '<span class="status-badge warning" style="font-size: 0.65rem;">Expired</span>';
+        const hoursLeft = Math.round((expires - now) / (1000 * 60 * 60));
+        if (hoursLeft < 24) return '<span class="status-badge online" style="font-size: 0.65rem;">' + hoursLeft + 'h left</span>';
+        const daysLeft = Math.round(hoursLeft / 24);
+        return '<span class="status-badge online" style="font-size: 0.65rem;">' + daysLeft + 'd left</span>';
+    }
+
+    container.innerHTML = invitations.map(inv => {
+        const isUsed = !!inv.usedAt;
+        const isExpired = !isUsed && new Date(inv.expiresAt) < new Date();
+
+        return `
+            <div class="card" style="margin-bottom: 0.75rem; ${isUsed || isExpired ? 'opacity: 0.6;' : ''}">
+                <div class="card-body" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: ${isUsed ? 'var(--text-muted)' : isExpired ? 'var(--warning)' : 'var(--accent)'}; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 24px; height: 24px;">
+                            <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                        </svg>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                            Invitation Link
+                            ${getExpiryStatus(inv.expiresAt, inv.usedAt)}
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+                            Created: ${formatDate(inv.createdAt)}
+                            ${isUsed ? ' | Used: ' + formatDate(inv.usedAt) : ' | Expires: ' + formatDate(inv.expiresAt)}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        ${!isUsed && !isExpired ? `<button class="btn btn-secondary btn-sm" onclick="copyInvitationLink('${inv.url}')">Copy Link</button>` : ''}
+                        <button class="btn btn-danger btn-sm" onclick="deleteInvitation('${inv.id}')">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function createInvitation() {
+    try {
+        const res = await fetch(basePath + '/api/invitations', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ expiresInHours: 168 }) // 7 days
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const inv = await res.json();
+
+        // Show the link in a modal
+        showModal(`
+            <div class="card-header"><h2>Invitation Created</h2></div>
+            <div class="card-body">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                    Share this link with the person you want to invite. It will expire in 7 days.
+                </p>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <input type="text" id="invitationUrl" class="form-input" value="${inv.url}" readonly style="flex: 1;">
+                    <button class="btn btn-primary" onclick="copyInvitationLink('${inv.url}'); hideModal();">Copy</button>
+                </div>
+                <p style="font-size: 0.8rem; color: var(--text-muted);">
+                    This link can only be used once.
+                </p>
+                <div style="display: flex; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button class="btn btn-secondary" onclick="hideModal()">Close</button>
+                </div>
+            </div>
+        `);
+
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function copyInvitationLink(url) {
+    try {
+        await navigator.clipboard.writeText(url);
+        showToast('Link copied to clipboard');
+    } catch (err) {
+        // Fallback for older browsers
+        const input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        showToast('Link copied to clipboard');
+    }
+}
+
+async function deleteInvitation(invitationId) {
+    if (!confirm('Delete this invitation link?')) return;
+    try {
+        const res = await fetch(basePath + '/api/invitations?invitationId=' + invitationId, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Invitation deleted');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+loadData();
+</script>
+{{end}}

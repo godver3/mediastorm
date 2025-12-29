@@ -9,7 +9,7 @@ import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, Linking, Platform, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Linking, Platform, ScrollView, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
   SafeAreaProvider,
@@ -18,6 +18,7 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
+import { AuthProvider, useAuth } from '../components/AuthContext';
 import { BackendSettingsProvider } from '../components/BackendSettingsContext';
 import { LiveProvider } from '../components/LiveContext';
 import { LoadingScreenProvider } from '../components/LoadingScreenContext';
@@ -31,11 +32,95 @@ import { WatchStatusProvider } from '../components/WatchStatusContext';
 import { NovaThemeProvider } from '../theme';
 import { GoBackConfiguration } from '@/services/remote-control/GoBackConfiguration';
 import { SpatialNavigationDeviceTypeProvider } from '@/services/tv-navigation';
+import LoginScreen from './login';
 
 import ConfigureRemoteControl from './configureRemoteControl';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * AuthGate renders the login screen when unauthenticated,
+ * or the main app when authenticated.
+ */
+function AuthGate() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  // Show loading indicator while checking stored auth
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0b0b0f' }}>
+        <ActivityIndicator size="large" color="#3f66ff" />
+      </View>
+    );
+  }
+
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <NovaThemeProvider>
+        <LoginScreen />
+      </NovaThemeProvider>
+    );
+  }
+
+  // Show main app when authenticated
+  return (
+    <UserProfilesProvider>
+      <PinEntryModal />
+      <LiveProvider>
+        <WatchlistProvider>
+          <WatchStatusProvider>
+            <ContinueWatchingProvider>
+              <MenuProvider>
+                <NovaThemeProvider>
+                  <LoadingScreenProvider>
+                    <ToastProvider>
+                      <ThemeProvider value={DarkTheme}>
+                        <SpatialNavigationDeviceTypeProvider>
+                          <ConfigureRemoteControl />
+                          <GoBackConfiguration />
+                          <Stack
+                            screenOptions={{
+                              headerShown: false,
+                              // Enable native swipe-back gesture on mobile
+                              gestureEnabled: !Platform.isTV,
+                              gestureDirection: 'horizontal',
+                              animation: Platform.isTV ? 'none' : 'default',
+                              // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
+                              freezeOnBlur: true,
+                            }}>
+                            {/* Drawer as the main screen - uses file-based routing */}
+                            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+                            {/* Details should render as a standard screen so it shares navigation affordances */}
+                            <Stack.Screen
+                              name="details"
+                              options={{
+                                headerShown: false,
+                                // Enable swipe-back gesture on details page
+                                gestureEnabled: !Platform.isTV,
+                                gestureDirection: 'horizontal',
+                                animation: Platform.isTV ? 'none' : 'slide_from_right',
+                              }}
+                            />
+                            <Stack.Screen
+                              name="player"
+                              options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
+                            />
+                          </Stack>
+                        </SpatialNavigationDeviceTypeProvider>
+                      </ThemeProvider>
+                    </ToastProvider>
+                  </LoadingScreenProvider>
+                </NovaThemeProvider>
+              </MenuProvider>
+            </ContinueWatchingProvider>
+          </WatchStatusProvider>
+        </WatchlistProvider>
+      </LiveProvider>
+    </UserProfilesProvider>
+  );
+}
 
 if (Platform.OS === 'ios') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,59 +262,9 @@ export default function RootLayout() {
         {__DEV__ && Platform.OS === 'ios' ? <SafeAreaDebugLogger /> : null}
         <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
           <BackendSettingsProvider>
-            <UserProfilesProvider>
-              <PinEntryModal />
-              <LiveProvider>
-                <WatchlistProvider>
-                  <WatchStatusProvider>
-                    <ContinueWatchingProvider>
-                      <MenuProvider>
-                        <NovaThemeProvider>
-                          <LoadingScreenProvider>
-                            <ToastProvider>
-                              <ThemeProvider value={DarkTheme}>
-                                <SpatialNavigationDeviceTypeProvider>
-                                  <ConfigureRemoteControl />
-                                  <GoBackConfiguration />
-                                  <Stack
-                                    screenOptions={{
-                                      headerShown: false,
-                                      // Enable native swipe-back gesture on mobile
-                                      gestureEnabled: !Platform.isTV,
-                                      gestureDirection: 'horizontal',
-                                      animation: Platform.isTV ? 'none' : 'default',
-                                      // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
-                                      freezeOnBlur: true,
-                                    }}>
-                                    {/* Drawer as the main screen - uses file-based routing */}
-                                    <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-                                    {/* Details should render as a standard screen so it shares navigation affordances */}
-                                    <Stack.Screen
-                                      name="details"
-                                      options={{
-                                        headerShown: false,
-                                        // Enable swipe-back gesture on details page
-                                        gestureEnabled: !Platform.isTV,
-                                        gestureDirection: 'horizontal',
-                                        animation: Platform.isTV ? 'none' : 'slide_from_right',
-                                      }}
-                                    />
-                                    <Stack.Screen
-                                      name="player"
-                                      options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
-                                    />
-                                  </Stack>
-                                </SpatialNavigationDeviceTypeProvider>
-                              </ThemeProvider>
-                            </ToastProvider>
-                          </LoadingScreenProvider>
-                        </NovaThemeProvider>
-                      </MenuProvider>
-                    </ContinueWatchingProvider>
-                  </WatchStatusProvider>
-                </WatchlistProvider>
-              </LiveProvider>
-            </UserProfilesProvider>
+            <AuthProvider>
+              <AuthGate />
+            </AuthProvider>
           </BackendSettingsProvider>
         </View>
       </SafeAreaProvider>

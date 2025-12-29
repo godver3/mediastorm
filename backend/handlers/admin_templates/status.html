@@ -1,6 +1,6 @@
 {{template "base" .}}
 
-{{define "title"}}Dashboard - strmr Admin{{end}}
+{{define "title"}}Dashboard - {{if .IsAdmin}}strmr Admin{{else}}strmr Account{{end}}{{end}}
 
 {{define "content"}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
@@ -18,7 +18,7 @@
 </div>
 
 <!-- Connection Status -->
-<div class="grid grid-4" style="margin-bottom: 1.5rem;">
+<div class="grid {{if .IsAdmin}}grid-4{{else}}grid-2{{end}}" style="margin-bottom: 1.5rem;">
     <div class="stat-card">
         <div class="stat-label">Backend</div>
         <div class="stat-value" id="backendStatus">
@@ -28,7 +28,7 @@
             <span class="status-badge offline"><span class="status-dot"></span> Offline</span>
             {{end}}
         </div>
-        <div class="stat-subtext">http://{{.Settings.Server.Host}}:{{.Settings.Server.Port}}</div>
+        {{if .IsAdmin}}<div class="stat-subtext">http://{{.Settings.Server.Host}}:{{.Settings.Server.Port}}</div>{{end}}
     </div>
 
     <div class="stat-card">
@@ -37,6 +37,7 @@
         <div class="stat-subtext" id="streamSubtext">Loading...</div>
     </div>
 
+    {{if .IsAdmin}}
     <div class="stat-card">
         <div class="stat-label">Service Mode</div>
         <div class="stat-value" style="font-size: 1rem;">{{.Settings.Streaming.ServiceMode}}</div>
@@ -60,6 +61,7 @@
         <div class="stat-value">{{.Settings.Streaming.MaxCacheSizeMB}} MB</div>
         <div class="stat-subtext">{{.Settings.Streaming.MaxDownloadWorkers}} workers</div>
     </div>
+    {{end}}
 </div>
 
 <!-- Active Streams -->
@@ -89,6 +91,7 @@
     </div>
 </div>
 
+{{if .IsAdmin}}
 <!-- Service Health -->
 <div class="grid grid-2" style="margin-bottom: 1.5rem;">
     <div class="card">
@@ -185,7 +188,9 @@
         </div>
     </div>
 </div>
+{{end}}
 
+{{if .IsAdmin}}
 <!-- Endpoint Health -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
@@ -345,7 +350,7 @@
                 </svg>
                 Indexers
             </h2>
-            <a href="/admin/settings#indexers" class="btn btn-sm btn-secondary">Edit</a>
+            <a href="{{$.BasePath}}/settings#indexers" class="btn btn-sm btn-secondary">Edit</a>
         </div>
         <div class="card-body">
             {{if .Settings.Indexers}}
@@ -396,7 +401,7 @@
                 </svg>
                 Torrent Scrapers
             </h2>
-            <a href="/admin/settings#torrentScrapers" class="btn btn-sm btn-secondary">Edit</a>
+            <a href="{{$.BasePath}}/settings#torrentScrapers" class="btn btn-sm btn-secondary">Edit</a>
         </div>
         <div class="card-body">
             {{if .Settings.TorrentScrapers}}
@@ -439,11 +444,14 @@
     </div>
 </div>
 {{end}}
+{{end}}
 
 {{define "scripts"}}
 <script>
     const pin = {{json .Settings.Server.PIN}};
-    
+    const basePath = {{json .BasePath}};
+    const isAdmin = {{json .IsAdmin}};
+
     async function testEndpoint(endpoint, elementPrefix) {
         const statusEl = document.getElementById(elementPrefix+'-status');
         const timeEl = document.getElementById(elementPrefix+'-time');
@@ -509,7 +517,7 @@
         const countEl = document.getElementById('activeStreamCount');
         const subtextEl = document.getElementById('streamSubtext');
         try {
-            const response = await fetch('/admin/api/streams');
+            const response = await fetch(basePath + '/api/streams');
             const data = await response.json();
             if (data.error) {
                 countEl.textContent = '-';
@@ -537,7 +545,7 @@
 
     async function refreshStatus() {
         try {
-            const status = await apiCall('/admin/api/status');
+            const status = await apiCall(basePath + '/api/status');
             const backendEl = document.getElementById('backendStatus');
             if (status.backend_reachable) {
                 backendEl.innerHTML = '<span class="status-badge online"><span class="status-dot"></span> Online</span>';
@@ -560,7 +568,7 @@
             }
         });
         try {
-            const response = await fetch('/admin/api/debrid-status');
+            const response = await fetch(basePath + '/api/debrid-status');
             const data = await response.json();
             if (data.error) {
                 rows.forEach(row => {
@@ -615,9 +623,11 @@
     setInterval(() => { refreshStreams(); }, 10000);
 
     document.addEventListener('DOMContentLoaded', () => {
-        testEndpoints();
         refreshStreams();
-        refreshDebridStatus();
+        if (isAdmin) {
+            testEndpoints();
+            refreshDebridStatus();
+        }
     });
 </script>
 {{end}}
