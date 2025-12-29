@@ -393,6 +393,9 @@ func (proc *Processor) processRarArchiveWithDir(ctx context.Context, parsed *Par
 		firstVideoFound := false
 		var firstVideoPath string
 
+		// Collect nested RAR files for recursive processing
+		var nestedRarContents []rarContent
+
 		// Analyze RAR content using progressive analysis with callback
 		analysisStart := time.Now()
 		rarContents, err := proc.rarProcessor.AnalyzeRarContentFromNzbProgressive(ctx, rarFiles, func(rc rarContent) bool {
@@ -400,6 +403,17 @@ func (proc *Processor) processRarArchiveWithDir(ctx context.Context, parsed *Par
 			if rc.IsDirectory {
 				proc.log.Debug("Skipping directory in RAR archive", "path", rc.InternalPath)
 				return true // Continue analysis
+			}
+
+			// Check if this is a nested RAR file - collect for later processing
+			if proc.isRarFile(rc.Filename) {
+				proc.log.Info("Found nested RAR file inside archive",
+					"file", rc.Filename,
+					"internal_path", rc.InternalPath,
+					"size", rc.Size,
+					"segments", len(rc.Segments))
+				nestedRarContents = append(nestedRarContents, rc)
+				return true // Continue analysis - don't create metadata for nested RARs
 			}
 
 			// Check if this is a video file
@@ -460,9 +474,28 @@ func (proc *Processor) processRarArchiveWithDir(ctx context.Context, parsed *Par
 		proc.log.Info("Successfully analyzed RAR archive content",
 			"archive", nzbBaseName,
 			"files_in_archive", len(rarContents),
+			"nested_rar_files", len(nestedRarContents),
 			"first_video_found", firstVideoFound,
 			"first_video_path", firstVideoPath,
 			"analysis_duration", time.Since(analysisStart))
+
+		// Process nested RAR archives if any were found
+		if len(nestedRarContents) > 0 && !firstVideoFound {
+			proc.log.Info("Processing nested RAR archives",
+				"nested_rar_count", len(nestedRarContents),
+				"rar_dir", rarDirPath)
+
+			nestedVideoPath, nestedErr := proc.processNestedRarArchives(ctx, nestedRarContents, rarDirPath, parsed.Path)
+			if nestedErr != nil {
+				proc.log.Warn("Failed to process nested RAR archives",
+					"error", nestedErr)
+			} else if nestedVideoPath != "" {
+				firstVideoFound = true
+				firstVideoPath = nestedVideoPath
+				proc.log.Info("Found video file in nested RAR archive",
+					"video_path", firstVideoPath)
+			}
+		}
 
 		proc.log.Info("Completed RAR archive metadata materialization",
 			"archive", nzbBaseName,
@@ -709,6 +742,120 @@ func (proc *Processor) isVideoFile(filename string) bool {
 		}
 	}
 	return false
+}
+
+// isRarFile checks if a filename is a RAR archive file
+func (proc *Processor) isRarFile(filename string) bool {
+	lower := strings.ToLower(filename)
+	// Check common RAR patterns: .rar, .r00, .r01, .part01.rar, etc.
+	if strings.HasSuffix(lower, ".rar") {
+		return true
+	}
+	// Check .r## pattern (e.g., .r00, .r01)
+	if len(lower) > 3 && lower[len(lower)-3] == '.' && lower[len(lower)-2] == 'r' {
+		lastChar := lower[len(lower)-1]
+		if lastChar >= '0' && lastChar <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// processNestedRarArchives handles RAR files found inside another RAR archive
+func (proc *Processor) processNestedRarArchives(ctx context.Context, nestedRarContents []rarContent, rarDirPath string, sourceNzbPath string) (string, error) {
+	if len(nestedRarContents) == 0 {
+		return "", nil
+	}
+
+	// Convert rarContent to ParsedFile format for the RAR processor
+	nestedRarFiles := make([]ParsedFile, len(nestedRarContents))
+	for i, rc := range nestedRarContents {
+		nestedRarFiles[i] = ParsedFile{
+			Filename:     rc.Filename,
+			Size:         rc.Size,
+			Segments:     rc.Segments,
+			IsRarArchive: true,
+		}
+	}
+
+	proc.log.Info("Processing nested RAR archive",
+		"parts", len(nestedRarFiles),
+		"rar_dir", rarDirPath)
+
+	// Track if we've found a video file
+	var firstVideoPath string
+
+	// Analyze the nested RAR content
+	nestedContents, err := proc.rarProcessor.AnalyzeRarContentFromNzbProgressive(ctx, nestedRarFiles, func(rc rarContent) bool {
+		// Skip directories
+		if rc.IsDirectory {
+			proc.log.Debug("Skipping directory in nested RAR archive", "path", rc.InternalPath)
+			return true
+		}
+
+		// Check if this is yet another nested RAR (prevent infinite recursion - max 2 levels)
+		if proc.isRarFile(rc.Filename) {
+			proc.log.Warn("Found deeply nested RAR file (3+ levels) - skipping to prevent infinite recursion",
+				"file", rc.Filename,
+				"internal_path", rc.InternalPath)
+			return true
+		}
+
+		// Check if this is a video file
+		isVideo := proc.isVideoFile(rc.Filename)
+
+		// Determine the virtual file path for this extracted file
+		virtualFilePath := filepath.Join(rarDirPath, rc.InternalPath)
+		virtualFilePath = strings.ReplaceAll(virtualFilePath, string(filepath.Separator), "/")
+
+		// Ensure parent directory exists for nested files
+		if err := proc.ensureDirectoryExists(filepath.Dir(virtualFilePath)); err != nil {
+			proc.log.Warn("Failed to create parent directory for nested RAR file",
+				"file", rc.Filename,
+				"error", err)
+			return true
+		}
+
+		// Create file metadata
+		fileMeta := proc.rarProcessor.CreateFileMetadataFromRarContent(rc, sourceNzbPath)
+
+		// Write file metadata to disk
+		if err := proc.metadataService.WriteFileMetadata(virtualFilePath, fileMeta); err != nil {
+			proc.log.Warn("Failed to write metadata for nested RAR file",
+				"file", rc.Filename,
+				"error", err)
+			return true
+		}
+
+		proc.log.Info("Created metadata for nested RAR extracted file",
+			"file", rc.Filename,
+			"internal_path", rc.InternalPath,
+			"virtual_path", virtualFilePath,
+			"size", rc.Size,
+			"is_video", isVideo,
+			"segments", len(rc.Segments))
+
+		// If this is the first video file, mark it
+		if isVideo && firstVideoPath == "" {
+			firstVideoPath = virtualFilePath
+			proc.log.Info("First video file discovered in nested RAR - playback can start",
+				"file", rc.Filename,
+				"path", virtualFilePath,
+				"size", rc.Size)
+		}
+
+		return true
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to analyze nested RAR archive: %w", err)
+	}
+
+	proc.log.Info("Successfully processed nested RAR archive",
+		"files_in_archive", len(nestedContents),
+		"video_found", firstVideoPath != "")
+
+	return firstVideoPath, nil
 }
 
 // separate7zFiles separates 7z files from regular files

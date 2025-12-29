@@ -205,10 +205,9 @@ func (p *Parser) parseFile(file nzbparser.NzbFile, meta map[string]string, allFi
 
 	// Normalize segment sizes using yEnc PartSize headers if needed
 	// This handles cases where NZB segment sizes include yEnc encoding overhead
-	// Skip for RAR and 7z files since archive analysis will determine exact sizes anyway
-	isRarFile := rarPattern.MatchString(file.Filename)
-	is7zFile := sevenZipPattern.MatchString(file.Filename)
-	if !isRarFile && !is7zFile && p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) >= 2 {
+	// This is required for all file types including RAR/7z since archive analysis
+	// depends on accurate segment sizes for seeking within files
+	if p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) >= 2 {
 		err := p.normalizeSegmentSizesWithYenc(file.Segments)
 		if err != nil {
 			// Log the error but continue with original segment sizes
