@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
+import React, { memo, useMemo, useState, useEffect } from 'react';
 import { Image } from './Image';
 import { StyleSheet, Text, View, Platform, Pressable } from 'react-native';
 import Animated, { useSharedValue, withTiming, Easing } from 'react-native-reanimated';
@@ -193,19 +193,13 @@ const EpisodeCard = memo(function EpisodeCard({ episode }: EpisodeCardProps) {
   const [isOverviewExpanded, setIsOverviewExpanded] = useState(false);
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
-  const [isExpandable, setIsExpandable] = useState(false);
   const overviewHeight = useSharedValue(styles.minCollapsedHeight + 4);
-  // Track raw measured heights to determine if text actually needs expansion
-  const rawCollapsedHeightRef = useRef(0);
-  const rawExpandedHeightRef = useRef(0);
 
   // Reset state when episode changes
   useEffect(() => {
     setIsOverviewExpanded(false);
-    setIsExpandable(false);
-    // Reset measurement refs for fresh calculation
-    rawCollapsedHeightRef.current = 0;
-    rawExpandedHeightRef.current = 0;
+    setCollapsedHeight(0);
+    setExpandedHeight(0);
     // Set initial height to minimum to avoid visual jump
     overviewHeight.value = styles.minCollapsedHeight + 4;
   }, [episode.id, styles.minCollapsedHeight]);
@@ -285,41 +279,27 @@ const EpisodeCard = memo(function EpisodeCard({ episode }: EpisodeCardProps) {
               setIsOverviewExpanded((prev) => !prev);
             }}>
             <View>
-              {/* Hidden text to measure collapsed height - key forces remount on episode change */}
+              {/* Hidden text to measure collapsed height */}
               <Text
-                key={`collapsed-${episode.id}`}
                 style={[styles.episodeOverview, styles.overviewHidden]}
                 numberOfLines={COLLAPSED_LINES}
                 onLayout={(e) => {
                   const height = e.nativeEvent.layout.height;
-                  if (height > 0) {
-                    rawCollapsedHeightRef.current = height;
-                    // Use minimum of 4 lines to keep consistent height between episodes
-                    const bufferedHeight = Math.max(height, styles.minCollapsedHeight) + 4;
+                  if (height > 0 && collapsedHeight === 0) {
+                    const bufferedHeight = height + 4;
                     setCollapsedHeight(bufferedHeight);
                     overviewHeight.value = bufferedHeight;
-                    // Check if expandable after both measurements are done
-                    if (rawExpandedHeightRef.current > 0) {
-                      setIsExpandable(rawExpandedHeightRef.current > height + 2);
-                    }
                   }
                 }}>
                 {episode.overview}
               </Text>
-              {/* Hidden text to measure full height - key forces remount on episode change */}
+              {/* Hidden text to measure full height */}
               <Text
-                key={`expanded-${episode.id}`}
                 style={[styles.episodeOverview, styles.overviewHidden]}
                 onLayout={(e) => {
                   const height = e.nativeEvent.layout.height;
-                  if (height > 0) {
-                    rawExpandedHeightRef.current = height;
-                    // Use minimum of 4 lines to keep consistent height between episodes
-                    setExpandedHeight(Math.max(height, styles.minCollapsedHeight) + 4);
-                    // Check if expandable after both measurements are done
-                    if (rawCollapsedHeightRef.current > 0) {
-                      setIsExpandable(height > rawCollapsedHeightRef.current + 2);
-                    }
+                  if (height > 0 && expandedHeight === 0) {
+                    setExpandedHeight(height + 4);
                   }
                 }}>
                 {episode.overview}
@@ -327,17 +307,18 @@ const EpisodeCard = memo(function EpisodeCard({ episode }: EpisodeCardProps) {
               {/* Visible animated container */}
               <Animated.View
                 style={[{ overflow: 'hidden' }, collapsedHeight > 0 ? { height: overviewHeight } : undefined]}>
-                <Text style={[styles.episodeOverview, { marginBottom: 0 }]}>{episode.overview}</Text>
+                <Text
+                  style={[styles.episodeOverview, { marginBottom: 0 }]}
+                  numberOfLines={isOverviewExpanded ? undefined : COLLAPSED_LINES}>
+                  {episode.overview}
+                </Text>
               </Animated.View>
             </View>
-            <Text
-              style={[
-                styles.overviewToggle,
-                // Hide text but preserve space when not expandable
-                !isExpandable && { opacity: 0 },
-              ]}>
-              {isOverviewExpanded ? 'Show less' : 'More'}
-            </Text>
+            {expandedHeight > collapsedHeight && (
+              <Text style={styles.overviewToggle}>
+                {isOverviewExpanded ? 'Show less' : 'More'}
+              </Text>
+            )}
           </Pressable>
         </View>
       )}
