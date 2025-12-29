@@ -83,7 +83,11 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 							ErrorMessage: "stream returned 404 (not found)",
 						}, nil
 					}
-					if resp.StatusCode >= 400 {
+					// 405 = Method Not Allowed means HEAD isn't supported but GET may work fine
+				// Fall through to ffprobe check instead of treating as uncached
+				if resp.StatusCode == http.StatusMethodNotAllowed {
+						log.Printf("[debrid-health] pre-resolved stream %s: HEAD not supported (405), falling through to ffprobe", result.Title)
+					} else if resp.StatusCode >= 400 {
 						log.Printf("[debrid-health] pre-resolved stream %s returned HTTP %d - treating as uncached", result.Title, resp.StatusCode)
 						return &DebridHealthCheck{
 							Healthy:      false,
