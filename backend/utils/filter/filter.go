@@ -146,6 +146,24 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			continue
 		}
 
+		// Filter by media type using season/episode detection
+		// TV shows have seasons/episodes, movies don't
+		hasTVPattern := len(parsed.Seasons) > 0 || len(parsed.Episodes) > 0
+
+		if opts.IsMovie && hasTVPattern {
+			// Searching for a movie but result has TV show pattern (S01E01 etc)
+			log.Printf("[filter] Rejecting %q: searching for movie but result has TV pattern (seasons=%v, episodes=%v)",
+				result.Title, parsed.Seasons, parsed.Episodes)
+			continue
+		}
+
+		if !opts.IsMovie && !hasTVPattern {
+			// Searching for a TV show but result has no TV indicators
+			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
+				result.Title)
+			continue
+		}
+
 		// For movies, also check year
 		if opts.IsMovie && opts.ExpectedYear > 0 {
 			if parsed.Year > 0 {
