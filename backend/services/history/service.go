@@ -391,6 +391,21 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			if prog.SeriesID != "" {
 				hiddenSeriesIDs[prog.SeriesID] = true
 			}
+			// Also extract series ID from episode itemId (format: "tvdb:series:12345:S01E01")
+			// This handles cases where seriesId wasn't stored but can be inferred
+			if prog.MediaType == "episode" || (prog.SeasonNumber > 0 && prog.EpisodeNumber > 0) {
+				parts := strings.Split(prog.ItemID, ":")
+				// Look for :S pattern to find where episode info starts
+				for i := len(parts) - 1; i >= 0; i-- {
+					if strings.HasPrefix(parts[i], "S") && len(parts[i]) > 1 {
+						inferredSeriesID := strings.Join(parts[:i], ":")
+						if inferredSeriesID != "" {
+							hiddenSeriesIDs[inferredSeriesID] = true
+						}
+						break
+					}
+				}
+			}
 		}
 	}
 
