@@ -24,6 +24,11 @@ type mdblistClient struct {
 	cacheMu  sync.RWMutex
 	cache    map[string]*mdblistCacheEntry
 	cacheTTL time.Duration
+
+	// Rate limiting
+	throttleMu  sync.Mutex
+	lastRequest time.Time
+	minInterval time.Duration
 }
 
 type mdblistCacheEntry struct {
@@ -74,6 +79,7 @@ func newMDBListClient(apiKey string, enabledRatings []string, enabled bool) *mdb
 		enabled:        enabled,
 		cache:          make(map[string]*mdblistCacheEntry),
 		cacheTTL:       24 * time.Hour, // Cache ratings for 24 hours to match metadata cache
+		minInterval:    100 * time.Millisecond,
 	}
 }
 
@@ -133,26 +139,62 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 	// Fetch all ratings in a single API call using /imdb/{type}/{id} endpoint
 	url := fmt.Sprintf("https://api.mdblist.com/imdb/%s/%s?apikey=%s", mediaType, imdbID, c.apiKey)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		log.Printf("[mdblist] http request error: %v", err)
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[mdblist] unexpected status %d for %s", resp.StatusCode, url)
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
 	var result mdblistMediaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	var lastErr error
+	backoff := 300 * time.Millisecond
+
+	// Retry loop with exponential backoff
+	for attempt := 0; attempt < 3; attempt++ {
+		// Rate limiting - ensure minimum interval between requests
+		c.throttleMu.Lock()
+		since := time.Since(c.lastRequest)
+		if since < c.minInterval {
+			time.Sleep(c.minInterval - since)
+		}
+		c.lastRequest = time.Now()
+		c.throttleMu.Unlock()
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("http request: %w", err)
+			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		// Handle rate limiting and server errors with retry
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			log.Printf("[mdblist] rate limited or server error (attempt %d/3): status %d", attempt+1, resp.StatusCode)
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("[mdblist] unexpected status %d for %s", resp.StatusCode, url)
+			return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		resp.Body.Close()
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
 	}
 
 	// Filter ratings based on enabled settings and convert to our format

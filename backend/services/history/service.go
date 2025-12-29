@@ -359,6 +359,7 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 
 // buildContinueWatchingFromHistory generates continue watching list from watch history and playback progress.
 // Prioritizes in-progress episodes (partially watched) over completed episodes.
+// Metadata lookups are parallelized for better performance.
 func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID string) ([]models.SeriesWatchState, error) {
 	s.mu.RLock()
 	metadataSvc := s.metadataService
@@ -491,148 +492,8 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 		}
 	}
 
-	// Build continue watching for each series
-	var continueWatching []models.SeriesWatchState
-
-	for seriesID := range seriesInfo {
-		info := seriesInfo[seriesID]
-		episodes := seriesEpisodes[seriesID] // May be empty if only in-progress
-		inProgress := inProgressBySeriesCache[seriesID]
-
-		var state models.SeriesWatchState
-		var nextEpisode *models.EpisodeReference
-
-		// Priority 1: In-progress episode (resume watching)
-		// For in-progress, we don't need full series details since we already have episode info
-		if inProgress != nil {
-			// The in-progress episode IS the next episode to watch
-			nextEpisode = &models.EpisodeReference{
-				SeasonNumber:  inProgress.SeasonNumber,
-				EpisodeNumber: inProgress.EpisodeNumber,
-				Title:         inProgress.EpisodeName,
-			}
-
-			// For in-progress, use the in-progress episode as both last and next
-			state = models.SeriesWatchState{
-				SeriesID:    seriesID,
-				SeriesTitle: inProgress.SeriesName,
-				Year:        inProgress.Year,
-				ExternalIDs: inProgress.ExternalIDs,
-				UpdatedAt:   inProgress.UpdatedAt,
-				LastWatched: *nextEpisode,
-				NextEpisode: nextEpisode,
-			}
-
-			// Get lightweight series info (poster, backdrop, external IDs only - no episodes)
-			seriesInfo, err := s.getSeriesInfoWithCache(ctx, seriesID, info.SeriesName, info.ExternalIDs)
-			if err == nil && seriesInfo != nil {
-				// Add poster/backdrop from metadata
-				if seriesInfo.Poster != nil {
-					state.PosterURL = seriesInfo.Poster.URL
-				}
-				if seriesInfo.Backdrop != nil {
-					state.BackdropURL = seriesInfo.Backdrop.URL
-				}
-
-				// Enrich external IDs from metadata (prioritize metadata over history)
-				if state.ExternalIDs == nil {
-					state.ExternalIDs = make(map[string]string)
-				}
-				if seriesInfo.IMDBID != "" {
-					state.ExternalIDs["imdb"] = seriesInfo.IMDBID
-				}
-				if seriesInfo.TMDBID > 0 {
-					state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesInfo.TMDBID)
-				}
-				if seriesInfo.TVDBID > 0 {
-					state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesInfo.TVDBID)
-				}
-
-				// Use metadata year if available
-				if seriesInfo.Year > 0 {
-					state.Year = seriesInfo.Year
-				}
-			}
-		} else if len(episodes) > 0 {
-			// Priority 2: Next unwatched episode after most recently completed
-			// For this case we DO need full series details to find the next episode
-			// Sort episodes by watch date (most recent first)
-			sort.Slice(episodes, func(i, j int) bool {
-				return episodes[i].WatchedAt.After(episodes[j].WatchedAt)
-			})
-
-			mostRecentEpisode := episodes[0]
-
-			// Get full series details (with all episodes) to find next unwatched
-			seriesDetails, err := s.getSeriesMetadataWithCache(ctx, seriesID, info.SeriesName, info.ExternalIDs)
-			if err != nil {
-				// Skip this series if metadata unavailable
-				continue
-			}
-
-			// Find next unwatched episode
-			nextEpisode = s.findNextUnwatchedEpisode(seriesDetails, mostRecentEpisode, episodes)
-			if nextEpisode == nil {
-				// No next episode available, skip this series
-				continue
-			}
-
-			state = models.SeriesWatchState{
-				SeriesID:    seriesID,
-				SeriesTitle: mostRecentEpisode.SeriesName,
-				Year:        mostRecentEpisode.Year,
-				ExternalIDs: mostRecentEpisode.ExternalIDs,
-				UpdatedAt:   mostRecentEpisode.WatchedAt,
-				LastWatched: s.convertToEpisodeRef(mostRecentEpisode),
-				NextEpisode: nextEpisode,
-			}
-
-			// Build watched episodes map
-			watchedMap := make(map[string]models.EpisodeReference)
-			for _, ep := range episodes {
-				key := episodeKey(ep.SeasonNumber, ep.EpisodeNumber)
-				watchedMap[key] = s.convertToEpisodeRef(ep)
-			}
-			state.WatchedEpisodes = watchedMap
-
-			// Enrich with metadata from series details
-			if seriesDetails != nil {
-				// Add poster/backdrop from metadata
-				if seriesDetails.Title.Poster != nil {
-					state.PosterURL = seriesDetails.Title.Poster.URL
-				}
-				if seriesDetails.Title.Backdrop != nil {
-					state.BackdropURL = seriesDetails.Title.Backdrop.URL
-				}
-
-				// Enrich external IDs from metadata (prioritize metadata over history)
-				if state.ExternalIDs == nil {
-					state.ExternalIDs = make(map[string]string)
-				}
-				if seriesDetails.Title.IMDBID != "" {
-					state.ExternalIDs["imdb"] = seriesDetails.Title.IMDBID
-				}
-				if seriesDetails.Title.TMDBID > 0 {
-					state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesDetails.Title.TMDBID)
-				}
-				if seriesDetails.Title.TVDBID > 0 {
-					state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesDetails.Title.TVDBID)
-				}
-
-				// Use metadata year if available
-				if seriesDetails.Title.Year > 0 {
-					state.Year = seriesDetails.Title.Year
-				}
-			}
-		} else {
-			// No episodes and no in-progress (shouldn't happen)
-			continue
-		}
-
-		continueWatching = append(continueWatching, state)
-	}
-
-	// Add in-progress movies to continue watching
+	// Collect movies that need processing (filter out <5% watched and hidden)
+	var moviesToProcess []*models.PlaybackProgress
 	for i := range progressItems {
 		prog := &progressItems[i]
 
@@ -641,25 +502,218 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			continue
 		}
 
-		// Only include movies with 0-90% progress (resume watching)
-		if prog.MediaType == "movie" && prog.PercentWatched > 0 && prog.PercentWatched < 90 {
+		// Only include movies with 5-90% progress (resume watching)
+		// Movies with <5% watched are excluded as they likely weren't really started
+		if prog.MediaType == "movie" && prog.PercentWatched >= 5 && prog.PercentWatched < 90 {
+			moviesToProcess = append(moviesToProcess, prog)
+		}
+	}
+
+	log.Printf("[history] continue watching: %d series to process, %d movies to process", len(seriesInfo), len(moviesToProcess))
+
+	// === PARALLEL METADATA LOOKUPS ===
+	// Use a semaphore to limit concurrent metadata requests
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Results will be collected here
+	var continueWatching []models.SeriesWatchState
+
+	// Process series in parallel
+	type seriesTask struct {
+		seriesID   string
+		info       models.WatchHistoryItem
+		episodes   []models.WatchHistoryItem
+		inProgress *models.PlaybackProgress
+	}
+
+	var seriesTasks []seriesTask
+	for seriesID := range seriesInfo {
+		seriesTasks = append(seriesTasks, seriesTask{
+			seriesID:   seriesID,
+			info:       seriesInfo[seriesID],
+			episodes:   seriesEpisodes[seriesID],
+			inProgress: inProgressBySeriesCache[seriesID],
+		})
+	}
+
+	for _, task := range seriesTasks {
+		wg.Add(1)
+		go func(t seriesTask) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var state models.SeriesWatchState
+			var nextEpisode *models.EpisodeReference
+
+			// Priority 1: In-progress episode (resume watching)
+			// For in-progress, we don't need full series details since we already have episode info
+			if t.inProgress != nil {
+				// The in-progress episode IS the next episode to watch
+				nextEpisode = &models.EpisodeReference{
+					SeasonNumber:  t.inProgress.SeasonNumber,
+					EpisodeNumber: t.inProgress.EpisodeNumber,
+					Title:         t.inProgress.EpisodeName,
+				}
+
+				// For in-progress, use the in-progress episode as both last and next
+				state = models.SeriesWatchState{
+					SeriesID:    t.seriesID,
+					SeriesTitle: t.inProgress.SeriesName,
+					Year:        t.inProgress.Year,
+					ExternalIDs: t.inProgress.ExternalIDs,
+					UpdatedAt:   t.inProgress.UpdatedAt,
+					LastWatched: *nextEpisode,
+					NextEpisode: nextEpisode,
+				}
+
+				// Get lightweight series info (poster, backdrop, external IDs only - no episodes)
+				seriesInfo, err := s.getSeriesInfoWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
+				if err == nil && seriesInfo != nil {
+					// Add poster/backdrop from metadata
+					if seriesInfo.Poster != nil {
+						state.PosterURL = seriesInfo.Poster.URL
+					}
+					if seriesInfo.Backdrop != nil {
+						state.BackdropURL = seriesInfo.Backdrop.URL
+					}
+
+					// Enrich external IDs from metadata (prioritize metadata over history)
+					if state.ExternalIDs == nil {
+						state.ExternalIDs = make(map[string]string)
+					}
+					if seriesInfo.IMDBID != "" {
+						state.ExternalIDs["imdb"] = seriesInfo.IMDBID
+					}
+					if seriesInfo.TMDBID > 0 {
+						state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesInfo.TMDBID)
+					}
+					if seriesInfo.TVDBID > 0 {
+						state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesInfo.TVDBID)
+					}
+
+					// Use metadata year if available
+					if seriesInfo.Year > 0 {
+						state.Year = seriesInfo.Year
+					}
+				}
+			} else if len(t.episodes) > 0 {
+				// Priority 2: Next unwatched episode after most recently completed
+				// For this case we DO need full series details to find the next episode
+				// Sort episodes by watch date (most recent first)
+				episodes := make([]models.WatchHistoryItem, len(t.episodes))
+				copy(episodes, t.episodes)
+				sort.Slice(episodes, func(i, j int) bool {
+					return episodes[i].WatchedAt.After(episodes[j].WatchedAt)
+				})
+
+				mostRecentEpisode := episodes[0]
+
+				// Get full series details (with all episodes) to find next unwatched
+				seriesDetails, err := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
+				if err != nil {
+					// Skip this series if metadata unavailable
+					return
+				}
+
+				// Find next unwatched episode
+				nextEpisode = s.findNextUnwatchedEpisode(seriesDetails, mostRecentEpisode, episodes)
+				if nextEpisode == nil {
+					// No next episode available, skip this series
+					return
+				}
+
+				state = models.SeriesWatchState{
+					SeriesID:    t.seriesID,
+					SeriesTitle: mostRecentEpisode.SeriesName,
+					Year:        mostRecentEpisode.Year,
+					ExternalIDs: mostRecentEpisode.ExternalIDs,
+					UpdatedAt:   mostRecentEpisode.WatchedAt,
+					LastWatched: s.convertToEpisodeRef(mostRecentEpisode),
+					NextEpisode: nextEpisode,
+				}
+
+				// Build watched episodes map
+				watchedMap := make(map[string]models.EpisodeReference)
+				for _, ep := range episodes {
+					key := episodeKey(ep.SeasonNumber, ep.EpisodeNumber)
+					watchedMap[key] = s.convertToEpisodeRef(ep)
+				}
+				state.WatchedEpisodes = watchedMap
+
+				// Enrich with metadata from series details
+				if seriesDetails != nil {
+					// Add poster/backdrop from metadata
+					if seriesDetails.Title.Poster != nil {
+						state.PosterURL = seriesDetails.Title.Poster.URL
+					}
+					if seriesDetails.Title.Backdrop != nil {
+						state.BackdropURL = seriesDetails.Title.Backdrop.URL
+					}
+
+					// Enrich external IDs from metadata (prioritize metadata over history)
+					if state.ExternalIDs == nil {
+						state.ExternalIDs = make(map[string]string)
+					}
+					if seriesDetails.Title.IMDBID != "" {
+						state.ExternalIDs["imdb"] = seriesDetails.Title.IMDBID
+					}
+					if seriesDetails.Title.TMDBID > 0 {
+						state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesDetails.Title.TMDBID)
+					}
+					if seriesDetails.Title.TVDBID > 0 {
+						state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesDetails.Title.TVDBID)
+					}
+
+					// Use metadata year if available
+					if seriesDetails.Title.Year > 0 {
+						state.Year = seriesDetails.Title.Year
+					}
+				}
+			} else {
+				// No episodes and no in-progress (shouldn't happen)
+				return
+			}
+
+			// Add to results
+			mu.Lock()
+			continueWatching = append(continueWatching, state)
+			mu.Unlock()
+		}(task)
+	}
+
+	// Process movies in parallel
+	for _, prog := range moviesToProcess {
+		wg.Add(1)
+		go func(p *models.PlaybackProgress) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
 			// Enrich with metadata first (poster, backdrop, overview, etc)
 			var movieDetails *models.Title
-			if details, err := s.getMovieMetadataWithCache(ctx, prog.ItemID, prog.MovieName, prog.Year, prog.ExternalIDs); err == nil && details != nil {
+			if details, err := s.getMovieMetadataWithCache(ctx, p.ItemID, p.MovieName, p.Year, p.ExternalIDs); err == nil && details != nil {
 				movieDetails = details
 			}
 
 			// Build the movie state with metadata
 			movieState := models.SeriesWatchState{
-				SeriesID:       prog.ItemID,
-				SeriesTitle:    prog.MovieName,
-				Year:           prog.Year,
-				ExternalIDs:    prog.ExternalIDs,
-				UpdatedAt:      prog.UpdatedAt,
-				PercentWatched: prog.PercentWatched,
+				SeriesID:       p.ItemID,
+				SeriesTitle:    p.MovieName,
+				Year:           p.Year,
+				ExternalIDs:    p.ExternalIDs,
+				UpdatedAt:      p.UpdatedAt,
+				PercentWatched: p.PercentWatched,
 				// For movies, use LastWatched to store movie info with metadata overview
 				LastWatched: models.EpisodeReference{
-					Title:    prog.MovieName,
+					Title:    p.MovieName,
 					Overview: "", // Will be populated from metadata below
 				},
 				NextEpisode: nil, // nil indicates this is a movie resume, not a series
@@ -706,9 +760,15 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 				}
 			}
 
+			// Add to results
+			mu.Lock()
 			continueWatching = append(continueWatching, movieState)
-		}
+			mu.Unlock()
+		}(prog)
 	}
+
+	// Wait for all metadata lookups to complete
+	wg.Wait()
 
 	// Sort by most recently updated (in-progress items will naturally sort first if more recent)
 	sort.Slice(continueWatching, func(i, j int) bool {
