@@ -42,6 +42,11 @@ func (m *mockMetadataService) MovieDetails(ctx context.Context, req models.Movie
 	return m.movieDetails, nil
 }
 
+func (m *mockMetadataService) MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error) {
+	// MovieInfo is lightweight version, same as MovieDetails for testing
+	return m.MovieDetails(ctx, req)
+}
+
 func TestRecordEpisodeAndList(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

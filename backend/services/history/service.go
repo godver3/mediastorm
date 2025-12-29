@@ -29,6 +29,7 @@ type MetadataService interface {
 	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
 	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
+	MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
 }
 
 // TraktScrobbler handles syncing watch history to Trakt.
@@ -650,11 +651,12 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 			// Build the movie state with metadata
 			movieState := models.SeriesWatchState{
-				SeriesID:    prog.ItemID,
-				SeriesTitle: prog.MovieName,
-				Year:        prog.Year,
-				ExternalIDs: prog.ExternalIDs,
-				UpdatedAt:   prog.UpdatedAt,
+				SeriesID:       prog.ItemID,
+				SeriesTitle:    prog.MovieName,
+				Year:           prog.Year,
+				ExternalIDs:    prog.ExternalIDs,
+				UpdatedAt:      prog.UpdatedAt,
+				PercentWatched: prog.PercentWatched,
 				// For movies, use LastWatched to store movie info with metadata overview
 				LastWatched: models.EpisodeReference{
 					Title:    prog.MovieName,
@@ -793,8 +795,8 @@ func (s *Service) getMovieMetadataWithCache(ctx context.Context, movieID, movieN
 		}
 	}
 
-	// Fetch from metadata service
-	details, err := metadataSvc.MovieDetails(ctx, query)
+	// Fetch from metadata service (use MovieInfo for lightweight fetch without ratings)
+	details, err := metadataSvc.MovieInfo(ctx, query)
 	if err != nil {
 		return nil, err
 	}
