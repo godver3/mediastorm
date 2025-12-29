@@ -392,6 +392,31 @@ var SettingsSchema = map[string]interface{}{
 			"openSubtitlesPassword": map[string]interface{}{"type": "password", "label": "OpenSubtitles Password", "description": "OpenSubtitles.org password", "order": 1},
 		},
 	},
+	"mdblist": map[string]interface{}{
+		"label": "MDBList Ratings",
+		"icon":  "star",
+		"group": "sources",
+		"order": 5,
+		"fields": map[string]interface{}{
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable MDBList integration for aggregated ratings (Rotten Tomatoes, IMDB, etc.)", "order": 0},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "MDBList API key from mdblist.com (free tier available)", "order": 1},
+			"enabledRatings": map[string]interface{}{
+				"type":        "checkboxes",
+				"label":       "Rating Sources",
+				"description": "Select which rating sources to display",
+				"order":       2,
+				"options": []map[string]interface{}{
+					{"value": "imdb", "label": "IMDB"},
+					{"value": "tmdb", "label": "TMDB"},
+					{"value": "trakt", "label": "Trakt"},
+					{"value": "letterboxd", "label": "Letterboxd"},
+					{"value": "tomatoes", "label": "Rotten Tomatoes (Critics)"},
+					{"value": "audience", "label": "Rotten Tomatoes (Audience)"},
+					{"value": "metacritic", "label": "Metacritic"},
+				},
+			},
+		},
+	},
 }
 
 // AdminUIHandler serves the admin dashboard UI

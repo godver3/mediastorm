@@ -137,7 +137,12 @@ func main() {
 
 	// Register API routes
 	settingsHandler := handlers.NewSettingsHandlerWithDemoMode(cfgManager, *demoMode)
-	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode)
+	mdblistCfg := metadata.MDBListConfig{
+		APIKey:         settings.MDBList.APIKey,
+		Enabled:        settings.MDBList.Enabled,
+		EnabledRatings: settings.MDBList.EnabledRatings,
+	}
+	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg)
 	metadataHandler := handlers.NewMetadataHandler(metadataService, cfgManager)
 	debridSearchService := debrid.NewSearchService(cfgManager)
 	indexerService := indexer.NewService(cfgManager, metadataService, debridSearchService)

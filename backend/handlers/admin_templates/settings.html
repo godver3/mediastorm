@@ -319,6 +319,15 @@
                 const tags = Array.isArray(value) ? value : [];
                 const tagsHtml = tags.map(tag => '<span class="tag">'+tag+'<span class="tag-remove" onclick="removeTag(\''+basePath+'\', \''+fieldKey+'\', \''+tag+'\')">&times;</span></span>').join('');
                 return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
+            case 'checkboxes':
+                const selectedValues = Array.isArray(value) ? value : [];
+                const checkboxesHtml = (fieldDef.options || []).map(opt => {
+                    const optValue = typeof opt === 'object' ? opt.value : opt;
+                    const optLabel = typeof opt === 'object' ? opt.label : opt;
+                    const isChecked = selectedValues.includes(optValue) ? 'checked' : '';
+                    return '<label class="checkbox-option"><input type="checkbox" value="'+optValue+'" '+isChecked+' onchange="handleCheckboxChange(\''+basePath+'\', \''+fieldKey+'\', \''+optValue+'\', this.checked)"><span>'+optLabel+'</span></label>';
+                }).join('');
+                return '<div class="checkboxes-group'+invalidClass+'" id="'+id+'_container">'+checkboxesHtml+'</div>';
             default:
                 return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
@@ -344,6 +353,18 @@
         const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
         let tags = (getValue(fullPath) || []).filter(t => t !== tag);
         setValue(fullPath, tags);
+        renderSettings();
+    }
+    function handleCheckboxChange(basePath, fieldKey, optionValue, isChecked) {
+        const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
+        let values = getValue(fullPath) || [];
+        if (!Array.isArray(values)) values = [];
+        if (isChecked && !values.includes(optionValue)) {
+            values.push(optionValue);
+        } else if (!isChecked) {
+            values = values.filter(v => v !== optionValue);
+        }
+        setValue(fullPath, values);
         renderSettings();
     }
     function addArrayItem(sectionKey) {
