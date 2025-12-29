@@ -60,6 +60,11 @@ func (f *fakeMetadataService) MovieDetails(_ context.Context, query models.Movie
 	return f.movieResp, f.movieErr
 }
 
+func (f *fakeMetadataService) MovieInfo(_ context.Context, query models.MovieDetailsQuery) (*models.Title, error) {
+	// MovieInfo is lightweight version, same as MovieDetails for testing
+	return f.MovieDetails(nil, query)
+}
+
 func (f *fakeMetadataService) Trailers(_ context.Context, _ models.TrailerQuery) (*models.TrailerResponse, error) {
 	return &models.TrailerResponse{Trailers: []models.Trailer{}}, nil
 }

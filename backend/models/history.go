@@ -27,6 +27,7 @@ type SeriesWatchState struct {
 	LastWatched     EpisodeReference            `json:"lastWatched"`
 	NextEpisode     *EpisodeReference           `json:"nextEpisode,omitempty"`
 	WatchedEpisodes map[string]EpisodeReference `json:"watchedEpisodes,omitempty"`
+	PercentWatched  float64                     `json:"percentWatched,omitempty"` // For in-progress movies
 }
 
 // EpisodeWatchPayload represents a request to record that a user started an episode.

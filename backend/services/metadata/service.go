@@ -1951,13 +1951,8 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	// Apply additional artworks from the artworks array
 	applyTVDBArtworks(&seriesTitle, extended.Artworks)
 
-	// Fetch ratings from MDBList if enabled and IMDB ID is available
-	if seriesTitle.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
-		if ratings, err := s.mdblist.GetRatings(ctx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
-			seriesTitle.Ratings = ratings
-			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
-		}
-	}
+	// Note: Ratings are NOT fetched here to keep this lightweight.
+	// Use SeriesDetails for full metadata including ratings.
 
 	log.Printf("[metadata] series info complete tvdbId=%d name=%q hasPoster=%v hasBackdrop=%v",
 		tvdbID, finalName, seriesTitle.Poster != nil, seriesTitle.Backdrop != nil)
@@ -1968,8 +1963,20 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	return &seriesTitle, nil
 }
 
-// MovieDetails fetches metadata for a movie including poster and backdrop.
+// MovieInfo fetches lightweight movie metadata (poster, backdrop, external IDs) without ratings.
+// This is useful for continue watching where we only need basic movie info.
+func (s *Service) MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error) {
+	// Use MovieDetails but skip ratings by calling the internal implementation
+	return s.movieDetailsInternal(ctx, req, false)
+}
+
+// MovieDetails fetches metadata for a movie including poster, backdrop, and ratings.
 func (s *Service) MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error) {
+	return s.movieDetailsInternal(ctx, req, true)
+}
+
+// movieDetailsInternal is the shared implementation for MovieInfo and MovieDetails.
+func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDetailsQuery, includeRatings bool) (*models.Title, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("tvdb client not configured")
 	}
@@ -2166,15 +2173,19 @@ func (s *Service) MovieDetails(ctx context.Context, req models.MovieDetailsQuery
 		log.Printf("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForReleases, len(movieTitle.Releases))
 	}
 
-	// Fetch ratings from MDBList if enabled and IMDB ID is available
-	imdbIDForRatings := movieTitle.IMDBID
-	if imdbIDForRatings == "" {
-		imdbIDForRatings = req.IMDBID
-	}
-	if imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
-		if ratings, err := s.mdblist.GetRatings(ctx, imdbIDForRatings, "movie"); err == nil && len(ratings) > 0 {
-			movieTitle.Ratings = ratings
-			log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
+	// Fetch ratings from MDBList if enabled, requested, and IMDB ID is available
+	if includeRatings {
+		imdbIDForRatings := movieTitle.IMDBID
+		if imdbIDForRatings == "" {
+			imdbIDForRatings = req.IMDBID
+		}
+		if imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+			if ratings, err := s.mdblist.GetRatings(ctx, imdbIDForRatings, "movie"); err != nil {
+				log.Printf("[metadata] error fetching ratings for movie imdbId=%s: %v", imdbIDForRatings, err)
+			} else if len(ratings) > 0 {
+				movieTitle.Ratings = ratings
+				log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
+			}
 		}
 	}
 

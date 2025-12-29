@@ -340,7 +340,17 @@
                 console.error('Continue watching API error:', continueResponse.status, errorText);
                 throw new Error('Failed to fetch continue watching: ' + continueResponse.status + ' - ' + errorText);
             }
-            const continueItems = await continueResponse.json() || [];
+            let continueItems = await continueResponse.json() || [];
+
+            // Filter out movies with <=5% progress (accidental clicks or quick previews)
+            continueItems = continueItems.filter(item => {
+                // Movies have no nextEpisode (undefined/null), series have nextEpisode defined
+                const isMovie = !item.nextEpisode;
+                if (isMovie && item.percentWatched !== undefined && item.percentWatched <= 5) {
+                    return false;
+                }
+                return true;
+            });
 
             document.getElementById('seriesInProgress').textContent = continueItems.length;
 
