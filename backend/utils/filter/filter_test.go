@@ -136,6 +136,67 @@ func TestResults_JapaneseRomanization(t *testing.T) {
 	}
 }
 
+func TestResults_MediaTypeFiltering(t *testing.T) {
+	// Test that TV show results are filtered out when searching for movies
+	t.Run("movie search rejects TV patterns", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},            // Movie pattern - should match
+			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"},          // TV pattern - should be filtered
+			{Title: "Trigger.Point.S03E01.Episode.1.1080p.AMZN.WEB-DL"}, // TV pattern - should be filtered
+		}
+
+		opts := Options{
+			ExpectedTitle: "Trigger Point",
+			ExpectedYear:  2022,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 1 {
+			t.Errorf("Expected 1 result (movie only), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		if len(filtered) > 0 && filtered[0].Title != "Trigger.Point.2022.1080p.BluRay.x264" {
+			t.Errorf("Expected movie result, got: %s", filtered[0].Title)
+		}
+	})
+
+	// Test that movie results are filtered out when searching for TV shows
+	t.Run("TV search rejects movie patterns", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"},           // TV pattern - should match
+			{Title: "Trigger.Point.S02E05.720p.HDTV.x264"},              // TV pattern - should match
+			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},             // Movie pattern - should be filtered
+		}
+
+		opts := Options{
+			ExpectedTitle: "Trigger Point",
+			ExpectedYear:  0,
+			IsMovie:       false,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 2 {
+			t.Errorf("Expected 2 results (TV episodes only), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify movie pattern was filtered out
+		for _, r := range filtered {
+			if r.Title == "Trigger.Point.2022.1080p.BluRay.x264" {
+				t.Error("Movie result should have been filtered from TV show search")
+			}
+		}
+	})
+}
+
 func TestShouldFilter(t *testing.T) {
 	tests := []struct {
 		title    string
