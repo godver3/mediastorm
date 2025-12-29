@@ -25,7 +25,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 const flushPromises = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 const baseSettings: BackendSettings = {
-  server: { host: '0.0.0.0', port: 7777, apiKey: 'demo-api-key', pin: '123456' },
+  server: { host: '0.0.0.0', port: 7777 },
   usenet: [
     {
       name: 'Default',
@@ -103,7 +103,6 @@ describe('BackendSettingsContext', () => {
     jest.clearAllMocks();
     await (AsyncStorage as any).clear();
     latestContext = null;
-    apiService.setApiKey('');
   });
 
   afterEach(async () => {
@@ -116,13 +115,11 @@ describe('BackendSettingsContext', () => {
     jest.restoreAllMocks();
   });
 
-  it('initialises with stored backend URL/API key and loads settings', async () => {
+  it('initialises with stored backend URL and loads settings', async () => {
     const getSettingsSpy = jest.spyOn(apiService, 'getSettings').mockResolvedValue(baseSettings);
     const setBaseUrlSpy = jest.spyOn(apiService, 'setBaseUrl');
-    const setApiKeySpy = jest.spyOn(apiService, 'setApiKey');
 
     await AsyncStorage.setItem('strmr.backendUrl', 'http://stored.example:9000/api/');
-    await AsyncStorage.setItem('strmr.backendApiKey', 'stored-key');
 
     await mountProvider();
 
@@ -136,12 +133,7 @@ describe('BackendSettingsContext', () => {
     expect(getSettingsSpy).toHaveBeenCalledTimes(1);
     expect(latestContext?.backendUrl).toBe('http://stored.example:9000/api');
     expect(latestContext?.settings).toEqual(baseSettings);
-    expect(latestContext?.backendApiKey).toBe('123456'); // PIN takes precedence over API key
     expect(latestContext?.error).toBeNull();
-
-    expect(setApiKeySpy.mock.calls.some(([key]) => key === 'stored-key')).toBe(true);
-    expect(setApiKeySpy.mock.calls.some(([key]) => key === '123456')).toBe(true); // PIN takes precedence
-    expect((AsyncStorage.setItem as jest.Mock).mock.calls).toContainEqual(['strmr.backendApiKey', '123456']);
   });
 
   it('normalises and persists backend URL updates', async () => {
@@ -162,26 +154,6 @@ describe('BackendSettingsContext', () => {
       'strmr.backendUrl',
       'http://demo-host:7777/api',
     ]);
-  });
-
-  it('persists backend API key updates', async () => {
-    jest.spyOn(apiService, 'getSettings').mockResolvedValue(baseSettings);
-    const setApiKeySpy = jest.spyOn(apiService, 'setApiKey');
-
-    await mountProvider();
-    await waitForCondition(() => !!latestContext?.isReady);
-
-    (AsyncStorage.setItem as jest.Mock).mockClear();
-    setApiKeySpy.mockClear();
-
-    await act(async () => {
-      await latestContext?.setBackendApiKey('new-secret-key');
-    });
-
-    await waitForCondition(() => latestContext?.backendApiKey === 'new-secret-key');
-
-    expect(setApiKeySpy).toHaveBeenCalledWith('new-secret-key');
-    expect((AsyncStorage.setItem as jest.Mock).mock.calls).toContainEqual(['strmr.backendApiKey', 'new-secret-key']);
   });
 
   it('surfaces errors when updating backend settings fails', async () => {

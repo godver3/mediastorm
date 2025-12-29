@@ -37,10 +37,8 @@ type Settings struct {
 }
 
 type ServerSettings struct {
-	Host   string `json:"host"`
-	Port   int    `json:"port"`
-	APIKey string `json:"apiKey"` // Deprecated: kept for migration compatibility
-	PIN    string `json:"pin"`    // 6-digit PIN for authentication
+	Host string `json:"host"`
+	Port int    `json:"port"`
 }
 
 type UsenetSettings struct {
@@ -353,7 +351,7 @@ func (p *PlexSettings) RemoveAccount(id string) bool {
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
 	return Settings{
-		Server:   ServerSettings{Host: "0.0.0.0", Port: 7777, APIKey: "", PIN: ""},
+		Server:   ServerSettings{Host: "0.0.0.0", Port: 7777},
 		Usenet:   []UsenetSettings{},
 		Indexers: []IndexerConfig{},
 		TorrentScrapers: []TorrentScraperConfig{

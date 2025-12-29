@@ -4,15 +4,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { apiService, UserSettings } from '@/services/api';
 
 const STORAGE_KEY = 'strmr.backendUrl';
-const API_KEY_STORAGE_KEY = 'strmr.backendApiKey';
 const DEFAULT_PORT = 7777;
 const DEFAULT_API_PATH = '/api';
 
 export interface BackendServerSettings {
   host: string;
   port: number;
-  apiKey: string; // Deprecated: kept for migration compatibility
-  pin: string; // 6-digit PIN for authentication
 }
 
 export interface BackendUsenetSettings {
@@ -144,7 +141,6 @@ export interface BackendSettings {
 
 interface BackendSettingsContextValue {
   backendUrl: string;
-  backendApiKey: string;
   isReady: boolean;
   loading: boolean;
   saving: boolean;
@@ -155,7 +151,6 @@ interface BackendSettingsContextValue {
   retryCountdown: number | null;
   refreshSettings: () => Promise<void>;
   setBackendUrl: (url: string) => Promise<void>;
-  setBackendApiKey: (apiKey: string) => Promise<void>;
   updateBackendSettings: (settings: BackendSettings) => Promise<BackendSettings>;
   // Per-user settings
   userSettings: UserSettings | null;
@@ -216,7 +211,6 @@ const isNetworkError = (err: unknown): boolean => {
 export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mountedRef = useRef(true);
   const [backendUrl, setBackendUrlState] = useState<string>(() => apiService.getBaseUrl());
-  const [backendApiKey, setBackendApiKeyState] = useState<string>(() => apiService.getApiKey());
   const [isReady, setIsReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -313,13 +307,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     }
   }, []);
 
-  const applyApiKey = useCallback((candidate?: string | null) => {
-    apiService.setApiKey(candidate ?? undefined);
-    if (mountedRef.current) {
-      setBackendApiKeyState(apiService.getApiKey());
-    }
-  }, []);
-
   const persistBackendUrl = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -327,15 +314,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       return;
     }
     await AsyncStorage.setItem(STORAGE_KEY, trimmed);
-  }, []);
-
-  const persistBackendApiKey = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      await AsyncStorage.removeItem(API_KEY_STORAGE_KEY);
-      return;
-    }
-    await AsyncStorage.setItem(API_KEY_STORAGE_KEY, trimmed);
   }, []);
 
   // Returns: { success: boolean, authRequired: boolean }
@@ -356,14 +334,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       setLastLoadedAt(Date.now());
       setIsBackendReachable(true);
       stopRetryTimer();
-      // Use PIN if available, fallback to API key for backward compatibility
-      const authKey = result?.server?.pin ?? result?.server?.apiKey ?? '';
-      applyApiKey(authKey);
-      try {
-        await persistBackendApiKey(authKey);
-      } catch (storageError) {
-        console.warn('Failed to persist backend authentication key.', storageError);
-      }
       return { success: true, authRequired: false };
     } catch (err) {
       const message = formatErrorMessage(err);
@@ -394,7 +364,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         setLoading(false);
       }
     }
-  }, [applyApiKey, persistBackendApiKey, stopRetryTimer]);
+  }, [stopRetryTimer]);
 
   // Keep the retry function ref in sync with the latest version
   useEffect(() => {
@@ -438,25 +408,8 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         }
       }
 
-      try {
-        const storedKey = await AsyncStorage.getItem(API_KEY_STORAGE_KEY);
-        if (cancelled) {
-          return;
-        }
-        // Use stored key, or fall back to env var if no stored key
-        const envKey = process.env.EXPO_PUBLIC_API_KEY;
-        applyApiKey(storedKey || envKey || undefined);
-      } catch (err) {
-        console.warn('Failed to read stored backend API key. Clearing local copy.', err);
-        if (!cancelled) {
-          // Fall back to env var on error
-          const envKey = process.env.EXPO_PUBLIC_API_KEY;
-          applyApiKey(envKey || undefined);
-        }
-      } finally {
-        if (!cancelled && mountedRef.current) {
-          setIsReady(true);
-        }
+      if (!cancelled && mountedRef.current) {
+        setIsReady(true);
       }
 
       try {
@@ -473,7 +426,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     return () => {
       cancelled = true;
     };
-  }, [applyApiBaseUrl, applyApiKey, refreshSettings]);
+  }, [applyApiBaseUrl, refreshSettings]);
 
   const setBackendUrlHandler = useCallback(
     async (url: string) => {
@@ -493,14 +446,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     [applyApiBaseUrl, persistBackendUrl, refreshSettings],
   );
 
-  const setBackendApiKeyHandler = useCallback(
-    async (apiKey: string) => {
-      applyApiKey(apiKey);
-      await persistBackendApiKey(apiKey);
-    },
-    [applyApiKey, persistBackendApiKey],
-  );
-
   const updateBackendSettings = useCallback(
     async (next: BackendSettings) => {
       setSaving(true);
@@ -510,14 +455,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
           setSettings(updated);
           setError(null);
           setLastLoadedAt(Date.now());
-        }
-        // Use PIN if available, fallback to API key for backward compatibility
-        const authKey = updated?.server?.pin ?? updated?.server?.apiKey ?? '';
-        applyApiKey(authKey);
-        try {
-          await persistBackendApiKey(authKey);
-        } catch (storageError) {
-          console.warn('Failed to persist backend authentication key after update.', storageError);
         }
         return updated;
       } catch (err) {
@@ -532,7 +469,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         }
       }
     },
-    [applyApiKey, persistBackendApiKey],
+    [],
   );
 
   const loadUserSettings = useCallback(async (userId: string): Promise<UserSettings> => {
@@ -578,7 +515,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   const value = useMemo<BackendSettingsContextValue>(
     () => ({
       backendUrl,
-      backendApiKey,
       isReady,
       loading,
       saving,
@@ -589,7 +525,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       retryCountdown,
       refreshSettings,
       setBackendUrl: setBackendUrlHandler,
-      setBackendApiKey: setBackendApiKeyHandler,
       updateBackendSettings,
       userSettings,
       userSettingsLoading,
@@ -599,7 +534,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     }),
     [
       backendUrl,
-      backendApiKey,
       isReady,
       loading,
       saving,
@@ -610,7 +544,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       retryCountdown,
       refreshSettings,
       setBackendUrlHandler,
-      setBackendApiKeyHandler,
       updateBackendSettings,
       userSettings,
       userSettingsLoading,

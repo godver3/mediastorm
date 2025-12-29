@@ -64,8 +64,8 @@ export default function MP4BoxDebugScreen() {
     return baseUrl;
   }, []);
 
-  const getApiKey = useCallback(() => {
-    return apiService.getApiKey();
+  const getAuthToken = useCallback(() => {
+    return apiService.getAuthToken() ?? '';
   }, []);
 
   const handleProbe = useCallback(async () => {
@@ -86,7 +86,7 @@ export default function MP4BoxDebugScreen() {
     addLog(`Probing: ${sourceUrl}`);
 
     try {
-      const probeUrl = `${apiBase}/video/debug/mp4box/probe?url=${encodeURIComponent(sourceUrl)}&apiKey=${getApiKey()}`;
+      const probeUrl = `${apiBase}/video/debug/mp4box/probe?url=${encodeURIComponent(sourceUrl)}&token=${getAuthToken()}`;
       addLog(`Request: ${probeUrl}`);
 
       const response = await fetch(probeUrl);
@@ -106,7 +106,7 @@ export default function MP4BoxDebugScreen() {
     } finally {
       setIsProbing(false);
     }
-  }, [sourceUrl, getApiBase, getApiKey, addLog]);
+  }, [sourceUrl, getApiBase, getAuthToken, addLog]);
 
   const handleStartSession = useCallback(async () => {
     if (!sourceUrl.trim()) {
@@ -134,7 +134,7 @@ export default function MP4BoxDebugScreen() {
         url: sourceUrl,
         dv: hasDV.toString(),
         hdr: hasHDR.toString(),
-        apiKey: getApiKey(),
+        token: getAuthToken(),
       });
       if (dvProfile) {
         params.set('dvProfile', dvProfile);
@@ -161,7 +161,7 @@ export default function MP4BoxDebugScreen() {
     } finally {
       setIsStartingSession(false);
     }
-  }, [sourceUrl, getApiBase, getApiKey, probeResult, addLog]);
+  }, [sourceUrl, getApiBase, getAuthToken, probeResult, addLog]);
 
   const handlePlay = useCallback(() => {
     if (!sessionResult?.playlistUrl) {
@@ -176,7 +176,7 @@ export default function MP4BoxDebugScreen() {
     }
 
     // Build the full playlist URL
-    const playlistUrl = `${apiBase.replace('/api', '')}${sessionResult.playlistUrl}?apiKey=${getApiKey()}`;
+    const playlistUrl = `${apiBase.replace('/api', '')}${sessionResult.playlistUrl}?token=${getAuthToken()}`;
     addLog(`Launching player with: ${playlistUrl}`);
 
     router.push({
@@ -189,7 +189,7 @@ export default function MP4BoxDebugScreen() {
         headerImage: '',
       },
     });
-  }, [sessionResult, getApiBase, getApiKey, addLog]);
+  }, [sessionResult, getApiBase, getAuthToken, addLog]);
 
   const handleClear = useCallback(() => {
     setSourceUrl('');

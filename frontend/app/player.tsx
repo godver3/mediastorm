@@ -1249,18 +1249,18 @@ export default function PlayerScreen() {
       'Content-Type': 'application/json',
     };
 
-    const appendApiKey = (base: string, key: string) =>
-      `${base}${base.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(key)}`;
+    const appendToken = (base: string, token: string) =>
+      `${base}${base.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 
     let url = endpoint;
-    const apiKey = apiService.getApiKey().trim();
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-      url = appendApiKey(url, apiKey);
+    const authToken = apiService.getAuthToken();
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+      url = appendToken(url, authToken);
     } else if (typeof window !== 'undefined' && window.location?.search) {
-      const inlineKey = new URLSearchParams(window.location.search).get('apiKey');
-      if (inlineKey) {
-        url = appendApiKey(url, inlineKey);
+      const inlineToken = new URLSearchParams(window.location.search).get('token');
+      if (inlineToken) {
+        url = appendToken(url, inlineToken);
       }
     }
 
@@ -1899,21 +1899,21 @@ export default function PlayerScreen() {
 
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const playlistBase = `${baseUrl}${response.playlistUrl}`;
-        const existingKey = (() => {
+        const existingToken = (() => {
           try {
             if (!effectiveMovie) {
               return '';
             }
             const currentUrl = new URL(String(effectiveMovie));
-            const key = currentUrl.searchParams.get('apiKey');
-            return key ? key.trim() : '';
+            const token = currentUrl.searchParams.get('token');
+            return token ? token.trim() : '';
           } catch {
             return '';
           }
         })();
-        const authKey = apiService.getApiKey().trim() || existingKey;
-        const playlistWithKey = authKey
-          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(authKey)}`
+        const authToken = apiService.getAuthToken() || existingToken;
+        const playlistWithKey = authToken
+          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
           : playlistBase;
 
         const sessionStart =
@@ -2894,9 +2894,9 @@ export default function PlayerScreen() {
 
           const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
           const playlistBase = `${baseUrl}${response.playlistUrl}`;
-          const authKey = apiService.getApiKey().trim();
-          const playlistWithKey = authKey
-            ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(authKey)}`
+          const authToken = apiService.getAuthToken();
+          const playlistWithKey = authToken
+            ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
             : playlistBase;
 
           console.log('[player] created new HLS session for retry', {
@@ -3482,9 +3482,9 @@ export default function PlayerScreen() {
 
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const playlistBase = `${baseUrl}${response.playlistUrl}`;
-        const authKey = apiService.getApiKey().trim();
-        const playlistWithKey = authKey
-          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(authKey)}`
+        const authToken = apiService.getAuthToken();
+        const playlistWithKey = authToken
+          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
           : playlistBase;
 
         const sessionStart =
@@ -3587,10 +3587,10 @@ export default function PlayerScreen() {
         }
 
         const url = new URL(resolvedMovie);
-        const movieApiKey = url.searchParams.get('apiKey');
-        if (movieApiKey && !apiService.getApiKey().trim()) {
-          console.log('[player] hydrating api key from playback url');
-          apiService.setApiKey(movieApiKey);
+        const movieToken = url.searchParams.get('token');
+        if (movieToken && !apiService.getAuthToken()) {
+          console.log('[player] hydrating auth token from playback url');
+          apiService.setAuthToken(movieToken);
         }
 
         // Extract path from either query param or WebDAV URL
