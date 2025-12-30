@@ -11,6 +11,7 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
 import { apiService, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
+import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import {
@@ -725,6 +726,42 @@ function IndexScreen() {
   const [isRemoveConfirmVisible, setIsRemoveConfirmVisible] = useState(false);
   const [pendingRemoveItem, setPendingRemoveItem] = useState<{ id: string; name: string } | null>(null);
 
+  // Version mismatch modal state
+  const [isVersionMismatchVisible, setIsVersionMismatchVisible] = useState(false);
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
+  const versionCheckDoneRef = React.useRef(false);
+
+  // Check for version mismatch on app launch
+  useEffect(() => {
+    // Only check once per app session, and only when backend is reachable
+    if (versionCheckDoneRef.current || !isBackendReachable) {
+      return;
+    }
+
+    const checkVersion = async () => {
+      try {
+        const result = await apiService.getBackendVersion();
+        if (result?.version) {
+          setBackendVersion(result.version);
+          // Compare versions - show modal if they don't match
+          if (result.version !== APP_VERSION) {
+            setIsVersionMismatchVisible(true);
+          }
+          versionCheckDoneRef.current = true;
+        }
+      } catch (err) {
+        // Silently fail - version check is not critical
+        console.log('[VersionCheck] Failed to fetch backend version:', err);
+      }
+    };
+
+    checkVersion();
+  }, [isBackendReachable]);
+
+  const handleDismissVersionMismatch = useCallback(() => {
+    setIsVersionMismatchVisible(false);
+  }, []);
+
   // Detect image orientation from URL pattern (avoids expensive Image.getSize network call)
   // backdropUrl = landscape, posterUrl = portrait, headerImage = check for poster patterns
   useEffect(() => {
@@ -1407,6 +1444,23 @@ function IndexScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* Version Mismatch Warning Modal (Mobile) */}
+        <Modal visible={isVersionMismatchVisible} transparent={true} animationType="fade" onRequestClose={handleDismissVersionMismatch}>
+          <View style={mobileStyles.modalOverlay}>
+            <View style={mobileStyles.modalContainer}>
+              <Text style={mobileStyles.modalTitle}>Version Mismatch</Text>
+              <Text style={mobileStyles.modalSubtitle}>
+                Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may experience unexpected behavior. Consider updating.
+              </Text>
+              <View style={mobileStyles.modalActions}>
+                <Pressable onPress={handleDismissVersionMismatch} style={mobileStyles.modalButton}>
+                  <Text style={mobileStyles.modalButtonText}>OK</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </>
     );
   }
@@ -1417,7 +1471,7 @@ function IndexScreen() {
 
   return (
     <SpatialNavigationRoot
-      isActive={isFocused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible}
+      isActive={isFocused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible && !isVersionMismatchVisible}
       onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
     >
       <Stack.Screen options={{ headerShown: false }} />
@@ -1636,6 +1690,31 @@ function IndexScreen() {
                   textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
                   focusedTextStyle={[desktopStyles.styles.tvModalButtonTextFocused, desktopStyles.styles.tvModalButtonDangerTextFocused]}
                 />
+              </View>
+            </SpatialNavigationNode>
+          </View>
+        </TvModal>
+
+        {/* Version Mismatch Warning Modal (TV) */}
+        <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
+          <View style={desktopStyles.styles.tvModalContainer}>
+            <Text style={desktopStyles.styles.tvModalTitle}>Version Mismatch</Text>
+            <Text style={desktopStyles.styles.tvModalSubtitle}>
+              Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may experience unexpected behavior. Consider updating.
+            </Text>
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={desktopStyles.styles.tvModalActions}>
+                <DefaultFocus>
+                  <FocusablePressable
+                    focusKey="version-mismatch-ok"
+                    text="OK"
+                    onSelect={handleDismissVersionMismatch}
+                    style={desktopStyles.styles.tvModalButton}
+                    focusedStyle={desktopStyles.styles.tvModalButtonFocused}
+                    textStyle={desktopStyles.styles.tvModalButtonText}
+                    focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+                  />
+                </DefaultFocus>
               </View>
             </SpatialNavigationNode>
           </View>
