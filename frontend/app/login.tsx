@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated as RNAnimated,
-  Easing,
   Keyboard,
   Platform,
   Pressable,
@@ -31,9 +29,6 @@ import { useToast } from '@/components/ToastContext';
 // Local logo asset with fallback chain
 const localLogoAsset = require('@/assets/app-logo-wide.png');
 const GITHUB_LOGO_URL = 'https://raw.githubusercontent.com/godver3/strmr/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
-
-// Animation constant from strmr-loading.tsx
-const CIRCLE_PULSE_DURATION_MS = 3200;
 
 export default function LoginScreen() {
   const theme = useTheme();
@@ -201,38 +196,13 @@ export default function LoginScreen() {
   const tempPasswordRef = useRef(password);
   const tempServerUrlRef = useRef(serverUrl);
 
-  // Background animation state
-  const circlePulse = useRef(new RNAnimated.Value(0)).current;
-
-  // Background glow animation (runs on both TV and mobile)
-  useEffect(() => {
-    circlePulse.setValue(0);
-    const loop = RNAnimated.loop(
-      RNAnimated.sequence([
-        RNAnimated.timing(circlePulse, {
-          toValue: 1,
-          duration: CIRCLE_PULSE_DURATION_MS,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        RNAnimated.timing(circlePulse, {
-          toValue: 0,
-          duration: CIRCLE_PULSE_DURATION_MS,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [circlePulse]);
-
   // Don't lock spatial navigation on login - let user navigate freely between fields
   // This is simpler UX than requiring keyboard dismissal between each field
   const handleUsernameFocus = useCallback(() => {
-    // Don't lock - allow D-pad navigation while keyboard is up
+    lowerFieldFocused.current = true;
   }, []);
   const handleUsernameBlur = useCallback(() => {
+    lowerFieldFocused.current = false;
     setUsername(tempUsernameRef.current);
   }, []);
 
@@ -257,61 +227,13 @@ export default function LoginScreen() {
     return (
       <SpatialNavigationRoot isActive={true}>
         <FixedSafeAreaView style={styles.safeArea}>
-          {/* Animated background */}
-          <View style={StyleSheet.absoluteFill}>
-            <RNAnimated.View pointerEvents="none" style={[tvBgStyles.gradientLayer, { opacity: 1 }]}>
-              <LinearGradient
-                colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0.85 }}
-                style={StyleSheet.absoluteFill}
-              />
-            </RNAnimated.View>
-            <RNAnimated.View pointerEvents="none" style={[tvBgStyles.gradientLayer, { opacity: 0.75 }]}>
-              <LinearGradient
-                colors={['rgba(232, 238, 255, 0.55)', 'rgba(40, 44, 54, 0.08)', 'rgba(210, 222, 255, 0.32)']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 0.95, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-            </RNAnimated.View>
-            {/* Center glow and arc effects */}
-            <View style={tvBgStyles.center}>
-              <RNAnimated.View
-                pointerEvents="none"
-                style={[
-                  tvBgStyles.radialBlur,
-                  {
-                    transform: [
-                      {
-                        scale: circlePulse.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [1.01, 1.08],
-                        }),
-                      },
-                    ],
-                    opacity: circlePulse.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.2, 0.4],
-                    }),
-                  },
-                ]}
-              >
-                <LinearGradient
-                  colors={[`${theme.colors.accent.primary}30`, `${theme.colors.accent.primary}00`]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <LinearGradient
-                  colors={[`${theme.colors.accent.primary}20`, `${theme.colors.accent.primary}00`]}
-                  start={{ x: 0, y: 0.5 }}
-                  end={{ x: 1, y: 0.5 }}
-                  style={[StyleSheet.absoluteFill, { transform: [{ rotate: '45deg' }] }]}
-                />
-              </RNAnimated.View>
-            </View>
-          </View>
+          {/* Static gradient background */}
+          <LinearGradient
+            colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0.85 }}
+            style={StyleSheet.absoluteFill}
+          />
           {/* Login card overlay */}
           <Animated.View style={[styles.container, tvAnimatedStyle]}>
             <View style={styles.card}>
@@ -533,6 +455,7 @@ export default function LoginScreen() {
             }}
             onBlur={() => {
               lowerFieldFocused.current = false;
+              setKeyboardVisible(false);
             }}
             styles={styles}
             theme={theme}
@@ -593,6 +516,14 @@ export default function LoginScreen() {
             textContentType="none"
             returnKeyType="next"
             onSubmitEditing={() => passwordRef.current?.focus()}
+            onFocus={() => {
+              lowerFieldFocused.current = true;
+              setKeyboardVisible(true);
+            }}
+            onBlur={() => {
+              lowerFieldFocused.current = false;
+              setKeyboardVisible(false);
+            }}
             styles={styles}
             theme={theme}
           />
@@ -617,6 +548,7 @@ export default function LoginScreen() {
             }}
             onBlur={() => {
               lowerFieldFocused.current = false;
+              setKeyboardVisible(false);
             }}
             styles={styles}
             theme={theme}
@@ -642,61 +574,13 @@ export default function LoginScreen() {
 
   return (
     <FixedSafeAreaView style={styles.safeArea}>
-      {/* Animated background */}
-      <View style={StyleSheet.absoluteFill}>
-        <RNAnimated.View pointerEvents="none" style={[mobileBgStyles.gradientLayer, { opacity: 1 }]}>
-          <LinearGradient
-            colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0.85 }}
-            style={StyleSheet.absoluteFill}
-          />
-        </RNAnimated.View>
-        <RNAnimated.View pointerEvents="none" style={[mobileBgStyles.gradientLayer, { opacity: 0.75 }]}>
-          <LinearGradient
-            colors={['rgba(232, 238, 255, 0.55)', 'rgba(40, 44, 54, 0.08)', 'rgba(210, 222, 255, 0.32)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0.95, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-        </RNAnimated.View>
-        {/* Center glow effect */}
-        <View style={mobileBgStyles.center}>
-          <RNAnimated.View
-            pointerEvents="none"
-            style={[
-              mobileBgStyles.radialBlur,
-              {
-                transform: [
-                  {
-                    scale: circlePulse.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1.01, 1.08],
-                    }),
-                  },
-                ],
-                opacity: circlePulse.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.2, 0.4],
-                }),
-              },
-            ]}
-          >
-            <LinearGradient
-              colors={[`${theme.colors.accent.primary}30`, `${theme.colors.accent.primary}00`]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <LinearGradient
-              colors={[`${theme.colors.accent.primary}20`, `${theme.colors.accent.primary}00`]}
-              start={{ x: 0, y: 0.5 }}
-              end={{ x: 1, y: 0.5 }}
-              style={[StyleSheet.absoluteFill, { transform: [{ rotate: '45deg' }] }]}
-            />
-          </RNAnimated.View>
-        </View>
-      </View>
+      {/* Static gradient background */}
+      <LinearGradient
+        colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0.85 }}
+        style={StyleSheet.absoluteFill}
+      />
       <Pressable style={styles.dismissArea} onPress={Keyboard.dismiss}>
         <Animated.View style={[styles.animatedContainer, animatedContainerStyle]}>{content}</Animated.View>
       </Pressable>
@@ -776,11 +660,11 @@ const LoginTextInput = React.forwardRef<TextInput, LoginTextInputProps>(
 LoginTextInput.displayName = 'LoginTextInput';
 
 const createStyles = (theme: NovaTheme, isTV: boolean) => {
-  // Scale factor: tvOS gets larger UI, Android TV gets 30% reduction
+  // Scale factor: tvOS gets larger UI, Android TV gets smaller UI
   const isTvOS = isTV && Platform.OS === 'ios';
   const isAndroidTV = isTV && Platform.OS === 'android';
   const s = (value: number) =>
-    isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.7) : value;
+    isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.55) : value;
   // Extra 50% scaling for specific text elements on tvOS
   const sText = (value: number) => (isTvOS ? Math.round(s(value) * 1.5) : s(value));
 
@@ -867,7 +751,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       color: theme.colors.text.secondary,
     },
     serverInfo: {
-      fontSize: sText(12),
+      fontSize: sText(14),
       color: theme.colors.text.muted,
       marginTop: 8,
     },
@@ -998,52 +882,3 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
   });
 };
 
-// TV background animation styles
-const tvBgStyles = StyleSheet.create({
-  gradientLayer: {
-    ...StyleSheet.absoluteFillObject,
-    top: -80,
-    bottom: -80,
-    left: -80,
-    right: -80,
-  },
-  center: {
-    flex: 1,
-    paddingHorizontal: 120,
-    paddingVertical: 80,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-  },
-  radialBlur: {
-    position: 'absolute',
-    width: 760,
-    height: 760,
-    borderRadius: 999,
-  },
-});
-
-// Mobile background animation styles
-const mobileBgStyles = StyleSheet.create({
-  gradientLayer: {
-    ...StyleSheet.absoluteFillObject,
-    top: -40,
-    bottom: -40,
-    left: -40,
-    right: -40,
-  },
-  center: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingVertical: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-  },
-  radialBlur: {
-    position: 'absolute',
-    width: 340,
-    height: 340,
-    borderRadius: 999,
-  },
-});
