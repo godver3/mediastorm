@@ -33,7 +33,7 @@ func TestVideoHandlerStreamsFromMetadataProvider(t *testing.T) {
 	data := []byte("hello world")
 	provider := &mockProvider{data: data}
 
-	handler := NewVideoHandlerWithProvider(false, "", "", provider)
+	handler := NewVideoHandlerWithProvider(false, "", "", "", provider)
 
 	req := httptest.NewRequest(http.MethodGet, "/video/stream?path=movies/title.mkv", nil)
 	rr := httptest.NewRecorder()
