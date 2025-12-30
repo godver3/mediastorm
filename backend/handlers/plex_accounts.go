@@ -312,9 +312,10 @@ func (h *PlexAccountsHandler) CheckPIN(w http.ResponseWriter, r *http.Request) {
 	// Token received, update account
 	account.AuthToken = pinResp.AuthToken
 
-	// Get username
+	// Get user info (username and ID for filtering watch history)
 	if userInfo, err := h.plexClient.GetUserInfo(pinResp.AuthToken); err == nil && userInfo != nil {
 		account.Username = userInfo.Username
+		account.UserID = userInfo.ID
 		if account.Name == "" || account.Name == "Plex Account" {
 			account.Name = userInfo.Username
 		}
@@ -379,5 +380,335 @@ func (h *PlexAccountsHandler) Disconnect(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
+	})
+}
+
+// GetHomeUsers returns the list of users in the Plex Home for an account.
+// GET /admin/api/plex/accounts/{accountID}/users
+func (h *PlexAccountsHandler) GetHomeUsers(w http.ResponseWriter, r *http.Request) {
+	session := adminSessionFromContext(r.Context())
+	if session == nil {
+		jsonError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Plex.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	loginAccount, ok := h.accountsService.Get(session.AccountID)
+	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+		jsonError(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	if account.AuthToken == "" {
+		jsonError(w, "Plex account not connected", http.StatusBadRequest)
+		return
+	}
+
+	if h.plexClient == nil {
+		jsonError(w, "Plex client not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	users, err := h.plexClient.GetHomeUsers(account.AuthToken)
+	if err != nil {
+		jsonError(w, "Failed to get home users: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": users,
+		"count": len(users),
+	})
+}
+
+// PlexHistoryItemResponse is the JSON response for a Plex watch history item.
+type PlexHistoryItemResponse struct {
+	RatingKey       string            `json:"ratingKey"`
+	Title           string            `json:"title"`
+	Type            string            `json:"type"` // "movie" or "episode"
+	Year            int               `json:"year,omitempty"`
+	SeriesTitle     string            `json:"seriesTitle,omitempty"`
+	Season          int               `json:"season,omitempty"`
+	Episode         int               `json:"episode,omitempty"`
+	ViewedAt        int64             `json:"viewedAt"`
+	ExternalIDs     map[string]string `json:"externalIds,omitempty"`
+	ServerName      string            `json:"serverName,omitempty"`
+}
+
+// GetHistory fetches watch history from connected Plex servers.
+// GET /admin/api/plex/accounts/{accountID}/history
+func (h *PlexAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	session := adminSessionFromContext(r.Context())
+	if session == nil {
+		jsonError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Plex.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	loginAccount, ok := h.accountsService.Get(session.AccountID)
+	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+		jsonError(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	if account.AuthToken == "" {
+		jsonError(w, "Plex account not connected", http.StatusBadRequest)
+		return
+	}
+
+	if h.plexClient == nil {
+		jsonError(w, "Plex client not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse limit from query params (default 500)
+	limit := 500
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 5000 {
+			limit = parsed
+		}
+	}
+
+	// Parse plexUserId filter from query params (0 = no filter, show all users)
+	plexUserID := 0
+	if uid := r.URL.Query().Get("plexUserId"); uid != "" {
+		if parsed, err := strconv.Atoi(uid); err == nil && parsed > 0 {
+			plexUserID = parsed
+		}
+	}
+
+	// Fetch watch history from all connected servers, optionally filtered by Plex user
+	historyItems, err := h.plexClient.GetAllWatchHistory(account.AuthToken, limit, plexUserID)
+	if err != nil {
+		jsonError(w, "Failed to fetch watch history: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to response format
+	items := make([]PlexHistoryItemResponse, 0, len(historyItems))
+	for _, item := range historyItems {
+		respItem := PlexHistoryItemResponse{
+			RatingKey:   item.RatingKey,
+			Title:       item.Title,
+			Type:        item.Type,
+			Year:        item.Year,
+			ViewedAt:    item.ViewedAt,
+			ExternalIDs: item.ExternalIDs,
+			ServerName:  item.ServerName,
+		}
+
+		// For episodes, set series info
+		if item.Type == "episode" {
+			respItem.SeriesTitle = item.GrandparentTitle
+			respItem.Season = item.ParentIndex
+			respItem.Episode = item.Index
+		}
+
+		items = append(items, respItem)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": items,
+		"count": len(items),
+	})
+}
+
+// GetServers returns the list of online owned Plex servers for an account.
+// GET /admin/api/plex/accounts/{accountID}/servers
+func (h *PlexAccountsHandler) GetServers(w http.ResponseWriter, r *http.Request) {
+	session := adminSessionFromContext(r.Context())
+	if session == nil {
+		jsonError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Plex.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	loginAccount, ok := h.accountsService.Get(session.AccountID)
+	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+		jsonError(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	if account.AuthToken == "" {
+		jsonError(w, "Plex account not connected", http.StatusBadRequest)
+		return
+	}
+
+	if h.plexClient == nil {
+		jsonError(w, "Plex client not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	servers, err := h.plexClient.GetOwnedServers(account.AuthToken)
+	if err != nil {
+		jsonError(w, "Failed to get servers: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to simple response
+	type serverInfo struct {
+		Name     string `json:"name"`
+		Platform string `json:"platform"`
+		Online   bool   `json:"online"`
+	}
+
+	result := make([]serverInfo, 0, len(servers))
+	for _, s := range servers {
+		result = append(result, serverInfo{
+			Name:     s.Name,
+			Platform: s.Platform,
+			Online:   s.Presence,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"servers": result,
+		"count":   len(result),
+	})
+}
+
+// PlexWatchlistItemResponse is the JSON response for a Plex watchlist item.
+type PlexWatchlistItemResponse struct {
+	RatingKey   string            `json:"ratingKey"`
+	Title       string            `json:"title"`
+	Type        string            `json:"type"` // "movie" or "show"
+	Year        int               `json:"year,omitempty"`
+	PosterURL   string            `json:"posterUrl,omitempty"`
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+}
+
+// GetWatchlist fetches watchlist from Plex for a specific account.
+// GET /admin/api/plex/accounts/{accountID}/watchlist
+func (h *PlexAccountsHandler) GetWatchlist(w http.ResponseWriter, r *http.Request) {
+	session := adminSessionFromContext(r.Context())
+	if session == nil {
+		jsonError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Plex.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	loginAccount, ok := h.accountsService.Get(session.AccountID)
+	if !ok || (!loginAccount.IsMaster && account.OwnerAccountID != session.AccountID) {
+		jsonError(w, "Not authorized", http.StatusForbidden)
+		return
+	}
+
+	if account.AuthToken == "" {
+		jsonError(w, "Plex account not connected", http.StatusBadRequest)
+		return
+	}
+
+	if h.plexClient == nil {
+		jsonError(w, "Plex client not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch watchlist
+	watchlistItems, err := h.plexClient.GetWatchlist(account.AuthToken)
+	if err != nil {
+		jsonError(w, "Failed to fetch watchlist: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to response format with external IDs
+	items := make([]PlexWatchlistItemResponse, 0, len(watchlistItems))
+	for _, item := range watchlistItems {
+		// Try to get external IDs from item details
+		externalIDs, _ := h.plexClient.GetItemDetails(account.AuthToken, item.RatingKey)
+		if externalIDs == nil {
+			externalIDs = plex.ParseGUID(item.GUID)
+		}
+
+		respItem := PlexWatchlistItemResponse{
+			RatingKey:   item.RatingKey,
+			Title:       item.Title,
+			Type:        plex.NormalizeMediaType(item.Type),
+			Year:        item.Year,
+			PosterURL:   item.Thumb,
+			ExternalIDs: externalIDs,
+		}
+
+		items = append(items, respItem)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": items,
+		"count": len(items),
 	})
 }

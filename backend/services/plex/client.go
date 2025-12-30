@@ -362,3 +362,384 @@ func (c *Client) ClientID() string {
 func GenerateClientID() string {
 	return "strmr-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
+
+// PlexHomeUser represents a user in a Plex Home
+type PlexHomeUser struct {
+	ID       int    `json:"id"`
+	Title    string `json:"title"`
+	Username string `json:"username,omitempty"`
+	Thumb    string `json:"thumb,omitempty"`
+	Admin    bool   `json:"admin,omitempty"`
+	Guest    bool   `json:"guest,omitempty"`
+}
+
+// GetHomeUsers retrieves the list of users in the Plex Home
+func (c *Client) GetHomeUsers(authToken string) ([]PlexHomeUser, error) {
+	req, err := http.NewRequest(http.MethodGet, plexTVBaseURL+"/home/users", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("plex api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("plex home users failed: %s - %s", resp.Status, string(body))
+	}
+
+	var homeResp struct {
+		Users []PlexHomeUser `json:"users"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&homeResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return homeResp.Users, nil
+}
+
+// PlexResource represents a Plex server or client resource
+type PlexResource struct {
+	Name             string               `json:"name"`
+	Product          string               `json:"product"`
+	ProductVersion   string               `json:"productVersion"`
+	Platform         string               `json:"platform"`
+	PlatformVersion  string               `json:"platformVersion"`
+	Device           string               `json:"device"`
+	ClientIdentifier string               `json:"clientIdentifier"`
+	CreatedAt        time.Time            `json:"createdAt"`
+	LastSeenAt       time.Time            `json:"lastSeenAt"`
+	Provides         string               `json:"provides"`
+	Owned            bool                 `json:"owned"`
+	AccessToken      string               `json:"accessToken"`
+	Connections      []PlexConnection     `json:"connections"`
+	Presence         bool                 `json:"presence"`
+}
+
+// PlexConnection represents a connection endpoint for a Plex resource
+type PlexConnection struct {
+	Protocol string `json:"protocol"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	URI      string `json:"uri"`
+	Local    bool   `json:"local"`
+	Relay    bool   `json:"relay"`
+}
+
+// WatchHistoryItem represents an item from Plex watch history
+type WatchHistoryItem struct {
+	RatingKey            string `json:"ratingKey"`
+	Key                  string `json:"key"`
+	ParentRatingKey      string `json:"parentRatingKey,omitempty"`
+	GrandparentRatingKey string `json:"grandparentRatingKey,omitempty"`
+	Title                string `json:"title"`
+	GrandparentTitle     string `json:"grandparentTitle,omitempty"`
+	ParentTitle          string `json:"parentTitle,omitempty"`
+	Type                 string `json:"type"` // "movie", "episode"
+	Thumb                string `json:"thumb,omitempty"`
+	GrandparentThumb     string `json:"grandparentThumb,omitempty"`
+	ViewedAt             int64  `json:"viewedAt"`
+	AccountID            int    `json:"accountID"`
+	LibrarySectionID     string `json:"librarySectionID,omitempty"` // String - Plex returns mixed types
+	Index                int    `json:"index,omitempty"`            // Episode number
+	ParentIndex          int    `json:"parentIndex,omitempty"`      // Season number
+	Year                 int    `json:"year,omitempty"`
+	GUID                 string `json:"guid,omitempty"`
+	// External IDs (populated after fetching details)
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	// Server info
+	ServerName string `json:"serverName,omitempty"`
+}
+
+// GetResources retrieves the user's Plex resources (servers, clients)
+func (c *Client) GetResources(authToken string) ([]PlexResource, error) {
+	resourcesURL := fmt.Sprintf("%s/resources?includeHttps=1&includeRelay=1", plexTVBaseURL)
+
+	req, err := http.NewRequest(http.MethodGet, resourcesURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("plex api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("plex resources failed: %s - %s", resp.Status, string(body))
+	}
+
+	var resources []PlexResource
+	if err := json.NewDecoder(resp.Body).Decode(&resources); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return resources, nil
+}
+
+// GetOwnedServers returns only owned Plex Media Server resources that are online
+func (c *Client) GetOwnedServers(authToken string) ([]PlexResource, error) {
+	resources, err := c.GetResources(authToken)
+	if err != nil {
+		return nil, err
+	}
+
+	var servers []PlexResource
+	for _, r := range resources {
+		// Filter for owned servers that provide "server" capability
+		if r.Owned && strings.Contains(r.Provides, "server") && r.Presence {
+			servers = append(servers, r)
+		}
+	}
+	return servers, nil
+}
+
+// GetServerWatchHistory fetches watch history from a specific Plex server
+// If accountID > 0, filters history to only that Plex user account
+func (c *Client) GetServerWatchHistory(server PlexResource, limit int, accountID int) ([]WatchHistoryItem, error) {
+	// Find the best connection to use (prefer direct over relay)
+	var serverURL string
+	for _, conn := range server.Connections {
+		if !conn.Relay && conn.Protocol == "https" {
+			serverURL = conn.URI
+			break
+		}
+	}
+	// Fallback to any available connection
+	if serverURL == "" {
+		for _, conn := range server.Connections {
+			if !conn.Relay {
+				serverURL = conn.URI
+				break
+			}
+		}
+	}
+	// Last resort: use relay
+	if serverURL == "" && len(server.Connections) > 0 {
+		serverURL = server.Connections[0].URI
+	}
+
+	if serverURL == "" {
+		return nil, fmt.Errorf("no available connection for server %s", server.Name)
+	}
+
+	// Build history URL with pagination and optional account filter
+	historyURL := fmt.Sprintf("%s/status/sessions/history/all", serverURL)
+	params := url.Values{}
+	params.Set("X-Plex-Token", server.AccessToken)
+	if limit > 0 {
+		params.Set("X-Plex-Container-Size", strconv.Itoa(limit))
+	}
+	if accountID > 0 {
+		params.Set("accountID", strconv.Itoa(accountID))
+	}
+
+	fullURL := historyURL + "?" + params.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", server.AccessToken)
+
+	// Use a client with longer timeout for server connections
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("plex server request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("plex history failed: %s - %s", resp.Status, string(body))
+	}
+
+	var historyResp struct {
+		MediaContainer struct {
+			Size     int                `json:"size"`
+			Metadata []WatchHistoryItem `json:"Metadata"`
+		} `json:"MediaContainer"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&historyResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	// Add server name to each item
+	for i := range historyResp.MediaContainer.Metadata {
+		historyResp.MediaContainer.Metadata[i].ServerName = server.Name
+	}
+
+	return historyResp.MediaContainer.Metadata, nil
+}
+
+// GetServerItemDetails fetches detailed metadata including GUIDs from a Plex server
+func (c *Client) GetServerItemDetails(server PlexResource, ratingKey string) (*WatchHistoryItem, error) {
+	// Find connection URL
+	var serverURL string
+	for _, conn := range server.Connections {
+		if !conn.Relay && conn.Protocol == "https" {
+			serverURL = conn.URI
+			break
+		}
+	}
+	if serverURL == "" {
+		for _, conn := range server.Connections {
+			if !conn.Relay {
+				serverURL = conn.URI
+				break
+			}
+		}
+	}
+	if serverURL == "" && len(server.Connections) > 0 {
+		serverURL = server.Connections[0].URI
+	}
+	if serverURL == "" {
+		return nil, fmt.Errorf("no available connection for server %s", server.Name)
+	}
+
+	detailsURL := fmt.Sprintf("%s/library/metadata/%s?X-Plex-Token=%s", serverURL, ratingKey, server.AccessToken)
+
+	req, err := http.NewRequest(http.MethodGet, detailsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", server.AccessToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("plex server request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil // Non-critical, return nil
+	}
+
+	var detailsResp struct {
+		MediaContainer struct {
+			Metadata []struct {
+				RatingKey        string `json:"ratingKey"`
+				Title            string `json:"title"`
+				Type             string `json:"type"`
+				Year             int    `json:"year"`
+				GUID             string `json:"guid"`
+				GrandparentTitle string `json:"grandparentTitle,omitempty"`
+				ParentTitle      string `json:"parentTitle,omitempty"`
+				GrandparentRatingKey string `json:"grandparentRatingKey,omitempty"`
+				Index            int    `json:"index,omitempty"`
+				ParentIndex      int    `json:"parentIndex,omitempty"`
+				Thumb            string `json:"thumb,omitempty"`
+				Guids            []struct {
+					ID string `json:"id"`
+				} `json:"Guid"`
+			} `json:"Metadata"`
+		} `json:"MediaContainer"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&detailsResp); err != nil {
+		return nil, nil
+	}
+
+	if len(detailsResp.MediaContainer.Metadata) == 0 {
+		return nil, nil
+	}
+
+	item := detailsResp.MediaContainer.Metadata[0]
+	result := &WatchHistoryItem{
+		RatingKey:        item.RatingKey,
+		Title:            item.Title,
+		Type:             item.Type,
+		Year:             item.Year,
+		GUID:             item.GUID,
+		GrandparentTitle: item.GrandparentTitle,
+		ParentTitle:      item.ParentTitle,
+		GrandparentRatingKey: item.GrandparentRatingKey,
+		Index:            item.Index,
+		ParentIndex:      item.ParentIndex,
+		Thumb:            item.Thumb,
+		ExternalIDs:      make(map[string]string),
+	}
+
+	// Parse main GUID
+	for k, v := range ParseGUID(item.GUID) {
+		result.ExternalIDs[k] = v
+	}
+
+	// Parse additional GUIDs array
+	for _, g := range item.Guids {
+		for k, v := range ParseGUID(g.ID) {
+			result.ExternalIDs[k] = v
+		}
+	}
+
+	return result, nil
+}
+
+// GetAllWatchHistory fetches watch history from all owned servers
+// If accountID > 0, filters history to only that Plex user account
+func (c *Client) GetAllWatchHistory(authToken string, limit int, accountID int) ([]WatchHistoryItem, error) {
+	servers, err := c.GetOwnedServers(authToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("no online owned Plex servers found")
+	}
+
+	var allHistory []WatchHistoryItem
+	var lastErr error
+
+	for _, server := range servers {
+		history, err := c.GetServerWatchHistory(server, limit, accountID)
+		if err != nil {
+			lastErr = err
+			continue // Try other servers
+		}
+
+		// Fetch details for each item to get external IDs
+		for i, item := range history {
+			details, err := c.GetServerItemDetails(server, item.RatingKey)
+			if err == nil && details != nil {
+				history[i].ExternalIDs = details.ExternalIDs
+				history[i].GUID = details.GUID
+				history[i].Year = details.Year
+				// For episodes, also fetch show details
+				if item.Type == "episode" && item.GrandparentRatingKey != "" {
+					showDetails, err := c.GetServerItemDetails(server, item.GrandparentRatingKey)
+					if err == nil && showDetails != nil {
+						// Copy show's external IDs
+						history[i].ExternalIDs = showDetails.ExternalIDs
+					}
+				}
+			}
+		}
+
+		allHistory = append(allHistory, history...)
+	}
+
+	// If no history but we had errors, return the last error
+	if len(allHistory) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+
+	return allHistory, nil
+}

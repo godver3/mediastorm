@@ -202,6 +202,13 @@
                     <!-- Connected - Ready to import -->
                     <div id="plexWatchlistConnected" style="display: none;">
                         <div class="form-group">
+                            <label class="form-label">Import from Plex Account</label>
+                            <select id="plexWatchlistAccountSelect" class="form-select" style="max-width: 300px;">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
                             <label class="form-label">Import to Profile</label>
                             <select id="plexProfileSelect" class="form-select" style="max-width: 300px;">
                                 {{range .Users}}
@@ -335,14 +342,141 @@
             </svg>
         </div>
         <div class="section-content">
-            <!-- Plex Watch History (TODO) -->
-            <div class="import-card todo-card">
+            <!-- Plex Watch History Import -->
+            <div class="import-card">
                 <div class="import-card-header">
                     <h3>Plex Watch History</h3>
-                    <span class="todo-badge">Coming Soon</span>
                 </div>
-                <div class="import-card-body">
-                    <p class="text-muted">Import your Plex watch history to strmr.</p>
+                <div class="import-card-body" id="plexHistoryCard">
+                    <!-- Not Connected -->
+                    <div id="plexHistoryNotConnected">
+                        <p class="text-muted">Connect your Plex account in the Integrations section above to import your watch history.</p>
+                    </div>
+
+                    <!-- Connected - Ready to import -->
+                    <div id="plexHistoryConnected" style="display: none;">
+                        <p class="text-muted" style="margin-bottom: 1rem;">
+                            <strong>Note:</strong> This imports watch history from your Plex Media Server(s). Your server must be online and accessible.
+                        </p>
+                        <div class="form-group">
+                            <label class="form-label">Import from Plex Account</label>
+                            <select id="plexHistoryAccountSelect" class="form-select" style="max-width: 300px;" onchange="onPlexHistoryAccountChange()">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Filter by Plex User</label>
+                            <select id="plexHistoryUserSelect" class="form-select" style="max-width: 300px;">
+                                <option value="0">All Users</option>
+                                <!-- Populated by JavaScript when account is selected -->
+                            </select>
+                            <small class="text-muted">Select which Plex user's watch history to import</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="plexHistoryProfileSelect" class="form-select" style="max-width: 300px;">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+
+                        <!-- Action buttons - swap between Load and Import -->
+                        <div id="plexHistoryFetchBtnWrapper">
+                            <button class="btn btn-primary" onclick="fetchPlexHistory()" id="plexHistoryFetchBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="1 4 1 10 7 10"/>
+                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                </svg>
+                                Load History from Plex
+                            </button>
+                        </div>
+                        <div id="plexHistoryImportBtnWrapper" style="display: none;">
+                            <div class="import-action-bar">
+                                <button class="btn btn-primary" onclick="importPlexHistory()" id="plexHistoryImportBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    Import <span id="plexHistorySelectedCount">0</span> Selected
+                                </button>
+                                <button class="btn btn-secondary" onclick="resetPlexHistoryLoad()">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="1 4 1 10 7 10"/>
+                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                    </svg>
+                                    Reload
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading -->
+                    <div id="plexHistoryLoading" style="display: none;">
+                        <div class="loading-box">
+                            <div class="spinner"></div>
+                            <span>Loading watch history from Plex servers...</span>
+                        </div>
+                    </div>
+
+                    <!-- Preview Table -->
+                    <div id="plexHistoryPreview" style="display: none; margin-top: 1rem;">
+                        <div class="preview-header">
+                            <div>
+                                <span class="preview-count" id="plexHistoryCount">0 items</span>
+                                <span class="text-muted"> in your Plex history</span>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary btn-sm" onclick="plexHistorySelectAll(true)">Select All</button>
+                                <button class="btn btn-secondary btn-sm" onclick="plexHistorySelectAll(false)">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="plexHistorySelectAllCheckbox" onchange="plexHistorySelectAll(this.checked)" checked></th>
+                                        <th>Title</th>
+                                        <th style="width: 80px;">Year</th>
+                                        <th style="width: 100px;">Type</th>
+                                        <th style="width: 150px;">Watched</th>
+                                        <th style="width: 120px;">Server</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="plexHistoryTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Import Progress -->
+                    <div id="plexHistoryImporting" style="display: none; margin-top: 1rem;">
+                        <div class="status-box">
+                            <div class="spinner"></div>
+                            <div>
+                                <div class="status-title">Importing items...</div>
+                                <div class="text-muted" id="plexHistoryImportProgress">0 of 0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Import Complete -->
+                    <div id="plexHistoryComplete" style="display: none; margin-top: 1rem;">
+                        <div class="success-box">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                <polyline points="22 4 12 14.01 9 11.01"/>
+                            </svg>
+                            <div>
+                                <div class="status-title" style="color: var(--success);">Import Complete</div>
+                                <div id="plexHistoryImportSummary" class="text-muted"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetPlexHistoryImport()">Import More</button>
+                    </div>
                 </div>
             </div>
 
@@ -825,6 +959,9 @@
     let plexSelectedItems = new Set();
     let plexPollInterval = null;
     let plexAuthAccountId = null;
+    // Plex history state
+    let plexHistoryItems = [];
+    let plexHistorySelectedItems = new Set();
 
     // ========== Trakt State ==========
     let traktAccounts = [];
@@ -850,6 +987,7 @@
             renderPlexAccountsList();
             updatePlexStatusBadge();
             updatePlexWatchlistSection();
+            updatePlexHistoryUI();
         } catch (err) {
             console.error('Failed to load Plex accounts:', err);
         }
@@ -1049,7 +1187,7 @@
     function updatePlexWatchlistSection() {
         const watchlistNotConnected = document.getElementById('plexWatchlistNotConnected');
         const watchlistConnected = document.getElementById('plexWatchlistConnected');
-        const accountSelect = document.getElementById('plexAccountSelect');
+        const accountSelect = document.getElementById('plexWatchlistAccountSelect');
 
         const connectedAccounts = plexAccounts.filter(a => a.connected);
 
@@ -1060,7 +1198,7 @@
             // Populate account select for watchlist import
             if (accountSelect) {
                 accountSelect.innerHTML = connectedAccounts.map(acc =>
-                    `<option value="${acc.id}">${escapeHtml(acc.name || acc.username || 'Unnamed')}</option>`
+                    `<option value="${acc.id}">${escapeHtml(acc.name)}${acc.username ? ` (${escapeHtml(acc.username)})` : ''}</option>`
                 ).join('');
             }
         } else {
@@ -1603,6 +1741,14 @@
 
     // ========== Plex Watchlist Functions ==========
     async function fetchPlexWatchlist() {
+        const accountSelect = document.getElementById('plexWatchlistAccountSelect');
+        const accountId = accountSelect.value;
+
+        if (!accountId) {
+            showToast('Please select a Plex account', 'error');
+            return;
+        }
+
         const fetchBtn = document.getElementById('plexFetchBtn');
         fetchBtn.disabled = true;
         document.getElementById('plexLoadingSection').style.display = 'block';
@@ -1610,7 +1756,7 @@
         document.getElementById('plexFetchBtnWrapper').style.display = 'none';
 
         try {
-            const response = await fetch('/admin/api/plex/watchlist');
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/watchlist`);
 
             if (!response.ok) {
                 const error = await response.json();
@@ -1787,6 +1933,262 @@
         document.getElementById('plexFetchBtnWrapper').style.display = 'block';
         plexWatchlistItems = [];
         plexSelectedItems.clear();
+    }
+
+    // ========== Plex Watch History Functions ==========
+    async function onPlexHistoryAccountChange() {
+        const accountSelect = document.getElementById('plexHistoryAccountSelect');
+        const userSelect = document.getElementById('plexHistoryUserSelect');
+        const accountId = accountSelect.value;
+
+        // Reset user select
+        userSelect.innerHTML = '<option value="0">All Users</option>';
+
+        if (!accountId) return;
+
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/users`);
+            if (response.ok) {
+                const data = await response.json();
+                const users = data.users || [];
+                users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.title + (user.username ? ` (${user.username})` : '');
+                    userSelect.appendChild(option);
+                });
+            }
+        } catch (err) {
+            console.error('Failed to load Plex users:', err);
+        }
+    }
+
+    async function fetchPlexHistory() {
+        const accountSelect = document.getElementById('plexHistoryAccountSelect');
+        const userSelect = document.getElementById('plexHistoryUserSelect');
+        const accountId = accountSelect.value;
+        const plexUserId = userSelect.value || '0';
+
+        if (!accountId) {
+            showToast('Please select a Plex account', 'error');
+            return;
+        }
+
+        const fetchBtn = document.getElementById('plexHistoryFetchBtn');
+        fetchBtn.disabled = true;
+        document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'none';
+        document.getElementById('plexHistoryLoading').style.display = 'block';
+
+        try {
+            const response = await fetch(`/admin/api/plex/accounts/${accountId}/history?limit=1000&plexUserId=${plexUserId}`);
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch watch history');
+            }
+
+            const data = await response.json();
+            plexHistoryItems = data.items || [];
+
+            // Select all items by default
+            plexHistorySelectedItems.clear();
+            plexHistoryItems.forEach((item, index) => plexHistorySelectedItems.add(index));
+
+            renderPlexHistoryTable();
+            document.getElementById('plexHistoryLoading').style.display = 'none';
+            document.getElementById('plexHistoryPreview').style.display = 'block';
+            document.getElementById('plexHistoryImportBtnWrapper').style.display = 'block';
+            updatePlexHistorySelectedCount();
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            document.getElementById('plexHistoryLoading').style.display = 'none';
+            document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'block';
+        } finally {
+            fetchBtn.disabled = false;
+        }
+    }
+
+    function renderPlexHistoryTable() {
+        const tbody = document.getElementById('plexHistoryTableBody');
+        const countEl = document.getElementById('plexHistoryCount');
+
+        countEl.textContent = `${plexHistoryItems.length} item${plexHistoryItems.length !== 1 ? 's' : ''}`;
+
+        if (plexHistoryItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">No watch history found on your Plex servers</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = plexHistoryItems.map((item, index) => {
+            const isSelected = plexHistorySelectedItems.has(index);
+            let displayTitle = item.title;
+            if (item.type === 'episode' && item.seriesTitle) {
+                displayTitle = `${item.seriesTitle} - S${String(item.season).padStart(2,'0')}E${String(item.episode).padStart(2,'0')} - ${item.title}`;
+            }
+            const watchedDate = item.viewedAt ? new Date(item.viewedAt * 1000).toLocaleDateString() : '-';
+
+            return `
+                <tr class="${isSelected ? '' : 'disabled'}">
+                    <td>
+                        <input type="checkbox"
+                               ${isSelected ? 'checked' : ''}
+                               onchange="togglePlexHistoryItem(${index}, this.checked)">
+                    </td>
+                    <td style="font-weight: 500;">${escapeHtml(displayTitle)}</td>
+                    <td style="color: var(--text-muted);">${item.year || '-'}</td>
+                    <td><span class="type-badge ${item.type}">${item.type}</span></td>
+                    <td style="color: var(--text-muted);">${watchedDate}</td>
+                    <td style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(item.serverName || '-')}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function togglePlexHistoryItem(index, checked) {
+        if (checked) {
+            plexHistorySelectedItems.add(index);
+        } else {
+            plexHistorySelectedItems.delete(index);
+        }
+        updatePlexHistorySelectedCount();
+        updatePlexHistoryRowStyles();
+    }
+
+    function plexHistorySelectAll(checked) {
+        plexHistorySelectedItems.clear();
+        if (checked) {
+            plexHistoryItems.forEach((item, index) => plexHistorySelectedItems.add(index));
+        }
+
+        document.querySelectorAll('#plexHistoryTableBody input[type="checkbox"]').forEach(cb => {
+            cb.checked = checked;
+        });
+        document.getElementById('plexHistorySelectAllCheckbox').checked = checked;
+
+        updatePlexHistorySelectedCount();
+        updatePlexHistoryRowStyles();
+    }
+
+    function updatePlexHistorySelectedCount() {
+        document.getElementById('plexHistorySelectedCount').textContent = plexHistorySelectedItems.size;
+        document.getElementById('plexHistoryImportBtn').disabled = plexHistorySelectedItems.size === 0;
+
+        const selectAllCb = document.getElementById('plexHistorySelectAllCheckbox');
+        selectAllCb.checked = plexHistorySelectedItems.size === plexHistoryItems.length;
+        selectAllCb.indeterminate = plexHistorySelectedItems.size > 0 && plexHistorySelectedItems.size < plexHistoryItems.length;
+    }
+
+    function updatePlexHistoryRowStyles() {
+        document.querySelectorAll('#plexHistoryTableBody tr').forEach((row, index) => {
+            if (plexHistorySelectedItems.has(index)) {
+                row.classList.remove('disabled');
+            } else {
+                row.classList.add('disabled');
+            }
+        });
+    }
+
+    async function importPlexHistory() {
+        const profileId = document.getElementById('plexHistoryProfileSelect').value;
+
+        if (!profileId) {
+            showToast('Please select a profile', 'error');
+            return;
+        }
+
+        if (plexHistorySelectedItems.size === 0) {
+            showToast('No items selected', 'error');
+            return;
+        }
+
+        const selectedItems = plexHistoryItems.filter((item, index) => plexHistorySelectedItems.has(index));
+
+        document.getElementById('plexHistoryPreview').style.display = 'none';
+        document.getElementById('plexHistoryImportBtnWrapper').style.display = 'none';
+        document.getElementById('plexHistoryImporting').style.display = 'block';
+        document.getElementById('plexHistoryImportProgress').textContent = `0 of ${selectedItems.length}`;
+
+        try {
+            const response = await fetch(`/admin/api/plex/import/history`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    items: selectedItems.map(item => ({
+                        ratingKey: item.ratingKey,
+                        title: item.title,
+                        type: item.type,
+                        year: item.year || 0,
+                        viewedAt: item.viewedAt,
+                        externalIds: item.externalIds || {},
+                        seriesTitle: item.seriesTitle || '',
+                        season: item.season || 0,
+                        episode: item.episode || 0
+                    }))
+                })
+            });
+
+            const result = await response.json();
+
+            document.getElementById('plexHistoryImporting').style.display = 'none';
+            document.getElementById('plexHistoryComplete').style.display = 'block';
+
+            let summary = `Successfully imported ${result.imported} item${result.imported !== 1 ? 's' : ''}.`;
+            if (result.failed > 0) {
+                summary += ` ${result.failed} item${result.failed !== 1 ? 's' : ''} failed.`;
+            }
+            document.getElementById('plexHistoryImportSummary').textContent = summary;
+
+            if (result.success) {
+                showToast(`Imported ${result.imported} items to watch history`, 'success');
+            } else {
+                showToast(`Imported ${result.imported} items with ${result.failed} failures`, 'warning');
+            }
+
+        } catch (err) {
+            document.getElementById('plexHistoryImporting').style.display = 'none';
+            document.getElementById('plexHistoryPreview').style.display = 'block';
+            showToast('Import failed: ' + err.message, 'error');
+        }
+    }
+
+    function resetPlexHistoryImport() {
+        document.getElementById('plexHistoryComplete').style.display = 'none';
+        document.getElementById('plexHistoryImportBtnWrapper').style.display = 'none';
+        document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'block';
+        plexHistoryItems = [];
+        plexHistorySelectedItems.clear();
+    }
+
+    function resetPlexHistoryLoad() {
+        document.getElementById('plexHistoryPreview').style.display = 'none';
+        document.getElementById('plexHistoryImportBtnWrapper').style.display = 'none';
+        document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'block';
+        plexHistoryItems = [];
+        plexHistorySelectedItems.clear();
+    }
+
+    // Update Plex History UI when accounts change
+    function updatePlexHistoryUI() {
+        const connectedAccounts = plexAccounts.filter(a => a.connected);
+        const accountSelect = document.getElementById('plexHistoryAccountSelect');
+
+        if (connectedAccounts.length === 0) {
+            document.getElementById('plexHistoryNotConnected').style.display = 'block';
+            document.getElementById('plexHistoryConnected').style.display = 'none';
+        } else {
+            document.getElementById('plexHistoryNotConnected').style.display = 'none';
+            document.getElementById('plexHistoryConnected').style.display = 'block';
+
+            // Populate account select
+            accountSelect.innerHTML = connectedAccounts.map(a =>
+                `<option value="${a.id}">${escapeHtml(a.name)}${a.username ? ` (${escapeHtml(a.username)})` : ''}</option>`
+            ).join('');
+
+            // Load users for the first account
+            onPlexHistoryAccountChange();
+        }
     }
 </script>
 {{end}}
