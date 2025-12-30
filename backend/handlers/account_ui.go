@@ -822,7 +822,7 @@ func (h *AccountUIHandler) GetProfileSettings(w http.ResponseWriter, r *http.Req
 		"filtering": map[string]interface{}{
 			"maxSizeMovieGb":   0,
 			"maxSizeEpisodeGb": 0,
-			"excludeHdr":       false,
+			"hdrDvPolicy":      "none",
 			"prioritizeHdr":    true,
 		},
 	}

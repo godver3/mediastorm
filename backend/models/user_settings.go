@@ -48,15 +48,27 @@ type HomeShelvesSettings struct {
 	TrendingMovieSource TrendingMovieSource `json:"trendingMovieSource,omitempty"` // "all" (TMDB) or "released" (MDBList)
 }
 
+// HDRDVPolicy determines what HDR/DV content to exclude from search results.
+type HDRDVPolicy string
+
+const (
+	// HDRDVPolicyNoExclusion excludes all HDR/DV content - only SDR allowed
+	HDRDVPolicyNoExclusion HDRDVPolicy = "none"
+	// HDRDVPolicyIncludeHDR allows HDR and DV profile 7/8 (DV profile 5 rejected at probe time)
+	HDRDVPolicyIncludeHDR HDRDVPolicy = "hdr"
+	// HDRDVPolicyIncludeHDRDV allows all content including all DV profiles - no filtering
+	HDRDVPolicyIncludeHDRDV HDRDVPolicy = "hdr_dv"
+)
+
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB   float64  `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB float64  `json:"maxSizeEpisodeGb"`
-	MaxResolution    string   `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	ExcludeHdr       bool     `json:"excludeHdr"`
-	PrioritizeHdr    bool     `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
-	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms   []string `json:"preferredTerms"` // Terms to prioritize in results (case-insensitive match in title)
+	MaxSizeMovieGB   float64     `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB float64     `json:"maxSizeEpisodeGb"`
+	MaxResolution    string      `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy      HDRDVPolicy `json:"hdrDvPolicy"`    // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	PrioritizeHdr    bool        `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
+	FilterOutTerms   []string    `json:"filterOutTerms"` // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms   []string    `json:"preferredTerms"` // Terms to prioritize in results (case-insensitive match in title)
 }
 
 // DefaultUserSettings returns the default settings for a new user.
@@ -79,7 +91,7 @@ func DefaultUserSettings() UserSettings {
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   0,
 			MaxSizeEpisodeGB: 0,
-			ExcludeHdr:       false,
+			HDRDVPolicy:      HDRDVPolicyNoExclusion,
 			PrioritizeHdr:    true,
 		},
 		LiveTV: LiveTVSettings{

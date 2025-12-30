@@ -11,6 +11,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/utils/filter"
 )
 
 // userSettingsProvider retrieves per-user settings.
@@ -167,7 +168,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
-		ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
+		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
@@ -200,8 +201,8 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			if clientSettings.MaxResolution != nil {
 				filterSettings.MaxResolution = *clientSettings.MaxResolution
 			}
-			if clientSettings.ExcludeHdr != nil {
-				filterSettings.ExcludeHdr = *clientSettings.ExcludeHdr
+			if clientSettings.HDRDVPolicy != nil {
+				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
 			}
 			if clientSettings.PrioritizeHdr != nil {
 				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
@@ -355,7 +356,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
 			MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
 			MaxResolution:    filterSettings.MaxResolution,
-			ExcludeHdr:       filterSettings.ExcludeHdr,
+			HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
 			PrioritizeHdr:    filterSettings.PrioritizeHdr,
 			AlternateTitles:  opts.AlternateTitles,
 			FilterOutTerms:   filterSettings.FilterOutTerms,

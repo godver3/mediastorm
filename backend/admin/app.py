@@ -96,7 +96,16 @@ SETTINGS_SCHEMA = {
         "fields": {
             "maxSizeMovieGb": {"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
             "maxSizeEpisodeGb": {"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
-            "excludeHdr": {"type": "boolean", "label": "Exclude HDR", "description": "Exclude HDR content from results"},
+            "hdrDvPolicy": {
+                "type": "select",
+                "label": "HDR/DV Policy",
+                "options": [
+                    {"value": "none", "label": "No exclusion"},
+                    {"value": "hdr", "label": "Include HDR"},
+                    {"value": "hdr_dv", "label": "Include HDR/DV"},
+                ],
+                "description": "HDR/DV inclusion policy. 'Include HDR' includes DV profile 7/8 (with HDR fallback layer). 'Include HDR/DV' includes all Dolby Vision profiles.",
+            },
             "prioritizeHdr": {"type": "boolean", "label": "Prioritize HDR", "description": "Prioritize HDR/DV content in results"},
             "filterOutTerms": {"type": "tags", "label": "Filter Terms", "description": "Terms to filter out from results"},
         }

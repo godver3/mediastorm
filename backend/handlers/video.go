@@ -21,7 +21,9 @@ import (
 	"syscall"
 	"time"
 
+	"novastream/config"
 	"novastream/internal/integration"
+	"novastream/models"
 	"novastream/services/streaming"
 
 	"github.com/gorilla/mux"
@@ -74,6 +76,21 @@ type VideoHandler struct {
 	webdavMu       sync.RWMutex
 	webdavBaseURL  string
 	webdavPrefix   string
+
+	// User settings for policy checks (e.g., HDR/DV policy)
+	userSettingsSvc   UserSettingsProvider
+	clientSettingsSvc ClientSettingsProvider
+	configManager     ConfigProvider
+}
+
+// UserSettingsProvider interface for accessing user settings
+type UserSettingsProvider interface {
+	Get(userID string) (*models.UserSettings, error)
+}
+
+// ConfigProvider interface for accessing global config
+type ConfigProvider interface {
+	Load() (config.Settings, error)
 }
 
 // NewVideoHandler creates a new video handler without an attached provider.
@@ -141,6 +158,21 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		hlsManager:             hlsMgr,
 		subtitleExtractManager: subtitleMgr,
 	}
+}
+
+// SetUserSettingsService sets the user settings service for policy checks
+func (h *VideoHandler) SetUserSettingsService(svc UserSettingsProvider) {
+	h.userSettingsSvc = svc
+}
+
+// SetConfigManager sets the config manager for global settings fallback
+func (h *VideoHandler) SetConfigManager(cfgManager ConfigProvider) {
+	h.configManager = cfgManager
+}
+
+// SetClientSettingsService sets the client settings service for per-device policy checks
+func (h *VideoHandler) SetClientSettingsService(svc ClientSettingsProvider) {
+	h.clientSettingsSvc = svc
 }
 
 // StreamVideo serves registered streams via the local provider.
@@ -963,6 +995,18 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		sanitizedPath = filePath
 	}
 
+	// Extract profile info from query params for DV policy check
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+
+	// Get clientID from query param or header
+	clientID := r.URL.Query().Get("clientId")
+	if clientID == "" {
+		clientID = r.Header.Get("X-Client-ID")
+	}
+
 	var (
 		fileSize int64
 		notes    []string
@@ -1026,6 +1070,12 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 
 		if len(notes) > 0 {
 			response.Notes = append(response.Notes, notes...)
+		}
+
+		// Check DV policy violation before returning
+		if violation, dvProfile := h.checkDVPolicyViolation(response, profileID, clientID); violation {
+			http.Error(w, fmt.Sprintf("DV_PROFILE_INCOMPATIBLE: profile %s has no HDR fallback layer", dvProfile), http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1110,6 +1160,12 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 
 	if len(notes) > 0 {
 		response.Notes = append(response.Notes, notes...)
+	}
+
+	// Check DV policy violation before returning
+	if violation, dvProfile := h.checkDVPolicyViolation(response, profileID, clientID); violation {
+		http.Error(w, fmt.Sprintf("DV_PROFILE_INCOMPATIBLE: profile %s has no HDR fallback layer", dvProfile), http.StatusBadRequest)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1935,6 +1991,26 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		profileID = r.URL.Query().Get("userId")
 	}
 	profileName := r.URL.Query().Get("profileName")
+
+	// Get clientID from query param or header
+	clientID := r.URL.Query().Get("clientId")
+	if clientID == "" {
+		clientID = r.Header.Get("X-Client-ID")
+	}
+
+	// Check DV profile compatibility with user's HDR/DV policy
+	if hasDV && dvProfile != "" {
+		hdrDVPolicy := h.getHDRDVPolicy(profileID, clientID)
+		if hdrDVPolicy == models.HDRDVPolicyIncludeHDR {
+			// Parse DV profile number from format like "dvhe.05.06"
+			dvProfileNum := parseDVProfileNumber(dvProfile)
+			if dvProfileNum == 5 {
+				log.Printf("[video] DV profile 5 incompatible with 'hdr' policy (no HDR fallback) for path=%q", cleanPath)
+				http.Error(w, "DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 
 	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, audioTrackIndex, subtitleTrackIndex)
@@ -2814,4 +2890,73 @@ func (h *VideoHandler) GetDirectURL(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"url": directURL,
 	})
+}
+
+// getHDRDVPolicy returns the effective HDR/DV policy for a user/client
+// Priority: client settings > user settings > global settings > default
+func (h *VideoHandler) getHDRDVPolicy(userID, clientID string) models.HDRDVPolicy {
+	var policy models.HDRDVPolicy
+
+	// Layer 1: Start with global settings
+	if h.configManager != nil {
+		globalSettings, err := h.configManager.Load()
+		if err == nil {
+			policy = models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy)
+		}
+	}
+
+	// Layer 2: User settings override global
+	if h.userSettingsSvc != nil && userID != "" {
+		userSettings, err := h.userSettingsSvc.Get(userID)
+		if err == nil && userSettings != nil && userSettings.Filtering.HDRDVPolicy != "" {
+			policy = userSettings.Filtering.HDRDVPolicy
+		}
+	}
+
+	// Layer 3: Client settings override user
+	if h.clientSettingsSvc != nil && clientID != "" {
+		clientSettings, err := h.clientSettingsSvc.Get(clientID)
+		if err == nil && clientSettings != nil && clientSettings.HDRDVPolicy != nil {
+			policy = *clientSettings.HDRDVPolicy
+			log.Printf("[video] Using client-specific HDR/DV policy: %s", policy)
+		}
+	}
+
+	// Default to allowing all content
+	if policy == "" {
+		policy = models.HDRDVPolicyIncludeHDRDV
+	}
+
+	return policy
+}
+
+// parseDVProfileNumber extracts the profile number from a DV profile string like "dvhe.05.06"
+func parseDVProfileNumber(dvProfile string) int {
+	parts := strings.Split(dvProfile, ".")
+	if len(parts) >= 2 {
+		profile, _ := strconv.Atoi(parts[1])
+		return profile
+	}
+	return 0
+}
+
+// checkDVPolicyViolation checks if the response contains DV profile 5 which is incompatible
+// with the user's "hdr" policy (SDR + HDR only). Returns true if there's a violation.
+func (h *VideoHandler) checkDVPolicyViolation(response videoMetadataResponse, profileID, clientID string) (bool, string) {
+	hdrDVPolicy := h.getHDRDVPolicy(profileID, clientID)
+	if hdrDVPolicy != models.HDRDVPolicyIncludeHDR {
+		return false, ""
+	}
+
+	// Check all video streams for DV profile 5
+	for _, vs := range response.VideoStreams {
+		if vs.HasDolbyVision && vs.DolbyVisionProfile != "" {
+			dvProfileNum := parseDVProfileNumber(vs.DolbyVisionProfile)
+			if dvProfileNum == 5 {
+				log.Printf("[video] ProbeVideo: DV profile 5 incompatible with 'hdr' policy (no HDR fallback)")
+				return true, vs.DolbyVisionProfile
+			}
+		}
+	}
+	return false, ""
 }

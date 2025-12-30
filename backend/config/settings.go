@@ -208,16 +208,28 @@ type HomeShelvesSettings struct {
 	TrendingMovieSource TrendingMovieSource `json:"trendingMovieSource,omitempty"` // "all" (TMDB) or "released" (MDBList)
 }
 
+// HDRDVPolicy determines what HDR/DV content to exclude from search results.
+type HDRDVPolicy string
+
+const (
+	// HDRDVPolicyNoExclusion excludes all HDR/DV content - only SDR allowed
+	HDRDVPolicyNoExclusion HDRDVPolicy = "none"
+	// HDRDVPolicyIncludeHDR allows HDR and DV profile 7/8 (DV profile 5 rejected at probe time)
+	HDRDVPolicyIncludeHDR HDRDVPolicy = "hdr"
+	// HDRDVPolicyIncludeHDRDV allows all content including all DV profiles - no filtering
+	HDRDVPolicyIncludeHDRDV HDRDVPolicy = "hdr_dv"
+)
+
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB                   float64  `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB                 float64  `json:"maxSizeEpisodeGb"`
-	MaxResolution                    string   `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	ExcludeHdr                       bool     `json:"excludeHdr"`
-	PrioritizeHdr                    bool     `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
-	FilterOutTerms                   []string `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms                   []string `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
-	BypassFilteringForAIOStreamsOnly bool     `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
+	MaxSizeMovieGB                   float64     `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB                 float64     `json:"maxSizeEpisodeGb"`
+	MaxResolution                    string      `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy                      HDRDVPolicy `json:"hdrDvPolicy"`                      // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	PrioritizeHdr                    bool        `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
+	FilterOutTerms                   []string    `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms                   []string    `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
+	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
 }
 
 // UISettings captures user interface preferences shared with the clients.
@@ -307,6 +319,7 @@ type PlexAccount struct {
 	OwnerAccountID string `json:"ownerAccountId,omitempty"` // Login account that owns this Plex account
 	AuthToken      string `json:"authToken,omitempty"`      // Plex auth token
 	Username       string `json:"username,omitempty"`       // Plex username
+	UserID         int    `json:"userId,omitempty"`         // Plex user ID (for filtering watch history)
 }
 
 type PlexSettings struct {
@@ -380,10 +393,10 @@ func DefaultSettings() Settings {
 			TrendingMovieSource: TrendingMovieSourceReleased, // Default to released-only (MDBList)
 		},
 		Filtering: FilterSettings{
-			MaxSizeMovieGB:   0,     // 0 means no limit
-			MaxSizeEpisodeGB: 0,     // 0 means no limit
-			ExcludeHdr:       false, // false = include HDR content
-			PrioritizeHdr:    true,  // true = prioritize HDR/DV content when not excluded
+			MaxSizeMovieGB:   0,                        // 0 means no limit
+			MaxSizeEpisodeGB: 0,                        // 0 means no limit
+			HDRDVPolicy:      HDRDVPolicyIncludeHDRDV,  // "hdr_dv" = allow all content (no HDR/DV filtering)
+			PrioritizeHdr:    true,                     // true = prioritize HDR/DV content when available
 		},
 		UI: UISettings{
 			LoadingAnimationEnabled: true,
@@ -540,6 +553,27 @@ func (m *Manager) Load() (Settings, error) {
 			}
 			// Remove from filtering
 			delete(filteringRaw, "servicePriority")
+		}
+	}
+
+	// Migrate excludeHdr (bool) to hdrDvPolicy (string enum)
+	if filteringRaw, ok := raw["filtering"].(map[string]interface{}); ok {
+		// Only migrate if hdrDvPolicy is not already set
+		if _, hasPolicy := filteringRaw["hdrDvPolicy"]; !hasPolicy {
+			if excludeHdr, hasExclude := filteringRaw["excludeHdr"]; hasExclude {
+				if exclude, ok := excludeHdr.(bool); ok && exclude {
+					// excludeHdr: true means exclude all HDR/DV content
+					// This maps to NOT having any inclusion policy, but since we now
+					// have inclusion policies, we'll need to handle this in the filtering logic
+					// For backwards compatibility, we don't have a "exclude all HDR" option,
+					// so we'll set it to "none" (no exclusion) and let the user reconfigure
+					filteringRaw["hdrDvPolicy"] = "none"
+				} else {
+					// excludeHdr: false means include HDR content, map to "none" (no exclusion)
+					filteringRaw["hdrDvPolicy"] = "none"
+				}
+				delete(filteringRaw, "excludeHdr")
+			}
 		}
 	}
 

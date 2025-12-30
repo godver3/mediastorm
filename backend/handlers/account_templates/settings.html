@@ -493,14 +493,15 @@ function renderSettings() {
                 </div>
                 <div class="setting-row">
                     <div class="setting-label">
-                        <h4>Exclude HDR Content</h4>
-                        <p>Hide HDR and Dolby Vision content from results</p>
+                        <h4>HDR/DV Policy</h4>
+                        <p>Filter content by HDR/Dolby Vision capability. 'Include HDR' allows DV profile 7/8 (with HDR fallback layer).</p>
                     </div>
                     <div class="setting-control">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="excludeHdr" ${s.filtering.excludeHdr ? 'checked' : ''} onchange="markChanged()">
-                            <span class="toggle-slider"></span>
-                        </label>
+                        <select id="hdrDvPolicy" onchange="markChanged()">
+                            <option value="none" ${s.filtering.hdrDvPolicy === 'none' || !s.filtering.hdrDvPolicy ? 'selected' : ''}>No exclusion</option>
+                            <option value="hdr" ${s.filtering.hdrDvPolicy === 'hdr' ? 'selected' : ''}>Include HDR</option>
+                            <option value="hdr_dv" ${s.filtering.hdrDvPolicy === 'hdr_dv' ? 'selected' : ''}>Include HDR/DV</option>
+                        </select>
                     </div>
                 </div>
                 <div class="setting-row" style="flex-direction: column; align-items: flex-start;">
@@ -576,7 +577,7 @@ function collectSettings() {
             maxSizeEpisodeGb: parseFloat(document.getElementById('maxSizeEpisodeGb').value) || 0,
             maxResolution: document.getElementById('maxResolution').value,
             prioritizeHdr: document.getElementById('prioritizeHdr').checked,
-            excludeHdr: document.getElementById('excludeHdr').checked,
+            hdrDvPolicy: document.getElementById('hdrDvPolicy').value,
             filterOutTerms: currentSettings.filtering.filterOutTerms || [],
         },
         liveTV: currentSettings.liveTV || { hiddenChannels: [], favoriteChannels: [], selectedCategories: [] },
