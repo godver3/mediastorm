@@ -528,7 +528,7 @@ const createStyles = (theme: NovaTheme) =>
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
       fontWeight: '600',
-      backgroundColor: theme.colors.background.secondary,
+      backgroundColor: theme.colors.background.surface,
       paddingRight: theme.spacing.md,
       zIndex: 1,
     },

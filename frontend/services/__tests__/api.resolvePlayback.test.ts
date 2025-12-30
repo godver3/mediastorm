@@ -52,7 +52,7 @@ describe('ApiService.resolvePlayback', () => {
 
     global.fetch = jest.fn().mockResolvedValue(okJsonResponse(playback));
 
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     const result = await api.resolvePlayback(sampleResult);
 
     expect(result).toEqual(playback);
@@ -91,7 +91,7 @@ describe('ApiService.resolvePlayback', () => {
       throw new Error(`Unexpected fetch to ${url}`);
     });
 
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     const result = await api.resolvePlayback(sampleResult);
 
     expect(result.webdavPath).toBe('/webdav/streams/test-file.mkv');
@@ -134,7 +134,7 @@ describe('ApiService.resolvePlayback', () => {
     });
 
     const onStatus = jest.fn();
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     const result = await api.resolvePlayback(sampleResult, { onStatus });
 
     expect(onStatus).toHaveBeenCalledTimes(3);
@@ -159,7 +159,7 @@ describe('ApiService.resolvePlayback', () => {
     global.fetch = jest.fn().mockResolvedValue(okJsonResponse(playback));
 
     const onStatus = jest.fn();
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     const result = await api.resolvePlayback(sampleResult, { onStatus });
 
     expect(onStatus).toHaveBeenCalledTimes(1);
@@ -172,7 +172,7 @@ describe('ApiService.resolvePlayback', () => {
 
     global.fetch = jest.fn().mockResolvedValue(okJsonResponse(failureResponse));
 
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     await expect(api.resolvePlayback(sampleResult)).rejects.toMatchObject({
       code: 'NZB_HEALTH_FAILED',
     });
@@ -183,7 +183,7 @@ describe('ApiService.resolvePlayback', () => {
 
     global.fetch = jest.fn().mockResolvedValue(okJsonResponse(failureResponse));
 
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     await expect(api.resolvePlayback(sampleResult)).rejects.toMatchObject({
       code: 'NZB_HEALTH_FAILED',
     });
@@ -205,7 +205,7 @@ describe('ApiService.resolvePlayback', () => {
       throw new Error(`Unexpected fetch to ${url}`);
     });
 
-    const api = new ApiService(baseUrl, 'test-key');
+    const api = new ApiService(baseUrl);
     await expect(api.resolvePlayback(sampleResult)).rejects.toMatchObject({
       code: 'NZB_HEALTH_FAILED',
     });

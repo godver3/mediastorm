@@ -27,9 +27,10 @@ interface ImageWrapperProps {
   cachePolicy?: 'none' | 'disk' | 'memory' | 'memory-disk';
   recyclingKey?: string;
   priority?: 'low' | 'normal' | 'high';
+  onError?: () => void;
 }
 
-export function Image({ source, style, contentFit = 'cover', transition, blurRadius, cachePolicy, recyclingKey, priority }: ImageWrapperProps) {
+export function Image({ source, style, contentFit = 'cover', transition, blurRadius, cachePolicy, recyclingKey, priority, onError }: ImageWrapperProps) {
   if (hasExpoImage && ExpoImageModule) {
     const ExpoImage = ExpoImageModule.Image;
     return (
@@ -42,6 +43,7 @@ export function Image({ source, style, contentFit = 'cover', transition, blurRad
         cachePolicy={cachePolicy}
         recyclingKey={recyclingKey}
         priority={priority}
+        onError={onError}
       />
     );
   }
@@ -56,6 +58,7 @@ export function Image({ source, style, contentFit = 'cover', transition, blurRad
       style={style}
       resizeMode={resizeMode}
       blurRadius={blurRadius}
+      onError={onError}
     />
   );
 }
