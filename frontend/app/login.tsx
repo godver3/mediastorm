@@ -28,6 +28,10 @@ import {
 } from '@/services/tv-navigation';
 import { useToast } from '@/components/ToastContext';
 
+// Local logo asset with fallback chain
+const localLogoAsset = require('@/assets/app-logo-wide.png');
+const GITHUB_LOGO_URL = 'https://raw.githubusercontent.com/godver3/strmr/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
+
 // Animation constant from strmr-loading.tsx
 const CIRCLE_PULSE_DURATION_MS = 3200;
 
@@ -45,6 +49,21 @@ export default function LoginScreen() {
   const [serverUrl, setServerUrl] = useState(backendUrl?.replace(/\/api$/, '') || '');
   const [isSavingServer, setIsSavingServer] = useState(false);
   const tvPasswordFocused = useSharedValue(0);
+
+  // Logo source with fallback chain: local → backend → github
+  const [logoSource, setLogoSource] = useState<'local' | 'backend' | 'github'>('local');
+  const getLogoSource = useCallback(() => {
+    if (logoSource === 'local') return localLogoAsset;
+    if (logoSource === 'backend' && backendUrl) return { uri: `${backendUrl}/static/app-logo-wide.png` };
+    return { uri: GITHUB_LOGO_URL };
+  }, [logoSource, backendUrl]);
+  const handleLogoError = useCallback(() => {
+    if (logoSource === 'local' && backendUrl) {
+      setLogoSource('backend');
+    } else if (logoSource === 'local' || logoSource === 'backend') {
+      setLogoSource('github');
+    }
+  }, [logoSource, backendUrl]);
 
   const usernameRef = useRef<TextInput | null>(null);
   const passwordRef = useRef<TextInput | null>(null);
@@ -64,10 +83,12 @@ export default function LoginScreen() {
         clearTimeout(keyboardHideTimeout.current);
         keyboardHideTimeout.current = null;
       }
-      setKeyboardVisible(true);
-      // TV: trigger animation for lower fields (password, server URL)
-      if (Platform.isTV && lowerFieldFocused.current) {
-        tvPasswordFocused.value = 1;
+      // Only animate up for lower fields (password, server URL)
+      if (lowerFieldFocused.current) {
+        setKeyboardVisible(true);
+        if (Platform.isTV) {
+          tvPasswordFocused.value = 1;
+        }
       }
     });
 
@@ -294,16 +315,19 @@ export default function LoginScreen() {
           {/* Login card overlay */}
           <Animated.View style={[styles.container, tvAnimatedStyle]}>
             <View style={styles.card}>
+              <View style={styles.tvImageHeaderContainer}>
+                <Image
+                  source={getLogoSource()}
+                  style={styles.tvLogoImage}
+                  contentFit="cover"
+                  onError={handleLogoError}
+                />
+                <LinearGradient
+                  colors={['transparent', theme.colors.background.surface]}
+                  style={styles.tvImageGradientOverlay}
+                />
+              </View>
               <View style={styles.header}>
-                {backendUrl ? (
-                  <Image
-                    source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
-                    style={styles.logoImage}
-                    contentFit="contain"
-                  />
-                ) : (
-                  <Text style={styles.title}>strmr</Text>
-                )}
                 <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
                 {!showServerConfig && backendUrl ? (
                   <Text style={styles.serverInfo} numberOfLines={1}>
@@ -424,6 +448,8 @@ export default function LoginScreen() {
                               placeholder="Enter password"
                               placeholderTextColor="#aaaaaa"
                               secureTextEntry
+                              autoCapitalize="none"
+                              autoCorrect={false}
                               autoComplete="off"
                               textContentType="none"
                               returnKeyType="done"
@@ -473,16 +499,19 @@ export default function LoginScreen() {
   const serverConfigContent = (
     <View style={styles.container}>
       <View style={styles.card}>
+        <View style={styles.imageHeaderContainer}>
+          <Image
+            source={getLogoSource()}
+            style={styles.mobileLogoImage}
+            contentFit="cover"
+            onError={handleLogoError}
+          />
+          <LinearGradient
+            colors={['transparent', theme.colors.background.surface]}
+            style={styles.imageGradientOverlay}
+          />
+        </View>
         <View style={styles.header}>
-          {backendUrl ? (
-            <Image
-              source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
-              style={styles.logoImage}
-              contentFit="contain"
-            />
-          ) : (
-            <Text style={styles.title}>strmr</Text>
-          )}
           <Text style={styles.subtitle}>Configure Server</Text>
         </View>
 
@@ -497,6 +526,14 @@ export default function LoginScreen() {
             autoCorrect={false}
             returnKeyType="done"
             onSubmitEditing={handleSaveServer}
+            onFocus={() => {
+              lowerFieldFocused.current = true;
+              // Android: keyboard event fires before focus, so set directly
+              setKeyboardVisible(true);
+            }}
+            onBlur={() => {
+              lowerFieldFocused.current = false;
+            }}
             styles={styles}
             theme={theme}
           />
@@ -520,16 +557,19 @@ export default function LoginScreen() {
   const loginContent = (
     <View style={styles.container}>
       <View style={styles.card}>
+        <View style={styles.imageHeaderContainer}>
+          <Image
+            source={getLogoSource()}
+            style={styles.mobileLogoImage}
+            contentFit="cover"
+            onError={handleLogoError}
+          />
+          <LinearGradient
+            colors={['transparent', theme.colors.background.surface]}
+            style={styles.imageGradientOverlay}
+          />
+        </View>
         <View style={styles.header}>
-          {backendUrl ? (
-            <Image
-              source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
-              style={styles.logoImage}
-              contentFit="contain"
-            />
-          ) : (
-            <Text style={styles.title}>strmr</Text>
-          )}
           <Text style={styles.subtitle}>Sign in to your account</Text>
           {backendUrl ? (
             <Pressable onPress={() => setShowServerConfig(true)}>
@@ -564,10 +604,20 @@ export default function LoginScreen() {
             onChangeText={setPassword}
             placeholder="Enter password"
             secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
             autoComplete="off"
             textContentType="oneTimeCode"
             returnKeyType="done"
             onSubmitEditing={handleLogin}
+            onFocus={() => {
+              lowerFieldFocused.current = true;
+              // Android: keyboard event fires before focus, so set directly
+              setKeyboardVisible(true);
+            }}
+            onBlur={() => {
+              lowerFieldFocused.current = false;
+            }}
             styles={styles}
             theme={theme}
           />
@@ -666,6 +716,8 @@ interface LoginTextInputProps {
   textContentType?: 'none' | 'username' | 'password' | 'emailAddress' | 'oneTimeCode';
   returnKeyType?: 'done' | 'next';
   onSubmitEditing?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
   styles: ReturnType<typeof createStyles>;
   theme: NovaTheme;
 }
@@ -685,6 +737,8 @@ const LoginTextInput = React.forwardRef<TextInput, LoginTextInputProps>(
       textContentType,
       returnKeyType,
       onSubmitEditing,
+      onFocus,
+      onBlur,
       styles,
       theme,
     },
@@ -710,6 +764,8 @@ const LoginTextInput = React.forwardRef<TextInput, LoginTextInputProps>(
           textContentType={textContentType}
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}
+          onFocus={onFocus}
+          onBlur={onBlur}
           style={styles.input}
         />
       </View>
@@ -750,16 +806,50 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       maxWidth: s(400),
       backgroundColor: theme.colors.background.surface,
       borderRadius: s(16),
-      padding: s(32),
+      overflow: 'hidden',
       shadowColor: '#000',
       shadowOffset: { width: 0, height: s(4) },
       shadowOpacity: 0.3,
       shadowRadius: s(8),
       elevation: s(8),
     },
+    imageHeaderContainer: {
+      width: '100%',
+      height: 210,
+      overflow: 'hidden',
+    },
+    mobileLogoImage: {
+      width: '100%',
+      height: '100%',
+    },
+    imageGradientOverlay: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: '30%',
+    },
+    tvImageHeaderContainer: {
+      width: '100%',
+      height: s(280),
+      overflow: 'hidden',
+    },
+    tvLogoImage: {
+      width: '100%',
+      height: '100%',
+    },
+    tvImageGradientOverlay: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: '30%',
+    },
     header: {
       alignItems: 'center',
       marginBottom: s(24),
+      paddingHorizontal: s(32),
+      paddingTop: s(16),
     },
     title: {
       fontSize: s(32),
@@ -783,9 +873,13 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     },
     form: {
       gap: s(16),
+      paddingHorizontal: s(32),
+      paddingBottom: s(32),
     },
     formContainer: {
       gap: s(16),
+      paddingHorizontal: s(32),
+      paddingBottom: s(32),
     },
     inputContainer: {
       marginBottom: s(8),
