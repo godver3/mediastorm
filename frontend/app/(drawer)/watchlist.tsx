@@ -188,11 +188,12 @@ const createStyles = (theme: NovaTheme) =>
     },
     filtersRow: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: theme.spacing.sm,
       marginBottom: theme.spacing.sm,
     },
     filterButton: {
-      paddingHorizontal: theme.spacing['2xl'],
+      paddingHorizontal: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
