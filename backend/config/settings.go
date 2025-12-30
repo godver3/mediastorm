@@ -210,12 +210,14 @@ type HomeShelvesSettings struct {
 
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB   float64  `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB float64  `json:"maxSizeEpisodeGb"`
-	MaxResolution    string   `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	ExcludeHdr       bool     `json:"excludeHdr"`
-	PrioritizeHdr    bool     `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
-	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (exact match in title)
+	MaxSizeMovieGB                   float64  `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB                 float64  `json:"maxSizeEpisodeGb"`
+	MaxResolution                    string   `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	ExcludeHdr                       bool     `json:"excludeHdr"`
+	PrioritizeHdr                    bool     `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
+	FilterOutTerms                   []string `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms                   []string `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
+	BypassFilteringForAIOStreamsOnly bool     `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
 }
 
 // UISettings captures user interface preferences shared with the clients.

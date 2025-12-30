@@ -129,6 +129,25 @@ func (s *SearchService) ReloadScrapers() {
 	log.Printf("[debrid] reloaded %d scraper(s)", len(scrapers))
 }
 
+// isOnlyAIOStreamsEnabled returns true if AIOStreams is the only enabled scraper in the config.
+func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
+	aioEnabled := false
+	otherEnabled := false
+
+	for _, s := range scrapers {
+		if !s.Enabled {
+			continue
+		}
+		if strings.ToLower(s.Type) == "aiostreams" {
+			aioEnabled = true
+		} else {
+			otherEnabled = true
+		}
+	}
+
+	return aioEnabled && !otherEnabled
+}
+
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
 // If a userID is provided and the user has custom settings, those are returned.
 // Otherwise, falls back to global settings.
@@ -140,6 +159,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID string, globalSettings
 		ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
 	// Check for per-user settings
@@ -277,8 +297,14 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		return nil, errors.Join(errs...)
 	}
 
+	// Check if filtering should be bypassed for AIOStreams-only mode
+	bypassFiltering := settings.Filtering.BypassFilteringForAIOStreamsOnly && isOnlyAIOStreamsEnabled(settings.TorrentScrapers)
+	if bypassFiltering {
+		log.Printf("[debrid] Bypassing strmr filtering - AIOStreams is the only enabled scraper and bypass setting is enabled")
+	}
+
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)
-	if ShouldFilter(parsed) {
+	if !bypassFiltering && ShouldFilter(parsed) {
 		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s", parsed.Title, parsed.Year, parsed.MediaType)
 		filterOpts := FilterOptions{
 			ExpectedTitle:    parsed.Title,

@@ -55,7 +55,8 @@ type FilterSettings struct {
 	MaxResolution    string   `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	ExcludeHdr       bool     `json:"excludeHdr"`
 	PrioritizeHdr    bool     `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
-	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (exact match in title)
+	FilterOutTerms   []string `json:"filterOutTerms"` // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms   []string `json:"preferredTerms"` // Terms to prioritize in results (case-insensitive match in title)
 }
 
 // DefaultUserSettings returns the default settings for a new user.
