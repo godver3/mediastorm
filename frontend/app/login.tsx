@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Image } from '@/components/Image';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -294,7 +295,15 @@ export default function LoginScreen() {
           <Animated.View style={[styles.container, tvAnimatedStyle]}>
             <View style={styles.card}>
               <View style={styles.header}>
-                <Text style={styles.title}>strmr</Text>
+                {backendUrl ? (
+                  <Image
+                    source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
+                    style={styles.logoImage}
+                    contentFit="contain"
+                  />
+                ) : (
+                  <Text style={styles.title}>strmr</Text>
+                )}
                 <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
                 {!showServerConfig && backendUrl ? (
                   <Text style={styles.serverInfo} numberOfLines={1}>
@@ -313,7 +322,7 @@ export default function LoginScreen() {
                         onBlur={() => serverUrlRef.current?.blur()}
                       >
                         {({ isFocused }: { isFocused: boolean }) => (
-                          <Pressable focusable={false} tvParallaxProperties={{ enabled: false }}>
+                          <Pressable tvParallaxProperties={{ enabled: false }}>
                             <View style={styles.inputContainer}>
                               <Text style={styles.inputLabel}>Server URL</Text>
                               <TextInput
@@ -364,7 +373,7 @@ export default function LoginScreen() {
                         onBlur={() => usernameRef.current?.blur()}
                       >
                         {({ isFocused }: { isFocused: boolean }) => (
-                          <Pressable focusable={false} tvParallaxProperties={{ enabled: false }}>
+                          <Pressable tvParallaxProperties={{ enabled: false }}>
                             <View style={styles.inputContainer}>
                               <Text style={styles.inputLabel}>Username</Text>
                               <TextInput
@@ -376,7 +385,7 @@ export default function LoginScreen() {
                                 onFocus={handleUsernameFocus}
                                 onBlur={handleUsernameBlur}
                                 placeholder="Enter username"
-                                placeholderTextColor={theme.colors.text.muted}
+                                placeholderTextColor="#aaaaaa"
                                 autoCapitalize="none"
                                 autoCorrect={false}
                                 autoComplete="off"
@@ -401,7 +410,7 @@ export default function LoginScreen() {
                       onBlur={() => passwordRef.current?.blur()}
                     >
                       {({ isFocused }: { isFocused: boolean }) => (
-                        <Pressable focusable={false} tvParallaxProperties={{ enabled: false }}>
+                        <Pressable tvParallaxProperties={{ enabled: false }}>
                           <View style={styles.inputContainer}>
                             <Text style={styles.inputLabel}>Password</Text>
                             <TextInput
@@ -413,7 +422,7 @@ export default function LoginScreen() {
                               onFocus={handlePasswordFocus}
                               onBlur={handlePasswordBlur}
                               placeholder="Enter password"
-                              placeholderTextColor={theme.colors.text.muted}
+                              placeholderTextColor="#aaaaaa"
                               secureTextEntry
                               autoComplete="off"
                               textContentType="none"
@@ -465,7 +474,15 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.header}>
-          <Text style={styles.title}>strmr</Text>
+          {backendUrl ? (
+            <Image
+              source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
+              style={styles.logoImage}
+              contentFit="contain"
+            />
+          ) : (
+            <Text style={styles.title}>strmr</Text>
+          )}
           <Text style={styles.subtitle}>Configure Server</Text>
         </View>
 
@@ -504,7 +521,15 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.header}>
-          <Text style={styles.title}>strmr</Text>
+          {backendUrl ? (
+            <Image
+              source={{ uri: `${backendUrl}/static/app-logo-wide.png` }}
+              style={styles.logoImage}
+              contentFit="contain"
+            />
+          ) : (
+            <Text style={styles.title}>strmr</Text>
+          )}
           <Text style={styles.subtitle}>Sign in to your account</Text>
           {backendUrl ? (
             <Pressable onPress={() => setShowServerConfig(true)}>
@@ -695,8 +720,13 @@ const LoginTextInput = React.forwardRef<TextInput, LoginTextInputProps>(
 LoginTextInput.displayName = 'LoginTextInput';
 
 const createStyles = (theme: NovaTheme, isTV: boolean) => {
-  // Scale factor for TV: reduce by ~30%
-  const s = (value: number) => (isTV ? Math.round(value * 0.7) : value);
+  // Scale factor: tvOS gets larger UI, Android TV gets 30% reduction
+  const isTvOS = isTV && Platform.OS === 'ios';
+  const isAndroidTV = isTV && Platform.OS === 'android';
+  const s = (value: number) =>
+    isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.7) : value;
+  // Extra 50% scaling for specific text elements on tvOS
+  const sText = (value: number) => (isTvOS ? Math.round(s(value) * 1.5) : s(value));
 
   return StyleSheet.create({
     safeArea: {
@@ -737,13 +767,17 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       color: theme.colors.accent.primary,
       marginBottom: s(8),
     },
+    logoImage: {
+      width: isTvOS ? 300 : isTV ? 200 : 140,
+      height: isTvOS ? 300 : isTV ? 200 : 140,
+      marginBottom: s(8),
+    },
     subtitle: {
-      fontSize: s(16),
+      fontSize: sText(16),
       color: theme.colors.text.secondary,
     },
     serverInfo: {
-      // Not scaled - keep URL display readable
-      fontSize: 12,
+      fontSize: sText(12),
       color: theme.colors.text.muted,
       marginTop: 8,
     },
@@ -757,7 +791,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       marginBottom: s(8),
     },
     inputLabel: {
-      fontSize: s(14),
+      fontSize: sText(14),
       color: theme.colors.text.secondary,
       marginBottom: s(8),
     },
@@ -769,6 +803,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       padding: s(14),
       fontSize: s(16),
       color: theme.colors.text.primary,
+      textAlign: 'left',
     },
     inputFocused: {
       borderColor: theme.colors.accent.primary,
