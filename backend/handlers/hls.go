@@ -76,6 +76,94 @@ func (d *debugReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
+// throttledReader wraps an io.Reader and slows down reads when ffmpeg is
+// generating segments faster than the player is consuming them.
+// This prevents excessive disk usage from buffered segments.
+type throttledReader struct {
+	r             io.Reader
+	session       *HLSSession
+	lastThrottle  time.Time
+	throttleCount int64
+}
+
+func newThrottledReader(r io.Reader, session *HLSSession) *throttledReader {
+	return &throttledReader{
+		r:       r,
+		session: session,
+	}
+}
+
+func (t *throttledReader) Read(p []byte) (n int, err error) {
+	// Check how far ahead ffmpeg is compared to player requests
+	t.session.mu.RLock()
+	maxRequested := t.session.MaxSegmentRequested
+	sessionID := t.session.ID
+	outputDir := t.session.OutputDir
+	hasDV := t.session.HasDV
+	hasHDR := t.session.HasHDR
+	t.session.mu.RUnlock()
+
+	// Only throttle if player has started requesting segments
+	if maxRequested >= 0 {
+		// Check actual segment files on disk (more accurate than SegmentsCreated counter)
+		segmentExt := ".ts"
+		if hasDV || hasHDR {
+			segmentExt = ".m4s"
+		}
+		pattern := filepath.Join(outputDir, "segment*"+segmentExt)
+		segmentFiles, _ := filepath.Glob(pattern)
+
+		// Find highest segment number
+		highestSegment := -1
+		for _, f := range segmentFiles {
+			base := filepath.Base(f)
+			var segNum int
+			if _, err := fmt.Sscanf(base, "segment%d", &segNum); err == nil {
+				if segNum > highestSegment {
+					highestSegment = segNum
+				}
+			}
+		}
+
+		if highestSegment >= 0 {
+			bufferAhead := highestSegment - maxRequested
+
+			// Start throttling when 15+ segments ahead (~60 seconds at 4s/segment)
+			// Apply aggressive delays to prevent runaway buffering
+			const throttleStartThreshold = 15
+			if bufferAhead > throttleStartThreshold {
+				// Calculate delay: scales aggressively with buffer size
+				// At 16 segments ahead: 500ms, at 30 ahead: 2000ms+
+				excessSegments := bufferAhead - throttleStartThreshold
+				delayMs := 500 + (excessSegments * 100) // 500ms base + 100ms per excess segment
+
+				// Cap at 15 seconds to avoid HTTP connection timeouts from the source.
+				// Most servers have read timeouts of 30-60s, so 15s should be safe.
+				//
+				// TODO: If this still causes issues with very fast connections, consider
+				// implementing buffered throttling instead: read from source at full speed
+				// into a memory buffer, then feed ffmpeg at a controlled rate. This would
+				// keep the source connection alive while still controlling disk usage.
+				if delayMs > 15000 {
+					delayMs = 15000
+				}
+
+				time.Sleep(time.Duration(delayMs) * time.Millisecond)
+				t.throttleCount++
+
+				// Log throttling periodically (every 10 seconds)
+				if time.Since(t.lastThrottle) > 10*time.Second {
+					log.Printf("[hls] session %s: THROTTLE - %d segments ahead (highest=%d, requested=%d), delay=%dms, total throttles=%d",
+						sessionID, bufferAhead, highestSegment, maxRequested, delayMs, t.throttleCount)
+					t.lastThrottle = time.Now()
+				}
+			}
+		}
+	}
+
+	return t.r.Read(p)
+}
+
 // HLSSession represents an active HLS transcoding session
 type HLSSession struct {
 	ID           string
@@ -1344,14 +1432,47 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	var headerPrefix []byte
 	var requireMatroskaAlign bool
 
-	// Check if the path is an external URL (e.g., from AIOStreams pre-resolved streams)
-	isExternalURL := strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://")
-
-	// Always prefer direct URL when available - this allows FFmpeg to seek to find metadata
-	// (e.g., moov atom at end of MP4 files) and enables better seeking/error recovery
+	// Always use piped input to enable rate limiting (throttledReader)
+	// Seeking is handled by creating new sessions, so ffmpeg doesn't need direct URL access
 	if hasDirectURL {
-		log.Printf("[hls] session %s: using direct URL: %s (startOffset=%.3f, isExternal=%v)", session.ID, directURL, session.StartOffset, isExternalURL)
-		usingPipe = false
+		log.Printf("[hls] session %s: fetching direct URL for piped input: %s (startOffset=%.3f)", session.ID, directURL, session.StartOffset)
+
+		// Fetch the direct URL ourselves so we can pipe it through throttledReader
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, directURL, nil)
+		if err != nil {
+			return fmt.Errorf("create direct URL request: %w", err)
+		}
+
+		// Add Range header for seeking if needed
+		if session.StartOffset > 0 && session.Duration > 0 {
+			// Estimate byte offset from time offset
+			// We'll use output seeking (-ss after -i) for precise sync
+			headReq, _ := http.NewRequestWithContext(ctx, http.MethodHead, directURL, nil)
+			if headResp, err := http.DefaultClient.Do(headReq); err == nil {
+				fileSize := headResp.ContentLength
+				headResp.Body.Close()
+				if fileSize > 0 {
+					byteOffset := int64(float64(fileSize) / session.Duration * session.StartOffset)
+					if byteOffset > 0 {
+						req.Header.Set("Range", fmt.Sprintf("bytes=%d-", byteOffset))
+						log.Printf("[hls] session %s: direct URL seeking to byte %d (time %.3fs)", session.ID, byteOffset, session.StartOffset)
+					}
+				}
+			}
+		}
+
+		directResp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("fetch direct URL: %w", err)
+		}
+		resp = &streaming.Response{
+			Body:          directResp.Body,
+			ContentLength: directResp.ContentLength,
+			Status:        directResp.StatusCode,
+		}
+		defer resp.Close()
+		usingPipe = true
+		log.Printf("[hls] session %s: direct URL stream established for piped input", session.ID)
 	} else {
 		// Fall back to pipe streaming only if direct URL not available
 		providerStartTime := time.Now()
@@ -1459,27 +1580,17 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// NOTE: -strict unofficial is added AFTER -i as an output option (see below)
 	// Placing it before -i doesn't enable writing dvcC boxes to the output
 
-	// Apply input seeking if we have a seekable source (URL) and startOffset > 0
-	// Input seeking (-ss before -i) is most efficient as FFmpeg seeks before decoding
-	if !usingPipe && session.StartOffset > 0 {
+	// Add input source - always use pipe for rate limiting via throttledReader
+	args = append(args, "-i", "pipe:0")
+
+	// For pipe inputs with seeking, add output seeking (-ss after -i)
+	// This tells FFmpeg to decode and sync to the target time
+	// Combined with byte-level seeking, this is efficient and safe:
+	// - Byte seeking reduces bandwidth (starts from calculated offset)
+	// - Output seeking ensures FFmpeg syncs to the next keyframe
+	if session.StartOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-	}
-
-	// Add input source
-	if usingPipe {
-		args = append(args, "-i", "pipe:0")
-
-		// For pipe inputs with seeking, add output seeking (-ss after -i)
-		// This tells FFmpeg to decode and sync to the target time
-		// Combined with byte-level seeking, this is efficient and safe:
-		// - Byte seeking reduces bandwidth (usenet starts from calculated offset)
-		// - Output seeking ensures FFmpeg syncs to the next keyframe
-		if session.StartOffset > 0 {
-			args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-			log.Printf("[hls] session %s: using output seeking to sync to %.3fs after byte offset", session.ID, session.StartOffset)
-		}
-	} else {
-		args = append(args, "-i", directURL)
+		log.Printf("[hls] session %s: using output seeking to sync to %.3fs after byte offset", session.ID, session.StartOffset)
 	}
 
 	// If we're seeking and know the total duration, tell FFmpeg how much content to expect
@@ -1806,10 +1917,14 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			pipeReader = io.MultiReader(bytes.NewReader(headerPrefix), pipeReader)
 		}
 
+		// Wrap with throttled reader to slow down input when buffer gets too far ahead
+		// This prevents excessive disk usage from segments generated faster than playback
+		throttledPipe := newThrottledReader(pipeReader, session)
+
 		// Wrap with debug reader to track bytes read and detect when source stream ends
-		debugPipe := newDebugReader(pipeReader, session.ID)
+		debugPipe := newDebugReader(throttledPipe, session.ID)
 		cmd.Stdin = debugPipe
-		log.Printf("[hls] session %s: SOURCE_STREAM started (wrapped with debug reader)", session.ID)
+		log.Printf("[hls] session %s: SOURCE_STREAM started (with throttling and debug reader)", session.ID)
 	}
 
 	stderr, err := cmd.StderrPipe()
@@ -2206,9 +2321,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					continue
 				}
 
-				// NOTE: FFmpeg pause/resume disabled - was causing playback issues
-				// bufferAhead := highestSegment - maxRequested
-				_ = highestSegment // unused now
+				// SIGSTOP/SIGCONT disabled - using throttledReader for rate limiting instead
+				// The throttledReader applies backpressure on the input pipe, which is
+				// smoother than pausing/resuming the ffmpeg process
+				_ = highestSegment
 
 			case <-rateLimitDone:
 				// Ensure FFmpeg is resumed before exiting
