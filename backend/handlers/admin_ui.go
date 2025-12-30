@@ -3654,10 +3654,17 @@ func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(response)
 }
 
-// fetchOverviewForItem fetches the overview/description for a watchlist item from metadata service
-func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, name string, year int, externalIDs map[string]string) string {
+// itemMetadata holds metadata fetched for watchlist import
+type itemMetadata struct {
+	Overview    string
+	PosterURL   string
+	BackdropURL string
+}
+
+// fetchMetadataForItem fetches overview and artwork for a watchlist item from metadata service
+func (h *AdminUIHandler) fetchMetadataForItem(ctx context.Context, mediaType, name string, year int, externalIDs map[string]string) itemMetadata {
 	if h.metadataService == nil {
-		return ""
+		return itemMetadata{}
 	}
 
 	// Parse external IDs
@@ -3677,6 +3684,8 @@ func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, na
 		imdbID = id
 	}
 
+	var result itemMetadata
+
 	switch strings.ToLower(mediaType) {
 	case "movie":
 		query := models.MovieDetailsQuery{
@@ -3687,7 +3696,13 @@ func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, na
 			TVDBID: tvdbID,
 		}
 		if title, err := h.metadataService.MovieDetails(ctx, query); err == nil && title != nil {
-			return title.Overview
+			result.Overview = title.Overview
+			if title.Poster != nil {
+				result.PosterURL = title.Poster.URL
+			}
+			if title.Backdrop != nil {
+				result.BackdropURL = title.Backdrop.URL
+			}
 		}
 	case "series", "show", "tv":
 		query := models.SeriesDetailsQuery{
@@ -3697,11 +3712,22 @@ func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, na
 			TVDBID: tvdbID,
 		}
 		if title, err := h.metadataService.SeriesInfo(ctx, query); err == nil && title != nil {
-			return title.Overview
+			result.Overview = title.Overview
+			if title.Poster != nil {
+				result.PosterURL = title.Poster.URL
+			}
+			if title.Backdrop != nil {
+				result.BackdropURL = title.Backdrop.URL
+			}
 		}
 	}
 
-	return ""
+	return result
+}
+
+// fetchOverviewForItem fetches the overview/description for a watchlist item from metadata service
+func (h *AdminUIHandler) fetchOverviewForItem(ctx context.Context, mediaType, name string, year int, externalIDs map[string]string) string {
+	return h.fetchMetadataForItem(ctx, mediaType, name, year, externalIDs).Overview
 }
 
 // --- Trakt Integration Handlers ---
@@ -4247,18 +4273,20 @@ func (h *AdminUIHandler) TraktImportWatchlist(w http.ResponseWriter, r *http.Req
 			continue
 		}
 
-		// Fetch overview from metadata service if available
-		var overview string
+		// Fetch metadata (overview and artwork) from metadata service if available
+		var metadata itemMetadata
 		if h.metadataService != nil {
-			overview = h.fetchOverviewForItem(ctx, item.MediaType, item.Title, item.Year, item.ExternalIDs)
+			metadata = h.fetchMetadataForItem(ctx, item.MediaType, item.Title, item.Year, item.ExternalIDs)
 		}
 
 		input := models.WatchlistUpsert{
 			ID:          itemID,
 			MediaType:   item.MediaType,
 			Name:        item.Title,
-			Overview:    overview,
+			Overview:    metadata.Overview,
 			Year:        item.Year,
+			PosterURL:   metadata.PosterURL,
+			BackdropURL: metadata.BackdropURL,
 			ExternalIDs: item.ExternalIDs,
 		}
 
