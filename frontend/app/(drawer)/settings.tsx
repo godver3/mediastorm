@@ -2920,7 +2920,7 @@ function SettingsScreen() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: theme.colors.primary,
+            backgroundColor: theme.colors.accent.primary,
             zIndex: 9999,
             pointerEvents: 'none',
           },
