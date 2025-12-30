@@ -31,6 +31,17 @@
             <option value="{{.ID}}">{{.Name}}</option>
             {{end}}
         </select>
+        <select id="clientSelector" class="form-select" style="min-width: 180px; display: none;" onchange="handleClientChange(this.value)">
+            <option value="">Profile Defaults</option>
+        </select>
+        <button id="identifyClientBtn" class="btn btn-secondary" style="display: none;" onclick="identifyClient()" title="Send ping to identify this device">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            Identify
+        </button>
         <button class="btn btn-primary" onclick="saveAllSettings()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -60,6 +71,10 @@
     let selectedUserId = '';
     let userSettings = null;
     let originalUserSettings = null;
+    let selectedClientId = '';
+    let clientSettings = null;
+    let originalClientSettings = null;
+    let clientsForUser = []; // Clients for the selected user
     let profilesData = []; // Profiles with PIN status
     let accountsData = []; // User accounts with profiles
     let hasDefaultPassword = false; // Whether admin has default password
@@ -207,6 +222,14 @@
 
     async function handleUserChange(userId) {
         selectedUserId = userId;
+        // Clear client selection when user changes
+        selectedClientId = '';
+        clientSettings = null;
+        originalClientSettings = null;
+        clientsForUser = [];
+
+        const clientSelector = document.getElementById('clientSelector');
+
         if (userId) {
             // Load user-specific settings
             try {
@@ -224,11 +247,96 @@
                 userSettings = null;
                 originalUserSettings = null;
             }
+
+            // Load clients for this user
+            await loadClientsForUser(userId);
+
+            // Show client selector if there are clients
+            if (clientsForUser.length > 0) {
+                clientSelector.innerHTML = '<option value="">Profile Defaults</option>' +
+                    clientsForUser.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                clientSelector.style.display = 'block';
+            } else {
+                clientSelector.style.display = 'none';
+            }
         } else {
             userSettings = null;
             originalUserSettings = null;
+            clientSelector.style.display = 'none';
         }
         renderSettings();
+    }
+
+    async function loadClientsForUser(userId) {
+        try {
+            const response = await fetch(basePath + '/api/clients?userId=' + encodeURIComponent(userId), {
+                credentials: 'same-origin'
+            });
+            if (response.ok) {
+                clientsForUser = await response.json() || [];
+            } else {
+                clientsForUser = [];
+            }
+        } catch (e) {
+            console.warn('Failed to load clients:', e);
+            clientsForUser = [];
+        }
+    }
+
+    async function handleClientChange(clientId) {
+        selectedClientId = clientId;
+        const identifyBtn = document.getElementById('identifyClientBtn');
+        if (clientId) {
+            // Load client-specific settings
+            try {
+                const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/settings', {
+                    credentials: 'same-origin'
+                });
+                if (response.ok) {
+                    clientSettings = await response.json();
+                    originalClientSettings = JSON.parse(JSON.stringify(clientSettings));
+                } else {
+                    clientSettings = {};
+                    originalClientSettings = {};
+                }
+            } catch (e) {
+                console.warn('Failed to load client settings:', e);
+                clientSettings = {};
+                originalClientSettings = {};
+            }
+            // Show identify button when a client is selected
+            if (identifyBtn) identifyBtn.style.display = 'inline-flex';
+        } else {
+            clientSettings = null;
+            originalClientSettings = null;
+            // Hide identify button when no client selected
+            if (identifyBtn) identifyBtn.style.display = 'none';
+        }
+        renderSettings();
+    }
+
+    async function identifyClient() {
+        if (!selectedClientId) return;
+        const btn = document.getElementById('identifyClientBtn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Sending...';
+        try {
+            const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(selectedClientId) + '/ping', {
+                method: 'POST',
+                credentials: 'same-origin'
+            });
+            if (response.ok) {
+                showToast('Ping sent! If the device is on the settings page, it will flash.');
+            } else {
+                showToast('Failed to send ping', 'error');
+            }
+        } catch (e) {
+            showToast('Failed to send ping: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
     }
 
     const icons = {
@@ -272,9 +380,30 @@
         return path;
     }
 
+    // Map filtering field paths to client settings keys
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'excludeHdr', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms'];
+
+    function getClientSettingsKey(path) {
+        // filtering.maxSizeMovieGb -> maxSizeMovieGb
+        const keys = path.split('.');
+        if (keys[0] === 'filtering' && keys.length === 2 && clientFilterFields.includes(keys[1])) {
+            return keys[1];
+        }
+        return null;
+    }
+
     function getValue(path) {
         const keys = path.split('.');
         const topKey = keys[0];
+
+        // If client selected and this is a client-supported filtering field
+        const clientKey = getClientSettingsKey(path);
+        if (selectedClientId && clientSettings && clientKey) {
+            // Return client setting if set, otherwise fall through to profile/global
+            if (clientSettings[clientKey] !== undefined && clientSettings[clientKey] !== null) {
+                return clientSettings[clientKey];
+            }
+        }
 
         // If user selected and this is a per-user section, use userSettings
         if (selectedUserId && userSettings && perUserSections.includes(topKey)) {
@@ -294,9 +423,17 @@
         }
         return val;
     }
+
     function setValue(path, value) {
         const keys = path.split('.');
         const topKey = keys[0];
+
+        // If client selected and this is a client-supported filtering field
+        const clientKey = getClientSettingsKey(path);
+        if (selectedClientId && clientSettings !== null && clientKey) {
+            clientSettings[clientKey] = value;
+            return;
+        }
 
         // If user selected and this is a per-user section, update userSettings
         if (selectedUserId && userSettings && perUserSections.includes(topKey)) {
@@ -316,6 +453,20 @@
             obj = obj[keys[i]];
         }
         obj[keys[keys.length - 1]] = value;
+    }
+
+    // Check if a client setting is explicitly set (not inherited)
+    function isClientSettingSet(fieldKey) {
+        if (!selectedClientId || !clientSettings) return false;
+        return clientSettings[fieldKey] !== undefined && clientSettings[fieldKey] !== null;
+    }
+
+    // Clear a client setting (revert to profile default)
+    function clearClientSetting(fieldKey) {
+        if (selectedClientId && clientSettings) {
+            delete clientSettings[fieldKey];
+            renderSettings();
+        }
     }
     function renderInput(fieldKey, fieldDef, value, basePath, sectionKey) {
         const id = (basePath + '_' + fieldKey).replace(/\./g, '_');
@@ -687,20 +838,15 @@
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
     function renderObjectSection(sectionKey, sectionDef) {
-        // Use userSettings for per-user sections when a user is selected
-        let sectionData;
-        if (selectedUserId && userSettings && perUserSections.includes(sectionKey)) {
-            sectionData = userSettings[sectionKey] || {};
-        } else {
-            sectionData = currentSettings[sectionKey] || {};
-        }
+        // Use getValue for proper three-tier cascade (global → profile → client)
         const fieldsHtml = Object.entries(sectionDef.fields)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .map(([fieldKey, fieldDef]) => {
                 const fieldError = getFieldError(sectionKey, fieldKey);
                 const invalidClass = fieldError ? ' invalid' : '';
                 const errorHtml = fieldError ? '<div class="validation-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+fieldError+'</div>' : '';
-                return '<div class="form-group'+invalidClass+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, sectionData[fieldKey], sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
+                const fieldValue = getValue(sectionKey + '.' + fieldKey);
+                return '<div class="form-group'+invalidClass+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
             }).join('');
 
         // Add test button for testable object sections
@@ -1481,9 +1627,13 @@
             if (id) openSections.add(id);
         });
 
-        // Add info banner when user is selected
+        // Add info banner when user or client is selected
         let bannerHtml = '';
-        if (selectedUserId) {
+        if (selectedClientId) {
+            const client = clientsForUser.find(c => c.id === selectedClientId);
+            const clientName = client ? client.name : selectedClientId;
+            bannerHtml = '<div style="background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Editing client-specific settings for <strong>' + clientName + '</strong>. Only Filtering options are shown. Values not set here will inherit from the profile.</span></div>';
+        } else if (selectedUserId) {
             bannerHtml = '<div style="background: var(--accent-bg, #2563eb20); border: 1px solid var(--accent, #2563eb); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Editing user-specific settings. Only Playback, Home Shelves, and Filtering are shown.</span></div>';
         }
 
@@ -1500,10 +1650,17 @@
         // Render sections grouped by their group property
         // Sections with their own group are shown at top level, even if they have a parent (for data access)
         let html = bannerHtml;
+
+        // Sections that can be configured per-client (subset of perUserSections)
+        const clientSections = ['filtering'];
+
         for (const group of groups) {
             const groupSections = Object.entries(schema).filter(([key, def]) => {
                 if (def.group !== group.id) return false;
-                if (selectedUserId && !perUserSections.includes(key)) return false;
+                // If a client is selected, only show client-configurable sections
+                if (selectedClientId && !clientSections.includes(key)) return false;
+                // If a user is selected (but not client), show per-user sections
+                if (selectedUserId && !selectedClientId && !perUserSections.includes(key)) return false;
                 return true;
             }).sort((a, b) => (a[1].order ?? 999) - (b[1].order ?? 999));
 
@@ -1527,7 +1684,22 @@
     }
     async function saveAllSettings() {
         try {
-            if (selectedUserId && userSettings) {
+            if (selectedClientId && clientSettings !== null) {
+                // Save client-specific settings
+                const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(selectedClientId) + '/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(clientSettings)
+                });
+                if (response.ok) {
+                    originalClientSettings = JSON.parse(JSON.stringify(clientSettings));
+                    showToast('Client settings saved successfully');
+                } else {
+                    const result = await response.json().catch(() => ({}));
+                    showToast(result.error || 'Failed to save client settings', 'error');
+                }
+            } else if (selectedUserId && userSettings) {
                 // Save user-specific settings
                 const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
                     method: 'PUT',
@@ -1561,7 +1733,9 @@
     }
     function resetSettings() {
         if (confirm('Reset all changes? This will revert to the last saved settings.')) {
-            if (selectedUserId && originalUserSettings) {
+            if (selectedClientId && originalClientSettings !== null) {
+                clientSettings = JSON.parse(JSON.stringify(originalClientSettings));
+            } else if (selectedUserId && originalUserSettings) {
                 userSettings = JSON.parse(JSON.stringify(originalUserSettings));
             } else {
                 currentSettings = JSON.parse(JSON.stringify(originalSettings));
@@ -1573,6 +1747,12 @@
     document.addEventListener('DOMContentLoaded', async () => {
         if (isAdmin) {
             await Promise.all([loadProfiles(), loadAccounts(), checkDefaultPassword()]);
+            // Check if browser restored a selected user (form state restoration)
+            const selector = document.getElementById('userSelector');
+            if (selector && selector.value) {
+                await handleUserChange(selector.value);
+                return; // handleUserChange will call renderSettings
+            }
         } else {
             await loadProfiles();
             // For non-admin, auto-select the first profile

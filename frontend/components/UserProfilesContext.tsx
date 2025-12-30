@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { apiService, type ApiError, type UserProfile } from '@/services/api';
+import { getClientRegistrationPayload } from '@/services/clientId';
 
 const USER_SETTINGS_LOAD_DEBOUNCE_MS = 100;
 
@@ -128,6 +129,16 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
           setActiveUserId(nextId);
           activeUserIdRef.current = nextId;
           await persistActiveUserId(nextId);
+          // Update client registration with the selected profile
+          if (nextId && nextUser) {
+            try {
+              const payload = await getClientRegistrationPayload();
+              await apiService.registerClient({ ...payload, userId: nextId });
+              console.log('[UserProfiles] Client registered with profile:', nextUser.name);
+            } catch (err) {
+              console.warn('[UserProfiles] Failed to update client profile:', err);
+            }
+          }
         }
       } catch (err) {
         const message = formatErrorMessage(err);
@@ -158,14 +169,15 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     // Debounce to avoid rapid reloads during initialization
     const timeoutId = setTimeout(() => {
-      console.log('[UserProfiles] Loading user settings for user:', activeUserId);
+      const activeUser = findUser(activeUserId);
+      console.log('[UserProfiles] Loading user settings for profile:', activeUser?.name ?? activeUserId);
       loadUserSettings(activeUserId).catch((err) => {
         console.warn('[UserProfiles] Failed to load user settings:', err);
       });
     }, USER_SETTINGS_LOAD_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
-  }, [activeUserId, isBackendReachable, loadUserSettings]);
+  }, [activeUserId, isBackendReachable, loadUserSettings, findUser]);
 
   const selectUser = useCallback(
     async (id: string) => {
@@ -185,6 +197,14 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setActiveUserId(trimmed);
       activeUserIdRef.current = trimmed;
       await persistActiveUserId(trimmed);
+      // Update client registration with the selected profile
+      try {
+        const payload = await getClientRegistrationPayload();
+        await apiService.registerClient({ ...payload, userId: trimmed });
+        console.log('[UserProfiles] Client registered with profile:', user.name);
+      } catch (err) {
+        console.warn('[UserProfiles] Failed to update client profile:', err);
+      }
     },
     [findUser],
   );
@@ -209,6 +229,14 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setActiveUserId(trimmed);
       activeUserIdRef.current = trimmed;
       await persistActiveUserId(trimmed);
+      // Update client registration with the selected profile
+      try {
+        const payload = await getClientRegistrationPayload();
+        await apiService.registerClient({ ...payload, userId: trimmed });
+        console.log('[UserProfiles] Client registered with profile:', user.name);
+      } catch (err) {
+        console.warn('[UserProfiles] Failed to update client profile:', err);
+      }
     },
     [findUser],
   );
@@ -228,6 +256,14 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
         await persistActiveUserId(userWithoutPin.id);
         setPendingPinUserId(null);
         setIsInitialPinCheck(false);
+        // Update client registration with the selected profile
+        try {
+          const payload = await getClientRegistrationPayload();
+          await apiService.registerClient({ ...payload, userId: userWithoutPin.id });
+          console.log('[UserProfiles] Client registered with profile:', userWithoutPin.name);
+        } catch (err) {
+          console.warn('[UserProfiles] Failed to update client profile:', err);
+        }
       } else {
         // All users have PINs - can't cancel, must enter PIN
         console.log('[UserProfiles] All users have PINs, cannot cancel');

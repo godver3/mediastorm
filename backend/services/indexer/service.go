@@ -30,6 +30,11 @@ type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
 }
 
+// clientSettingsProvider retrieves per-client filter settings.
+type clientSettingsProvider interface {
+	Get(clientID string) (*models.ClientFilterSettings, error)
+}
+
 type (
 	debridSearchService interface {
 		Search(context.Context, debrid.SearchOptions) ([]models.NZBResult, error)
@@ -51,6 +56,7 @@ type Service struct {
 	debridPlayback debridPlaybackService
 	metadata       metadataSearchService
 	userSettings   userSettingsProvider
+	clientSettings clientSettingsProvider
 }
 
 func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSvc debridSearchService) *Service {
@@ -71,21 +77,26 @@ func (s *Service) SetUserSettingsProvider(provider userSettingsProvider) {
 	s.userSettings = provider
 }
 
+// SetClientSettingsProvider sets the client settings provider for per-client filtering.
+func (s *Service) SetClientSettingsProvider(provider clientSettingsProvider) {
+	s.clientSettings = provider
+}
+
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
-// If a userID is provided and the user has custom settings, those are returned.
-// Otherwise, falls back to global settings.
-func (s *Service) getEffectiveFilterSettings(userID string, globalSettings config.Settings) models.FilterSettings {
-	// Default to global settings
+// Settings cascade: Global -> Profile -> Client (client settings win)
+func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) models.FilterSettings {
+	// Start with global settings
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxResolution:    globalSettings.Filtering.MaxResolution,
 		ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
-	// Check for per-user settings
+	// Layer 2: Profile settings override global
 	if userID != "" && s.userSettings != nil {
 		userSettings, err := s.userSettings.Get(userID)
 		if err != nil {
@@ -93,6 +104,37 @@ func (s *Service) getEffectiveFilterSettings(userID string, globalSettings confi
 		} else if userSettings != nil {
 			log.Printf("[indexer] using per-user filtering settings for user %s", userID)
 			filterSettings = userSettings.Filtering
+		}
+	}
+
+	// Layer 3: Client settings override profile (field-by-field, only if set)
+	if clientID != "" && s.clientSettings != nil {
+		clientSettings, err := s.clientSettings.Get(clientID)
+		if err != nil {
+			log.Printf("[indexer] failed to get client settings for %s: %v", clientID, err)
+		} else if clientSettings != nil && !clientSettings.IsEmpty() {
+			log.Printf("[indexer] applying per-client filtering overrides for client %s", clientID)
+			if clientSettings.MaxSizeMovieGB != nil {
+				filterSettings.MaxSizeMovieGB = *clientSettings.MaxSizeMovieGB
+			}
+			if clientSettings.MaxSizeEpisodeGB != nil {
+				filterSettings.MaxSizeEpisodeGB = *clientSettings.MaxSizeEpisodeGB
+			}
+			if clientSettings.MaxResolution != nil {
+				filterSettings.MaxResolution = *clientSettings.MaxResolution
+			}
+			if clientSettings.ExcludeHdr != nil {
+				filterSettings.ExcludeHdr = *clientSettings.ExcludeHdr
+			}
+			if clientSettings.PrioritizeHdr != nil {
+				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
+			}
+			if clientSettings.FilterOutTerms != nil {
+				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
+			}
+			if clientSettings.PreferredTerms != nil {
+				filterSettings.PreferredTerms = *clientSettings.PreferredTerms
+			}
 		}
 	}
 
@@ -107,6 +149,7 @@ type SearchOptions struct {
 	MediaType  string // "movie" or "series"
 	Year       int    // Release year (for movies)
 	UserID     string // Optional: user ID for per-user filtering settings
+	ClientID   string // Optional: client ID for per-client filtering settings
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
@@ -119,8 +162,8 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	// Get effective filtering settings (per-user if available, otherwise global)
-	filterSettings := s.getEffectiveFilterSettings(opts.UserID, settings)
+	// Get effective filtering settings (cascade: global -> profile -> client)
+	filterSettings := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
@@ -171,7 +214,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				resultsChan <- searchResult{err: fmt.Errorf("debrid search service not configured"), source: "debrid"}
 				return
 			}
-			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID)
+			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q, ClientID=%q", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID, opts.ClientID)
 			debOpts := debrid.SearchOptions{
 				Query:           opts.Query,
 				Categories:      append([]string{}, opts.Categories...),
@@ -181,6 +224,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				Year:            opts.Year,
 				AlternateTitles: append([]string{}, alternateTitles...),
 				UserID:          opts.UserID,
+				ClientID:        opts.ClientID,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			if err != nil {

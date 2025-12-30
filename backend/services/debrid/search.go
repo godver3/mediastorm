@@ -18,6 +18,11 @@ type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
 }
 
+// clientSettingsProvider retrieves per-client filter settings.
+type clientSettingsProvider interface {
+	Get(clientID string) (*models.ClientFilterSettings, error)
+}
+
 // imdbResolver resolves IMDB IDs from title metadata when not available from primary sources.
 type imdbResolver interface {
 	ResolveIMDBID(ctx context.Context, title string, mediaType string, year int) string
@@ -33,14 +38,16 @@ type SearchOptions struct {
 	Year            int      // Optional: Release year - helps with filtering
 	AlternateTitles []string // Optional: alternate or foreign titles for fuzzy filtering
 	UserID          string   // Optional: user ID for per-user filtering settings
+	ClientID        string   // Optional: client ID for per-client filtering settings
 }
 
 // SearchService coordinates queries against configured debrid providers.
 type SearchService struct {
-	cfg          *config.Manager
-	scrapers     []Scraper
-	userSettings userSettingsProvider
-	imdbResolver imdbResolver
+	cfg            *config.Manager
+	scrapers       []Scraper
+	userSettings   userSettingsProvider
+	clientSettings clientSettingsProvider
+	imdbResolver   imdbResolver
 }
 
 // NewSearchService constructs a new debrid search service.
@@ -112,6 +119,11 @@ func (s *SearchService) SetUserSettingsProvider(provider userSettingsProvider) {
 	s.userSettings = provider
 }
 
+// SetClientSettingsProvider sets the client settings provider for per-client filtering.
+func (s *SearchService) SetClientSettingsProvider(provider clientSettingsProvider) {
+	s.clientSettings = provider
+}
+
 // SetIMDBResolver sets the IMDB resolver for fallback ID resolution.
 func (s *SearchService) SetIMDBResolver(resolver imdbResolver) {
 	s.imdbResolver = resolver
@@ -149,10 +161,9 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 }
 
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
-// If a userID is provided and the user has custom settings, those are returned.
-// Otherwise, falls back to global settings.
-func (s *SearchService) getEffectiveFilterSettings(userID string, globalSettings config.Settings) models.FilterSettings {
-	// Default to global settings
+// Settings cascade: Global -> Profile -> Client (client settings win)
+func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) models.FilterSettings {
+	// Start with global settings
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
@@ -162,7 +173,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID string, globalSettings
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
-	// Check for per-user settings
+	// Layer 2: Profile settings override global
 	if userID != "" && s.userSettings != nil {
 		userSettings, err := s.userSettings.Get(userID)
 		if err != nil {
@@ -170,6 +181,37 @@ func (s *SearchService) getEffectiveFilterSettings(userID string, globalSettings
 		} else if userSettings != nil {
 			log.Printf("[debrid] using per-user filtering settings for user %s", userID)
 			filterSettings = userSettings.Filtering
+		}
+	}
+
+	// Layer 3: Client settings override profile (field-by-field, only if set)
+	if clientID != "" && s.clientSettings != nil {
+		clientSettings, err := s.clientSettings.Get(clientID)
+		if err != nil {
+			log.Printf("[debrid] failed to get client settings for %s: %v", clientID, err)
+		} else if clientSettings != nil && !clientSettings.IsEmpty() {
+			log.Printf("[debrid] applying per-client filtering overrides for client %s", clientID)
+			if clientSettings.MaxSizeMovieGB != nil {
+				filterSettings.MaxSizeMovieGB = *clientSettings.MaxSizeMovieGB
+			}
+			if clientSettings.MaxSizeEpisodeGB != nil {
+				filterSettings.MaxSizeEpisodeGB = *clientSettings.MaxSizeEpisodeGB
+			}
+			if clientSettings.MaxResolution != nil {
+				filterSettings.MaxResolution = *clientSettings.MaxResolution
+			}
+			if clientSettings.ExcludeHdr != nil {
+				filterSettings.ExcludeHdr = *clientSettings.ExcludeHdr
+			}
+			if clientSettings.PrioritizeHdr != nil {
+				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
+			}
+			if clientSettings.FilterOutTerms != nil {
+				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
+			}
+			if clientSettings.PreferredTerms != nil {
+				filterSettings.PreferredTerms = *clientSettings.PreferredTerms
+			}
 		}
 	}
 
@@ -187,8 +229,8 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	// Get effective filtering settings (per-user if available, otherwise global)
-	filterSettings := s.getEffectiveFilterSettings(opts.UserID, settings)
+	// Get effective filtering settings (cascade: global -> profile -> client)
+	filterSettings := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 
 	if !hasActiveDebridProviders(settings.Streaming.DebridProviders) {
 		return []models.NZBResult{}, nil
