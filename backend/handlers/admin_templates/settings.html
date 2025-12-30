@@ -28,7 +28,7 @@
         <select id="userSelector" class="form-select" style="min-width: 180px;" onchange="handleUserChange(this.value)">
             {{if .IsAdmin}}<option value="">Global Defaults</option>{{end}}
             {{range .Users}}
-            <option value="{{.ID}}">{{.Name}}</option>
+            <option value="{{.ID}}" data-has-overrides="{{if index $.UserOverrides .ID}}true{{else}}false{{end}}">{{.Name}}{{if index $.UserOverrides .ID}} ●{{end}}</option>
             {{end}}
         </select>
         <select id="clientSelector" class="form-select" style="min-width: 180px; display: none;" onchange="handleClientChange(this.value)">
@@ -41,6 +41,13 @@
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
             Identify
+        </button>
+        <button id="revertBtn" class="btn btn-secondary" style="display: none;" onclick="revertToGlobal()" title="Reset all settings to inherit from parent defaults">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+            </svg>
+            Revert
         </button>
         <button class="btn btn-primary" onclick="saveAllSettings()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -78,6 +85,7 @@
     let profilesData = []; // Profiles with PIN status
     let accountsData = []; // User accounts with profiles
     let hasDefaultPassword = false; // Whether admin has default password
+    let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
     const basePath = {{json .BasePath}};
 
@@ -258,7 +266,7 @@
             // Show client selector if there are clients
             if (clientsForUser.length > 0) {
                 clientSelector.innerHTML = '<option value="">Profile Defaults</option>' +
-                    clientsForUser.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                    clientsForUser.map(c => `<option value="${c.id}">${c.name}${c.hasOverrides ? ' ●' : ''}</option>`).join('');
                 clientSelector.style.display = 'block';
             } else {
                 clientSelector.style.display = 'none';
@@ -269,6 +277,7 @@
             clientSelector.style.display = 'none';
         }
         renderSettings();
+        updateRevertButtonVisibility();
     }
 
     async function loadClientsForUser(userId) {
@@ -317,6 +326,7 @@
             if (identifyBtn) identifyBtn.style.display = 'none';
         }
         renderSettings();
+        updateRevertButtonVisibility();
     }
 
     async function identifyClient() {
@@ -341,6 +351,122 @@
             btn.disabled = false;
             btn.innerHTML = originalHTML;
         }
+    }
+
+    // Update revert button visibility based on selection and overrides
+    function updateRevertButtonVisibility() {
+        const revertBtn = document.getElementById('revertBtn');
+        if (!revertBtn) return;
+
+        let showRevert = false;
+        let hasOverrides = false;
+
+        if (selectedClientId && clientSettings) {
+            // Check if client has any overrides
+            hasOverrides = Object.keys(clientSettings).some(k => clientSettings[k] !== undefined && clientSettings[k] !== null);
+            showRevert = hasOverrides;
+        } else if (selectedUserId) {
+            // Check if user/profile has overrides
+            hasOverrides = userOverrides && userOverrides[selectedUserId];
+            showRevert = hasOverrides;
+        }
+
+        revertBtn.style.display = showRevert ? 'inline-flex' : 'none';
+        revertBtn.title = selectedClientId
+            ? 'Reset all device settings to profile defaults'
+            : 'Reset all profile settings to global defaults';
+    }
+
+    // Revert all settings to parent defaults (global for profile, profile for client)
+    async function revertToGlobal() {
+        const isClient = !!selectedClientId;
+        const target = isClient ? 'device' : 'profile';
+        const parentName = isClient ? 'profile' : 'global';
+
+        if (!confirm(`Are you sure you want to reset all ${target} settings to ${parentName} defaults? This cannot be undone.`)) {
+            return;
+        }
+
+        const btn = document.getElementById('revertBtn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Resetting...';
+
+        try {
+            let response;
+            if (isClient) {
+                // Reset client settings
+                response = await fetch(basePath + '/api/clients/' + encodeURIComponent(selectedClientId) + '/settings', {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+            } else {
+                // Reset user/profile settings
+                response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+            }
+
+            if (response.ok) {
+                showToast(`${isClient ? 'Device' : 'Profile'} settings reset to ${parentName} defaults`);
+
+                // Update local state
+                if (isClient) {
+                    clientSettings = {};
+                    originalClientSettings = {};
+                    // Update client in the list
+                    const clientInList = clientsForUser.find(c => c.id === selectedClientId);
+                    if (clientInList) clientInList.hasOverrides = false;
+                    updateClientDropdownIndicators();
+                } else {
+                    userSettings = null;
+                    originalUserSettings = null;
+                    // Update user overrides tracking
+                    if (userOverrides) userOverrides[selectedUserId] = false;
+                    updateUserDropdownIndicators();
+                }
+
+                updateRevertButtonVisibility();
+                renderSettings();
+            } else {
+                const err = await response.text();
+                showToast('Failed to reset settings: ' + err, 'error');
+            }
+        } catch (e) {
+            showToast('Failed to reset settings: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    // Update the user dropdown to show/hide override indicators
+    function updateUserDropdownIndicators() {
+        const userSelector = document.getElementById('userSelector');
+        if (!userSelector) return;
+
+        Array.from(userSelector.options).forEach(option => {
+            if (!option.value) return; // Skip "Global Defaults" option
+            const hasOverride = userOverrides && userOverrides[option.value];
+            const currentText = option.text.replace(/ ●$/, ''); // Remove existing indicator
+            option.text = hasOverride ? currentText + ' ●' : currentText;
+            option.dataset.hasOverrides = hasOverride ? 'true' : 'false';
+        });
+    }
+
+    // Update the client dropdown to show/hide override indicators
+    function updateClientDropdownIndicators() {
+        const clientSelector = document.getElementById('clientSelector');
+        if (!clientSelector) return;
+
+        clientsForUser.forEach(client => {
+            const option = clientSelector.querySelector(`option[value="${client.id}"]`);
+            if (option) {
+                const currentText = option.text.replace(/ ●$/, '');
+                option.text = client.hasOverrides ? currentText + ' ●' : currentText;
+            }
+        });
     }
 
     const icons = {
@@ -385,7 +511,7 @@
     }
 
     // Map filtering field paths to client settings keys
-    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'excludeHdr', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms'];
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms'];
 
     function getClientSettingsKey(path) {
         // filtering.maxSizeMovieGb -> maxSizeMovieGb
@@ -669,7 +795,11 @@
             case 'boolean':
                 return '<label class="toggle"><input type="checkbox" id="'+id+'" '+(value ? 'checked' : '')+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.checked)"><span class="toggle-slider"></span></label>';
             case 'select':
-                const options = fieldDef.options.map(opt => '<option value="'+opt+'" '+(value === opt ? 'selected' : '')+'>'+opt+'</option>').join('');
+                const options = fieldDef.options.map(opt => {
+                    const optValue = typeof opt === 'object' ? opt.value : opt;
+                    const optLabel = typeof opt === 'object' ? opt.label : opt;
+                    return '<option value="'+optValue+'" '+(value === optValue ? 'selected' : '')+'>'+optLabel+'</option>';
+                }).join('');
                 return '<select class="form-select'+invalidClass+'" id="'+id+'" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">'+options+'</select>';
             case 'number':
                 return '<input type="number" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || 0)+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', parseFloat(this.value) || 0)">';
@@ -747,7 +877,10 @@
             switch (fieldDef.type) {
                 case 'boolean': newItem[fieldKey] = false; break;
                 case 'number': newItem[fieldKey] = 0; break;
-                case 'select': newItem[fieldKey] = fieldDef.options?.[0] || ''; break;
+                case 'select':
+                    const firstOpt = fieldDef.options?.[0];
+                    newItem[fieldKey] = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
+                    break;
                 default: newItem[fieldKey] = '';
             }
         }
@@ -1889,6 +2022,12 @@
                 if (response.ok) {
                     originalClientSettings = JSON.parse(JSON.stringify(clientSettings));
                     showToast('Client settings saved successfully');
+                    // Update client override indicator
+                    const hasOverrides = Object.keys(clientSettings).some(k => clientSettings[k] !== undefined && clientSettings[k] !== null);
+                    const clientInList = clientsForUser.find(c => c.id === selectedClientId);
+                    if (clientInList) clientInList.hasOverrides = hasOverrides;
+                    updateClientDropdownIndicators();
+                    updateRevertButtonVisibility();
                 } else {
                     const result = await response.json().catch(() => ({}));
                     showToast(result.error || 'Failed to save client settings', 'error');
@@ -1903,6 +2042,10 @@
                 if (response.ok) {
                     originalUserSettings = JSON.parse(JSON.stringify(userSettings));
                     showToast('User settings saved successfully');
+                    // Update user override indicator (settings were saved, so they have overrides now)
+                    if (userOverrides) userOverrides[selectedUserId] = true;
+                    updateUserDropdownIndicators();
+                    updateRevertButtonVisibility();
                 } else {
                     const result = await response.text();
                     showToast(result || 'Failed to save user settings', 'error');

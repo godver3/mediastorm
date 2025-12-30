@@ -92,16 +92,35 @@ func (h *ClientsHandler) Register(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ClientWithOverrides extends Client with hasOverrides flag for UI
+type ClientWithOverrides struct {
+	models.Client
+	HasOverrides bool `json:"hasOverrides"`
+}
+
 // List handles GET /api/clients
 // Returns all clients (master only) or clients for a specific user if userId query param is provided
 func (h *ClientsHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
 
-	var result []models.Client
+	var clients []models.Client
 	if userID != "" {
-		result = h.clients.ListByUser(userID)
+		clients = h.clients.ListByUser(userID)
 	} else {
-		result = h.clients.List()
+		clients = h.clients.List()
+	}
+
+	// Enrich with override information
+	result := make([]ClientWithOverrides, len(clients))
+	for i, c := range clients {
+		hasOverrides := false
+		if settings, err := h.settings.Get(c.ID); err == nil && settings != nil {
+			hasOverrides = !settings.IsEmpty()
+		}
+		result[i] = ClientWithOverrides{
+			Client:       c,
+			HasOverrides: hasOverrides,
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -282,6 +301,39 @@ func (h *ClientsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+// ResetSettings handles DELETE /api/clients/{clientID}/settings
+// Resets all client-specific settings to inherit from profile/global defaults
+func (h *ClientsHandler) ResetSettings(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := strings.TrimSpace(vars["clientID"])
+	if clientID == "" {
+		writeJSONError(w, "client id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify client exists
+	client, err := h.clients.Get(clientID)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if client == nil {
+		writeJSONError(w, "client not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.settings.Delete(clientID); err != nil {
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Client settings reset to defaults",
+	})
 }
 
 // Ping handles POST /api/clients/{clientID}/ping
