@@ -65,6 +65,33 @@ func (s *Service) Get(userID string) (*models.UserSettings, error) {
 	return nil, nil
 }
 
+// HasOverrides returns true if the user has custom settings stored.
+func (s *Service) HasOverrides(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	_, exists := s.settings[userID]
+	return exists
+}
+
+// GetUsersWithOverrides returns a map of userID -> hasOverrides for all users
+// that have custom settings stored.
+func (s *Service) GetUsersWithOverrides() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]bool)
+	for userID := range s.settings {
+		result[userID] = true
+	}
+	return result
+}
+
 // GetWithDefaults returns the user's settings merged with defaults.
 // If the user has no custom settings, returns the defaults.
 func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (models.UserSettings, error) {

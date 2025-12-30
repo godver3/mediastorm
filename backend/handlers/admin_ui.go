@@ -635,18 +635,19 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 
 // AdminPageData holds data for admin page templates
 type AdminPageData struct {
-	CurrentPath string
-	BasePath    string // "/admin" for master accounts, "/account" for regular accounts
-	IsAdmin     bool   // true for master accounts, false for regular accounts
-	AccountID   string // Account ID for scoping data (empty for master)
-	Username    string // Username of logged in account
-	Settings    config.Settings
-	Schema      map[string]interface{}
-	Groups      []map[string]string
-	Status      AdminStatus
-	Users       []models.User
-	Version     string
-	NoProfiles  bool // true when non-admin user has no profiles
+	CurrentPath   string
+	BasePath      string // "/admin" for master accounts, "/account" for regular accounts
+	IsAdmin       bool   // true for master accounts, false for regular accounts
+	AccountID     string // Account ID for scoping data (empty for master)
+	Username      string // Username of logged in account
+	Settings      config.Settings
+	Schema        map[string]interface{}
+	Groups        []map[string]string
+	Status        AdminStatus
+	Users         []models.User
+	UserOverrides map[string]bool // Map of userID -> hasOverrides for showing indicators
+	Version       string
+	NoProfiles    bool // true when non-admin user has no profiles
 }
 
 // AdminStatus holds backend status information
@@ -673,18 +674,25 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	// Check if non-admin user has no profiles
 	noProfiles := !isAdmin && len(usersList) == 0
 
+	// Get user override information for dropdown indicators
+	var userOverrides map[string]bool
+	if h.userSettingsService != nil {
+		userOverrides = h.userSettingsService.GetUsersWithOverrides()
+	}
+
 	data := AdminPageData{
-		CurrentPath: basePath + "/settings",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Settings:    settings,
-		Schema:      SettingsSchema,
-		Groups:      SettingsGroups,
-		Users:       usersList,
-		Version:     GetBackendVersion(),
-		NoProfiles:  noProfiles,
+		CurrentPath:   basePath + "/settings",
+		BasePath:      basePath,
+		IsAdmin:       isAdmin,
+		AccountID:     accountID,
+		Username:      username,
+		Settings:      settings,
+		Schema:        SettingsSchema,
+		Groups:        SettingsGroups,
+		Users:         usersList,
+		UserOverrides: userOverrides,
+		Version:       GetBackendVersion(),
+		NoProfiles:    noProfiles,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1067,6 +1075,31 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+// ResetUserSettings resets user-specific settings to global defaults
+func (h *AdminUIHandler) ResetUserSettings(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		http.Error(w, "userId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if h.userSettingsService == nil {
+		http.Error(w, "User settings service not available", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.userSettingsService.Delete(userID); err != nil {
+		http.Error(w, "Failed to reset user settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "User settings reset to global defaults",
+	})
 }
 
 // LoginPageData holds data for the login template
