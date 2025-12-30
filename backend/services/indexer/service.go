@@ -82,6 +82,7 @@ func (s *Service) getEffectiveFilterSettings(userID string, globalSettings confi
 		ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
 	// Check for per-user settings
@@ -220,48 +221,67 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		return nil, lastErr
 	}
 
-	log.Printf("[indexer] Sorting %d results with ServicePriority=%q", len(aggregated), settings.Streaming.ServicePriority)
-	sort.SliceStable(aggregated, func(i, j int) bool {
-		// Apply service priority FIRST - prioritized service type always comes before non-prioritized
-		priority := settings.Streaming.ServicePriority
-		if priority != config.StreamingServicePriorityNone {
-			iIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[i].ServiceType == models.ServiceTypeUsenet) ||
-				(priority == config.StreamingServicePriorityDebrid && aggregated[i].ServiceType == models.ServiceTypeDebrid)
-			jIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[j].ServiceType == models.ServiceTypeUsenet) ||
-				(priority == config.StreamingServicePriorityDebrid && aggregated[j].ServiceType == models.ServiceTypeDebrid)
+	// Check if ranking should be bypassed for AIOStreams-only mode
+	// Only bypass when: setting is enabled, AIOStreams is the only scraper, and no usenet results are mixed in
+	bypassRanking := settings.Filtering.BypassFilteringForAIOStreamsOnly &&
+		isOnlyAIOStreamsEnabled(settings.TorrentScrapers) &&
+		!includeUsenet
 
-			if iIsPrioritized != jIsPrioritized {
-				return iIsPrioritized
+	if bypassRanking {
+		log.Printf("[indexer] Bypassing strmr ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
+	} else {
+		log.Printf("[indexer] Sorting %d results with ServicePriority=%q", len(aggregated), settings.Streaming.ServicePriority)
+		sort.SliceStable(aggregated, func(i, j int) bool {
+			// 1. Apply service priority FIRST - prioritized service type always comes before non-prioritized
+			priority := settings.Streaming.ServicePriority
+			if priority != config.StreamingServicePriorityNone {
+				iIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[i].ServiceType == models.ServiceTypeUsenet) ||
+					(priority == config.StreamingServicePriorityDebrid && aggregated[i].ServiceType == models.ServiceTypeDebrid)
+				jIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[j].ServiceType == models.ServiceTypeUsenet) ||
+					(priority == config.StreamingServicePriorityDebrid && aggregated[j].ServiceType == models.ServiceTypeDebrid)
+
+				if iIsPrioritized != jIsPrioritized {
+					return iIsPrioritized
+				}
 			}
-		}
 
-		// Sort by resolution FIRST (2160p > 1080p > 720p > etc.)
-		resI := extractResolutionFromResult(aggregated[i])
-		resJ := extractResolutionFromResult(aggregated[j])
-
-		if resI != resJ {
-			return resI > resJ
-		}
-
-		// Within same resolution, prioritize HDR/DV content if enabled
-		if filterSettings.PrioritizeHdr && !filterSettings.ExcludeHdr {
-			iHasHDR := aggregated[i].Attributes["hdr"] != ""
-			jHasHDR := aggregated[j].Attributes["hdr"] != ""
-			iHasDV := aggregated[i].Attributes["hasDV"] == "true"
-			jHasDV := aggregated[j].Attributes["hasDV"] == "true"
-
-			// DV > HDR > SDR (within same resolution)
-			if iHasDV != jHasDV {
-				return iHasDV
+			// 2. Prioritize results containing preferred terms
+			if len(filterSettings.PreferredTerms) > 0 {
+				iHasPreferred := containsPreferredTerm(aggregated[i].Title, filterSettings.PreferredTerms)
+				jHasPreferred := containsPreferredTerm(aggregated[j].Title, filterSettings.PreferredTerms)
+				if iHasPreferred != jHasPreferred {
+					return iHasPreferred
+				}
 			}
-			if iHasHDR != jHasHDR {
-				return iHasHDR
-			}
-		}
 
-		// Finally, tiebreak by size (larger = better quality)
-		return aggregated[i].SizeBytes > aggregated[j].SizeBytes
-	})
+			// 3. Sort by resolution (2160p > 1080p > 720p > etc.)
+			resI := extractResolutionFromResult(aggregated[i])
+			resJ := extractResolutionFromResult(aggregated[j])
+
+			if resI != resJ {
+				return resI > resJ
+			}
+
+			// 4. Within same resolution, prioritize HDR/DV content if enabled
+			if filterSettings.PrioritizeHdr && !filterSettings.ExcludeHdr {
+				iHasHDR := aggregated[i].Attributes["hdr"] != ""
+				jHasHDR := aggregated[j].Attributes["hdr"] != ""
+				iHasDV := aggregated[i].Attributes["hasDV"] == "true"
+				jHasDV := aggregated[j].Attributes["hasDV"] == "true"
+
+				// DV > HDR > SDR (within same resolution)
+				if iHasDV != jHasDV {
+					return iHasDV
+				}
+				if iHasHDR != jHasHDR {
+					return iHasHDR
+				}
+			}
+
+			// 5. Finally, tiebreak by size (larger = better quality)
+			return aggregated[i].SizeBytes > aggregated[j].SizeBytes
+		})
+	}
 
 	// Debug: log top results after sorting
 	for idx := 0; idx < len(aggregated) && idx < 5; idx++ {
@@ -981,4 +1001,35 @@ func extractResolution(title string) int {
 
 	// Default (no resolution detected)
 	return 0
+}
+
+// isOnlyAIOStreamsEnabled returns true if AIOStreams is the only enabled scraper in the config.
+func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
+	aioEnabled := false
+	otherEnabled := false
+
+	for _, s := range scrapers {
+		if !s.Enabled {
+			continue
+		}
+		if strings.ToLower(s.Type) == "aiostreams" {
+			aioEnabled = true
+		} else {
+			otherEnabled = true
+		}
+	}
+
+	return aioEnabled && !otherEnabled
+}
+
+// containsPreferredTerm checks if a title contains any of the preferred terms (case-insensitive).
+func containsPreferredTerm(title string, preferredTerms []string) bool {
+	titleLower := strings.ToLower(title)
+	for _, term := range preferredTerms {
+		termLower := strings.ToLower(strings.TrimSpace(term))
+		if termLower != "" && strings.Contains(titleLower, termLower) {
+			return true
+		}
+	}
+	return false
 }
