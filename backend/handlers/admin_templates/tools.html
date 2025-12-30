@@ -314,14 +314,128 @@
                 </div>
             </div>
 
-            <!-- Trakt Watchlist Import (TODO) -->
-            <div class="import-card todo-card">
+            <!-- Trakt Watchlist Import -->
+            <div class="import-card">
                 <div class="import-card-header">
                     <h3>Trakt Watchlist</h3>
-                    <span class="todo-badge">Coming Soon</span>
                 </div>
-                <div class="import-card-body">
-                    <p class="text-muted">Import your Trakt watchlist. Connect your Trakt account in the Integrations section below first.</p>
+                <div class="import-card-body" id="traktWatchlistCard">
+                    <!-- Not Connected -->
+                    <div id="traktWatchlistNotConnected">
+                        <p class="text-muted">Connect your Trakt account in the Integrations section above to import your watchlist.</p>
+                    </div>
+
+                    <!-- Connected - Ready to import -->
+                    <div id="traktWatchlistConnected" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Import from Trakt Account</label>
+                            <select id="traktWatchlistAccountSelect" class="form-select" style="max-width: 300px;">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="traktWatchlistProfileSelect" class="form-select" style="max-width: 300px;">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+
+                        <!-- Action buttons - swap between Load and Import -->
+                        <div id="traktWatchlistFetchBtnWrapper">
+                            <button class="btn btn-primary" onclick="fetchTraktWatchlist()" id="traktWatchlistFetchBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="1 4 1 10 7 10"/>
+                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                </svg>
+                                Load Watchlist from Trakt
+                            </button>
+                        </div>
+                        <div id="traktWatchlistImportBtnWrapper" style="display: none;">
+                            <div class="import-action-bar">
+                                <button class="btn btn-primary" onclick="importTraktWatchlist()" id="traktWatchlistImportBtn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    Import <span id="traktWatchlistSelectedCount">0</span> Selected
+                                </button>
+                                <button class="btn btn-secondary" onclick="resetTraktWatchlistLoad()">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="1 4 1 10 7 10"/>
+                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                                    </svg>
+                                    Reload
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading -->
+                    <div id="traktWatchlistLoadingSection" style="display: none;">
+                        <div class="loading-box">
+                            <div class="spinner"></div>
+                            <span>Loading watchlist...</span>
+                        </div>
+                    </div>
+
+                    <!-- Preview Table -->
+                    <div id="traktWatchlistPreviewSection" style="display: none; margin-top: 1rem;">
+                        <div class="preview-header">
+                            <div>
+                                <span class="preview-count" id="traktWatchlistCount">0 items</span>
+                                <span class="text-muted"> in your Trakt watchlist</span>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary btn-sm" onclick="traktWatchlistSelectAll(true)">Select All</button>
+                                <button class="btn btn-secondary btn-sm" onclick="traktWatchlistSelectAll(false)">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="traktWatchlistSelectAllCheckbox" onchange="traktWatchlistSelectAll(this.checked)" checked></th>
+                                        <th>Title</th>
+                                        <th style="width: 80px;">Year</th>
+                                        <th style="width: 100px;">Type</th>
+                                        <th style="width: 100px;">IDs</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="traktWatchlistTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Import Progress -->
+                    <div id="traktWatchlistImportingSection" style="display: none; margin-top: 1rem;">
+                        <div class="status-box">
+                            <div class="spinner"></div>
+                            <div>
+                                <div class="status-title">Importing items...</div>
+                                <div class="text-muted" id="traktWatchlistImportProgress">0 of 0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Import Complete -->
+                    <div id="traktWatchlistCompleteSection" style="display: none; margin-top: 1rem;">
+                        <div class="success-box">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                <polyline points="22 4 12 14.01 9 11.01"/>
+                            </svg>
+                            <div>
+                                <div class="status-title" style="color: var(--success);">Import Complete</div>
+                                <div id="traktWatchlistImportSummary" class="text-muted"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetTraktWatchlistImport()">Import More</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -967,6 +1081,8 @@
     let traktAccounts = [];
     let traktHistoryItems = [];
     let traktHistorySelectedItems = new Set();
+    let traktWatchlistItems = [];
+    let traktWatchlistSelectedItems = new Set();
     let traktAuthAccountId = null;
     let traktPollInterval = null;
     let userProfiles = [];
@@ -1229,6 +1345,7 @@
             renderTraktAccountsList();
             updateTraktStatusBadge();
             updateTraktHistorySection();
+            updateTraktWatchlistSection();
         } catch (err) {
             console.error('Failed to load Trakt accounts:', err);
         }
@@ -1541,6 +1658,223 @@
             if (historyNotConnected) historyNotConnected.style.display = 'block';
             if (historyConnected) historyConnected.style.display = 'none';
         }
+    }
+
+    // ========== Trakt Watchlist Functions ==========
+    function updateTraktWatchlistSection() {
+        const watchlistNotConnected = document.getElementById('traktWatchlistNotConnected');
+        const watchlistConnected = document.getElementById('traktWatchlistConnected');
+        const accountSelect = document.getElementById('traktWatchlistAccountSelect');
+
+        const connectedAccounts = traktAccounts.filter(a => a.connected);
+
+        if (connectedAccounts.length > 0) {
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'none';
+            if (watchlistConnected) watchlistConnected.style.display = 'block';
+
+            // Populate account select for watchlist import
+            if (accountSelect) {
+                accountSelect.innerHTML = connectedAccounts.map(acc =>
+                    `<option value="${acc.id}">${escapeHtml(acc.name || acc.username || 'Unnamed')}</option>`
+                ).join('');
+            }
+        } else {
+            if (watchlistNotConnected) watchlistNotConnected.style.display = 'block';
+            if (watchlistConnected) watchlistConnected.style.display = 'none';
+        }
+    }
+
+    async function fetchTraktWatchlist() {
+        const accountSelect = document.getElementById('traktWatchlistAccountSelect');
+        const accountId = accountSelect.value;
+
+        if (!accountId) {
+            showToast('Please select a Trakt account', 'error');
+            return;
+        }
+
+        const fetchBtn = document.getElementById('traktWatchlistFetchBtn');
+        fetchBtn.disabled = true;
+        document.getElementById('traktWatchlistLoadingSection').style.display = 'block';
+        document.getElementById('traktWatchlistPreviewSection').style.display = 'none';
+        document.getElementById('traktWatchlistFetchBtnWrapper').style.display = 'none';
+
+        try {
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/watchlist`);
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch watchlist');
+            }
+
+            const data = await response.json();
+            traktWatchlistItems = data.items || [];
+
+            // Select all items by default
+            traktWatchlistSelectedItems.clear();
+            traktWatchlistItems.forEach((item, index) => traktWatchlistSelectedItems.add(index));
+
+            renderTraktWatchlistTable();
+            document.getElementById('traktWatchlistLoadingSection').style.display = 'none';
+            document.getElementById('traktWatchlistPreviewSection').style.display = 'block';
+            document.getElementById('traktWatchlistImportBtnWrapper').style.display = 'block';
+            updateTraktWatchlistSelectedCount();
+
+        } catch (err) {
+            showToast(err.message, 'error');
+            document.getElementById('traktWatchlistLoadingSection').style.display = 'none';
+            document.getElementById('traktWatchlistFetchBtnWrapper').style.display = 'block';
+        } finally {
+            fetchBtn.disabled = false;
+        }
+    }
+
+    function renderTraktWatchlistTable() {
+        const tbody = document.getElementById('traktWatchlistTableBody');
+        const countEl = document.getElementById('traktWatchlistCount');
+
+        countEl.textContent = `${traktWatchlistItems.length} item${traktWatchlistItems.length !== 1 ? 's' : ''}`;
+
+        if (traktWatchlistItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">Your Trakt watchlist is empty</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = traktWatchlistItems.map((item, index) => {
+            const isSelected = traktWatchlistSelectedItems.has(index);
+            const ids = item.externalIds || {};
+            const idBadges = Object.entries(ids)
+                .filter(([k, v]) => v)
+                .map(([k, v]) => `<span class="id-badge">${k.toUpperCase()}</span>`)
+                .join('');
+
+            return `
+                <tr class="${isSelected ? '' : 'disabled'}">
+                    <td>
+                        <input type="checkbox"
+                               ${isSelected ? 'checked' : ''}
+                               onchange="toggleTraktWatchlistItem(${index}, this.checked)">
+                    </td>
+                    <td style="font-weight: 500;">${escapeHtml(item.title || 'Unknown Title')}</td>
+                    <td style="color: var(--text-muted);">${item.year || '-'}</td>
+                    <td><span class="type-badge ${item.type}">${item.type}</span></td>
+                    <td><div class="id-badges">${idBadges || '<span class="id-badge">TRAKT</span>'}</div></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function toggleTraktWatchlistItem(index, checked) {
+        if (checked) {
+            traktWatchlistSelectedItems.add(index);
+        } else {
+            traktWatchlistSelectedItems.delete(index);
+        }
+        updateTraktWatchlistSelectedCount();
+        updateTraktWatchlistRowStyles();
+    }
+
+    function traktWatchlistSelectAll(checked) {
+        traktWatchlistSelectedItems.clear();
+        if (checked) {
+            traktWatchlistItems.forEach((item, index) => traktWatchlistSelectedItems.add(index));
+        }
+
+        document.querySelectorAll('#traktWatchlistTableBody input[type="checkbox"]').forEach(cb => {
+            cb.checked = checked;
+        });
+        document.getElementById('traktWatchlistSelectAllCheckbox').checked = checked;
+
+        updateTraktWatchlistSelectedCount();
+        updateTraktWatchlistRowStyles();
+    }
+
+    function updateTraktWatchlistSelectedCount() {
+        document.getElementById('traktWatchlistSelectedCount').textContent = traktWatchlistSelectedItems.size;
+        document.getElementById('traktWatchlistImportBtn').disabled = traktWatchlistSelectedItems.size === 0;
+
+        const selectAllCb = document.getElementById('traktWatchlistSelectAllCheckbox');
+        selectAllCb.checked = traktWatchlistSelectedItems.size === traktWatchlistItems.length;
+        selectAllCb.indeterminate = traktWatchlistSelectedItems.size > 0 && traktWatchlistSelectedItems.size < traktWatchlistItems.length;
+    }
+
+    function updateTraktWatchlistRowStyles() {
+        document.querySelectorAll('#traktWatchlistTableBody tr').forEach((row, index) => {
+            if (traktWatchlistItems[index]) {
+                const isSelected = traktWatchlistSelectedItems.has(index);
+                row.classList.toggle('disabled', !isSelected);
+            }
+        });
+    }
+
+    async function importTraktWatchlist() {
+        if (traktWatchlistSelectedItems.size === 0) {
+            showToast('Please select at least one item to import', 'error');
+            return;
+        }
+
+        const profileId = document.getElementById('traktWatchlistProfileSelect').value;
+        if (!profileId) {
+            showToast('Please select a profile', 'error');
+            return;
+        }
+
+        const itemsToImport = traktWatchlistItems.filter((item, index) => traktWatchlistSelectedItems.has(index));
+
+        document.getElementById('traktWatchlistPreviewSection').style.display = 'none';
+        document.getElementById('traktWatchlistImportBtnWrapper').style.display = 'none';
+        document.getElementById('traktWatchlistImportingSection').style.display = 'block';
+        document.getElementById('traktWatchlistImportProgress').textContent = `0 of ${itemsToImport.length}`;
+
+        try {
+            const response = await fetch('/admin/api/trakt/import/watchlist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    profileId: profileId,
+                    items: itemsToImport
+                })
+            });
+
+            const result = await response.json();
+
+            document.getElementById('traktWatchlistImportingSection').style.display = 'none';
+            document.getElementById('traktWatchlistCompleteSection').style.display = 'block';
+
+            let summary = `Successfully imported ${result.imported} item${result.imported !== 1 ? 's' : ''}.`;
+            if (result.failed > 0) {
+                summary += ` ${result.failed} item${result.failed !== 1 ? 's' : ''} failed.`;
+            }
+            document.getElementById('traktWatchlistImportSummary').textContent = summary;
+
+            if (result.success) {
+                showToast(`Imported ${result.imported} items to watchlist`, 'success');
+            } else {
+                showToast(`Imported ${result.imported} items with ${result.failed} failures`, 'warning');
+            }
+
+        } catch (err) {
+            document.getElementById('traktWatchlistImportingSection').style.display = 'none';
+            document.getElementById('traktWatchlistPreviewSection').style.display = 'block';
+            document.getElementById('traktWatchlistImportBtnWrapper').style.display = 'block';
+            showToast('Import failed: ' + err.message, 'error');
+        }
+    }
+
+    function resetTraktWatchlistImport() {
+        document.getElementById('traktWatchlistCompleteSection').style.display = 'none';
+        document.getElementById('traktWatchlistImportBtnWrapper').style.display = 'none';
+        document.getElementById('traktWatchlistFetchBtnWrapper').style.display = 'block';
+        traktWatchlistItems = [];
+        traktWatchlistSelectedItems.clear();
+    }
+
+    function resetTraktWatchlistLoad() {
+        document.getElementById('traktWatchlistPreviewSection').style.display = 'none';
+        document.getElementById('traktWatchlistImportBtnWrapper').style.display = 'none';
+        document.getElementById('traktWatchlistFetchBtnWrapper').style.display = 'block';
+        traktWatchlistItems = [];
+        traktWatchlistSelectedItems.clear();
     }
 
     function escapeHtml(text) {

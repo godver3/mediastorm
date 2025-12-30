@@ -416,6 +416,7 @@ func main() {
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
 
 	// Global settings endpoint (master only)
 	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.GetSettings)).Methods(http.MethodGet)
@@ -501,6 +502,7 @@ func main() {
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/disconnect", adminUIHandler.RequireAuth(traktAccountsHandler.Disconnect)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/scrobbling", adminUIHandler.RequireAuth(traktAccountsHandler.SetScrobbling)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/history", adminUIHandler.RequireAuth(traktAccountsHandler.GetHistory)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/watchlist", adminUIHandler.RequireAuth(traktAccountsHandler.GetWatchlist)).Methods(http.MethodGet)
 
 	// Profile Trakt linking (admin routes)
 	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.SetTraktAccount)).Methods(http.MethodPut)
@@ -530,6 +532,7 @@ func main() {
 	r.HandleFunc("/admin/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Delete)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.GetSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.ResetSettings)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
 
 	fmt.Println("📊 Admin dashboard available at /admin")
@@ -568,6 +571,7 @@ func main() {
 	// Protected account routes - User Settings API
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
 
 	// Protected account routes - Client device management (same handlers as admin)
 	r.HandleFunc("/account/api/clients", adminUIHandler.RequireAuth(clientsHandler.List)).Methods(http.MethodGet)
@@ -575,6 +579,7 @@ func main() {
 	r.HandleFunc("/account/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Update)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.GetSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.ResetSettings)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
 
 	// Protected account routes - History API

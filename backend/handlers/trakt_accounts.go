@@ -499,6 +499,74 @@ func (h *TraktAccountsHandler) SetScrobbling(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// GetWatchlist retrieves the watchlist for a specific Trakt account.
+// GET /api/trakt/accounts/{id}/watchlist
+func (h *TraktAccountsHandler) GetWatchlist(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Trakt.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	accessToken, err := h.ensureValidAccountToken(account)
+	if err != nil {
+		jsonError(w, "Failed to validate token: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if accessToken == "" {
+		jsonError(w, "Account not connected", http.StatusUnauthorized)
+		return
+	}
+
+	// Update client with account credentials
+	h.traktClient.UpdateCredentials(account.ClientID, account.ClientSecret)
+
+	items, err := h.traktClient.GetAllWatchlist(accessToken)
+	if err != nil {
+		jsonError(w, "Failed to fetch watchlist: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to normalized format
+	normalizedItems := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		normalized := map[string]interface{}{
+			"type":     trakt.NormalizeMediaType(item.Type),
+			"listedAt": item.ListedAt,
+		}
+
+		if item.Movie != nil {
+			normalized["title"] = item.Movie.Title
+			normalized["year"] = item.Movie.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Movie.IDs)
+		} else if item.Show != nil {
+			normalized["title"] = item.Show.Title
+			normalized["year"] = item.Show.Year
+			normalized["externalIds"] = trakt.IDsToMap(item.Show.IDs)
+		}
+
+		normalizedItems = append(normalizedItems, normalized)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": normalizedItems,
+		"count": len(normalizedItems),
+	})
+}
+
 // GetHistory retrieves the watch history for a specific Trakt account.
 // GET /api/trakt/accounts/{id}/history
 func (h *TraktAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
