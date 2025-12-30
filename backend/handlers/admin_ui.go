@@ -253,10 +253,19 @@ var SettingsSchema = map[string]interface{}{
 		"group": "sources",
 		"order": 0,
 		"fields": map[string]interface{}{
-			"maxSizeMovieGb":                   map[string]interface{}{"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
-			"maxSizeEpisodeGb":                 map[string]interface{}{"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
-			"maxResolution":                    map[string]interface{}{"type": "select", "label": "Max Resolution", "options": []string{"", "480p", "720p", "1080p", "2160p"}, "description": "Maximum resolution (empty = no limit)"},
-			"excludeHdr":                       map[string]interface{}{"type": "boolean", "label": "Exclude HDR", "description": "Exclude HDR content from results"},
+			"maxSizeMovieGb":   map[string]interface{}{"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
+			"maxSizeEpisodeGb": map[string]interface{}{"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
+			"maxResolution":    map[string]interface{}{"type": "select", "label": "Max Resolution", "options": []string{"", "480p", "720p", "1080p", "2160p"}, "description": "Maximum resolution (empty = no limit)"},
+			"hdrDvPolicy": map[string]interface{}{
+				"type":  "select",
+				"label": "HDR/DV Policy",
+				"options": []map[string]string{
+					{"value": "hdr_dv", "label": "All content"},
+					{"value": "hdr", "label": "SDR + HDR only"},
+					{"value": "none", "label": "SDR only"},
+				},
+				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
+			},
 			"prioritizeHdr":                    map[string]interface{}{"type": "boolean", "label": "Prioritize HDR", "description": "Prioritize HDR/DV content in results"},
 			"filterOutTerms":                   map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive match in title)"},
 			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive match in title, ranked higher)"},
@@ -549,7 +558,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 			return total
 		},
 		"hasFiltering": func(f config.FilterSettings) bool {
-			return f.ExcludeHdr || f.MaxSizeMovieGB > 0 || len(f.FilterOutTerms) > 0
+			return f.HDRDVPolicy != "" && f.HDRDVPolicy != config.HDRDVPolicyNoExclusion || f.MaxSizeMovieGB > 0 || len(f.FilterOutTerms) > 0
 		},
 		"join": strings.Join,
 	}
@@ -1011,7 +1020,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 			MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
-			ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
+			HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 			PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 			FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		},
@@ -4376,4 +4385,147 @@ func (h *AdminUIHandler) TraktImportHistory(w http.ResponseWriter, r *http.Reque
 		response["errors"] = errors
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+// PlexImportHistory imports Plex watch history to local history
+func (h *AdminUIHandler) PlexImportHistory(w http.ResponseWriter, r *http.Request) {
+	if h.historyService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "History service not initialized",
+		})
+		return
+	}
+
+	var req struct {
+		ProfileID string `json:"profileId"`
+		Items     []struct {
+			RatingKey   string            `json:"ratingKey"`
+			Title       string            `json:"title"`
+			MediaType   string            `json:"type"`
+			Year        int               `json:"year"`
+			ViewedAt    int64             `json:"viewedAt"`
+			ExternalIDs map[string]string `json:"externalIds"`
+			SeriesTitle string            `json:"seriesTitle,omitempty"`
+			Season      int               `json:"season,omitempty"`
+			Episode     int               `json:"episode,omitempty"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if req.ProfileID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Profile ID required",
+		})
+		return
+	}
+
+	if len(req.Items) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "No items to import",
+		})
+		return
+	}
+
+	successCount := 0
+	errorCount := 0
+	var errors []string
+
+	watched := true
+	for _, item := range req.Items {
+		var itemID string
+		var seriesID string
+
+		if item.MediaType == "movie" {
+			// For movies, use TMDB > IMDB > TVDB > Plex
+			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+				itemID = tmdbID
+			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+				itemID = imdbID
+			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
+				itemID = tvdbID
+			} else if item.RatingKey != "" {
+				itemID = "plex:" + item.RatingKey
+			}
+		} else if item.MediaType == "episode" {
+			// For episodes, construct composite ID like tmdb:tv:SHOWID:S01E02
+			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+				seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
+				itemID = fmt.Sprintf("tmdb:tv:%s:S%02dE%02d", tmdbID, item.Season, item.Episode)
+			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
+				seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
+				itemID = fmt.Sprintf("tvdb:series:%s:S%02dE%02d", tvdbID, item.Season, item.Episode)
+			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+				seriesID = fmt.Sprintf("imdb:%s", imdbID)
+				itemID = fmt.Sprintf("imdb:%s:S%02dE%02d", imdbID, item.Season, item.Episode)
+			} else if item.RatingKey != "" {
+				seriesID = "plex:series:" + item.RatingKey
+				itemID = fmt.Sprintf("plex:series:%s:S%02dE%02d", item.RatingKey, item.Season, item.Episode)
+			}
+		}
+
+		if itemID == "" {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: no valid ID found", item.Title))
+			continue
+		}
+
+		// Convert Unix timestamp to time.Time
+		watchedAt := time.Unix(item.ViewedAt, 0)
+
+		historyItem := models.WatchHistoryUpdate{
+			MediaType:   item.MediaType,
+			ItemID:      itemID,
+			Watched:     &watched,
+			WatchedAt:   watchedAt,
+			ExternalIDs: item.ExternalIDs,
+		}
+
+		// For movies, set the name
+		if item.MediaType == "movie" {
+			historyItem.Name = item.Title
+			historyItem.Year = item.Year
+		} else if item.MediaType == "episode" {
+			// For episodes, set series and episode info
+			historyItem.SeriesID = seriesID
+			historyItem.SeriesName = item.SeriesTitle
+			historyItem.Name = item.Title
+			historyItem.SeasonNumber = item.Season
+			historyItem.EpisodeNumber = item.Episode
+			historyItem.Year = item.Year
+		}
+
+		_, err := h.historyService.UpdateWatchHistory(req.ProfileID, historyItem)
+		if err != nil {
+			errorCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+		} else {
+			successCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	plexResponse := map[string]interface{}{
+		"success":    errorCount == 0,
+		"imported":   successCount,
+		"failed":     errorCount,
+		"totalItems": len(req.Items),
+	}
+	if len(errors) > 0 {
+		plexResponse["errors"] = errors
+	}
+	json.NewEncoder(w).Encode(plexResponse)
 }

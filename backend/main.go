@@ -336,8 +336,14 @@ func main() {
 		prequeueHandler.SetMetadataProber(videoHandler)
 		prequeueHandler.SetFullProber(videoHandler) // Combined prober for single ffprobe call
 		prequeueHandler.SetUserSettingsService(userSettingsService)
+		prequeueHandler.SetClientSettingsService(clientSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
-		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, and config")
+		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, client settings, and config")
+
+		// Configure video handler with user settings for HDR/DV policy checks
+		videoHandler.SetUserSettingsService(userSettingsService)
+		videoHandler.SetClientSettingsService(clientSettingsService)
+		videoHandler.SetConfigManager(cfgManager)
 	}
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours)
@@ -507,6 +513,11 @@ func main() {
 	r.HandleFunc("/admin/api/plex/accounts/{accountID}/pin", adminUIHandler.RequireAuth(plexAccountsHandler.CreatePIN)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/plex/accounts/{accountID}/pin/{pinID}", adminUIHandler.RequireAuth(plexAccountsHandler.CheckPIN)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/plex/accounts/{accountID}/disconnect", adminUIHandler.RequireAuth(plexAccountsHandler.Disconnect)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/history", adminUIHandler.RequireAuth(plexAccountsHandler.GetHistory)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/servers", adminUIHandler.RequireAuth(plexAccountsHandler.GetServers)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/users", adminUIHandler.RequireAuth(plexAccountsHandler.GetHomeUsers)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/accounts/{accountID}/watchlist", adminUIHandler.RequireAuth(plexAccountsHandler.GetWatchlist)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/plex/import/history", adminUIHandler.RequireAuth(adminUIHandler.PlexImportHistory)).Methods(http.MethodPost)
 
 	// Profile Plex linking (admin routes)
 	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.SetPlexAccount)).Methods(http.MethodPut)
