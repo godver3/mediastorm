@@ -132,6 +132,9 @@ module.exports = ({ config }) => {
         buildNumber: '3',
         deploymentTarget: '15.1',
         icon: './assets/ios_icons/icon-1024.png',
+        entitlements: {
+          'com.apple.developer.networking.wifi-info': true,
+        },
         infoPlist: {
           LSApplicationQueriesSchemes: ['outplayer', 'infuse'],
           ITSAppUsesNonExemptEncryption: false,
