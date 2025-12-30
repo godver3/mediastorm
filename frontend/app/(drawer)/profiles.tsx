@@ -513,6 +513,7 @@ export default function ProfilesScreen() {
 
 const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080) => {
   const isTV = Platform.isTV;
+  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
   const isCompact = theme.breakpoint === 'compact';
   const horizontalPadding = isTV ? theme.spacing.xl * 1.5 : isCompact ? theme.spacing.lg : theme.spacing['2xl'];
 
@@ -795,12 +796,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontWeight: '600',
     },
     colorPickerSection: {
-      gap: theme.spacing.sm,
-      marginBottom: theme.spacing.lg,
+      gap: isAndroidTV ? theme.spacing.xs : theme.spacing.sm,
+      marginBottom: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
     },
     colorPickerLabel: {
-      ...theme.typography.label.md,
+      ...(isAndroidTV ? theme.typography.label.sm : theme.typography.label.md),
       color: theme.colors.text.secondary,
+      textAlign: 'center',
+      marginBottom: theme.spacing.sm,
     },
 
     // Modal styles for TV
@@ -812,18 +815,18 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       zIndex: 1000,
     },
     modalContainer: {
-      width: '80%',
-      maxWidth: 700,
+      width: isAndroidTV ? '40%' : '80%',
+      maxWidth: isAndroidTV ? 350 : 700,
       margin: '10%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.xl,
+      borderRadius: isAndroidTV ? theme.radius.lg : theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
-      padding: theme.spacing['2xl'],
-      gap: theme.spacing.lg,
+      padding: isAndroidTV ? theme.spacing.xl : theme.spacing['2xl'],
+      gap: isAndroidTV ? theme.spacing.md : theme.spacing.lg,
     },
     modalTitle: {
-      ...theme.typography.title.xl,
+      ...(isAndroidTV ? theme.typography.title.lg : theme.typography.title.xl),
       color: theme.colors.text.primary,
     },
     pinErrorContainer: {
@@ -895,13 +898,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: 'white',
     },
     modalButton: {
-      minWidth: 280,
-      minHeight: 64,
+      minWidth: isAndroidTV ? 140 : 280,
+      minHeight: isAndroidTV ? 32 : 64,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing['2xl'],
-      borderWidth: 3,
+      paddingVertical: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
+      paddingHorizontal: isAndroidTV ? theme.spacing.xl : theme.spacing['2xl'],
+      borderWidth: isAndroidTV ? 2 : 3,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
       borderColor: theme.colors.border.subtle,
@@ -911,11 +914,12 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       backgroundColor: theme.colors.background.elevated,
     },
     modalButtonText: {
-      ...theme.typography.title.md,
+      ...(isAndroidTV ? theme.typography.body.sm : theme.typography.title.md),
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
     modalButtonTextFocused: {
+      ...(isAndroidTV ? theme.typography.body.sm : theme.typography.title.md),
       color: theme.colors.text.primary,
     },
     modalButtonsContainer: {
@@ -925,19 +929,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     // Profile actions modal styles
     profileModalHeader: {
       alignItems: 'center',
-      gap: theme.spacing.lg,
-      marginBottom: theme.spacing.lg,
+      gap: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
+      marginBottom: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
     },
     profileModalAvatar: {
-      width: 100,
-      height: 100,
-      borderRadius: 50,
+      width: isAndroidTV ? 70 : 100,
+      height: isAndroidTV ? 70 : 100,
+      borderRadius: isAndroidTV ? 35 : 50,
       backgroundColor: theme.colors.background.surface,
       justifyContent: 'center',
       alignItems: 'center',
     },
     profileModalAvatarText: {
-      fontSize: 48,
+      fontSize: isAndroidTV ? 32 : 48,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -963,10 +967,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
     },
     colorSwatch: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      borderWidth: 3,
+      width: isAndroidTV ? 24 : 48,
+      height: isAndroidTV ? 24 : 48,
+      borderRadius: isAndroidTV ? 12 : 24,
+      borderWidth: isAndroidTV ? 2 : 3,
       borderColor: 'transparent',
     },
     colorSwatchFocused: {
@@ -987,14 +991,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: theme.spacing.sm,
-      marginTop: theme.spacing.md,
-      paddingTop: theme.spacing.md,
+      gap: isAndroidTV ? theme.spacing.xs : theme.spacing.sm,
+      marginTop: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
+      paddingTop: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
     },
     adminInfoNoteText: {
-      ...theme.typography.body.md,
+      ...(isAndroidTV ? theme.typography.caption.sm : theme.typography.body.md),
       color: theme.colors.text.muted,
     },
     // Admin info note styles (Mobile)
