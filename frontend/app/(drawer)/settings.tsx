@@ -58,7 +58,14 @@ import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { APP_VERSION } from '@/version';
 import { router, Stack } from 'expo-router';
-import * as Updates from 'expo-updates';
+
+// expo-updates may not be available in all builds (e.g., development builds without it)
+let Updates: typeof import('expo-updates') | null = null;
+try {
+  Updates = require('expo-updates');
+} catch {
+  // Module not available - updates functionality will be disabled
+}
 
 type SettingsTab = 'connection' | 'content' | 'playback' | 'home' | 'advanced' | 'live' | 'filtering';
 
@@ -1299,6 +1306,10 @@ function SettingsScreen() {
   }, [isSubmittingLogs, showToast]);
 
   const handleCheckForUpdates = useCallback(async () => {
+    if (!Updates) {
+      showToast('Updates not available in this build', { tone: 'info' });
+      return;
+    }
     if (__DEV__) {
       showToast('Updates disabled in development mode', { tone: 'info' });
       return;
@@ -1326,6 +1337,10 @@ function SettingsScreen() {
   }, [updateStatus, showToast]);
 
   const handleApplyUpdate = useCallback(async () => {
+    if (!Updates) {
+      showToast('Updates not available in this build', { tone: 'info' });
+      return;
+    }
     try {
       await Updates.reloadAsync();
     } catch (err) {
@@ -2895,17 +2910,17 @@ function SettingsScreen() {
               {/* Grid Content - with edge buffer */}
               <View style={styles.tvContentArea}>
                 {currentTabGridData.length > 0 && (
-                  <View style={styles.tvGridContainer}>
-                    <SpatialNavigationVirtualizedGrid
-                      data={currentTabGridData}
-                      renderItem={renderGridItem}
-                      numberOfColumns={1}
-                      itemHeight={(styles.tvGridItemHeight as { height: number }).height}
-                      numberOfRenderedRows={Math.max(currentTabGridData.length, 10)}
-                      numberOfRowsVisibleOnScreen={Math.min(8, currentTabGridData.length)}
-                      rowContainerStyle={styles.tvGridRowContainer}
-                    />
-                  </View>
+                  <SpatialNavigationScrollView
+                    style={styles.tvGridContainer}
+                    contentContainerStyle={styles.tvScrollContent}>
+                    <View style={styles.tvGridRowContainer}>
+                      {currentTabGridData.map((item) => (
+                        <View key={item.id}>
+                          {renderGridItem({ item })}
+                        </View>
+                      ))}
+                    </View>
+                  </SpatialNavigationScrollView>
                 )}
               </View>
             </View>
@@ -4030,8 +4045,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     versionInfoRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
       alignItems: 'center',
+      gap: theme.spacing.md,
       paddingVertical: theme.spacing.xs * atvScale,
       paddingHorizontal: theme.spacing.lg * atvScale,
     },
@@ -4039,11 +4055,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
+      minWidth: 100,
       ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
     },
     versionInfoValue: {
       ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
+      fontWeight: '600',
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
       ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
@@ -4581,6 +4599,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridContainer: {
       flex: 1,
     },
+    tvScrollContent: {
+      paddingBottom: theme.spacing['2xl'],
+    },
     // TV Grid title styles (part of virtualized grid)
     tvGridTitleRow: {
       paddingBottom: theme.spacing.md * atvScale,
@@ -4599,16 +4620,12 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       gap: theme.spacing.sm * atvScale,
       flexWrap: 'wrap',
     },
-    // TV Grid item height for virtualized list (includes spacing between items)
-    tvGridItemHeight: { height: isNonTvosTV ? 52 : 100 },
-    tvGridHeaderHeight: { height: 80 * atvScale },
-    tvGridDropdownHeight: { height: 120 * atvScale },
-    // Row container style for settings grid
+    // Row container style for settings grid (used with ScrollView)
     // Calculate width: 60% of available content area
     tvGridRowContainer: isTV
       ? {
           width: (screenWidth - tvEdgeBufferHorizontal * 2 - tvPadding * 2) * 0.6,
-          gap: isNonTvosTV ? theme.spacing.xs : theme.spacing.md,
+          gap: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
         }
       : {},
     // Full width style for grid items (needed because virtualized grid item wrappers don't have width)
