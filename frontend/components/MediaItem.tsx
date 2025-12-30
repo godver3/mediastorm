@@ -196,6 +196,26 @@ const createStyles = (theme: NovaTheme) => {
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
+    // "More" card styles for watchlist overflow
+    moreCard: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: theme.spacing.md,
+    },
+    moreCardText: {
+      ...theme.typography.title.lg,
+      color: theme.colors.text.primary,
+      fontWeight: '700',
+      textAlign: 'center',
+      fontSize: isTV ? 28 * tvTextScale : 22,
+    },
+    moreCardSubtext: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+      marginTop: theme.spacing.xs,
+    },
   });
 };
 
@@ -226,7 +246,16 @@ const MediaItem = memo(function MediaItem({ title, onPress, onLongPress, onFocus
         style={[styles.container, styles.containerCompact, style]}
         accessibilityRole="button">
         <View style={[styles.imageContainer, styles.imageContainerCompact]}>
-          {title.poster?.url ? (
+          {title.mediaType === 'more' ? (
+            <LinearGradient
+              colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.moreCard}>
+              <Text style={styles.moreCardText}>{title.name}</Text>
+              <Text style={styles.moreCardSubtext}>View all</Text>
+            </LinearGradient>
+          ) : title.poster?.url ? (
             <Image source={title.poster.url} style={styles.poster} contentFit="cover" />
           ) : (
             <View style={styles.placeholder}>
@@ -234,29 +263,31 @@ const MediaItem = memo(function MediaItem({ title, onPress, onLongPress, onFocus
             </View>
           )}
           {/* Progress badge - hide if less than 5% */}
-          {title.percentWatched !== undefined && title.percentWatched >= 5 && (
+          {title.mediaType !== 'more' && title.percentWatched !== undefined && title.percentWatched >= 5 && (
             <View style={styles.progressBadge}>
               <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
             </View>
           )}
-          <View style={[styles.info, styles.infoCompact]}>
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-              locations={[0, 0.6, 1]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={styles.textGradient}
-            />
-            <Text style={styles.titleCompact} numberOfLines={2}>
-              {title.name}
-            </Text>
-            {title.year ? (
-              <Text style={styles.yearCompact}>{title.year}</Text>
-            ) : (
-              <View style={styles.yearPlaceholder} />
-            )}
-          </View>
+          {title.mediaType !== 'more' && (
+            <View style={[styles.info, styles.infoCompact]}>
+              <LinearGradient
+                pointerEvents="none"
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                locations={[0, 0.6, 1]}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.textGradient}
+              />
+              <Text style={styles.titleCompact} numberOfLines={2}>
+                {title.name}
+              </Text>
+              {title.year ? (
+                <Text style={styles.yearCompact}>{title.year}</Text>
+              ) : (
+                <View style={styles.yearPlaceholder} />
+              )}
+            </View>
+          )}
         </View>
       </Pressable>
     );
@@ -270,7 +301,16 @@ const MediaItem = memo(function MediaItem({ title, onPress, onLongPress, onFocus
           style={[styles.container, style, isFocused && styles.containerFocused]}
           renderToHardwareTextureAndroid={isAndroidTV}>
           <View style={styles.imageContainer}>
-            {title.poster?.url ? (
+            {title.mediaType === 'more' ? (
+              <LinearGradient
+                colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.moreCard}>
+                <Text style={styles.moreCardText}>{title.name}</Text>
+                <Text style={styles.moreCardSubtext}>View all</Text>
+              </LinearGradient>
+            ) : title.poster?.url ? (
               <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />
             ) : (
               <View style={styles.placeholder}>
@@ -278,32 +318,34 @@ const MediaItem = memo(function MediaItem({ title, onPress, onLongPress, onFocus
               </View>
             )}
             {/* Media type badge */}
-            {title.mediaType && (
+            {title.mediaType && title.mediaType !== 'more' && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
               </View>
             )}
             {/* Progress badge - hide if less than 5% */}
-            {title.percentWatched !== undefined && title.percentWatched >= 5 && (
+            {title.mediaType !== 'more' && title.percentWatched !== undefined && title.percentWatched >= 5 && (
               <View style={styles.progressBadge}>
                 <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
               </View>
             )}
             {/* Overlay info to match Search page */}
-            <View style={[styles.infoCompact]}>
-              <LinearGradient
-                pointerEvents="none"
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                locations={[0, 0.6, 1]}
-                start={{ x: 0.5, y: 0 }}
-                end={{ x: 0.5, y: 1 }}
-                style={styles.textGradient}
-              />
-              <Text style={styles.titleTV} numberOfLines={2}>
-                {title.name}
-              </Text>
-              {title.year ? <Text style={styles.yearTV}>{title.year}</Text> : <View style={styles.yearPlaceholder} />}
-            </View>
+            {title.mediaType !== 'more' && (
+              <View style={[styles.infoCompact]}>
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                  locations={[0, 0.6, 1]}
+                  start={{ x: 0.5, y: 0 }}
+                  end={{ x: 0.5, y: 1 }}
+                  style={styles.textGradient}
+                />
+                <Text style={styles.titleTV} numberOfLines={2}>
+                  {title.name}
+                </Text>
+                {title.year ? <Text style={styles.yearTV}>{title.year}</Text> : <View style={styles.yearPlaceholder} />}
+              </View>
+            )}
           </View>
         </View>
       )}
