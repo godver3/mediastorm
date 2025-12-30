@@ -2426,8 +2426,52 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		log.Printf("[hls] session %s: transcoding stopped due to IDLE_TIMEOUT after %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
 	} else if completionPercent < 95 && expectedSegments > 0 {
-		log.Printf("[hls] session %s: WARNING - PREMATURE_COMPLETION at %.1f%% (expected %d segments, got %d)",
+		log.Printf("[hls] session %s: PREMATURE_COMPLETION at %.1f%% (expected %d segments, got %d)",
 			session.ID, completionPercent, expectedSegments, actualSegments)
+
+		// Attempt recovery if we haven't exhausted retries
+		if recoveryAttempts < hlsMaxRecoveryAttempts {
+			// Calculate new start offset based on segments already created
+			newStartOffset := session.StartOffset + float64(highestSegment+1)*hlsSegmentDuration
+
+			// Don't exceed the total duration
+			if session.Duration > 0 && newStartOffset >= session.Duration {
+				log.Printf("[hls] session %s: premature completion recovery would exceed duration (offset %.2f >= duration %.2f), marking complete",
+					session.ID, newStartOffset, session.Duration)
+				return nil
+			}
+
+			log.Printf("[hls] session %s: premature completion recovery - highest segment=%d, new offset=%.2fs (was %.2fs), attempt %d/%d",
+				session.ID, highestSegment, newStartOffset, session.StartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+
+			// Reset session state for restart
+			session.mu.Lock()
+			session.FFmpegCmd = nil
+			session.FFmpegPID = 0
+			session.Completed = false
+			session.RecoveryAttempts++
+			session.StartOffset = newStartOffset
+			session.CreatedAt = time.Now()
+			session.LastSegmentRequest = time.Now()
+			session.mu.Unlock()
+
+			// Create a new background context for the restart
+			newCtx, newCancel := context.WithCancel(context.Background())
+			session.mu.Lock()
+			session.Cancel = newCancel
+			session.mu.Unlock()
+
+			// Brief delay before reconnecting
+			log.Printf("[hls] session %s: waiting 2 seconds before recovery restart", session.ID)
+			time.Sleep(2 * time.Second)
+
+			// Restart transcoding from the new offset
+			log.Printf("[hls] session %s: restarting transcoding from %.2fs after premature completion (recovery attempt %d/%d)",
+				session.ID, newStartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+			return m.startTranscoding(newCtx, session, cachedForceAAC)
+		}
+		log.Printf("[hls] session %s: premature completion recovery exhausted (%d/%d attempts)",
+			session.ID, recoveryAttempts, hlsMaxRecoveryAttempts)
 	} else {
 		log.Printf("[hls] session %s: transcoding completed successfully in %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
