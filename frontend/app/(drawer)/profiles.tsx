@@ -530,6 +530,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
   const cardHeight = isTV ? Math.round(cardWidth * 1.1) : 0; // Slightly taller than wide for profile cards
   const gridItemHeight = cardHeight + gap;
 
+  // Mobile grid configuration - 3 columns responsive to screen width
+  const mobileGap = theme.spacing.md;
+  const mobileAvailableWidth = screenWidth - horizontalPadding * 2;
+  const mobileCardWidth = Math.floor((mobileAvailableWidth - mobileGap * 2) / 3);
+  const mobileAvatarSize = Math.min(56, Math.floor(mobileCardWidth * 0.5));
+  const mobileAvatarFontSize = Math.floor(mobileAvatarSize * 0.45);
+
   const styles = StyleSheet.create({
     safeArea: {
       flex: 1,
@@ -707,11 +714,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     mobileCardGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.md,
+      gap: mobileGap,
       justifyContent: 'flex-start',
     },
     mobileCard: {
-      width: (screenWidth - horizontalPadding * 2 - theme.spacing.md * 2) / 3,
+      width: mobileCardWidth,
       aspectRatio: 0.85,
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.background.surface,
@@ -720,22 +727,22 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       justifyContent: 'center',
       alignItems: 'center',
       gap: theme.spacing.sm,
-      padding: theme.spacing.md,
+      padding: theme.spacing.sm,
     },
     mobileCardActive: {
       borderColor: theme.colors.accent.primary,
     },
     mobileCardAvatar: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: mobileAvatarSize,
+      height: mobileAvatarSize,
+      borderRadius: mobileAvatarSize / 2,
       backgroundColor: theme.colors.background.elevated,
       justifyContent: 'center',
       alignItems: 'center',
       position: 'relative',
     },
     mobileCardAvatarText: {
-      fontSize: 24,
+      fontSize: mobileAvatarFontSize,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -774,7 +781,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       letterSpacing: 0.3,
     },
     mobileCardName: {
-      ...theme.typography.body.md,
+      ...theme.typography.body.sm,
       fontWeight: '600',
       color: theme.colors.text.primary,
       textAlign: 'center',
@@ -796,14 +803,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontWeight: '600',
     },
     colorPickerSection: {
-      gap: isAndroidTV ? theme.spacing.xs : theme.spacing.sm,
-      marginBottom: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
+      gap: isTV ? (isAndroidTV ? theme.spacing.xs : theme.spacing.sm) : theme.spacing.sm,
+      marginBottom: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
     },
     colorPickerLabel: {
-      ...(isAndroidTV ? theme.typography.label.sm : theme.typography.label.md),
+      ...(isTV ? (isAndroidTV ? theme.typography.caption.sm : theme.typography.label.md) : theme.typography.body.sm),
       color: theme.colors.text.secondary,
       textAlign: 'center',
-      marginBottom: theme.spacing.sm,
+      marginBottom: isTV ? theme.spacing.sm : theme.spacing.xs,
     },
 
     // Modal styles for TV
@@ -929,19 +936,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     // Profile actions modal styles
     profileModalHeader: {
       alignItems: 'center',
-      gap: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
-      marginBottom: isAndroidTV ? theme.spacing.sm : theme.spacing.lg,
+      gap: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
+      marginBottom: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
     },
     profileModalAvatar: {
-      width: isAndroidTV ? 70 : 100,
-      height: isAndroidTV ? 70 : 100,
-      borderRadius: isAndroidTV ? 35 : 50,
+      width: isTV ? (isAndroidTV ? 70 : 100) : 64,
+      height: isTV ? (isAndroidTV ? 70 : 100) : 64,
+      borderRadius: isTV ? (isAndroidTV ? 35 : 50) : 32,
       backgroundColor: theme.colors.background.surface,
       justifyContent: 'center',
       alignItems: 'center',
     },
     profileModalAvatarText: {
-      fontSize: isAndroidTV ? 32 : 48,
+      fontSize: isTV ? (isAndroidTV ? 32 : 48) : 28,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -967,10 +974,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
     },
     colorSwatch: {
-      width: isAndroidTV ? 24 : 48,
-      height: isAndroidTV ? 24 : 48,
-      borderRadius: isAndroidTV ? 12 : 24,
-      borderWidth: isAndroidTV ? 2 : 3,
+      width: isTV ? (isAndroidTV ? 24 : 48) : 36,
+      height: isTV ? (isAndroidTV ? 24 : 48) : 36,
+      borderRadius: isTV ? (isAndroidTV ? 12 : 24) : 18,
+      borderWidth: isTV ? (isAndroidTV ? 2 : 3) : 2,
       borderColor: 'transparent',
     },
     colorSwatchFocused: {
