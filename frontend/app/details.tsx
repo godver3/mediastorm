@@ -218,6 +218,7 @@ export default function DetailsScreen() {
   const isWeb = Platform.OS === 'web';
   const isTV = Platform.isTV;
   const isMobile = !isWeb && !isTV;
+  const tvScale = isTV ? getTVScaleMultiplier() : 1;
   const shouldShowDebugPlayerButton = false;
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const overlayGradientColors = useMemo(
@@ -3447,7 +3448,7 @@ export default function DetailsScreen() {
             {ratings.map((rating) => {
               const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
               const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
-              const iconSize = isTV ? 18 : 14;
+              const iconSize = Math.round((isTV ? 17 : 14) * tvScale);
               return (
                 <RatingBadge
                   key={rating.source}
@@ -4098,14 +4099,14 @@ const createDetailsStyles = (theme: NovaTheme) => {
     ratingBadge: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: isTV ? 6 : 4,
+      gap: Math.round((isTV ? 7 : 4) * tvScale),
       backgroundColor: 'rgba(255, 255, 255, 0.1)',
-      paddingHorizontal: isTV ? 12 : 8,
-      paddingVertical: isTV ? 6 : 4,
-      borderRadius: 6,
+      paddingHorizontal: Math.round((isTV ? 11 : 8) * tvScale),
+      paddingVertical: Math.round((isTV ? 6 : 4) * tvScale),
+      borderRadius: Math.round(6 * tvScale),
     },
     ratingValue: {
-      fontSize: Math.round((isTV ? 16 : 14) * tvTextScale),
+      fontSize: Math.round((isTV ? 17 : 14) * tvScale),
       fontWeight: '700',
     },
     ratingLabel: {
