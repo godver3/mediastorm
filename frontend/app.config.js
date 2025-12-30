@@ -139,6 +139,8 @@ module.exports = ({ config }) => {
           LSApplicationQueriesSchemes: ['outplayer', 'infuse'],
           ITSAppUsesNonExemptEncryption: false,
           UIBackgroundModes: ['audio'],
+          NSLocalNetworkUsageDescription:
+            'strmr needs to connect to your media server on your local network.',
           ...(isTV
             ? {
                 UIUserInterfaceStyle: 'Automatic',
@@ -160,6 +162,8 @@ module.exports = ({ config }) => {
           ITSAppUsesNonExemptEncryption: false,
           UIUserInterfaceStyle: 'Automatic',
           UIBackgroundModes: ['audio'],
+          NSLocalNetworkUsageDescription:
+            'strmr needs to connect to your media server on your local network.',
         },
       },
       newArchEnabled: true,

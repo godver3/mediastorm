@@ -303,7 +303,7 @@
                     <tr>
                         <td>Content Filtering</td>
                         <td>
-                            {% if settings.filtering.excludeHdr or settings.filtering.maxSizeMovieGb > 0 or settings.filtering.filterOutTerms %}
+                            {% if (settings.filtering.hdrDvPolicy and settings.filtering.hdrDvPolicy != 'none') or settings.filtering.maxSizeMovieGb > 0 or settings.filtering.filterOutTerms %}
                             <span class="status-badge warning"><span class="status-dot"></span> Active</span>
                             {% else %}
                             <span class="status-badge online"><span class="status-dot"></span> None</span>

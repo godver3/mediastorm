@@ -90,7 +90,7 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
 		MaxResolution:    globalSettings.Filtering.MaxResolution,
-		ExcludeHdr:       globalSettings.Filtering.ExcludeHdr,
+		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
@@ -123,8 +123,8 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			if clientSettings.MaxResolution != nil {
 				filterSettings.MaxResolution = *clientSettings.MaxResolution
 			}
-			if clientSettings.ExcludeHdr != nil {
-				filterSettings.ExcludeHdr = *clientSettings.ExcludeHdr
+			if clientSettings.HDRDVPolicy != nil {
+				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
 			}
 			if clientSettings.PrioritizeHdr != nil {
 				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
@@ -307,7 +307,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			}
 
 			// 4. Within same resolution, prioritize HDR/DV content if enabled
-			if filterSettings.PrioritizeHdr && !filterSettings.ExcludeHdr {
+			if filterSettings.PrioritizeHdr {
 				iHasHDR := aggregated[i].Attributes["hdr"] != ""
 				jHasHDR := aggregated[j].Attributes["hdr"] != ""
 				iHasDV := aggregated[i].Attributes["hasDV"] == "true"
@@ -656,7 +656,7 @@ func (s *Service) searchUsenet(ctx context.Context, settings config.Settings, op
 		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
 		MaxResolution:    settings.Filtering.MaxResolution,
-		ExcludeHdr:       settings.Filtering.ExcludeHdr,
+		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}
@@ -771,7 +771,7 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 		MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
 		MaxResolution:    filterSettings.MaxResolution,
-		ExcludeHdr:       filterSettings.ExcludeHdr,
+		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
 		PrioritizeHdr:    filterSettings.PrioritizeHdr,
 		AlternateTitles:  alternateTitles,
 		FilterOutTerms:   filterSettings.FilterOutTerms,
@@ -789,7 +789,7 @@ func (s *Service) applyUsenetFiltering(results []models.NZBResult, settings conf
 		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
 		MaxResolution:    settings.Filtering.MaxResolution,
-		ExcludeHdr:       settings.Filtering.ExcludeHdr,
+		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}

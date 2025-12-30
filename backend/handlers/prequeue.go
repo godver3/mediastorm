@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,17 +22,23 @@ import (
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
 type PrequeueHandler struct {
-	store           *playback.PrequeueStore
-	indexerSvc      *indexer.Service
-	playbackSvc     *playback.Service
-	historySvc      *history.Service
-	videoProber     VideoProber
-	hlsCreator      HLSCreator
-	metadataProber  VideoMetadataProber
-	fullProber      VideoFullProber // Combined prober for single ffprobe call
-	userSettingsSvc *user_settings.Service
-	configManager   *config.Manager
-	demoMode        bool
+	store             *playback.PrequeueStore
+	indexerSvc        *indexer.Service
+	playbackSvc       *playback.Service
+	historySvc        *history.Service
+	videoProber       VideoProber
+	hlsCreator        HLSCreator
+	metadataProber    VideoMetadataProber
+	fullProber        VideoFullProber // Combined prober for single ffprobe call
+	userSettingsSvc   *user_settings.Service
+	clientSettingsSvc ClientSettingsProvider
+	configManager     *config.Manager
+	demoMode          bool
+}
+
+// ClientSettingsProvider interface for accessing per-client filter settings
+type ClientSettingsProvider interface {
+	Get(clientID string) (*models.ClientFilterSettings, error)
 }
 
 // VideoProber interface for probing video metadata
@@ -155,6 +162,11 @@ func (h *PrequeueHandler) SetUserSettingsService(svc *user_settings.Service) {
 // SetConfigManager sets the config manager for global settings fallback
 func (h *PrequeueHandler) SetConfigManager(cfgManager *config.Manager) {
 	h.configManager = cfgManager
+}
+
+// SetClientSettingsService sets the client settings service for per-device filtering
+func (h *PrequeueHandler) SetClientSettingsService(svc ClientSettingsProvider) {
+	h.clientSettingsSvc = svc
 }
 
 // Prequeue initiates a prequeue request for a title
@@ -368,6 +380,42 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		e.Status = playback.PrequeueStatusResolving
 	})
 
+	// Load filter settings for DV profile compatibility checking
+	// Priority: client settings > user settings > global settings > default
+	var hdrDVPolicy models.HDRDVPolicy
+
+	// Layer 1: Start with global settings
+	if h.configManager != nil {
+		globalSettings, err := h.configManager.Load()
+		if err == nil {
+			hdrDVPolicy = models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy)
+		}
+	}
+
+	// Layer 2: User settings override global
+	if h.userSettingsSvc != nil {
+		userSettings, err := h.userSettingsSvc.Get(userID)
+		if err == nil && userSettings != nil && userSettings.Filtering.HDRDVPolicy != "" {
+			hdrDVPolicy = userSettings.Filtering.HDRDVPolicy
+		}
+	}
+
+	// Layer 3: Client/device settings override user
+	if clientID != "" && h.clientSettingsSvc != nil {
+		clientSettings, err := h.clientSettingsSvc.Get(clientID)
+		if err == nil && clientSettings != nil && clientSettings.HDRDVPolicy != nil {
+			hdrDVPolicy = *clientSettings.HDRDVPolicy
+			log.Printf("[prequeue] Using client-specific HDR/DV policy: %s", hdrDVPolicy)
+		}
+	}
+
+	// Default to allowing all content
+	if hdrDVPolicy == "" {
+		hdrDVPolicy = models.HDRDVPolicyIncludeHDRDV
+	}
+	needsDVCheck := hdrDVPolicy == models.HDRDVPolicyIncludeHDR
+	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v", hdrDVPolicy, needsDVCheck)
+
 	// Try to resolve the best result using parallel health checks for usenet
 	var resolution *models.PlaybackResolution
 	var lastErr error
@@ -404,6 +452,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		}
 	}
 
+	// Cached probe result for DV checking (reused later for track selection)
+	var cachedProbeResult *VideoFullResult
+
 	// Try to resolve top results in priority order
 	for i, result := range topResults {
 		select {
@@ -418,6 +469,30 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
 			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
 				log.Printf("[prequeue] Resolved debrid result [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
+
+				// Check DV profile compatibility if needed (only for "hdr" policy)
+				if needsDVCheck && h.fullProber != nil {
+					probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+					if probeErr != nil {
+						log.Printf("[prequeue] Probe failed for %s: %v, trying next result", result.Title, probeErr)
+						resolution = nil
+						lastErr = probeErr
+						continue
+					}
+					// Check for DV profile 5 (no HDR fallback layer)
+					if probeResult != nil && probeResult.HasDolbyVision {
+						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
+						if dvProfileNum == 5 {
+							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
+								probeResult.DolbyVisionProfile, dvProfileNum)
+							resolution = nil
+							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							continue
+						}
+						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+					}
+					cachedProbeResult = probeResult
+				}
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve debrid %s: %v", result.Title, lastErr)
@@ -441,6 +516,30 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			resolution, lastErr = h.playbackSvc.ResolveWithHealthResult(ctx, hr)
 			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
 				log.Printf("[prequeue] Resolved usenet result [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
+
+				// Check DV profile compatibility if needed (only for "hdr" policy)
+				if needsDVCheck && h.fullProber != nil {
+					probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+					if probeErr != nil {
+						log.Printf("[prequeue] Probe failed for %s: %v, trying next result", result.Title, probeErr)
+						resolution = nil
+						lastErr = probeErr
+						continue
+					}
+					// Check for DV profile 5 (no HDR fallback layer)
+					if probeResult != nil && probeResult.HasDolbyVision {
+						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
+						if dvProfileNum == 5 {
+							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
+								probeResult.DolbyVisionProfile, dvProfileNum)
+							resolution = nil
+							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							continue
+						}
+						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+					}
+					cachedProbeResult = probeResult
+				}
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve usenet %s: %v", result.Title, lastErr)
@@ -462,6 +561,30 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
 			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
 				log.Printf("[prequeue] Resolved result: %s -> %s", result.Title, resolution.WebDAVPath)
+
+				// Check DV profile compatibility if needed (only for "hdr" policy)
+				if needsDVCheck && h.fullProber != nil {
+					probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+					if probeErr != nil {
+						log.Printf("[prequeue] Probe failed for %s: %v, trying next result", result.Title, probeErr)
+						resolution = nil
+						lastErr = probeErr
+						continue
+					}
+					// Check for DV profile 5 (no HDR fallback layer)
+					if probeResult != nil && probeResult.HasDolbyVision {
+						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
+						if dvProfileNum == 5 {
+							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
+								probeResult.DolbyVisionProfile, dvProfileNum)
+							resolution = nil
+							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							continue
+						}
+						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+					}
+					cachedProbeResult = probeResult
+				}
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve %s: %v", result.Title, lastErr)
@@ -521,7 +644,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		var hasTrueHD, hasCompatibleAudio bool
 		var dvProfile string
 
-		if h.fullProber != nil {
+		// Reuse cached probe result if we already probed during DV check
+		if cachedProbeResult != nil {
+			audioStreams = cachedProbeResult.AudioStreams
+			subtitleStreams = cachedProbeResult.SubtitleStreams
+			hasDV = cachedProbeResult.HasDolbyVision
+			hasHDR10 = cachedProbeResult.HasHDR10
+			dvProfile = cachedProbeResult.DolbyVisionProfile
+			hasTrueHD = cachedProbeResult.HasTrueHD
+			hasCompatibleAudio = cachedProbeResult.HasCompatibleAudio
+			log.Printf("[prequeue] Using cached probe result: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
+				hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams))
+		} else if h.fullProber != nil {
 			// Single ffprobe call for both HDR detection and track metadata
 			fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
 			if err != nil {
@@ -800,4 +934,16 @@ func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStream
 	}
 
 	return -1
+}
+
+// parseDVProfile extracts the profile number from a Dolby Vision profile string.
+// Format: "dvhe.05.06" or "dav1.05.06" where second segment is the profile number.
+// Returns 0 if format is not recognized.
+func parseDVProfile(dvProfile string) int {
+	parts := strings.Split(dvProfile, ".")
+	if len(parts) >= 2 {
+		profile, _ := strconv.Atoi(parts[1])
+		return profile
+	}
+	return 0
 }

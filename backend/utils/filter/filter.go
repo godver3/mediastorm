@@ -2,6 +2,7 @@ package filter
 
 import (
 	"log"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -21,16 +22,28 @@ const (
 	MaxYearDifference = 1
 )
 
+// HDRDVPolicy determines what HDR/DV content to exclude from search results.
+type HDRDVPolicy string
+
+const (
+	// HDRDVPolicyNoExclusion excludes all HDR/DV content - only SDR allowed
+	HDRDVPolicyNoExclusion HDRDVPolicy = "none"
+	// HDRDVPolicyIncludeHDR allows HDR and DV profile 7/8 (DV profile 5 rejected at probe time)
+	HDRDVPolicyIncludeHDR HDRDVPolicy = "hdr"
+	// HDRDVPolicyIncludeHDRDV allows all content including all DV profiles - no filtering
+	HDRDVPolicyIncludeHDRDV HDRDVPolicy = "hdr_dv"
+)
+
 // Options contains the expected metadata for filtering results
 type Options struct {
 	ExpectedTitle    string
 	ExpectedYear     int
-	IsMovie          bool     // true for movies, false for TV shows
-	MaxSizeMovieGB   float64  // Maximum size in GB for movies (0 = no limit)
-	MaxSizeEpisodeGB float64  // Maximum size in GB for episodes (0 = no limit)
-	MaxResolution    string   // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	ExcludeHdr       bool     // Exclude HDR content from results
-	PrioritizeHdr    bool     // Prioritize HDR/DV content in results (when not excluded)
+	IsMovie          bool        // true for movies, false for TV shows
+	MaxSizeMovieGB   float64     // Maximum size in GB for movies (0 = no limit)
+	MaxSizeEpisodeGB float64     // Maximum size in GB for episodes (0 = no limit)
+	MaxResolution    string      // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy      HDRDVPolicy // HDR/DV inclusion policy
+	PrioritizeHdr    bool        // Prioritize HDR/DV content in results
 	AlternateTitles  []string
 	FilterOutTerms   []string // Terms to filter out from results (case-insensitive match in title)
 }
@@ -211,13 +224,28 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			}
 		}
 
-		// Check HDR status
+		// Check HDR/DV status
 		hasHDR := len(parsed.HDR) > 0
+		hasDV := hasDolbyVision(parsed.HDR)
 
-		// Check HDR exclusion if enabled
-		if opts.ExcludeHdr && hasHDR {
-			log.Printf("[filter] Rejecting %q: HDR exclusion enabled, detected HDR: %v", result.Title, parsed.HDR)
-			continue
+		// Apply HDR/DV policy filtering
+		// "none" = exclude all HDR/DV (only SDR allowed)
+		// "hdr" = allow SDR + HDR + DV with HDR fallback (DV profile 5 exclusion happens at probe time)
+		// "hdr_dv" = allow everything (no filtering)
+		switch opts.HDRDVPolicy {
+		case HDRDVPolicyNoExclusion:
+			// Exclude all HDR/DV content - only allow SDR
+			if hasHDR || hasDV {
+				log.Printf("[filter] Rejecting %q: policy excludes HDR/DV content", result.Title)
+				continue
+			}
+		case HDRDVPolicyIncludeHDR:
+			// Allow SDR, HDR, and DV with HDR fallback
+			// DV profile 5 (no HDR fallback) detection requires ffprobe and happens during prequeue
+			// Text-based filtering can't reliably detect DV profile, so we allow all DV here
+			// and let the probe phase reject incompatible profiles
+		case HDRDVPolicyIncludeHDRDV:
+			// Allow everything - no HDR/DV filtering
 		}
 
 		// Store HDR info in attributes for downstream sorting
@@ -251,7 +279,7 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 	// Note: HDR prioritization is now handled in the indexer service sorting
 	// which considers resolution BEFORE HDR (so 2160p SDR ranks above 1080p HDR).
 	// We still log that HDR info was processed for debugging.
-	if opts.PrioritizeHdr && !opts.ExcludeHdr {
+	if opts.PrioritizeHdr {
 		log.Printf("[filter] HDR attributes set on results (sorting handled by indexer)")
 	}
 
@@ -269,6 +297,37 @@ func hasDolbyVision(hdrFormats []string) bool {
 	for _, format := range hdrFormats {
 		lower := strings.ToLower(format)
 		if lower == "dv" || lower == "dolby vision" || strings.Contains(lower, "dolby") {
+			return true
+		}
+	}
+	return false
+}
+
+// dvProfile78Regex matches DV profile 7 or 8 patterns (e.g., "DV P7", "DoVi P8", "Dolby Vision P07")
+var dvProfile78Regex = regexp.MustCompile(`(?i)(dv|dovi|dolby\s*vision)\s*p?0?[78]`)
+
+// hasDVProfile78 checks if the HDR formats include DV profile 7 or 8
+// These profiles have an HDR10/HDR10+ fallback layer for non-DV displays
+func hasDVProfile78(hdrFormats []string) bool {
+	for _, format := range hdrFormats {
+		if dvProfile78Regex.MatchString(format) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNonDVHDR checks if there's HDR content that isn't Dolby Vision
+// (e.g., HDR10, HDR10+, HLG)
+func hasNonDVHDR(hdrFormats []string) bool {
+	for _, format := range hdrFormats {
+		lower := strings.ToLower(format)
+		// Skip DV formats
+		if lower == "dv" || lower == "dolby vision" || strings.Contains(lower, "dolby") || strings.Contains(lower, "dovi") {
+			continue
+		}
+		// Check for other HDR formats
+		if strings.Contains(lower, "hdr") || lower == "hlg" {
 			return true
 		}
 	}

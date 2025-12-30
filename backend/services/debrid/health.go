@@ -65,14 +65,21 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		// First, do a quick HEAD request to check if the URL is accessible
 		// This catches 404s and other HTTP errors quickly without waiting for ffprobe
 		if streamURL != "" {
-			headCtx, headCancel := context.WithTimeout(ctx, 10*time.Second)
+			headCtx, headCancel := context.WithTimeout(ctx, 20*time.Second)
 			defer headCancel()
 
 			headReq, err := http.NewRequestWithContext(headCtx, http.MethodHead, streamURL, nil)
 			if err == nil {
 				headReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
 				if resp, err := http.DefaultClient.Do(headReq); err == nil {
+					contentLength := resp.ContentLength
+					contentType := resp.Header.Get("Content-Type")
+					finalURL := resp.Request.URL.String()
 					resp.Body.Close()
+
+					log.Printf("[debrid-health] pre-resolved stream %s: HEAD status=%d content-length=%d content-type=%q final-url=%q",
+						result.Title, resp.StatusCode, contentLength, contentType, finalURL)
+
 					if resp.StatusCode == http.StatusNotFound {
 						log.Printf("[debrid-health] pre-resolved stream %s returned 404 - treating as uncached", result.Title)
 						return &DebridHealthCheck{
@@ -84,8 +91,8 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 						}, nil
 					}
 					// 405 = Method Not Allowed means HEAD isn't supported but GET may work fine
-				// Fall through to ffprobe check instead of treating as uncached
-				if resp.StatusCode == http.StatusMethodNotAllowed {
+					// Fall through to ffprobe check instead of treating as uncached
+					if resp.StatusCode == http.StatusMethodNotAllowed {
 						log.Printf("[debrid-health] pre-resolved stream %s: HEAD not supported (405), falling through to ffprobe", result.Title)
 					} else if resp.StatusCode >= 400 {
 						log.Printf("[debrid-health] pre-resolved stream %s returned HTTP %d - treating as uncached", result.Title, resp.StatusCode)
@@ -95,6 +102,19 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 							Cached:       false,
 							Provider:     result.Attributes["tracker"],
 							ErrorMessage: fmt.Sprintf("stream returned HTTP %d", resp.StatusCode),
+						}, nil
+					}
+
+					// Check for suspiciously small content (likely a placeholder video)
+					// Real video files are typically > 10MB, placeholders are usually < 1MB
+					if contentLength > 0 && contentLength < 1*1024*1024 {
+						log.Printf("[debrid-health] pre-resolved stream %s has suspiciously small size (%d bytes) - likely a placeholder", result.Title, contentLength)
+						return &DebridHealthCheck{
+							Healthy:      false,
+							Status:       "not_cached",
+							Cached:       false,
+							Provider:     result.Attributes["tracker"],
+							ErrorMessage: fmt.Sprintf("stream too small (%d bytes) - likely a placeholder", contentLength),
 						}, nil
 					}
 				} else {

@@ -810,7 +810,10 @@ export const initiatePlayback = async (
   let hasHDR10 = false;
   let dolbyVisionProfile = '';
   try {
-    const metadata = await apiService.getVideoMetadata(playback.webdavPath);
+    const metadata = await apiService.getVideoMetadata(playback.webdavPath, {
+      profileId: options.profileId,
+      clientId: apiService.getClientId() ?? undefined,
+    });
     hasDolbyVision = detectDolbyVision(metadata);
     hasHDR10 = detectHDR10(metadata);
 
@@ -821,6 +824,13 @@ export const initiatePlayback = async (
       setSelectionInfo(`HDR10 detected - preparing HLS stream…`);
     }
   } catch (error) {
+    // Check if this is a DV policy violation - re-throw so it triggers fallback
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
+        errorMessage.toLowerCase().includes('no hdr fallback')) {
+      console.error('🚫 DV profile incompatible with user policy, cannot play:', errorMessage);
+      throw error;
+    }
     console.warn('Failed to detect HDR, proceeding with standard playback', error);
   }
 
@@ -837,7 +847,10 @@ export const initiatePlayback = async (
     try {
       // We need metadata to select tracks - fetch to get full data for track selection
       console.log('🎬 Fetching metadata for track selection...');
-      const metadata = await apiService.getVideoMetadata(playback.webdavPath);
+      const metadata = await apiService.getVideoMetadata(playback.webdavPath, {
+        profileId: options.profileId,
+        clientId: apiService.getClientId() ?? undefined,
+      });
 
       if (metadata) {
         // Use preferences if available, otherwise fall back to sensible defaults
@@ -866,6 +879,13 @@ export const initiatePlayback = async (
         }
       }
     } catch (e) {
+      // Check if this is a DV policy violation - re-throw so it triggers fallback
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
+          errorMessage.toLowerCase().includes('no hdr fallback')) {
+        console.error('🚫 DV profile incompatible with user policy, cannot play:', errorMessage);
+        throw e;
+      }
       console.warn('Failed to resolve track preferences for HLS session', e);
     }
   }
@@ -1000,6 +1020,16 @@ export const getHealthFailureReason = (error: unknown): string | null => {
     return null;
   }
 
+  const lowerMessage = rawMessage.toLowerCase();
+
+  // Check for DV profile incompatibility error
+  if (
+    lowerMessage.includes('dv_profile_incompatible') ||
+    lowerMessage.includes('no hdr fallback')
+  ) {
+    return 'DV profile 5 not compatible (no HDR fallback)';
+  }
+
   const reasonMatch =
     rawMessage.match(/health (?:check|status)(?: reported)?\s*"?([a-z0-9 _-]+)/i) ||
     rawMessage.match(/reported\s+"?([a-z0-9 _-]+)"?/i) ||
@@ -1055,6 +1085,10 @@ export const isHealthFailureError = (error: unknown): boolean => {
     'torrent not cached',
     'no media files found',
     'no download links',
+    // DV profile compatibility failures
+    'dv_profile_incompatible',
+    'dv profile',
+    'no hdr fallback',
   ];
   return healthKeywords.some((keyword) => message.includes(keyword));
 };
