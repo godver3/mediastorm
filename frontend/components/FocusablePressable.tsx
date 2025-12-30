@@ -168,12 +168,13 @@ const FocusablePressable = ({
     </SpatialNavigationFocusableView>
   );
 
-  // If showing the ready pip, wrap in a View so the pip can be positioned outside
-  // the spatial navigation wrapper without being clipped
-  if (showReadyPip && !loading) {
-    return (
-      <View style={{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }}>
-        {wrapper}
+  // Always render the same structure to prevent spatial navigation re-registration
+  // when showReadyPip changes. The pip is conditionally visible but the wrapper
+  // structure stays consistent to maintain navigation node positions.
+  return (
+    <View style={{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }}>
+      {wrapper}
+      {showReadyPip && !loading && (
         <View
           style={{
             position: 'absolute',
@@ -187,11 +188,9 @@ const FocusablePressable = ({
           }}
           pointerEvents="none"
         />
-      </View>
-    );
-  }
-
-  return wrapper;
+      )}
+    </View>
+  );
 };
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
