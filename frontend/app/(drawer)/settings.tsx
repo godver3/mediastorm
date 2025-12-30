@@ -2442,20 +2442,14 @@ function SettingsScreen() {
             'live-hidden-header',
           ];
           const isTopmost = topmostHeaders.includes(item.id);
-
-          const isAdminNote = item.id === 'connection-admin-note';
-          const isAboutHeader = item.id === 'about-header';
-          const isAndroidTV = Platform.isTV && Platform.OS !== 'ios';
           const headerContent = (
             <View style={[
               styles.tvGridHeader,
               styles.tvGridItemFullWidth,
               styles.tvGridItemSpacing,
-              isAdminNote && { paddingTop: isAndroidTV ? 12 : 8, paddingBottom: 8 },
-              isAboutHeader && isAndroidTV && { paddingTop: 4, paddingBottom: 4 },
             ]}>
-              {item.title ? <Text style={[styles.tvGridHeaderTitle, { marginBottom: isAboutHeader && isAndroidTV ? 0 : 8 }]}>{item.title}</Text> : null}
-              {item.description && <Text style={[styles.tvGridHeaderDescription, isAdminNote && { marginBottom: 0 }]}>{item.description}</Text>}
+              {item.title ? <Text style={styles.tvGridHeaderTitle}>{item.title}</Text> : null}
+              {item.description && <Text style={styles.tvGridHeaderDescription}>{item.description}</Text>}
             </View>
           );
 
@@ -2830,7 +2824,7 @@ function SettingsScreen() {
                 <Text style={styles.versionInfoLabel}>Backend</Text>
                 <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
               </View>
-              <View style={{ marginTop: 12 }}>
+              <View style={styles.versionButtonContainer}>
                 <FocusablePressable
                   text={updateButtonText}
                   onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
@@ -4065,6 +4059,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
       ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
+    versionButtonContainer: {
+      marginTop: theme.spacing.md * atvScale,
+    },
     loadingRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -4625,7 +4622,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridRowContainer: isTV
       ? {
           width: (screenWidth - tvEdgeBufferHorizontal * 2 - tvPadding * 2) * 0.6,
-          gap: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
+          gap: isNonTvosTV ? theme.spacing.sm : theme.spacing.xs,
         }
       : {},
     // Full width style for grid items (needed because virtualized grid item wrappers don't have width)
