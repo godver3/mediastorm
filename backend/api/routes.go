@@ -54,6 +54,7 @@ func Register(
 	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
+	clientsHandler *handlers.ClientsHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -238,6 +239,30 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.Options).Methods(http.MethodOptions)
+
+	// Client device management routes
+	if clientsHandler != nil {
+		// Registration endpoint (all authenticated users)
+		protected.HandleFunc("/clients/register", clientsHandler.Register).Methods(http.MethodPost)
+		protected.HandleFunc("/clients/register", clientsHandler.Options).Methods(http.MethodOptions)
+
+		// Client management (master only for list all, otherwise filtered by user)
+		protected.HandleFunc("/clients", clientsHandler.List).Methods(http.MethodGet)
+		protected.HandleFunc("/clients", clientsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/clients/{clientID}", clientsHandler.Get).Methods(http.MethodGet)
+		protected.HandleFunc("/clients/{clientID}", clientsHandler.Update).Methods(http.MethodPut)
+		protected.HandleFunc("/clients/{clientID}", clientsHandler.Delete).Methods(http.MethodDelete)
+		protected.HandleFunc("/clients/{clientID}", clientsHandler.Options).Methods(http.MethodOptions)
+
+		// Client-specific filter settings
+		protected.HandleFunc("/clients/{clientID}/settings", clientsHandler.GetSettings).Methods(http.MethodGet)
+		protected.HandleFunc("/clients/{clientID}/settings", clientsHandler.UpdateSettings).Methods(http.MethodPut)
+		protected.HandleFunc("/clients/{clientID}/settings", clientsHandler.Options).Methods(http.MethodOptions)
+
+		// Client ping check (for device identification)
+		protected.HandleFunc("/clients/{clientID}/ping", clientsHandler.CheckPing).Methods(http.MethodGet)
+		protected.HandleFunc("/clients/{clientID}/ping", clientsHandler.Options).Methods(http.MethodOptions)
+	}
 
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.List).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Add).Methods(http.MethodPost)

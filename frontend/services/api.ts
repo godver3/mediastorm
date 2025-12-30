@@ -272,6 +272,28 @@ export interface VideoMetadata {
   notes?: string[];
 }
 
+export interface Client {
+  id: string;
+  userId: string;
+  name: string;
+  deviceType: string;
+  os: string;
+  appVersion: string;
+  lastSeenAt: string;
+  firstSeenAt: string;
+  filterEnabled: boolean;
+}
+
+export interface ClientFilterSettings {
+  maxSizeMovieGb?: number;
+  maxSizeEpisodeGb?: number;
+  maxResolution?: string;
+  excludeHdr?: boolean;
+  prioritizeHdr?: boolean;
+  filterOutTerms?: string[];
+  preferredTerms?: string[];
+}
+
 export interface HlsSessionStartResponse {
   sessionId: string;
   playlistUrl: string;
@@ -572,6 +594,7 @@ class ApiService {
   private baseUrl!: string;
   private fallbackUrls!: string[];
   private authToken: string | null = null;
+  private clientId: string | null = null;
   private readonly playbackQueuePollIntervalMs = 1500;
   private readonly playbackQueueTimeoutMs = 120000;
   private readonly allowedInProgressStatuses = new Set(['queued', 'processing', 'pending', 'retrying']);
@@ -595,6 +618,14 @@ class ApiService {
 
   setAuthToken(token: string | null) {
     this.authToken = token?.trim() || null;
+  }
+
+  getClientId(): string | null {
+    return this.clientId;
+  }
+
+  setClientId(id: string | null) {
+    this.clientId = id?.trim() || null;
   }
 
   /**
@@ -700,6 +731,11 @@ class ApiService {
       if (!headerMap['X-PIN']) {
         headerMap['X-PIN'] = this.authToken;
       }
+    }
+
+    // Include client ID for per-client settings
+    if (this.clientId && !headerMap['X-Client-ID']) {
+      headerMap['X-Client-ID'] = this.clientId;
     }
 
     requestInit.headers = headerMap;
@@ -1262,6 +1298,41 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ result }),
     });
+  }
+
+  // Client device registration
+  async registerClient(data: {
+    id: string;
+    userId?: string;
+    deviceType: string;
+    os: string;
+    appVersion: string;
+  }): Promise<{ client: Client }> {
+    return this.request<{ client: Client }>('/clients/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getClients(userId?: string): Promise<Client[]> {
+    const params = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    return this.request<Client[]>(`/clients${params}`);
+  }
+
+  async getClientSettings(clientId: string): Promise<ClientFilterSettings> {
+    return this.request<ClientFilterSettings>(`/clients/${encodeURIComponent(clientId)}/settings`);
+  }
+
+  async updateClientSettings(clientId: string, settings: ClientFilterSettings): Promise<ClientFilterSettings> {
+    return this.request<ClientFilterSettings>(`/clients/${encodeURIComponent(clientId)}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  }
+
+  // Check if there's a pending ping for this client (for device identification)
+  async checkClientPing(clientId: string): Promise<{ ping: boolean }> {
+    return this.request<{ ping: boolean }>(`/clients/${encodeURIComponent(clientId)}/ping`);
   }
 
   async getUsers(): Promise<UserProfile[]> {

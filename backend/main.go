@@ -35,6 +35,8 @@ import (
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
+	"novastream/services/clients"
+	client_settings "novastream/services/client_settings"
 	"novastream/services/watchlist"
 	"novastream/utils"
 
@@ -261,11 +263,26 @@ func main() {
 	}
 	userSettingsHandler := handlers.NewUserSettingsHandler(userSettingsService, userService, cfgManager)
 
+	// Initialize clients service for device tracking
+	clientsService, err := clients.NewService(settings.Cache.Directory)
+	if err != nil {
+		log.Fatalf("failed to initialise clients: %v", err)
+	}
+	clientSettingsService, err := client_settings.NewService(settings.Cache.Directory)
+	if err != nil {
+		log.Fatalf("failed to initialise client settings: %v", err)
+	}
+	clientsHandler := handlers.NewClientsHandler(clientsService, clientSettingsService)
+
 	// Wire up user settings to services for per-user settings
 	debridSearchService.SetUserSettingsProvider(userSettingsService)
 	debridSearchService.SetIMDBResolver(metadataService) // Fallback IMDB ID resolution via TVDB
 	indexerService.SetUserSettingsProvider(userSettingsService)
 	metadataHandler.SetUserSettingsProvider(userSettingsService)
+
+	// Wire up client settings to services for per-client settings cascade
+	debridSearchService.SetClientSettingsProvider(clientSettingsService)
+	indexerService.SetClientSettingsProvider(clientSettingsService)
 
 	historyService, err := history.NewService(settings.Cache.Directory)
 	if err != nil {
@@ -350,6 +367,7 @@ func main() {
 		debugVideoHandler,
 		userSettingsHandler,
 		subtitlesHandler,
+		clientsHandler,
 		accountsService,
 		sessionsService,
 		userService,
@@ -494,6 +512,15 @@ func main() {
 	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.SetPlexAccount)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.ClearPlexAccount)).Methods(http.MethodDelete)
 
+	// Client device management (admin routes)
+	r.HandleFunc("/admin/api/clients", adminUIHandler.RequireAuth(clientsHandler.List)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Get)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Update)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Delete)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.GetSettings)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
+
 	fmt.Println("📊 Admin dashboard available at /admin")
 
 	// Register account UI routes (for regular/non-master accounts)
@@ -530,6 +557,14 @@ func main() {
 	// Protected account routes - User Settings API
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
+
+	// Protected account routes - Client device management (same handlers as admin)
+	r.HandleFunc("/account/api/clients", adminUIHandler.RequireAuth(clientsHandler.List)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Get)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Update)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.GetSettings)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
 
 	// Protected account routes - History API
 	r.HandleFunc("/account/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)

@@ -29,6 +29,7 @@ type PrequeueRequest struct {
 	TitleName string `json:"titleName"` // The actual title name for search queries
 	MediaType string `json:"mediaType"` // "movie" or "series"
 	UserID    string `json:"userId"`
+	ClientID  string `json:"clientId,omitempty"` // Client device ID for per-client filtering
 	ImdbID    string `json:"imdbId,omitempty"`
 	Year      int    `json:"year,omitempty"`
 	// For series: episode info (determined by backend based on watch history)

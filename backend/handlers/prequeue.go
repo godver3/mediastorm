@@ -193,7 +193,13 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[prequeue] Received request: titleId=%s titleName=%q userId=%s mediaType=%s", req.TitleID, titleName, req.UserID, mediaType)
+	// Get client ID from request body or header
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		clientID = strings.TrimSpace(r.Header.Get("X-Client-ID"))
+	}
+
+	log.Printf("[prequeue] Received request: titleId=%s titleName=%q userId=%s clientId=%s mediaType=%s", req.TitleID, titleName, req.UserID, clientID, mediaType)
 
 	// For series, determine the target episode based on watch history
 	var targetEpisode *models.EpisodeReference
@@ -241,7 +247,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode)
 
 	// Start background worker with all the info needed for search
-	go h.runPrequeueWorker(entry.ID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, targetEpisode)
+	go h.runPrequeueWorker(entry.ID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode)
 
 	// Return response
 	resp := playback.PrequeueResponse{
@@ -310,7 +316,7 @@ func (h *PrequeueHandler) Options(w http.ResponseWriter, r *http.Request) {
 }
 
 // runPrequeueWorker runs the prequeue background task
-func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) {
+func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference) {
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -342,6 +348,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		IMDBID:     imdbID,
 		Year:       year,
 		UserID:     userID,
+		ClientID:   clientID,
 	})
 	if err != nil {
 		log.Printf("[prequeue] Search failed: %v", err)

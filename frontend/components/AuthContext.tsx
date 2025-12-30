@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiService } from '@/services/api';
+import { getClientId, getClientRegistrationPayload } from '@/services/clientId';
 
 const AUTH_TOKEN_KEY = 'strmr.authToken';
 const AUTH_ACCOUNT_KEY = 'strmr.authAccount';
@@ -52,6 +53,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const loadStoredAuth = async () => {
       try {
+        // Initialize client ID first (always, regardless of auth state)
+        const clientId = await getClientId();
+        apiService.setClientId(clientId);
+
         // Read backend URL, token, and account in parallel
         const [storedBackendUrl, storedToken, storedAccountJson] = await Promise.all([
           AsyncStorage.getItem(BACKEND_URL_KEY),
@@ -97,6 +102,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   setAccount(null);
                 }
                 apiService.setAuthToken(null);
+              } else {
+                // Session is valid - register client with backend
+                try {
+                  const clientPayload = await getClientRegistrationPayload();
+                  await apiService.registerClient(clientPayload);
+                  console.log('[Auth] Client registered with backend');
+                } catch (regErr) {
+                  // Non-fatal - client registration is optional
+                  console.warn('[Auth] Failed to register client:', regErr);
+                }
               }
             } catch (err) {
               // Network error or timeout - keep stored auth, will be validated on next request
@@ -169,6 +184,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mountedRef.current) {
         setToken(data.token);
         setAccount(authAccount);
+      }
+
+      // Register client with backend (non-blocking, non-fatal)
+      try {
+        const clientPayload = await getClientRegistrationPayload();
+        await apiService.registerClient(clientPayload);
+        console.log('[Auth] Client registered with backend after login');
+      } catch (regErr) {
+        console.warn('[Auth] Failed to register client after login:', regErr);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';

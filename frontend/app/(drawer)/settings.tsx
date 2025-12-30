@@ -40,6 +40,7 @@ import { useToast } from '@/components/ToastContext';
 import { useLiveChannels } from '@/hooks/useLiveChannels';
 import useUnplayableReleases from '@/hooks/useUnplayableReleases';
 import { apiService } from '@/services/api';
+import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
 import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
@@ -824,6 +825,50 @@ function SettingsScreen() {
       .then((res) => setBackendVersion(res.version))
       .catch(() => setBackendVersion(null));
   }, []);
+
+  // Ping polling for device identification
+  const pingFlashOpacity = useSharedValue(0);
+  const pingFlashStyle = useAnimatedStyle(() => ({
+    opacity: pingFlashOpacity.value,
+  }));
+
+  useEffect(() => {
+    if (!isFocused) return;
+
+    let mounted = true;
+    let intervalId: ReturnType<typeof setInterval>;
+
+    const checkForPing = async () => {
+      try {
+        const clientId = await getClientId();
+        const response = await apiService.checkClientPing(clientId);
+        if (mounted && response.ping) {
+          // Flash the screen and show toast
+          showToast('📍 This device was pinged from the admin panel!');
+          pingFlashOpacity.value = withSequence(
+            withTiming(0.4, { duration: 100 }),
+            withTiming(0, { duration: 100 }),
+            withTiming(0.4, { duration: 100 }),
+            withTiming(0, { duration: 100 }),
+            withTiming(0.4, { duration: 100 }),
+            withTiming(0, { duration: 300 }),
+          );
+        }
+      } catch {
+        // Silently ignore ping check errors
+      }
+    };
+
+    // Poll every 3 seconds
+    intervalId = setInterval(checkForPing, 3000);
+    // Also check immediately
+    checkForPing();
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [isFocused, showToast, pingFlashOpacity]);
 
   const tabs = useMemo<TabOption[]>(
     () => [
@@ -2866,6 +2911,22 @@ function SettingsScreen() {
 
   return (
     <>
+      {/* Ping flash overlay for device identification */}
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: theme.colors.primary,
+            zIndex: 9999,
+            pointerEvents: 'none',
+          },
+          pingFlashStyle,
+        ]}
+      />
       <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
         <Stack.Screen options={{ headerShown: false }} />
         <FixedSafeAreaView style={styles.safeArea} edges={['top']}>

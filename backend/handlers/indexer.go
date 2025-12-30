@@ -34,6 +34,11 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	imdbID := strings.TrimSpace(r.URL.Query().Get("imdbId"))
 	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	// Client ID from header (preferred) or query param
+	clientID := strings.TrimSpace(r.Header.Get("X-Client-ID"))
+	if clientID == "" {
+		clientID = strings.TrimSpace(r.URL.Query().Get("clientId"))
+	}
 	year := 0
 	if rawYear := r.URL.Query().Get("year"); rawYear != "" {
 		if parsed, err := strconv.Atoi(rawYear); err == nil && parsed > 0 {
@@ -55,6 +60,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		MediaType:  mediaType,
 		Year:       year,
 		UserID:     userID,
+		ClientID:   clientID,
 	}
 
 	results, err := h.Service.Search(r.Context(), opts)
