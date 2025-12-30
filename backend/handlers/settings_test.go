@@ -13,7 +13,7 @@ import (
 
 func TestSettingsHandler_GetSettings(t *testing.T) {
 	cfg := config.Settings{
-		Server: config.ServerSettings{Host: "127.0.0.1", Port: 9999, APIKey: "secret"},
+		Server: config.ServerSettings{Host: "127.0.0.1", Port: 9999},
 		Usenet: []config.UsenetSettings{
 			{Name: "Test", Host: "news.example", Port: 563, SSL: true, Username: "user", Password: "pass", Connections: 16, Enabled: true},
 		},
@@ -43,7 +43,7 @@ func TestSettingsHandler_GetSettings(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if got.Server.Port != cfg.Server.Port || got.Server.Host != cfg.Server.Host || got.Server.APIKey != cfg.Server.APIKey {
+	if got.Server.Port != cfg.Server.Port || got.Server.Host != cfg.Server.Host {
 		t.Fatalf("unexpected server settings: %+v", got.Server)
 	}
 	if len(got.Usenet) != 1 || got.Usenet[0].Username != cfg.Usenet[0].Username || got.Usenet[0].Password != cfg.Usenet[0].Password {
@@ -56,7 +56,7 @@ func TestSettingsHandler_PutSettings(t *testing.T) {
 	handler := NewSettingsHandler(mgr)
 
 	payload := config.Settings{
-		Server: config.ServerSettings{Host: "0.0.0.0", Port: 8888, APIKey: ""},
+		Server: config.ServerSettings{Host: "0.0.0.0", Port: 8888},
 		Usenet: []config.UsenetSettings{
 			{Name: "Test", Host: "news.example", Port: 443, SSL: false, Username: "alice", Password: "hunter2", Connections: 4, Enabled: true},
 		},

@@ -97,7 +97,7 @@ func TestBuildMagnetFromHash(t *testing.T) {
 }
 
 func TestJackettScraperName(t *testing.T) {
-	scraper := NewJackettScraper("http://localhost:9117", "testkey", nil)
+	scraper := NewJackettScraper("http://localhost:9117", "testkey", "Jackett", nil)
 	if scraper.Name() != "Jackett" {
 		t.Errorf("expected scraper name 'Jackett', got %q", scraper.Name())
 	}
@@ -136,7 +136,7 @@ func TestJackettParseResponse(t *testing.T) {
   </channel>
 </rss>`
 
-	scraper := NewJackettScraper("http://localhost:9117", "testkey", nil)
+	scraper := NewJackettScraper("http://localhost:9117", "testkey", "Jackett", nil)
 	results, err := scraper.parseResponse([]byte(xmlResponse))
 	if err != nil {
 		t.Fatalf("parseResponse failed: %v", err)
@@ -227,7 +227,7 @@ func TestJackettSearchMovie(t *testing.T) {
 	}))
 	defer server.Close()
 
-	scraper := NewJackettScraper(server.URL, "testkey", nil)
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
 	results, err := scraper.searchMovie(context.Background(), "The Matrix", 1999)
 	if err != nil {
 		t.Fatalf("searchMovie failed: %v", err)
@@ -277,7 +277,7 @@ func TestJackettSearchTV(t *testing.T) {
 	}))
 	defer server.Close()
 
-	scraper := NewJackettScraper(server.URL, "testkey", nil)
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
 	results, err := scraper.searchTV(context.Background(), "Breaking Bad", 5, 16)
 	if err != nil {
 		t.Fatalf("searchTV failed: %v", err)
@@ -312,7 +312,7 @@ func TestJackettSearch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	scraper := NewJackettScraper(server.URL, "testkey", nil)
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
 
 	// Test movie search
 	req := SearchRequest{
@@ -357,7 +357,7 @@ func TestJackettTestConnection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	scraper := NewJackettScraper(server.URL, "testkey", nil)
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
 	err := scraper.TestConnection(context.Background())
 	if err != nil {
 		t.Fatalf("TestConnection failed: %v", err)
@@ -384,7 +384,7 @@ func TestJackettDeduplication(t *testing.T) {
   </channel>
 </rss>`
 
-	scraper := NewJackettScraper("http://localhost:9117", "testkey", nil)
+	scraper := NewJackettScraper("http://localhost:9117", "testkey", "Jackett", nil)
 	results, err := scraper.parseResponse([]byte(xmlResponse))
 	if err != nil {
 		t.Fatalf("parseResponse failed: %v", err)
