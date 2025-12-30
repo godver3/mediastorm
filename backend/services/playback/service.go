@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -160,6 +161,21 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 
 	log.Printf("[playback] NZB processed successfully, storagePath=%q", storagePath)
 
+	// If storagePath is a directory (multi-file NZB), find the best playable file within it
+	finalPath := storagePath
+	if s.metadataSvc != nil && s.isLikelyDirectory(storagePath) {
+		log.Printf("[playback] storagePath appears to be a directory, scanning for media files: %q", storagePath)
+		hints := buildSelectionHintsFromCandidate(candidate, storagePath)
+		mediaFile, findErr := s.findBestMediaFile(storagePath, hints)
+		if findErr != nil {
+			return nil, fmt.Errorf("directory contains no playable media files: %w", findErr)
+		}
+		if mediaFile != "" {
+			finalPath = mediaFile
+			log.Printf("[playback] selected media file from directory: %q", finalPath)
+		}
+	}
+
 	sourceNZBPath := strings.TrimSpace(fileName)
 	if healthCheck != nil && strings.TrimSpace(healthCheck.FileName) != "" {
 		sourceNZBPath = strings.TrimSpace(healthCheck.FileName)
@@ -179,8 +195,8 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		}
 	}
 
-	// Prepend WebDAV prefix to the storage path
-	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), storagePath)
+	// Prepend WebDAV prefix to the final path (file, not directory)
+	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), finalPath)
 
 	resolution := &models.PlaybackResolution{
 		HealthStatus:  "healthy",
@@ -613,6 +629,34 @@ type webDAVEntry struct {
 type mediaFileCandidate struct {
 	path     string
 	priority int
+}
+
+// buildSelectionHintsFromCandidate extracts selection hints from an NZBResult for file matching.
+// This enables episode matching (S01E01) when selecting files from multi-file NZBs.
+func buildSelectionHintsFromCandidate(candidate models.NZBResult, directory string) mediaresolve.SelectionHints {
+	hints := mediaresolve.SelectionHints{
+		ReleaseTitle: candidate.Title,
+		QueueName:    candidate.GUID,
+		Directory:    directory,
+	}
+
+	if candidate.Attributes != nil {
+		if code := strings.TrimSpace(candidate.Attributes["targetEpisodeCode"]); code != "" {
+			hints.TargetEpisodeCode = code
+		}
+		if season, _ := strconv.Atoi(strings.TrimSpace(candidate.Attributes["targetSeason"])); season > 0 {
+			hints.TargetSeason = season
+		}
+		if episode, _ := strconv.Atoi(strings.TrimSpace(candidate.Attributes["targetEpisode"])); episode > 0 {
+			hints.TargetEpisode = episode
+		}
+		// Build episode code if we have season/episode but no code
+		if hints.TargetEpisodeCode == "" && hints.TargetSeason > 0 && hints.TargetEpisode > 0 {
+			hints.TargetEpisodeCode = fmt.Sprintf("S%02dE%02d", hints.TargetSeason, hints.TargetEpisode)
+		}
+	}
+
+	return hints
 }
 
 // findBestMediaFile recursively scans a directory for the best playable media file
