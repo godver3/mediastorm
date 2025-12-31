@@ -899,6 +899,7 @@ function LiveScreen() {
                   text="Refresh"
                   onSelect={handleRefreshSettings}
                   loading={isRefreshing}
+                  wrapperStyle={{ alignSelf: 'center' }}
                 />
               </View>
             ) : (

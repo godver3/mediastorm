@@ -38,6 +38,8 @@ interface CustomPressableProps extends PressableProps {
   loading?: boolean;
   /** Show a small indicator pip in the top-right corner (e.g., for prequeue ready) */
   showReadyPip?: boolean;
+  /** Style applied to the outer wrapper View (use to override alignSelf for centering) */
+  wrapperStyle?: StyleProp<ViewStyle>;
 }
 
 const FocusablePressable = ({
@@ -55,6 +57,7 @@ const FocusablePressable = ({
   focusKey,
   loading = false,
   showReadyPip = false,
+  wrapperStyle,
   ...props
 }: CustomPressableProps) => {
   const { onPress: _ignoredOnPress, ...restProps } = props;
@@ -172,7 +175,7 @@ const FocusablePressable = ({
   // when showReadyPip changes. The pip is conditionally visible but the wrapper
   // structure stays consistent to maintain navigation node positions.
   return (
-    <View style={{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }}>
+    <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
       {wrapper}
       {showReadyPip && !loading && (
         <View

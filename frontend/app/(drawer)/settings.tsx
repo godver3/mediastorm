@@ -964,6 +964,7 @@ function SettingsScreen() {
   const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
   const [logUrl, setLogUrl] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready'>('idle');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { releases: unplayableReleases, unmarkUnplayable, clearAll: clearUnplayableReleases } = useUnplayableReleases();
   const playbackOptions = useMemo<
     {
@@ -1101,6 +1102,18 @@ function SettingsScreen() {
       showToast(message, { tone: 'danger' });
     }
   }, [backendUrlInput, setBackendUrl, refreshSettings, showToast]);
+
+  const handleReloadSettings = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshSettings();
+      showToast('Settings refreshed', { tone: 'success' });
+    } catch {
+      showToast('Failed to refresh settings', { tone: 'danger' });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshSettings, showToast]);
 
   // TV Text Input Modal handlers
   const openTextInputModal = useCallback(
@@ -2142,13 +2155,22 @@ function SettingsScreen() {
         description: account ? `Signed in as ${account.username}${account.isMaster ? ' (Admin)' : ''}` : undefined,
       },
       {
-        type: 'button',
-        id: 'sign-out',
-        label: 'Sign Out',
-        action: 'sign-out',
+        type: 'button-row',
+        id: 'account-buttons',
+        buttons: [
+          {
+            label: isRefreshing ? 'Reloading...' : 'Reload',
+            action: 'reload',
+            disabled: isRefreshing,
+          },
+          {
+            label: 'Sign Out',
+            action: 'sign-out',
+          },
+        ],
       },
     ],
-    [backendUrl, isSubmittingLogs, account],
+    [backendUrl, isSubmittingLogs, account, isRefreshing],
   );
 
   const playbackGridData = useMemo<SettingsGridItem[]>(() => {
@@ -2436,9 +2458,12 @@ function SettingsScreen() {
             }
           })();
           break;
+        case 'reload':
+          void handleReloadSettings();
+          break;
       }
     },
-    [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, clearUnplayableReleases, showToast, logout],
+    [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, clearUnplayableReleases, showToast, logout, handleReloadSettings],
   );
 
   // TV Grid field update handler
@@ -3118,18 +3143,27 @@ function SettingsScreen() {
                         {account.isMaster ? ' (Admin)' : ''}
                       </Text>
                     )}
-                    <FocusablePressable
-                      text="Sign Out"
-                      onSelect={async () => {
-                        try {
-                          await logout();
-                          showToast('Signed out successfully', { tone: 'success' });
-                        } catch (err) {
-                          showToast('Failed to sign out', { tone: 'danger' });
-                        }
-                      }}
-                      style={[styles.debugButton, { marginTop: 12 }]}
-                    />
+                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                      <FocusablePressable
+                        text={isRefreshing ? 'Reloading...' : 'Reload'}
+                        onSelect={handleReloadSettings}
+                        disabled={isRefreshing}
+                        loading={isRefreshing}
+                        style={styles.debugButton}
+                      />
+                      <FocusablePressable
+                        text="Sign Out"
+                        onSelect={async () => {
+                          try {
+                            await logout();
+                            showToast('Signed out successfully', { tone: 'success' });
+                          } catch (err) {
+                            showToast('Failed to sign out', { tone: 'danger' });
+                          }
+                        }}
+                        style={styles.debugButton}
+                      />
+                    </View>
                   </View>
                 )}
 
