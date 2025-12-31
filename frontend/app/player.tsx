@@ -422,6 +422,7 @@ export default function PlayerScreen() {
     titleId: titleIdParam,
     imdbId: imdbIdParam,
     tvdbId: tvdbIdParam,
+    shuffleMode: shuffleModeParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -546,6 +547,11 @@ export default function PlayerScreen() {
   const tvdbId = useMemo(() => {
     return Array.isArray(tvdbIdParam) ? tvdbIdParam[0] : tvdbIdParam;
   }, [tvdbIdParam]);
+
+  const shuffleMode = useMemo(() => {
+    const raw = Array.isArray(shuffleModeParam) ? shuffleModeParam[0] : shuffleModeParam;
+    return raw === '1';
+  }, [shuffleModeParam]);
 
   const cleanSeriesTitle = useMemo(() => {
     if (typeof seriesTitle === 'string' && seriesTitle.trim()) {
@@ -1872,26 +1878,71 @@ export default function PlayerScreen() {
         const currentAudioTrack = selectedAudioTrackIndexRef.current;
         const currentSubtitleTrack = selectedSubtitleTrackIndexRef.current;
 
-        console.log('[player] creating HLS session with tracks', {
-          audioTrack: currentAudioTrack,
-          subtitleTrack: currentSubtitleTrack,
-          audioTrackType: typeof currentAudioTrack,
-          subtitleTrackType: typeof currentSubtitleTrack,
-        });
+        // Check if we have an existing session - use seek endpoint for faster response
+        const existingSessionId = hlsSessionIdRef.current;
+        let response: { sessionId: string; playlistUrl: string; duration?: number; startOffset?: number };
 
-        const response = await apiService.createHlsSession({
-          path: trimmedPath,
-          dv: routeHasDolbyVision,
-          dvProfile: routeDvProfile || undefined,
-          hdr: routeHasHDR10,
-          forceAAC: forceAacFromRoute,
-          start: safeTarget,
-          audioTrack: currentAudioTrack ?? undefined,
-          subtitleTrack: currentSubtitleTrack ?? undefined,
-        });
+        if (existingSessionId) {
+          console.log('[player] seeking within existing HLS session', {
+            sessionId: existingSessionId,
+            targetTime: safeTarget,
+          });
 
-        // Store session ID for keepalive pings when paused
-        hlsSessionIdRef.current = response.sessionId;
+          // CRITICAL: Clear the video source BEFORE calling seek API.
+          // This stops iOS AVPlayer from trying to access segments that the backend
+          // is about to delete. Without this, the player errors with -12312 because
+          // it tries to prefetch segments from the old (now-deleted) playlist.
+          // Use empty string (not null) to prevent fallback to resolvedMovie.
+          console.log('[player] clearing video source before seek to prevent race condition');
+          setCurrentMovieUrl('');
+
+          try {
+            const seekResponse = await apiService.seekHlsSession(existingSessionId, safeTarget);
+            response = {
+              sessionId: seekResponse.sessionId,
+              playlistUrl: seekResponse.playlistUrl,
+              duration: seekResponse.duration,
+              startOffset: seekResponse.startOffset,
+            };
+            console.log('[player] HLS seek completed', { response });
+          } catch (seekError) {
+            console.warn('[player] HLS seek failed, falling back to new session', seekError);
+            // Fall through to create new session
+            const newSessionResponse = await apiService.createHlsSession({
+              path: trimmedPath,
+              dv: routeHasDolbyVision,
+              dvProfile: routeDvProfile || undefined,
+              hdr: routeHasHDR10,
+              forceAAC: forceAacFromRoute,
+              start: safeTarget,
+              audioTrack: currentAudioTrack ?? undefined,
+              subtitleTrack: currentSubtitleTrack ?? undefined,
+            });
+            response = newSessionResponse;
+            hlsSessionIdRef.current = response.sessionId;
+          }
+        } else {
+          console.log('[player] creating new HLS session with tracks', {
+            audioTrack: currentAudioTrack,
+            subtitleTrack: currentSubtitleTrack,
+            audioTrackType: typeof currentAudioTrack,
+            subtitleTrackType: typeof currentSubtitleTrack,
+          });
+
+          response = await apiService.createHlsSession({
+            path: trimmedPath,
+            dv: routeHasDolbyVision,
+            dvProfile: routeDvProfile || undefined,
+            hdr: routeHasHDR10,
+            forceAAC: forceAacFromRoute,
+            start: safeTarget,
+            audioTrack: currentAudioTrack ?? undefined,
+            subtitleTrack: currentSubtitleTrack ?? undefined,
+          });
+
+          // Store session ID for keepalive pings when paused
+          hlsSessionIdRef.current = response.sessionId;
+        }
 
         if (warmStartTokenRef.current !== token) {
           return true;
@@ -1912,9 +1963,12 @@ export default function PlayerScreen() {
           }
         })();
         const authToken = apiService.getAuthToken() || existingToken;
+        // Add cache-busting parameter to force player to reload playlist after seek
+        // iOS AVPlayer caches HLS playlists and won't reload if URL is identical
+        const cacheBuster = `_t=${Date.now()}`;
         const playlistWithKey = authToken
-          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
-          : playlistBase;
+          ? `${playlistBase}?token=${encodeURIComponent(authToken)}&${cacheBuster}`
+          : `${playlistBase}?${cacheBuster}`;
 
         const sessionStart =
           typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
@@ -1946,6 +2000,9 @@ export default function PlayerScreen() {
         setCurrentMovieUrl(playlistWithKey);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
+        // Reset progress event counter for fresh debug logs after seek
+        progressEventCountRef.current = 0;
+        firstProgressValueRef.current = null;
 
         if (typeof response.duration === 'number' && response.duration > 0) {
           updateDuration(response.duration, 'hls-session');
@@ -2057,6 +2114,12 @@ export default function PlayerScreen() {
   const handleProgressUpdate = useCallback(
     (time: number, meta?: VideoProgressMeta) => {
       if (!Number.isFinite(time) || time < 0) {
+        return;
+      }
+
+      // Skip updating currentTime during HLS seek transition to prevent
+      // stale progress events from overwriting the correct seek position
+      if (pausedForSeekRef.current) {
         return;
       }
 
@@ -2939,6 +3002,7 @@ export default function PlayerScreen() {
       seasonNumber,
       episodeNumber,
       titleId,
+      shuffleMode,
     });
 
     // Mark that video ended naturally - prevents unmount cleanup from overwriting autoPlay
@@ -2946,7 +3010,33 @@ export default function PlayerScreen() {
 
     // Only auto-navigate for TV show episodes
     if (mediaType === 'episode' && seasonNumber && episodeNumber) {
-      // Find current episode index in allEpisodes
+      const seriesId = titleId || imdbId || tvdbId;
+
+      // Shuffle mode: pick a random episode (different from current)
+      if (shuffleMode && allEpisodes.length > 1) {
+        let randomIndex: number;
+        let nextEp: SeriesEpisode;
+        do {
+          randomIndex = Math.floor(Math.random() * allEpisodes.length);
+          nextEp = allEpisodes[randomIndex];
+        } while (nextEp.seasonNumber === seasonNumber && nextEp.episodeNumber === episodeNumber);
+
+        console.log('🔀 Shuffle: playing random episode', {
+          season: nextEp.seasonNumber,
+          episode: nextEp.episodeNumber,
+        });
+
+        if (seriesId) {
+          playbackNavigation.setNextEpisode(seriesId, nextEp.seasonNumber, nextEp.episodeNumber, true, true);
+        }
+
+        setTimeout(() => {
+          router.back();
+        }, 500);
+        return;
+      }
+
+      // Sequential mode: find next episode in order
       const currentIndex = allEpisodes.findIndex(
         (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
       );
@@ -2959,10 +3049,9 @@ export default function PlayerScreen() {
           episode: nextEp.episodeNumber,
         });
 
-        const seriesId = titleId || imdbId || tvdbId;
         if (seriesId) {
           // Set next episode with autoPlay=true so details page auto-plays
-          playbackNavigation.setNextEpisode(seriesId, nextEp.seasonNumber, nextEp.episodeNumber, true);
+          playbackNavigation.setNextEpisode(seriesId, nextEp.seasonNumber, nextEp.episodeNumber, true, false);
         }
 
         // Small delay for smooth transition, then navigate back to trigger autoplay
@@ -2982,7 +3071,7 @@ export default function PlayerScreen() {
         router.back();
       }, 1000);
     }
-  }, [mediaType, seasonNumber, episodeNumber, router, titleId, imdbId, tvdbId, allEpisodes]);
+  }, [mediaType, seasonNumber, episodeNumber, router, titleId, imdbId, tvdbId, allEpisodes, shuffleMode]);
 
   const handleTracksAvailable = useCallback(
     (audioTracks: TrackInfo[], subtitleTracks: TrackInfo[]) => {
@@ -3497,6 +3586,9 @@ export default function PlayerScreen() {
         setCurrentMovieUrl(playlistWithKey);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
+        // Reset progress event counter for fresh debug logs after track change
+        progressEventCountRef.current = 0;
+        firstProgressValueRef.current = null;
 
         if (typeof response.duration === 'number' && response.duration > 0) {
           updateDuration(response.duration, 'hls-session');
@@ -3989,8 +4081,9 @@ export default function PlayerScreen() {
               // Always disable VLC's built-in subtitles - we use SubtitleOverlay for consistent sizing
               selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
-              forceRnvPlayer={routeHasAnyHDR}
-              forceNativeFullscreen={Platform.OS !== 'web' && (isHlsStream || routeHasAnyHDR)}
+              // Always use react-native-video on native platforms (all content is HLS)
+              forceRnvPlayer={Platform.OS !== 'web'}
+              forceNativeFullscreen={Platform.OS !== 'web'}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{
                 title: episodeName || title || undefined,

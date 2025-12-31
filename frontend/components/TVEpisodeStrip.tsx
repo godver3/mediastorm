@@ -12,6 +12,7 @@ interface TVEpisodeStripProps {
   activeEpisode: SeriesEpisode;
   allEpisodes: SeriesEpisode[];
   selectedSeason: { number: number } | null;
+  percentWatched?: number | null;
   onSelect?: () => void;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -216,6 +217,34 @@ const createStyles = (theme: NovaTheme) => {
       right: 0,
       bottom: 0,
     },
+    progressCorner: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: Math.round(80 * TV_SCALE),
+      height: Math.round(80 * TV_SCALE),
+      overflow: 'hidden',
+      zIndex: 10,
+    },
+    progressTriangle: {
+      position: 'absolute',
+      top: Math.round(-40 * TV_SCALE),
+      right: Math.round(-40 * TV_SCALE),
+      width: Math.round(80 * TV_SCALE),
+      height: Math.round(80 * TV_SCALE),
+      backgroundColor: theme.colors.accent.primary,
+      transform: [{ rotate: '45deg' }],
+    },
+    progressBadgeText: {
+      position: 'absolute',
+      top: Math.round(15 * TV_SCALE),
+      right: Math.round(5 * TV_SCALE),
+      fontSize: Math.round(12 * TV_SCALE),
+      lineHeight: Math.round(14 * TV_SCALE),
+      color: '#FFFFFF',
+      fontWeight: '700',
+      transform: [{ rotate: '45deg' }],
+    },
   });
 };
 
@@ -259,6 +288,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
   activeEpisode,
   allEpisodes,
   selectedSeason,
+  percentWatched,
   onSelect,
   onFocus,
   onBlur,
@@ -378,6 +408,12 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                     <Text style={styles.selectedMetadataText}>{activeEpisode.runtimeMinutes} min</Text>
                   )}
                 </View>
+                {percentWatched != null && percentWatched > 0 && (
+                  <View style={styles.progressCorner}>
+                    <View style={styles.progressTriangle} />
+                    <Text style={styles.progressBadgeText}>{`${percentWatched}%`}</Text>
+                  </View>
+                )}
               </Pressable>
             )}
           </SpatialNavigationFocusableView>

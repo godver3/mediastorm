@@ -222,15 +222,17 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // For HDR content (Dolby Vision or HDR10) on native platforms, use HLS streaming for native player support
-  // - iOS/tvOS: AVPlayer with HLS properly supports HDR10 and Dolby Vision
-  // - Android/Android TV: ExoPlayer with HLS properly supports HDR10 and Dolby Vision
-  // VLCKit/libVLC does not support HDR output - it tone-maps to SDR
-  const needsHlsForHdr = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10);
+  // On native platforms (iOS/Android), always use HLS streaming for react-native-video
+  // - Provides consistent playback experience with proper codec/container support
+  // - iOS AVPlayer doesn't support MKV containers natively
+  // - Enables proper audio track selection and subtitle handling
+  // - HDR (Dolby Vision/HDR10) is properly passed through
+  const useHlsOnNative = Platform.OS !== 'web';
+  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`);
 
-  if (needsHlsForHdr) {
-    const hdrType = options.hasDolbyVision ? 'Dolby Vision' : 'HDR10';
-    console.log(`🎬 ${hdrType} content detected - using HLS streaming for native HDR support`);
+  if (useHlsOnNative) {
+    const hdrType = options.hasDolbyVision ? 'Dolby Vision' : options.hasHDR10 ? 'HDR10' : 'SDR';
+    console.log(`🎬 Native platform - using HLS streaming (${hdrType})`);
     const base = apiService.getBaseUrl().replace(/\/$/, '');
     const queryParams: Record<string, string> = {};
 
@@ -564,6 +566,7 @@ export const launchNativePlayer = (
     imdbId?: string;
     tvdbId?: string;
     debugPlayer?: boolean;
+    shuffleMode?: boolean;
   } = {},
 ) => {
   const {
@@ -586,6 +589,7 @@ export const launchNativePlayer = (
     imdbId,
     tvdbId,
     debugPlayer,
+    shuffleMode,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -619,6 +623,7 @@ export const launchNativePlayer = (
       ...(titleId ? { titleId } : {}),
       ...(imdbId ? { imdbId } : {}),
       ...(tvdbId ? { tvdbId } : {}),
+      ...(shuffleMode ? { shuffleMode: '1' } : {}),
     },
   });
 };
@@ -650,6 +655,7 @@ export const initiatePlayback = async (
     userSettings?: any; // Per-user settings override
     profileId?: string;
     profileName?: string;
+    shuffleMode?: boolean;
   } = {},
 ) => {
   setSelectionError(null);
@@ -803,57 +809,42 @@ export const initiatePlayback = async (
     }
   }
 
-  // Fetch metadata to detect HDR content (Dolby Vision or HDR10)
-  // VLCKit does not support HDR output on iOS - it tone-maps to SDR
-  // Use HLS with native AVPlayer for true HDR playback
+  // Fetch metadata for HDR detection and track selection
+  // All native playback uses HLS with react-native-video for consistent experience
   let hasDolbyVision = false;
   let hasHDR10 = false;
   let dolbyVisionProfile = '';
-  try {
-    const metadata = await apiService.getVideoMetadata(playback.webdavPath, {
-      profileId: options.profileId,
-      clientId: apiService.getClientId() ?? undefined,
-    });
-    hasDolbyVision = detectDolbyVision(metadata);
-    hasHDR10 = detectHDR10(metadata);
-
-    if (hasDolbyVision && metadata.videoStreams && metadata.videoStreams[0]) {
-      dolbyVisionProfile = metadata.videoStreams[0].dolbyVisionProfile || 'dv-hevc';
-      setSelectionInfo(`Dolby Vision detected - preparing HLS stream…`);
-    } else if (hasHDR10) {
-      setSelectionInfo(`HDR10 detected - preparing HLS stream…`);
-    }
-  } catch (error) {
-    // Check if this is a DV policy violation - re-throw so it triggers fallback
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
-        errorMessage.toLowerCase().includes('no hdr fallback')) {
-      console.error('🚫 DV profile incompatible with user policy, cannot play:', errorMessage);
-      throw error;
-    }
-    console.warn('Failed to detect HDR, proceeding with standard playback', error);
-  }
-
-  const hasAnyHDR = hasDolbyVision || hasHDR10;
-
-  // Determine preferred tracks for HLS session
   let selectedAudioTrack: number | undefined;
   let selectedSubtitleTrack: number | undefined;
 
-  // For HDR content, always try to select tracks based on user preferences or defaults
-  // This ensures proper audio/subtitle track selection even if settings don't explicitly define preferences
   const playbackSettings = options.userSettings?.playback ?? settings?.playback;
-  if (hasAnyHDR) {
+  const isNativePlatform = Platform.OS !== 'web';
+
+  // For native platforms, always fetch metadata for track selection and HDR detection
+  if (isNativePlatform) {
     try {
-      // We need metadata to select tracks - fetch to get full data for track selection
-      console.log('🎬 Fetching metadata for track selection...');
+      setSelectionInfo('Preparing stream…');
+      console.log('🎬 Fetching metadata for native playback...');
       const metadata = await apiService.getVideoMetadata(playback.webdavPath, {
         profileId: options.profileId,
         clientId: apiService.getClientId() ?? undefined,
       });
 
+      // Detect HDR
+      hasDolbyVision = detectDolbyVision(metadata);
+      hasHDR10 = detectHDR10(metadata);
+
+      if (hasDolbyVision && metadata.videoStreams && metadata.videoStreams[0]) {
+        dolbyVisionProfile = metadata.videoStreams[0].dolbyVisionProfile || 'dv-hevc';
+        setSelectionInfo('Dolby Vision detected - preparing HLS stream…');
+      } else if (hasHDR10) {
+        setSelectionInfo('HDR10 detected - preparing HLS stream…');
+      } else {
+        setSelectionInfo('Preparing HLS stream…');
+      }
+
+      // Select audio/subtitle tracks based on user preferences
       if (metadata) {
-        // Use preferences if available, otherwise fall back to sensible defaults
         const audioLang = playbackSettings?.preferredAudioLanguage || 'eng';
         const subLang = playbackSettings?.preferredSubtitleLanguage || 'eng';
         const subMode = playbackSettings?.preferredSubtitleMode || 'off';
@@ -864,7 +855,6 @@ export const initiatePlayback = async (
             selectedAudioTrack = match;
             console.log(`🎬 Selected audio track ${match} for language ${audioLang}`);
           } else {
-            // Fall back to first audio track if no language match
             selectedAudioTrack = metadata.audioStreams[0].index;
             console.log(`🎬 No ${audioLang} audio found, using first track: ${selectedAudioTrack}`);
           }
@@ -878,58 +868,44 @@ export const initiatePlayback = async (
           }
         }
       }
-    } catch (e) {
+    } catch (error) {
       // Check if this is a DV policy violation - re-throw so it triggers fallback
-      const errorMessage = e instanceof Error ? e.message : String(e);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
           errorMessage.toLowerCase().includes('no hdr fallback')) {
         console.error('🚫 DV profile incompatible with user policy, cannot play:', errorMessage);
-        throw e;
+        throw error;
       }
-      console.warn('Failed to resolve track preferences for HLS session', e);
+      console.warn('Failed to fetch metadata, proceeding with default settings', error);
     }
   }
 
-  // Build stream URL with HDR awareness
-  // For HDR content (Dolby Vision or HDR10): Use HLS streaming for native iOS AVPlayer support
-  // VLCKit does not support HDR output - it tone-maps to SDR
-  // Pass startOffset to HLS session creation - FFmpeg will start transcoding from that point
-  // For non-HDR: Disable transmuxing on mobile since VLC/native players support MKV natively
-  const shouldDisableTransmux = Platform.OS !== 'web' && !hasAnyHDR;
-  let streamUrl = hasAnyHDR
-    ? buildStreamUrl(playback.webdavPath, settings, {
-        hasDolbyVision,
-        dolbyVisionProfile,
-        hasHDR10,
-        startOffset: options.startOffset,
-        audioTrack: selectedAudioTrack,
-        subtitleTrack: selectedSubtitleTrack,
-        profileId: options.profileId,
-        profileName: options.profileName,
-      })
-    : shouldDisableTransmux
-      ? buildStreamUrl(playback.webdavPath, settings, {
-          disableTransmux: true,
-          startOffset: options.startOffset,
-          profileId: options.profileId,
-          profileName: options.profileName,
-        })
-      : buildStreamUrl(playback.webdavPath, settings, {
-          startOffset: options.startOffset,
-          profileId: options.profileId,
-          profileName: options.profileName,
-        });
+  const hasAnyHDR = hasDolbyVision || hasHDR10;
 
-  // If HLS session URL, fetch the actual playlist URL
+  // Build stream URL
+  // On native platforms: Always use HLS streaming for react-native-video
+  // On web: Use direct streaming with transmux as needed
+  let streamUrl = buildStreamUrl(playback.webdavPath, settings, {
+    hasDolbyVision,
+    dolbyVisionProfile,
+    hasHDR10,
+    startOffset: options.startOffset,
+    audioTrack: selectedAudioTrack,
+    subtitleTrack: selectedSubtitleTrack,
+    profileId: options.profileId,
+    profileName: options.profileName,
+  });
+
+  // If HLS session URL (native platforms), fetch the actual playlist URL
   let hlsDuration: number | undefined;
-  if (hasAnyHDR && streamUrl.includes('/video/hls/start')) {
+  if (isNativePlatform && streamUrl.includes('/video/hls/start')) {
     try {
-      const hdrTypeLabel = hasDolbyVision ? 'Dolby Vision' : 'HDR10';
+      const contentType = hasDolbyVision ? 'Dolby Vision' : hasHDR10 ? 'HDR10' : 'SDR';
       const startOffsetInfo = options.startOffset
         ? ` (will seek to ${Math.floor(options.startOffset)}s after loading)`
         : '';
-      setSelectionInfo(`Creating HLS session for ${hdrTypeLabel}${startOffsetInfo}…`);
-      console.log(`🎬 Creating HLS session for ${hdrTypeLabel} with URL:`, streamUrl);
+      setSelectionInfo(`Creating HLS session (${contentType})${startOffsetInfo}…`);
+      console.log(`🎬 Creating HLS session (${contentType}) with URL:`, streamUrl);
       const response = await fetch(streamUrl);
       if (!response.ok) {
         throw new Error(`HLS session creation failed: ${response.statusText}`);

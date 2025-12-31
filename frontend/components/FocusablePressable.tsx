@@ -114,6 +114,7 @@ const FocusablePressable = ({
               ) : null}
               {text && (
                 <Text
+                  numberOfLines={1}
                   style={[
                     isFocused ? styles.watchButtonTextFocused : styles.watchButtonText,
                     isFocused ? focusedTextStyle : textStyle,

@@ -549,6 +549,8 @@ export default function DetailsScreen() {
         if (nextEp) {
           console.log('[Details] Found next episode from playback:', nextEp);
           setNextEpisodeFromPlayback(nextEp);
+          // Restore shuffle mode from playback navigation
+          setIsShuffleMode(nextEp.shuffleMode);
 
           // Try to select/play the episode immediately if we have the episodes loaded
           if (allEpisodesRef.current.length > 0) {
@@ -677,6 +679,7 @@ export default function DetailsScreen() {
   const descriptionHeight = useSharedValue(0);
   const [nextUpEpisode, setNextUpEpisode] = useState<SeriesEpisode | null>(null);
   const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
+  const [isShuffleMode, setIsShuffleMode] = useState(false);
   const [isEpisodeStripFocused, setIsEpisodeStripFocused] = useState(false);
   const [seasons, setSeasons] = useState<SeriesSeason[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<SeriesSeason | null>(null);
@@ -1326,8 +1329,8 @@ export default function DetailsScreen() {
   }, [isItemWatched, mediaType, titleId]);
   const canToggleWatchlist = Boolean(titleId && mediaType);
 
-  const watchlistButtonLabel = isWatchlisted ? 'Remove' : 'Add to watchlist';
-  const watchStateButtonLabel = isSeries ? 'Watch Status' : isWatched ? 'Mark as not watched' : 'Mark as watched';
+  const watchlistButtonLabel = isWatchlisted ? 'Remove' : 'Watchlist';
+  const watchStateButtonLabel = isSeries ? 'Watch State' : isWatched ? 'Mark as not watched' : 'Mark as watched';
   const watchNowLabel = Platform.isTV
     ? !isSeries || !hasWatchedEpisodes
       ? 'Play'
@@ -1571,6 +1574,8 @@ export default function DetailsScreen() {
           // Profile info for stream tracking
           profileId: activeUserId ?? undefined,
           profileName: activeUser?.name,
+          // Shuffle mode for random episode playback
+          shuffleMode: isShuffleMode,
         },
       );
     },
@@ -1582,6 +1587,7 @@ export default function DetailsScreen() {
       userSettings,
       activeUserId,
       activeUser,
+      isShuffleMode,
       headerImage,
       title,
       router,
@@ -1854,8 +1860,43 @@ export default function DetailsScreen() {
           console.error('[prequeue] Failed to create HLS session:', hlsError);
           throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
         }
+      } else if (Platform.OS !== 'web') {
+        // Native platforms (iOS/Android) - use HLS for all content for react-native-video compatibility
+        // iOS AVPlayer doesn't support MKV containers natively
+        console.log('[prequeue] Native platform SDR content - using HLS streaming');
+        setSelectionInfo('Preparing HLS stream...');
+
+        try {
+          // Use prequeue-selected tracks if available
+          const selectedAudioTrack =
+            prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
+              ? prequeueStatus.selectedAudioTrack
+              : undefined;
+          const selectedSubtitleTrack =
+            prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
+              ? prequeueStatus.selectedSubtitleTrack
+              : undefined;
+
+          const hlsResponse = await apiService.createHlsSession({
+            path: prequeueStatus.streamPath,
+            start: typeof startOffset === 'number' ? startOffset : undefined,
+            audioTrack: selectedAudioTrack,
+            subtitleTrack: selectedSubtitleTrack,
+            profileId: activeUserId ?? undefined,
+            profileName: activeUser?.name,
+          });
+
+          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+          const authToken = apiService.getAuthToken();
+          streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+          hlsDuration = hlsResponse.duration;
+          console.log('[prequeue] Created HLS session for SDR content, using URL:', streamUrl);
+        } catch (hlsError) {
+          console.error('[prequeue] Failed to create HLS session for SDR:', hlsError);
+          throw new Error(`Failed to create HLS session: ${hlsError}`);
+        }
       } else {
-        // SDR content - build direct stream URL
+        // Web - build direct stream URL
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const authToken = apiService.getAuthToken();
         // Build URL manually to ensure proper encoding of special chars like semicolons
@@ -1865,7 +1906,7 @@ export default function DetailsScreen() {
         if (authToken) {
           queryParts.push(`token=${encodeURIComponent(authToken)}`);
         }
-        queryParts.push('transmux=0'); // Let native player handle it
+        queryParts.push('transmux=0'); // Let web player handle it
         // Add profile info for stream tracking
         if (activeUserId) {
           queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
@@ -1874,7 +1915,7 @@ export default function DetailsScreen() {
           queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
         }
         streamUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
-        console.log('[prequeue] Using direct stream URL:', streamUrl);
+        console.log('[prequeue] Web platform - using direct stream URL:', streamUrl);
       }
 
       // Build display title
@@ -2631,6 +2672,15 @@ export default function DetailsScreen() {
   useEffect(() => {
     handlePlayEpisodeRef.current = handlePlayEpisode;
   }, [handlePlayEpisode]);
+
+  // Shuffle play - pick a random episode and play it
+  const handleShufflePlay = useCallback(() => {
+    if (allEpisodes.length === 0) return;
+    const randomIndex = Math.floor(Math.random() * allEpisodes.length);
+    const randomEpisode = allEpisodes[randomIndex];
+    setIsShuffleMode(true);
+    handlePlayEpisode(randomEpisode);
+  }, [allEpisodes, handlePlayEpisode]);
 
   const getItemIdForProgress = useCallback((): string | null => {
     // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
@@ -3549,6 +3599,7 @@ export default function DetailsScreen() {
                   activeEpisode={activeEpisode}
                   allEpisodes={allEpisodes}
                   selectedSeason={selectedSeason}
+                  percentWatched={displayProgress}
                   onSelect={handleWatchNow}
                   onFocus={handleEpisodeStripFocus}
                   onBlur={handleEpisodeStripBlur}
@@ -3600,11 +3651,22 @@ export default function DetailsScreen() {
               {isSeries && (
                 <FocusablePressable
                   focusKey="select-episode"
-                  text={!useCompactActionLayout ? 'Select Episode' : undefined}
+                  text={!useCompactActionLayout ? 'Select' : undefined}
                   icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
                   accessibilityLabel="Select Episode"
                   onSelect={() => setSeasonSelectorVisible(true)}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                />
+              )}
+              {isSeries && (
+                <FocusablePressable
+                  focusKey="shuffle-play"
+                  text={!useCompactActionLayout ? 'Shuffle' : undefined}
+                  icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
+                  accessibilityLabel="Shuffle play random episode"
+                  onSelect={handleShufflePlay}
+                  style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                  disabled={episodesLoading || allEpisodes.length === 0}
                 />
               )}
               <FocusablePressable
@@ -3652,31 +3714,8 @@ export default function DetailsScreen() {
                   disabled={trailerButtonDisabled}
                 />
               )}
-              {Platform.isTV && activeEpisode && (
-                <>
-                  <FocusablePressable
-                    focusKey="previous-episode"
-                    text={!useCompactActionLayout ? 'Previous' : undefined}
-                    icon={useCompactActionLayout ? 'chevron-back' : undefined}
-                    invisibleIcon={!useCompactActionLayout}
-                    accessibilityLabel="Previous Episode"
-                    onSelect={handlePreviousEpisode}
-                    disabled={!findPreviousEpisode(activeEpisode)}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.episodeNavButton}
-                  />
-                  <FocusablePressable
-                    focusKey="next-episode"
-                    text={!useCompactActionLayout ? 'Next' : undefined}
-                    icon={useCompactActionLayout ? 'chevron-forward' : undefined}
-                    invisibleIcon={!useCompactActionLayout}
-                    accessibilityLabel="Next Episode"
-                    onSelect={handleNextEpisode}
-                    disabled={!findNextEpisode(activeEpisode)}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.episodeNavButton}
-                  />
-                </>
-              )}
-              {displayProgress !== null && displayProgress > 0 && (
+              {/* Show progress badge in action row only for movies (no episode card) */}
+              {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
                 <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
                   <Text
                     style={[
@@ -3693,7 +3732,7 @@ export default function DetailsScreen() {
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>
-              <EpisodeCard episode={activeEpisode} />
+              <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />
             </View>
           )}
           {!Platform.isTV && activeEpisode && (

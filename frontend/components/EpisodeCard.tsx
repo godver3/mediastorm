@@ -10,6 +10,7 @@ import { tvScale, isTV, getTVScaleMultiplier } from '../theme/tokens/tvScale';
 
 interface EpisodeCardProps {
   episode: SeriesEpisode;
+  percentWatched?: number | null;
 }
 
 const formatAirDate = (dateString?: string): string | null => {
@@ -103,6 +104,34 @@ const createStyles = (theme: NovaTheme) => {
       color: theme.colors.text.primary,
       fontWeight: '700',
     },
+    progressCorner: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: 80,
+      height: 80,
+      overflow: 'hidden',
+      zIndex: 10,
+    },
+    progressTriangle: {
+      position: 'absolute',
+      top: -40,
+      right: -40,
+      width: 80,
+      height: 80,
+      backgroundColor: theme.colors.accent.primary,
+      transform: [{ rotate: '45deg' }],
+    },
+    progressBadgeText: {
+      position: 'absolute',
+      top: 15,
+      right: 5,
+      fontSize: 12,
+      lineHeight: 14,
+      color: '#FFFFFF',
+      fontWeight: '700',
+      transform: [{ rotate: '45deg' }],
+    },
     contentContainer: {
       flex: 1,
       padding: isTV ? theme.spacing.lg : theme.spacing.sm,
@@ -187,7 +216,7 @@ const createStyles = (theme: NovaTheme) => {
   };
 };
 
-const EpisodeCard = memo(function EpisodeCard({ episode }: EpisodeCardProps) {
+const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: EpisodeCardProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [isOverviewExpanded, setIsOverviewExpanded] = useState(false);
@@ -226,6 +255,12 @@ const EpisodeCard = memo(function EpisodeCard({ episode }: EpisodeCardProps) {
 
   return (
     <View style={styles.container}>
+      {percentWatched != null && percentWatched > 0 && (
+        <View style={styles.progressCorner}>
+          <View style={styles.progressTriangle} />
+          <Text style={styles.progressBadgeText}>{`${percentWatched}%`}</Text>
+        </View>
+      )}
       <View style={styles.topRow}>
         <View style={styles.imageContainer}>
           {episode.image?.url ? (

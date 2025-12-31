@@ -8,6 +8,7 @@ interface NextEpisodeInfo {
   seasonNumber: number;
   episodeNumber: number;
   autoPlay: boolean; // When true, automatically start playback instead of just selecting
+  shuffleMode: boolean; // When true, continue picking random episodes
   timestamp: number; // To invalidate stale data
 }
 
@@ -19,13 +20,21 @@ export const playbackNavigation = {
   /**
    * Set the next episode to show when returning to details page
    * @param autoPlay - When true, automatically start playback of the episode
+   * @param shuffleMode - When true, continue picking random episodes
    */
-  setNextEpisode(titleId: string, seasonNumber: number, episodeNumber: number, autoPlay: boolean = false) {
+  setNextEpisode(
+    titleId: string,
+    seasonNumber: number,
+    episodeNumber: number,
+    autoPlay: boolean = false,
+    shuffleMode: boolean = false,
+  ) {
     nextEpisodeToShow = {
       titleId,
       seasonNumber,
       episodeNumber,
       autoPlay,
+      shuffleMode,
       timestamp: Date.now(),
     };
   },
@@ -33,7 +42,9 @@ export const playbackNavigation = {
   /**
    * Get and clear the next episode to show (if it matches the titleId and is still fresh)
    */
-  consumeNextEpisode(titleId: string): { seasonNumber: number; episodeNumber: number; autoPlay: boolean } | null {
+  consumeNextEpisode(
+    titleId: string,
+  ): { seasonNumber: number; episodeNumber: number; autoPlay: boolean; shuffleMode: boolean } | null {
     if (!nextEpisodeToShow) {
       return null;
     }
@@ -56,6 +67,7 @@ export const playbackNavigation = {
       seasonNumber: nextEpisodeToShow.seasonNumber,
       episodeNumber: nextEpisodeToShow.episodeNumber,
       autoPlay: nextEpisodeToShow.autoPlay,
+      shuffleMode: nextEpisodeToShow.shuffleMode,
     };
     nextEpisodeToShow = null;
     return result;
