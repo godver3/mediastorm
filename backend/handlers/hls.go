@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -84,6 +85,98 @@ type throttledReader struct {
 	session       *HLSSession
 	lastThrottle  time.Time
 	throttleCount int64
+}
+
+// throttlingProxy is an HTTP server that proxies requests to a remote URL
+// with throttling support. It allows FFmpeg to use HTTP Range requests for
+// seeking while we control the download speed.
+type throttlingProxy struct {
+	targetURL string
+	session   *HLSSession
+	server    *http.Server
+	port      int
+}
+
+// newThrottlingProxy creates a new throttling proxy for the given URL.
+// Returns the proxy and the local URL that FFmpeg should use.
+func newThrottlingProxy(targetURL string, session *HLSSession) (*throttlingProxy, string, error) {
+	proxy := &throttlingProxy{
+		targetURL: targetURL,
+		session:   session,
+	}
+
+	// Find a free port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to find free port: %w", err)
+	}
+	proxy.port = listener.Addr().(*net.TCPAddr).Port
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stream", proxy.handleStream)
+
+	proxy.server = &http.Server{
+		Handler: mux,
+	}
+
+	go func() {
+		if err := proxy.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Printf("[hls] session %s: proxy server error: %v", session.ID, err)
+		}
+	}()
+
+	localURL := fmt.Sprintf("http://127.0.0.1:%d/stream", proxy.port)
+	log.Printf("[hls] session %s: started throttling proxy on port %d for URL: %s", session.ID, proxy.port, targetURL)
+
+	return proxy, localURL, nil
+}
+
+func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
+	// Create request to target URL
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.targetURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	// Forward Range header for seeking support
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+		log.Printf("[hls] session %s: proxy forwarding Range: %s", p.session.ID, rangeHeader)
+	}
+
+	// Make request to target
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[hls] session %s: proxy request failed: %v", p.session.ID, err)
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	// Wrap with throttled reader and copy to response
+	throttled := newThrottledReader(resp.Body, p.session)
+	_, err = io.Copy(w, throttled)
+	if err != nil && err != context.Canceled {
+		log.Printf("[hls] session %s: proxy copy error: %v", p.session.ID, err)
+	}
+}
+
+func (p *throttlingProxy) Close() {
+	if p.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		p.server.Shutdown(ctx)
+		log.Printf("[hls] session %s: stopped throttling proxy on port %d", p.session.ID, p.port)
+	}
 }
 
 func newThrottledReader(r io.Reader, session *HLSSession) *throttledReader {
@@ -222,6 +315,10 @@ type HLSSession struct {
 
 	// Cached probe data from unified probe (avoids multiple ffprobe calls)
 	ProbeData *UnifiedProbeResult
+
+	// Per-track extraction tracking (prevents duplicate extractions without blocking session)
+	subtitleExtractionMu     sync.Mutex      // Protects subtitleExtracting map
+	subtitleExtracting       map[int]bool    // Tracks which subtitle tracks are currently being extracted
 	FatalErrorTime   time.Time
 	BitstreamErrors  int // Count of bitstream filter errors (to detect persistent issues)
 }
@@ -294,6 +391,7 @@ const (
 	// Resume when buffer drops to this level
 	hlsBufferResumeThreshold = 20 // ~80 seconds of buffer ahead
 )
+
 
 // HLSManager manages HLS transcoding sessions
 type HLSManager struct {
@@ -1431,49 +1529,25 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	var usingPipe bool
 	var headerPrefix []byte
 	var requireMatroskaAlign bool
+	var proxyURL string       // URL for FFmpeg to use (via throttling proxy)
+	var proxy *throttlingProxy // proxy server to close when done
 
-	// Always use piped input to enable rate limiting (throttledReader)
-	// Seeking is handled by creating new sessions, so ffmpeg doesn't need direct URL access
+	// For direct URLs, use a throttling proxy so FFmpeg can use HTTP Range requests for seeking
+	// while we still control the download speed
 	if hasDirectURL {
-		log.Printf("[hls] session %s: fetching direct URL for piped input: %s (startOffset=%.3f)", session.ID, directURL, session.StartOffset)
+		log.Printf("[hls] session %s: setting up throttling proxy for direct URL: %s", session.ID, directURL)
 
-		// Fetch the direct URL ourselves so we can pipe it through throttledReader
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, directURL, nil)
+		var err error
+		proxy, proxyURL, err = newThrottlingProxy(directURL, session)
 		if err != nil {
-			return fmt.Errorf("create direct URL request: %w", err)
+			log.Printf("[hls] session %s: failed to create throttling proxy: %v, falling back to pipe", session.ID, err)
+			hasDirectURL = false // Fall through to pipe handling
+		} else {
+			log.Printf("[hls] session %s: throttling proxy ready at %s", session.ID, proxyURL)
 		}
+	}
 
-		// Add Range header for seeking if needed
-		if session.StartOffset > 0 && session.Duration > 0 {
-			// Estimate byte offset from time offset
-			// We'll use output seeking (-ss after -i) for precise sync
-			headReq, _ := http.NewRequestWithContext(ctx, http.MethodHead, directURL, nil)
-			if headResp, err := http.DefaultClient.Do(headReq); err == nil {
-				fileSize := headResp.ContentLength
-				headResp.Body.Close()
-				if fileSize > 0 {
-					byteOffset := int64(float64(fileSize) / session.Duration * session.StartOffset)
-					if byteOffset > 0 {
-						req.Header.Set("Range", fmt.Sprintf("bytes=%d-", byteOffset))
-						log.Printf("[hls] session %s: direct URL seeking to byte %d (time %.3fs)", session.ID, byteOffset, session.StartOffset)
-					}
-				}
-			}
-		}
-
-		directResp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("fetch direct URL: %w", err)
-		}
-		resp = &streaming.Response{
-			Body:          directResp.Body,
-			ContentLength: directResp.ContentLength,
-			Status:        directResp.StatusCode,
-		}
-		defer resp.Close()
-		usingPipe = true
-		log.Printf("[hls] session %s: direct URL stream established for piped input", session.ID)
-	} else {
+	if !hasDirectURL {
 		// Fall back to pipe streaming only if direct URL not available
 		providerStartTime := time.Now()
 		log.Printf("[hls] session %s: requesting stream from provider", session.ID)
@@ -1580,17 +1654,27 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// NOTE: -strict unofficial is added AFTER -i as an output option (see below)
 	// Placing it before -i doesn't enable writing dvcC boxes to the output
 
-	// Add input source - always use pipe for rate limiting via throttledReader
-	args = append(args, "-i", "pipe:0")
-
-	// For pipe inputs with seeking, add output seeking (-ss after -i)
-	// This tells FFmpeg to decode and sync to the target time
-	// Combined with byte-level seeking, this is efficient and safe:
-	// - Byte seeking reduces bandwidth (starts from calculated offset)
-	// - Output seeking ensures FFmpeg syncs to the next keyframe
+	// Seeking strategy:
+	// - With proxy URL: use INPUT seeking (-ss before -i) - FFmpeg can seek via HTTP Range
+	// - With pipe: use INPUT seeking - FFmpeg reads and discards at I/O speed
 	if session.StartOffset > 0 {
+		// INPUT seeking (-ss before -i): allows FFmpeg to seek via HTTP Range when using URL,
+		// or reads and discards quickly when using pipe
 		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-		log.Printf("[hls] session %s: using output seeking to sync to %.3fs after byte offset", session.ID, session.StartOffset)
+		if proxyURL != "" {
+			log.Printf("[hls] session %s: using INPUT seeking to %.3fs via HTTP Range (proxy URL)", session.ID, session.StartOffset)
+		} else {
+			log.Printf("[hls] session %s: using INPUT seeking to skip to %.3fs (pipe mode)", session.ID, session.StartOffset)
+		}
+	}
+
+	// Add input source - use proxy URL if available (for HTTP Range seeking), otherwise use pipe
+	if proxyURL != "" {
+		args = append(args, "-i", proxyURL)
+		log.Printf("[hls] session %s: FFmpeg input set to proxy URL: %s", session.ID, proxyURL)
+	} else {
+		args = append(args, "-i", "pipe:0")
+		log.Printf("[hls] session %s: FFmpeg input set to pipe:0", session.ID)
 	}
 
 	// If we're seeking and know the total duration, tell FFmpeg how much content to expect
@@ -2349,6 +2433,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	waitStart := time.Now()
 	err = cmd.Wait()
 	waitDuration := time.Since(waitStart)
+
+	// Clean up throttling proxy if we used one
+	if proxy != nil {
+		log.Printf("[hls] session %s: closing throttling proxy", session.ID)
+		proxy.Close()
+	}
 
 	// Log FFmpeg exit details
 	exitCode := 0
@@ -3258,13 +3348,47 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 	// Check if file exists - for fMP4/DV sessions, all tracks should be pre-extracted
 	// If not found, fall back to on-demand extraction (for MPEG-TS or edge cases)
 	if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-		session.mu.Lock()
-		// Double-check after acquiring lock (another request might have extracted it)
-		if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+		// Use per-track extraction tracking to prevent duplicates without blocking the session
+		// This avoids a deadlock where subtitle extraction holds session.mu while the
+		// transcoding pipeline waits for session.mu.RLock at startup
+		session.subtitleExtractionMu.Lock()
+		if session.subtitleExtracting == nil {
+			session.subtitleExtracting = make(map[int]bool)
+		}
+		alreadyExtracting := session.subtitleExtracting[requestedTrack]
+		if !alreadyExtracting {
+			// Double-check file doesn't exist after acquiring lock
+			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+				session.subtitleExtracting[requestedTrack] = true
+			}
+		}
+		session.subtitleExtractionMu.Unlock()
+
+		if alreadyExtracting {
+			// Another request is already extracting this track, wait and retry
+			log.Printf("[hls] subtitle track %d extraction already in progress for session %s, waiting", requestedTrack, sessionID)
+			time.Sleep(500 * time.Millisecond)
+			// Check if file now exists
+			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+				// Still not ready, return empty VTT
+				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Write([]byte("WEBVTT\n\n"))
+				return
+			}
+		} else if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+			// We're responsible for extracting this track
 			log.Printf("[hls] subtitle track %d not pre-extracted, attempting on-demand extraction for session %s", requestedTrack, sessionID)
-			if err := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath); err != nil {
-				session.mu.Unlock()
-				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, err)
+			extractErr := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath)
+
+			// Clear the extraction flag
+			session.subtitleExtractionMu.Lock()
+			delete(session.subtitleExtracting, requestedTrack)
+			session.subtitleExtractionMu.Unlock()
+
+			if extractErr != nil {
+				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, extractErr)
 				// Return empty VTT instead of error to avoid breaking playback
 				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 				w.Header().Set("Cache-Control", "no-cache")
@@ -3272,11 +3396,10 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 				w.Write([]byte("WEBVTT\n\n"))
 				return
 			}
-		}
-		session.mu.Unlock()
 
-		// Wait a moment for filesystem to flush (race condition fix)
-		time.Sleep(50 * time.Millisecond)
+			// Wait a moment for filesystem to flush (race condition fix)
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	// Check if file exists (might not be ready yet or no subtitles selected)

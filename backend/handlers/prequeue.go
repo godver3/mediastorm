@@ -93,6 +93,8 @@ type VideoFullResult struct {
 	// Stream metadata
 	AudioStreams    []AudioStreamInfo
 	SubtitleStreams []SubtitleStreamInfo
+	// Duration in seconds (for seeking calculations)
+	Duration float64
 }
 
 // VideoFullProber interface for combined HDR and metadata probing in a single ffprobe call

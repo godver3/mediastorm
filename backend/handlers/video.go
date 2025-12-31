@@ -2471,6 +2471,13 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		SubtitleStreams: make([]SubtitleStreamInfo, 0),
 	}
 
+	// Extract duration from format
+	if meta.Format.Duration != "" {
+		if dur, err := strconv.ParseFloat(meta.Format.Duration, 64); err == nil {
+			result.Duration = dur
+		}
+	}
+
 	// Extract HDR info from primary video stream
 	stream := selectPrimaryVideoStream(meta)
 	if stream != nil {
@@ -2551,6 +2558,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 // unifiedProbeToVideoFull converts a cached UnifiedProbeResult to VideoFullResult
 func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *VideoFullResult {
 	result := &VideoFullResult{
+		Duration:           cached.Duration,
 		HasDolbyVision:     cached.HasDolbyVision,
 		HasHDR10:           cached.HasHDR10,
 		DolbyVisionProfile: cached.DolbyVisionProfile,
@@ -2587,6 +2595,7 @@ func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *Vide
 // videoFullToUnifiedProbe converts a VideoFullResult to UnifiedProbeResult for caching
 func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *UnifiedProbeResult {
 	cached := &UnifiedProbeResult{
+		Duration:           result.Duration,
 		HasDolbyVision:     result.HasDolbyVision,
 		HasHDR10:           result.HasHDR10,
 		DolbyVisionProfile: result.DolbyVisionProfile,
