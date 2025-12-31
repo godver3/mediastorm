@@ -19,12 +19,12 @@
     </div>
 </div>
 {{else}}
-<div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
+<div class="page-header page-header-flex" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
         <h1>Settings</h1>
         <p>{{if .IsAdmin}}Configure your strmr server{{else}}Configure profile settings{{end}}</p>
     </div>
-    <div style="display: flex; gap: 0.5rem; align-items: center;">
+    <div class="page-header-controls" style="display: flex; gap: 0.5rem; align-items: center;">
         <select id="userSelector" class="form-select" style="min-width: 180px;" onchange="handleUserChange(this.value)">
             {{if .IsAdmin}}<option value="">Global Defaults</option>{{end}}
             {{range .Users}}

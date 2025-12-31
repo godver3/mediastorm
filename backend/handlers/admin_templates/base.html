@@ -1006,6 +1006,27 @@
                 font-size: 1.5rem;
             }
 
+            /* Settings page header responsive layout */
+            .page-header-flex {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 1rem;
+            }
+
+            .page-header-controls {
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .page-header-controls .form-select {
+                min-width: 0 !important;
+                flex: 1 1 calc(50% - 0.25rem);
+            }
+
+            .page-header-controls .btn {
+                flex: 0 0 auto;
+            }
+
             .stat-value {
                 font-size: 1.5rem;
             }
@@ -1041,6 +1062,15 @@
 
             .form-select {
                 padding: 0.5rem 0.75rem;
+            }
+
+            /* Settings controls - stack on very small screens */
+            .page-header-controls .form-select {
+                flex: 1 1 100%;
+            }
+
+            .page-header-controls {
+                gap: 0.5rem;
             }
 
             .profile-pin-section {
