@@ -880,7 +880,9 @@ function LiveScreen() {
                 <Text style={styles.emptyMessage}>
                   Provide an M3U playlist URL in Settings to load channels for Live TV playback.
                 </Text>
-                <FocusablePressable text="Open Settings" onSelect={handleOpenSettings} />
+                <View style={{ width: '100%', alignItems: 'center' }}>
+                  <FocusablePressable text="Open Settings" onSelect={handleOpenSettings} />
+                </View>
               </View>
             ) : (
               <>
