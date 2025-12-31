@@ -1379,7 +1379,15 @@ function IndexScreen() {
             onLayout={handleMobileScrollLayout}
             onContentSizeChange={handleMobileContentSizeChange}
           >
-            <View style={mobileStyles.hero}>
+            <Pressable
+              style={mobileStyles.hero}
+              onPress={() => {
+                const currentHeroItem = mobileHeroItems[mobileHeroIndex % mobileHeroItems.length];
+                if (currentHeroItem) {
+                  handleCardSelect(currentHeroItem);
+                }
+              }}
+            >
               <Image source={heroSource.headerImage} style={mobileStyles.heroImage} contentFit="cover" />
               <LinearGradient
                 colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
@@ -1396,7 +1404,7 @@ function IndexScreen() {
                   {heroSource.description}
                 </Text>
               </View>
-            </View>
+            </Pressable>
 
             {mobileShelfConfig
               .filter((config) => config.enabled)
