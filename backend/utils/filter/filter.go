@@ -34,18 +34,67 @@ const (
 	HDRDVPolicyIncludeHDRDV HDRDVPolicy = "hdr_dv"
 )
 
+// EpisodeCountResolver provides episode count information from metadata.
+// This interface allows the filter to get accurate episode counts without
+// directly depending on the metadata service.
+type EpisodeCountResolver interface {
+	// GetTotalSeriesEpisodes returns the total number of episodes in a series
+	GetTotalSeriesEpisodes() int
+	// GetEpisodesForSeasons returns the total episodes across the specified seasons
+	GetEpisodesForSeasons(seasons []int) int
+}
+
+// SeriesEpisodeResolver is a concrete implementation of EpisodeCountResolver
+// that uses pre-fetched series episode data.
+type SeriesEpisodeResolver struct {
+	TotalEpisodes     int         // Total episodes across all seasons
+	SeasonEpisodeCounts map[int]int // Map of season number -> episode count
+}
+
+// NewSeriesEpisodeResolver creates a resolver from season episode counts.
+// seasonCounts is a map of season number to episode count.
+func NewSeriesEpisodeResolver(seasonCounts map[int]int) *SeriesEpisodeResolver {
+	total := 0
+	for _, count := range seasonCounts {
+		total += count
+	}
+	return &SeriesEpisodeResolver{
+		TotalEpisodes:       total,
+		SeasonEpisodeCounts: seasonCounts,
+	}
+}
+
+func (r *SeriesEpisodeResolver) GetTotalSeriesEpisodes() int {
+	return r.TotalEpisodes
+}
+
+func (r *SeriesEpisodeResolver) GetEpisodesForSeasons(seasons []int) int {
+	if r.SeasonEpisodeCounts == nil {
+		return 0
+	}
+	total := 0
+	for _, seasonNum := range seasons {
+		if count, ok := r.SeasonEpisodeCounts[seasonNum]; ok {
+			total += count
+		}
+	}
+	return total
+}
+
 // Options contains the expected metadata for filtering results
 type Options struct {
-	ExpectedTitle    string
-	ExpectedYear     int
-	IsMovie          bool        // true for movies, false for TV shows
-	MaxSizeMovieGB   float64     // Maximum size in GB for movies (0 = no limit)
-	MaxSizeEpisodeGB float64     // Maximum size in GB for episodes (0 = no limit)
-	MaxResolution    string      // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	HDRDVPolicy      HDRDVPolicy // HDR/DV inclusion policy
-	PrioritizeHdr    bool        // Prioritize HDR/DV content in results
-	AlternateTitles  []string
-	FilterOutTerms   []string // Terms to filter out from results (case-insensitive match in title)
+	ExpectedTitle       string
+	ExpectedYear        int
+	IsMovie             bool        // true for movies, false for TV shows
+	MaxSizeMovieGB      float64     // Maximum size in GB for movies (0 = no limit)
+	MaxSizeEpisodeGB    float64     // Maximum size in GB for episodes (0 = no limit)
+	MaxResolution       string      // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy         HDRDVPolicy // HDR/DV inclusion policy
+	PrioritizeHdr       bool        // Prioritize HDR/DV content in results
+	AlternateTitles     []string
+	FilterOutTerms      []string               // Terms to filter out from results (case-insensitive match in title)
+	TotalSeriesEpisodes int                    // Deprecated: use EpisodeResolver instead
+	EpisodeResolver     EpisodeCountResolver   // Resolver for accurate episode counts from metadata
 }
 
 // filteredResult holds a result with its HDR status for sorting
@@ -138,8 +187,8 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 
 		// Log parsed info for first few results
 		if i < 5 {
-			log.Printf("[filter] Parsed result[%d]: Title=%q -> ParsedTitle=%q, Year=%d, Seasons=%v, Episodes=%v",
-				i, result.Title, parsed.Title, parsed.Year, parsed.Seasons, parsed.Episodes)
+			log.Printf("[filter] Parsed result[%d]: Title=%q -> ParsedTitle=%q, Year=%d, Seasons=%v, Episodes=%v, Complete=%v",
+				i, result.Title, parsed.Title, parsed.Year, parsed.Seasons, parsed.Episodes, parsed.Complete)
 		}
 
 		// Check title similarity
@@ -160,8 +209,9 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 		}
 
 		// Filter by media type using season/episode detection
-		// TV shows have seasons/episodes, movies don't
+		// TV shows have seasons/episodes or are marked as complete packs, movies don't
 		hasTVPattern := len(parsed.Seasons) > 0 || len(parsed.Episodes) > 0
+		isCompletePack := parsed.Complete
 
 		if opts.IsMovie && hasTVPattern {
 			// Searching for a movie but result has TV show pattern (S01E01 etc)
@@ -170,8 +220,8 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			continue
 		}
 
-		if !opts.IsMovie && !hasTVPattern {
-			// Searching for a TV show but result has no TV indicators
+		if !opts.IsMovie && !hasTVPattern && !isCompletePack {
+			// Searching for a TV show but result has no TV indicators and isn't a complete pack
 			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
 				result.Title)
 			continue
@@ -204,9 +254,31 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 					continue
 				}
 			} else if !opts.IsMovie && opts.MaxSizeEpisodeGB > 0 {
-				if sizeGB > opts.MaxSizeEpisodeGB {
+				// For TV shows, check if this is a pack and calculate per-episode size
+				// A pack is: complete flag OR has seasons but NO specific episodes
+				// (S01E01 has both seasons=[1] and episodes=[1], so it's NOT a pack)
+				isPack := isCompletePack || (len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0)
+				effectiveSizeGB := sizeGB
+
+				if isPack {
+					// This is a pack - get episode count from metadata or estimate
+					episodeCount := getPackEpisodeCount(parsed.Seasons, isCompletePack, opts.EpisodeResolver, opts.TotalSeriesEpisodes)
+					if episodeCount > 0 {
+						effectiveSizeGB = sizeGB / float64(episodeCount)
+						result.EpisodeCount = episodeCount // Pass to frontend for display
+						log.Printf("[filter] Pack detected: %q - %.2f GB / %d episodes = %.2f GB per episode",
+							result.Title, sizeGB, episodeCount, effectiveSizeGB)
+					} else {
+						// Complete pack but no season info and no metadata - skip size filter
+						log.Printf("[filter] Complete pack %q with unknown episode count - skipping size filter", result.Title)
+						// Don't apply size filter for packs we can't estimate
+						effectiveSizeGB = 0
+					}
+				}
+
+				if effectiveSizeGB > opts.MaxSizeEpisodeGB {
 					log.Printf("[filter] Rejecting %q: size %.2f GB > %.2f GB limit (episode)",
-						result.Title, sizeGB, opts.MaxSizeEpisodeGB)
+						result.Title, effectiveSizeGB, opts.MaxSizeEpisodeGB)
 					continue
 				}
 			}
@@ -417,4 +489,44 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// getPackEpisodeCount gets the number of episodes in a pack using the resolver.
+// Priority: 1) Use resolver for accurate count, 2) Use legacy totalSeriesEpisodes,
+// 3) Estimate from seasons array, 4) Return 0 if no information available.
+const defaultEpisodesPerSeason = 13 // Fallback estimate for most TV shows
+
+func getPackEpisodeCount(seasons []int, isCompletePack bool, resolver EpisodeCountResolver, legacyTotal int) int {
+	// Priority 1: Use resolver for accurate metadata-based counts
+	if resolver != nil {
+		if isCompletePack && len(seasons) == 0 {
+			// Complete pack with no season info - get total series episodes
+			if total := resolver.GetTotalSeriesEpisodes(); total > 0 {
+				return total
+			}
+		} else if len(seasons) > 0 {
+			// Pack with specific seasons - get episodes for those seasons
+			if count := resolver.GetEpisodesForSeasons(seasons); count > 0 {
+				return count
+			}
+		}
+	}
+
+	// Priority 2: Use legacy total if provided (backwards compatibility)
+	if legacyTotal > 0 {
+		return legacyTotal
+	}
+
+	// Priority 3: Estimate from seasons array
+	if len(seasons) > 0 {
+		return len(seasons) * defaultEpisodesPerSeason
+	}
+
+	// No information available - return 0 to signal unknown
+	return 0
+}
+
+// Deprecated: use getPackEpisodeCount instead
+func estimatePackEpisodeCount(seasons []int, totalSeriesEpisodes int) int {
+	return getPackEpisodeCount(seasons, len(seasons) == 0, nil, totalSeriesEpisodes)
 }

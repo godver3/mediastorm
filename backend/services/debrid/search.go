@@ -31,15 +31,17 @@ type imdbResolver interface {
 
 // SearchOptions mirrors the indexer search contract but is scoped for debrid providers.
 type SearchOptions struct {
-	Query           string
-	Categories      []string
-	MaxResults      int
-	IMDBID          string   // Optional IMDB ID to bypass metadata search
-	MediaType       string   // Optional: "movie" or "series" - helps with filtering
-	Year            int      // Optional: Release year - helps with filtering
-	AlternateTitles []string // Optional: alternate or foreign titles for fuzzy filtering
-	UserID          string   // Optional: user ID for per-user filtering settings
-	ClientID        string   // Optional: client ID for per-client filtering settings
+	Query               string
+	Categories          []string
+	MaxResults          int
+	IMDBID              string                       // Optional IMDB ID to bypass metadata search
+	MediaType           string                       // Optional: "movie" or "series" - helps with filtering
+	Year                int                          // Optional: Release year - helps with filtering
+	AlternateTitles     []string                     // Optional: alternate or foreign titles for fuzzy filtering
+	UserID              string                       // Optional: user ID for per-user filtering settings
+	ClientID            string                       // Optional: client ID for per-client filtering settings
+	TotalSeriesEpisodes int                          // Deprecated: use EpisodeResolver instead
+	EpisodeResolver     filter.EpisodeCountResolver  // Optional: resolver for accurate episode counts from metadata
 }
 
 // SearchService coordinates queries against configured debrid providers.
@@ -348,18 +350,21 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)
 	if !bypassFiltering && ShouldFilter(parsed) {
-		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s", parsed.Title, parsed.Year, parsed.MediaType)
+		hasResolver := opts.EpisodeResolver != nil
+		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s, hasEpisodeResolver=%v", parsed.Title, parsed.Year, parsed.MediaType, hasResolver)
 		filterOpts := FilterOptions{
-			ExpectedTitle:    parsed.Title,
-			ExpectedYear:     parsed.Year,
-			MediaType:        parsed.MediaType,
-			MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
-			MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
-			MaxResolution:    filterSettings.MaxResolution,
-			HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-			PrioritizeHdr:    filterSettings.PrioritizeHdr,
-			AlternateTitles:  opts.AlternateTitles,
-			FilterOutTerms:   filterSettings.FilterOutTerms,
+			ExpectedTitle:       parsed.Title,
+			ExpectedYear:        parsed.Year,
+			MediaType:           parsed.MediaType,
+			MaxSizeMovieGB:      filterSettings.MaxSizeMovieGB,
+			MaxSizeEpisodeGB:    filterSettings.MaxSizeEpisodeGB,
+			MaxResolution:       filterSettings.MaxResolution,
+			HDRDVPolicy:         filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
+			PrioritizeHdr:       filterSettings.PrioritizeHdr,
+			AlternateTitles:     opts.AlternateTitles,
+			FilterOutTerms:      filterSettings.FilterOutTerms,
+			TotalSeriesEpisodes: opts.TotalSeriesEpisodes,
+			EpisodeResolver:     opts.EpisodeResolver,
 		}
 		aggregate = FilterResults(aggregate, filterOpts)
 	}

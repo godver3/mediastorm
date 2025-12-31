@@ -113,6 +113,7 @@ func main() {
 	debridSearchService := debrid.NewSearchService(cfgManager)
 	indexerService := indexer.NewService(cfgManager, metadataService, debridSearchService)
 	indexerHandler := handlers.NewIndexerHandler(indexerService, *demoMode)
+	indexerHandler.SetMetadataService(metadataService) // Enable episode resolver for pack size filtering
 	// Note: user settings service wiring happens later after userSettingsService is created
 	debridProxyService := debrid.NewProxyService(cfgManager)
 	// Create HealthService with ffprobe path for pre-resolved stream validation
@@ -338,7 +339,8 @@ func main() {
 		prequeueHandler.SetUserSettingsService(userSettingsService)
 		prequeueHandler.SetClientSettingsService(clientSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
-		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, client settings, and config")
+		prequeueHandler.SetMetadataService(metadataService) // For episode counting in pack size filtering
+		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, client settings, config, and metadata")
 
 		// Configure video handler with user settings for HDR/DV policy checks
 		videoHandler.SetUserSettingsService(userSettingsService)

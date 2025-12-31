@@ -16,9 +16,15 @@ import (
 	"novastream/services/indexer"
 	"novastream/services/playback"
 	user_settings "novastream/services/user_settings"
+	"novastream/utils/filter"
 
 	"github.com/gorilla/mux"
 )
+
+// SeriesDetailsProvider provides series metadata for episode counting
+type SeriesDetailsProvider interface {
+	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+}
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
 type PrequeueHandler struct {
@@ -33,6 +39,7 @@ type PrequeueHandler struct {
 	userSettingsSvc   *user_settings.Service
 	clientSettingsSvc ClientSettingsProvider
 	configManager     *config.Manager
+	metadataSvc       SeriesDetailsProvider // For episode counting
 	demoMode          bool
 }
 
@@ -169,6 +176,11 @@ func (h *PrequeueHandler) SetConfigManager(cfgManager *config.Manager) {
 // SetClientSettingsService sets the client settings service for per-device filtering
 func (h *PrequeueHandler) SetClientSettingsService(svc ClientSettingsProvider) {
 	h.clientSettingsSvc = svc
+}
+
+// SetMetadataService sets the metadata service for episode counting
+func (h *PrequeueHandler) SetMetadataService(svc SeriesDetailsProvider) {
+	h.metadataSvc = svc
 }
 
 // Prequeue initiates a prequeue request for a title
@@ -354,15 +366,25 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 
 	log.Printf("[prequeue] Searching with query: %q", query)
 
+	// Create episode resolver for TV shows to enable accurate pack size filtering
+	var episodeResolver *filter.SeriesEpisodeResolver
+	if mediaType == "series" && h.metadataSvc != nil {
+		episodeResolver = h.createEpisodeResolver(ctx, titleName, year, imdbID)
+		if episodeResolver != nil {
+			log.Printf("[prequeue] Episode resolver created: %d total episodes, %d seasons", episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
+		}
+	}
+
 	// Search for results (match manual selection limit for consistent fallback coverage)
 	results, err := h.indexerSvc.Search(ctx, indexer.SearchOptions{
-		Query:      query,
-		MaxResults: 50,
-		MediaType:  mediaType,
-		IMDBID:     imdbID,
-		Year:       year,
-		UserID:     userID,
-		ClientID:   clientID,
+		Query:           query,
+		MaxResults:      50,
+		MediaType:       mediaType,
+		IMDBID:          imdbID,
+		Year:            year,
+		UserID:          userID,
+		ClientID:        clientID,
+		EpisodeResolver: episodeResolver,
 	})
 	if err != nil {
 		log.Printf("[prequeue] Search failed: %v", err)
@@ -816,6 +838,53 @@ func (h *PrequeueHandler) buildSearchQuery(titleName, mediaType string, targetEp
 // padNumber pads a number to 2 digits
 func padNumber(n int) string {
 	return fmt.Sprintf("%02d", n)
+}
+
+// createEpisodeResolver fetches series metadata and creates an episode resolver
+// for accurate pack size filtering
+func (h *PrequeueHandler) createEpisodeResolver(ctx context.Context, titleName string, year int, imdbID string) *filter.SeriesEpisodeResolver {
+	if h.metadataSvc == nil {
+		return nil
+	}
+
+	// Build query using available identifiers
+	query := models.SeriesDetailsQuery{
+		Name: titleName,
+		Year: year,
+	}
+
+	// Fetch series details from metadata service
+	details, err := h.metadataSvc.SeriesDetails(ctx, query)
+	if err != nil {
+		log.Printf("[prequeue] Failed to get series details for episode resolver: %v", err)
+		return nil
+	}
+
+	if details == nil || len(details.Seasons) == 0 {
+		log.Printf("[prequeue] No season data available for episode resolver")
+		return nil
+	}
+
+	// Build season -> episode count map
+	seasonCounts := make(map[int]int)
+	for _, season := range details.Seasons {
+		// Skip specials (season 0) unless explicitly included
+		if season.Number > 0 {
+			// Use EpisodeCount if available, otherwise count episodes
+			count := season.EpisodeCount
+			if count == 0 {
+				count = len(season.Episodes)
+			}
+			seasonCounts[season.Number] = count
+		}
+	}
+
+	if len(seasonCounts) == 0 {
+		log.Printf("[prequeue] No valid seasons found for episode resolver")
+		return nil
+	}
+
+	return filter.NewSeriesEpisodeResolver(seasonCounts)
 }
 
 // compatibleAudioCodecs lists codecs that can be played without transcoding

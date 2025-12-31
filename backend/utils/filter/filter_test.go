@@ -215,3 +215,219 @@ func TestShouldFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestResults_PackSizeCalculation(t *testing.T) {
+	// Test that complete packs are not rejected based on full pack size
+	// when per-episode size is within limit
+	t.Run("complete pack with 4 seasons passes size limit", func(t *testing.T) {
+		// ReBoot: 4 seasons × ~13 eps = 52 eps, 26 GB pack = ~0.5 GB/ep
+		results := []models.NZBResult{
+			{
+				Title:     "ReBoot.1994.COMPLETE.1080p.WEBRip.x264-[TroubleGod]",
+				SizeBytes: 26 * 1024 * 1024 * 1024, // 26 GB
+			},
+		}
+
+		opts := Options{
+			ExpectedTitle:    "ReBoot",
+			ExpectedYear:     1994,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 10.0, // 10 GB per episode limit
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass: 26 GB / (4 seasons × 13 eps) = ~0.5 GB per episode
+		if len(filtered) != 1 {
+			t.Errorf("Expected complete pack to pass size filter (per-ep size < limit), got %d results", len(filtered))
+		}
+	})
+
+	t.Run("season pack with 1 season passes size limit", func(t *testing.T) {
+		// Breaking Bad S01: 1 season × ~13 eps = 13 eps, 13 GB pack = 1 GB/ep
+		results := []models.NZBResult{
+			{
+				Title:     "Breaking.Bad.S01.1080p.BluRay.x265",
+				SizeBytes: 13 * 1024 * 1024 * 1024, // 13 GB
+			},
+		}
+
+		opts := Options{
+			ExpectedTitle:    "Breaking Bad",
+			ExpectedYear:     0,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 5.0, // 5 GB per episode limit
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass: 13 GB / 13 eps = 1 GB per episode
+		if len(filtered) != 1 {
+			t.Errorf("Expected season pack to pass size filter (per-ep size < limit), got %d results", len(filtered))
+		}
+	})
+
+	t.Run("massive pack exceeds per-episode limit", func(t *testing.T) {
+		// Giant pack: 5 seasons × 13 eps = 65 eps, 1700 GB pack = ~26 GB/ep
+		results := []models.NZBResult{
+			{
+				Title:     "Breaking.Bad.COMPLETE.S01-S05.2160p.WEB-DL",
+				SizeBytes: 1700 * 1024 * 1024 * 1024, // 1700 GB
+			},
+		}
+
+		opts := Options{
+			ExpectedTitle:    "Breaking Bad",
+			ExpectedYear:     0,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 10.0, // 10 GB per episode limit
+		}
+
+		filtered := Results(results, opts)
+
+		// Should fail: 1700 GB / 65 eps = ~26 GB per episode > 10 GB limit
+		if len(filtered) != 0 {
+			t.Errorf("Expected massive pack to be filtered (per-ep size > limit), got %d results", len(filtered))
+		}
+	})
+
+	t.Run("with TotalSeriesEpisodes provided", func(t *testing.T) {
+		// Pack with exact episode count from metadata
+		results := []models.NZBResult{
+			{
+				Title:     "ReBoot.1994.COMPLETE.1080p.WEBRip.x264",
+				SizeBytes: 26 * 1024 * 1024 * 1024, // 26 GB
+			},
+		}
+
+		opts := Options{
+			ExpectedTitle:       "ReBoot",
+			ExpectedYear:        1994,
+			IsMovie:             false,
+			MaxSizeEpisodeGB:    1.0, // 1 GB per episode limit
+			TotalSeriesEpisodes: 47,  // Actual ReBoot episode count
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass: 26 GB / 47 eps = ~0.55 GB per episode < 1 GB limit
+		if len(filtered) != 1 {
+			t.Errorf("Expected pack to pass with TotalSeriesEpisodes, got %d results", len(filtered))
+		}
+	})
+
+	t.Run("single episode not treated as pack", func(t *testing.T) {
+		results := []models.NZBResult{
+			{
+				Title:     "ReBoot.S01E01.1080p.WEBRip.x264",
+				SizeBytes: 12 * 1024 * 1024 * 1024, // 12 GB single episode
+			},
+		}
+
+		opts := Options{
+			ExpectedTitle:    "ReBoot",
+			ExpectedYear:     0,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 10.0, // 10 GB per episode limit
+		}
+
+		filtered := Results(results, opts)
+
+		// Should fail: single episode at 12 GB > 10 GB limit
+		if len(filtered) != 0 {
+			t.Errorf("Expected single episode to be filtered, got %d results", len(filtered))
+		}
+	})
+
+	t.Run("with EpisodeResolver for complete pack", func(t *testing.T) {
+		// Complete pack without season info - uses resolver for total episodes
+		results := []models.NZBResult{
+			{
+				Title:     "ReBoot.1994.COMPLETE.1080p.WEBRip.x264",
+				SizeBytes: 26 * 1024 * 1024 * 1024, // 26 GB
+			},
+		}
+
+		// Mock resolver with season counts: S1=13, S2=12, S3=10, S4=12 = 47 total
+		resolver := NewSeriesEpisodeResolver(map[int]int{
+			1: 13,
+			2: 12,
+			3: 10,
+			4: 12,
+		})
+
+		opts := Options{
+			ExpectedTitle:    "ReBoot",
+			ExpectedYear:     1994,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 1.0, // 1 GB per episode limit
+			EpisodeResolver:  resolver,
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass: 26 GB / 47 eps = ~0.55 GB per episode < 1 GB limit
+		if len(filtered) != 1 {
+			t.Errorf("Expected complete pack to pass with EpisodeResolver, got %d results", len(filtered))
+		}
+	})
+
+	t.Run("with EpisodeResolver for season pack", func(t *testing.T) {
+		// Season 2 pack - uses resolver for that specific season
+		results := []models.NZBResult{
+			{
+				Title:     "Breaking.Bad.S02.1080p.BluRay.x265",
+				SizeBytes: 13 * 1024 * 1024 * 1024, // 13 GB
+			},
+		}
+
+		// Mock resolver with Breaking Bad seasons
+		resolver := NewSeriesEpisodeResolver(map[int]int{
+			1: 7,
+			2: 13,
+			3: 13,
+			4: 13,
+			5: 16,
+		})
+
+		opts := Options{
+			ExpectedTitle:    "Breaking Bad",
+			ExpectedYear:     0,
+			IsMovie:          false,
+			MaxSizeEpisodeGB: 2.0, // 2 GB per episode limit
+			EpisodeResolver:  resolver,
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass: 13 GB / 13 eps (S02) = 1.0 GB per episode < 2 GB limit
+		if len(filtered) != 1 {
+			t.Errorf("Expected season pack to pass with EpisodeResolver, got %d results", len(filtered))
+		}
+	})
+}
+
+func TestEstimatePackEpisodeCount(t *testing.T) {
+	tests := []struct {
+		name                string
+		seasons             []int
+		totalSeriesEpisodes int
+		expected            int
+	}{
+		{"with totalSeriesEpisodes", []int{1, 2, 3}, 47, 47},
+		{"5 seasons no total", []int{1, 2, 3, 4, 5}, 0, 65}, // 5 × 13
+		{"1 season no total", []int{1}, 0, 13},              // 1 × 13
+		{"no info", nil, 0, 0},                              // 0 = skip size filter
+		{"empty seasons no total", []int{}, 0, 0},           // 0 = skip size filter
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := estimatePackEpisodeCount(tt.seasons, tt.totalSeriesEpisodes)
+			if result != tt.expected {
+				t.Errorf("estimatePackEpisodeCount(%v, %d) = %d, want %d",
+					tt.seasons, tt.totalSeriesEpisodes, result, tt.expected)
+			}
+		})
+	}
+}

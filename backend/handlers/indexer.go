@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"novastream/models"
 	"novastream/services/debrid"
 	"novastream/services/indexer"
+	"novastream/utils/filter"
 )
 
 type indexerService interface {
@@ -20,12 +22,18 @@ type indexerService interface {
 var _ indexerService = (*indexer.Service)(nil)
 
 type IndexerHandler struct {
-	Service  indexerService
-	DemoMode bool
+	Service     indexerService
+	MetadataSvc SeriesDetailsProvider
+	DemoMode    bool
 }
 
 func NewIndexerHandler(s indexerService, demoMode bool) *IndexerHandler {
 	return &IndexerHandler{Service: s, DemoMode: demoMode}
+}
+
+// SetMetadataService sets the metadata service for episode counting
+func (h *IndexerHandler) SetMetadataService(svc SeriesDetailsProvider) {
+	h.MetadataSvc = svc
 }
 
 func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -52,15 +60,26 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Create episode resolver for TV shows to enable accurate pack size filtering
+	var episodeResolver *filter.SeriesEpisodeResolver
+	if mediaType == "series" && h.MetadataSvc != nil {
+		episodeResolver = h.createEpisodeResolver(r.Context(), query, year)
+		if episodeResolver != nil {
+			log.Printf("[indexer] Episode resolver created: %d total episodes, %d seasons",
+				episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
+		}
+	}
+
 	opts := indexer.SearchOptions{
-		Query:      query,
-		Categories: categories,
-		MaxResults: max,
-		IMDBID:     imdbID,
-		MediaType:  mediaType,
-		Year:       year,
-		UserID:     userID,
-		ClientID:   clientID,
+		Query:           query,
+		Categories:      categories,
+		MaxResults:      max,
+		IMDBID:          imdbID,
+		MediaType:       mediaType,
+		Year:            year,
+		UserID:          userID,
+		ClientID:        clientID,
+		EpisodeResolver: episodeResolver,
 	}
 
 	results, err := h.Service.Search(r.Context(), opts)
@@ -111,4 +130,61 @@ func buildMaskedTitle(query string, year int, mediaType string) string {
 
 func (h *IndexerHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// createEpisodeResolver fetches series metadata and creates an episode resolver
+// for accurate pack size filtering
+func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string, year int) *filter.SeriesEpisodeResolver {
+	if h.MetadataSvc == nil {
+		return nil
+	}
+
+	// Parse title from query (e.g., "ReBoot S03E02" -> "ReBoot")
+	parsed := debrid.ParseQuery(query)
+	titleName := strings.TrimSpace(parsed.Title)
+	if titleName == "" {
+		titleName = strings.TrimSpace(query)
+	}
+	if titleName == "" {
+		return nil
+	}
+
+	// Build query using available identifiers
+	metaQuery := models.SeriesDetailsQuery{
+		Name: titleName,
+		Year: year,
+	}
+
+	// Fetch series details from metadata service
+	details, err := h.MetadataSvc.SeriesDetails(ctx, metaQuery)
+	if err != nil {
+		log.Printf("[indexer] Failed to get series details for episode resolver: %v", err)
+		return nil
+	}
+
+	if details == nil || len(details.Seasons) == 0 {
+		log.Printf("[indexer] No season data available for episode resolver")
+		return nil
+	}
+
+	// Build season -> episode count map
+	seasonCounts := make(map[int]int)
+	for _, season := range details.Seasons {
+		// Skip specials (season 0) unless explicitly included
+		if season.Number > 0 {
+			// Use EpisodeCount if available, otherwise count episodes
+			count := season.EpisodeCount
+			if count == 0 {
+				count = len(season.Episodes)
+			}
+			seasonCounts[season.Number] = count
+		}
+	}
+
+	if len(seasonCounts) == 0 {
+		log.Printf("[indexer] No valid seasons found for episode resolver")
+		return nil
+	}
+
+	return filter.NewSeriesEpisodeResolver(seasonCounts)
 }

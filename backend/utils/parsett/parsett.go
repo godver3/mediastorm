@@ -54,6 +54,7 @@ type ParsedTitle struct {
 	Hardcoded  bool     `json:"hardcoded,omitempty"`
 	Proper     bool     `json:"proper,omitempty"`
 	Repack     bool     `json:"repack,omitempty"`
+	Complete   bool     `json:"complete,omitempty"`   // Complete series/season pack
 	Site       string   `json:"site,omitempty"`
 	BitDepth   string   `json:"bit_depth,omitempty"`  // e.g., "10bit"
 	HDR        []string `json:"hdr,omitempty"`        // HDR formats like DV, HDR, HDR10+
