@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Image } from '@/components/Image';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { useAuth } from '@/components/AuthContext';
@@ -43,7 +43,6 @@ export default function LoginScreen() {
   const [showServerConfig, setShowServerConfig] = useState(!backendUrl);
   const [serverUrl, setServerUrl] = useState(backendUrl?.replace(/\/api$/, '') || '');
   const [isSavingServer, setIsSavingServer] = useState(false);
-  const tvPasswordFocused = useSharedValue(0);
 
   // Logo source with fallback chain: local → backend → github
   const [logoSource, setLogoSource] = useState<'local' | 'backend' | 'github'>('local');
@@ -78,22 +77,15 @@ export default function LoginScreen() {
         clearTimeout(keyboardHideTimeout.current);
         keyboardHideTimeout.current = null;
       }
-      // Only animate up for lower fields (password, server URL)
-      if (lowerFieldFocused.current) {
+      // Only animate up for lower fields (password, server URL) - mobile only
+      if (lowerFieldFocused.current && !Platform.isTV) {
         setKeyboardVisible(true);
-        if (Platform.isTV) {
-          tvPasswordFocused.value = 1;
-        }
       }
     });
 
     const hideSub = Keyboard.addListener(hideEvent, () => {
       keyboardHideTimeout.current = setTimeout(() => {
         setKeyboardVisible(false);
-        // TV: revert animation when keyboard hides
-        if (Platform.isTV) {
-          tvPasswordFocused.value = 0;
-        }
       }, 100);
     });
 
@@ -104,7 +96,7 @@ export default function LoginScreen() {
         clearTimeout(keyboardHideTimeout.current);
       }
     };
-  }, [tvPasswordFocused]);
+  }, []);
 
   // Mobile: shift content up when keyboard is visible
   const KEYBOARD_OFFSET = 150;
@@ -118,16 +110,9 @@ export default function LoginScreen() {
     ],
   }));
 
-  // TV: shift content up when keyboard is shown
-  const TV_PASSWORD_OFFSET = 120;
+  // TV: no content shift animation (disabled)
   const tvAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      {
-        translateY: withTiming(tvPasswordFocused.value ? -TV_PASSWORD_OFFSET : 0, {
-          duration: 250,
-        }),
-      },
-    ],
+    transform: [{ translateY: 0 }],
   }));
 
   // Show auth errors as toasts
@@ -226,7 +211,7 @@ export default function LoginScreen() {
   if (Platform.isTV) {
     return (
       <SpatialNavigationRoot isActive={true}>
-        <FixedSafeAreaView style={styles.safeArea}>
+        <FixedSafeAreaView style={styles.safeArea} edges={[]}>
           {/* Static gradient background */}
           <LinearGradient
             colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
@@ -265,6 +250,7 @@ export default function LoginScreen() {
                       <SpatialNavigationFocusableView
                         focusKey="server-url"
                         onSelect={() => serverUrlRef.current?.focus()}
+                        onFocus={() => Platform.OS === 'android' && serverUrlRef.current?.focus()}
                         onBlur={() => serverUrlRef.current?.blur()}
                       >
                         {({ isFocused }: { isFocused: boolean }) => (
@@ -272,6 +258,7 @@ export default function LoginScreen() {
                             <View style={styles.inputContainer}>
                               <Text style={styles.inputLabel}>Server URL</Text>
                               <TextInput
+                                key={`server-url-${serverUrl}`}
                                 ref={serverUrlRef}
                                 defaultValue={serverUrl}
                                 onChangeText={(text) => {
@@ -299,16 +286,18 @@ export default function LoginScreen() {
                       </SpatialNavigationFocusableView>
                     </DefaultFocus>
 
-                    <FocusablePressable
-                      focusKey="server-connect"
-                      text="Connect"
-                      onSelect={handleSaveServer}
-                      loading={isSavingServer}
-                      style={styles.tvButton}
-                      focusedStyle={styles.tvButtonFocused}
-                      textStyle={styles.tvButtonText}
-                      focusedTextStyle={styles.tvButtonTextFocused}
-                    />
+                    <View>
+                      <FocusablePressable
+                        focusKey="server-connect"
+                        text="Connect"
+                        onSelect={handleSaveServer}
+                        loading={isSavingServer}
+                        style={styles.tvButton}
+                        focusedStyle={styles.tvButtonFocused}
+                        textStyle={styles.tvButtonText}
+                        focusedTextStyle={styles.tvButtonTextFocused}
+                      />
+                    </View>
                   </View>
                 ) : (
                   <View style={styles.formContainer}>
@@ -316,6 +305,7 @@ export default function LoginScreen() {
                       <SpatialNavigationFocusableView
                         focusKey="login-username"
                         onSelect={() => usernameRef.current?.focus()}
+                        onFocus={() => Platform.OS === 'android' && usernameRef.current?.focus()}
                         onBlur={() => usernameRef.current?.blur()}
                       >
                         {({ isFocused }: { isFocused: boolean }) => (
@@ -323,6 +313,7 @@ export default function LoginScreen() {
                             <View style={styles.inputContainer}>
                               <Text style={styles.inputLabel}>Username</Text>
                               <TextInput
+                                key={`username-${username}`}
                                 ref={usernameRef}
                                 defaultValue={username}
                                 onChangeText={(text) => {
@@ -353,6 +344,7 @@ export default function LoginScreen() {
                     <SpatialNavigationFocusableView
                       focusKey="login-password"
                       onSelect={() => passwordRef.current?.focus()}
+                      onFocus={() => Platform.OS === 'android' && passwordRef.current?.focus()}
                       onBlur={() => passwordRef.current?.blur()}
                     >
                       {({ isFocused }: { isFocused: boolean }) => (
@@ -360,6 +352,7 @@ export default function LoginScreen() {
                           <View style={styles.inputContainer}>
                             <Text style={styles.inputLabel}>Password</Text>
                             <TextInput
+                              key={`password-${password}`}
                               ref={passwordRef}
                               defaultValue={password}
                               onChangeText={(text) => {
@@ -387,26 +380,30 @@ export default function LoginScreen() {
                       )}
                     </SpatialNavigationFocusableView>
 
-                    <FocusablePressable
-                      focusKey="login-submit"
-                      text="Sign In"
-                      onSelect={handleLogin}
-                      loading={isLoading}
-                      style={styles.tvButton}
-                      focusedStyle={styles.tvButtonFocused}
-                      textStyle={styles.tvButtonText}
-                      focusedTextStyle={styles.tvButtonTextFocused}
-                    />
+                    <View>
+                      <FocusablePressable
+                        focusKey="login-submit"
+                        text="Sign In"
+                        onSelect={handleLogin}
+                        loading={isLoading}
+                        style={styles.tvButton}
+                        focusedStyle={styles.tvButtonFocused}
+                        textStyle={styles.tvButtonText}
+                        focusedTextStyle={styles.tvButtonTextFocused}
+                      />
+                    </View>
 
-                    <FocusablePressable
-                      focusKey="login-change-server"
-                      text="Change Server"
-                      onSelect={() => setShowServerConfig(true)}
-                      style={styles.tvSecondaryButton}
-                      focusedStyle={styles.tvSecondaryButtonFocused}
-                      textStyle={styles.tvButtonText}
-                      focusedTextStyle={styles.tvButtonTextFocused}
-                    />
+                    <View>
+                      <FocusablePressable
+                        focusKey="login-change-server"
+                        text="Change Server"
+                        onSelect={() => setShowServerConfig(true)}
+                        style={styles.tvSecondaryButton}
+                        focusedStyle={styles.tvSecondaryButtonFocused}
+                        textStyle={styles.tvButtonText}
+                        focusedTextStyle={styles.tvButtonTextFocused}
+                      />
+                    </View>
                   </View>
                 )}
               </SpatialNavigationNode>
@@ -665,8 +662,8 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
   const isAndroidTV = isTV && Platform.OS === 'android';
   const s = (value: number) =>
     isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.55) : value;
-  // Extra 50% scaling for specific text elements on tvOS
-  const sText = (value: number) => (isTvOS ? Math.round(s(value) * 1.5) : s(value));
+  // Extra 50% scaling for specific text elements on TV platforms
+  const sText = (value: number) => (isTV ? Math.round(s(value) * 1.5) : s(value));
 
   return StyleSheet.create({
     safeArea: {
@@ -687,7 +684,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     },
     card: {
       width: '100%',
-      maxWidth: s(400),
+      maxWidth: isTV ? s(500) : s(400),
       backgroundColor: theme.colors.background.surface,
       borderRadius: s(16),
       overflow: 'hidden',
@@ -764,24 +761,31 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       gap: s(16),
       paddingHorizontal: s(32),
       paddingBottom: s(32),
+      alignItems: 'center',
     },
     inputContainer: {
       marginBottom: s(8),
+      width: '100%',
     },
     inputLabel: {
       fontSize: sText(14),
       color: theme.colors.text.secondary,
       marginBottom: s(8),
+      textAlign: 'left',
     },
     input: {
       backgroundColor: theme.colors.background.elevated,
       borderWidth: 2,
       borderColor: 'transparent',
       borderRadius: s(8),
-      padding: s(14),
+      paddingVertical: s(14),
+      paddingLeft: isAndroidTV ? s(12) : 0,
+      paddingRight: 0,
       fontSize: s(16),
       color: theme.colors.text.primary,
       textAlign: 'left',
+      minWidth: s(340),
+      height: s(56),
     },
     inputFocused: {
       borderColor: theme.colors.accent.primary,
@@ -797,51 +801,55 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     },
     tvButton: {
       backgroundColor: theme.colors.accent.primary,
-      alignSelf: 'center',
-      width: '60%',
+      minWidth: s(280),
       paddingVertical: s(12),
-      paddingHorizontal: s(24),
+      paddingHorizontal: s(32),
       minHeight: s(48),
       justifyContent: 'center',
+      alignItems: 'center',
       overflow: 'visible',
       borderWidth: 2,
       borderColor: 'transparent',
+      borderRadius: s(8),
     },
     tvButtonFocused: {
       backgroundColor: theme.colors.accent.primary,
-      alignSelf: 'center',
-      width: '60%',
+      minWidth: s(280),
       paddingVertical: s(12),
-      paddingHorizontal: s(24),
+      paddingHorizontal: s(32),
       minHeight: s(48),
       justifyContent: 'center',
+      alignItems: 'center',
       overflow: 'visible',
       borderWidth: 2,
       borderColor: theme.colors.text.primary,
+      borderRadius: s(8),
     },
     tvSecondaryButton: {
       backgroundColor: 'transparent',
       borderWidth: 2,
       borderColor: 'transparent',
-      alignSelf: 'center',
-      width: '60%',
+      minWidth: s(280),
       paddingVertical: s(10),
-      paddingHorizontal: s(24),
+      paddingHorizontal: s(32),
       minHeight: s(44),
       justifyContent: 'center',
+      alignItems: 'center',
       overflow: 'visible',
+      borderRadius: s(8),
     },
     tvSecondaryButtonFocused: {
       backgroundColor: theme.colors.background.elevated,
-      alignSelf: 'center',
-      width: '60%',
+      minWidth: s(280),
       paddingVertical: s(10),
-      paddingHorizontal: s(24),
+      paddingHorizontal: s(32),
       minHeight: s(44),
       justifyContent: 'center',
+      alignItems: 'center',
       overflow: 'visible',
       borderWidth: 2,
       borderColor: theme.colors.text.primary,
+      borderRadius: s(8),
     },
     tvButtonText: {
       fontSize: s(18),
