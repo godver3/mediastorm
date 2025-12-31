@@ -1860,43 +1860,8 @@ export default function DetailsScreen() {
           console.error('[prequeue] Failed to create HLS session:', hlsError);
           throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
         }
-      } else if (Platform.OS !== 'web') {
-        // Native platforms (iOS/Android) - use HLS for all content for react-native-video compatibility
-        // iOS AVPlayer doesn't support MKV containers natively
-        console.log('[prequeue] Native platform SDR content - using HLS streaming');
-        setSelectionInfo('Preparing HLS stream...');
-
-        try {
-          // Use prequeue-selected tracks if available
-          const selectedAudioTrack =
-            prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-              ? prequeueStatus.selectedAudioTrack
-              : undefined;
-          const selectedSubtitleTrack =
-            prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-              ? prequeueStatus.selectedSubtitleTrack
-              : undefined;
-
-          const hlsResponse = await apiService.createHlsSession({
-            path: prequeueStatus.streamPath,
-            start: typeof startOffset === 'number' ? startOffset : undefined,
-            audioTrack: selectedAudioTrack,
-            subtitleTrack: selectedSubtitleTrack,
-            profileId: activeUserId ?? undefined,
-            profileName: activeUser?.name,
-          });
-
-          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-          const authToken = apiService.getAuthToken();
-          streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
-          hlsDuration = hlsResponse.duration;
-          console.log('[prequeue] Created HLS session for SDR content, using URL:', streamUrl);
-        } catch (hlsError) {
-          console.error('[prequeue] Failed to create HLS session for SDR:', hlsError);
-          throw new Error(`Failed to create HLS session: ${hlsError}`);
-        }
       } else {
-        // Web - build direct stream URL
+        // SDR content - build direct stream URL
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const authToken = apiService.getAuthToken();
         // Build URL manually to ensure proper encoding of special chars like semicolons
@@ -1906,7 +1871,7 @@ export default function DetailsScreen() {
         if (authToken) {
           queryParts.push(`token=${encodeURIComponent(authToken)}`);
         }
-        queryParts.push('transmux=0'); // Let web player handle it
+        queryParts.push('transmux=0'); // Let native player handle it
         // Add profile info for stream tracking
         if (activeUserId) {
           queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
@@ -1915,7 +1880,7 @@ export default function DetailsScreen() {
           queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
         }
         streamUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
-        console.log('[prequeue] Web platform - using direct stream URL:', streamUrl);
+        console.log('[prequeue] Using direct stream URL:', streamUrl);
       }
 
       // Build display title

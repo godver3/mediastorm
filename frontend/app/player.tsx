@@ -4181,9 +4181,9 @@ export default function PlayerScreen() {
               // Always disable VLC's built-in subtitles - we use SubtitleOverlay for consistent sizing
               selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
-              // Always use react-native-video on native platforms (all content is HLS)
-              forceRnvPlayer={Platform.OS !== 'web'}
-              forceNativeFullscreen={Platform.OS !== 'web'}
+              // Use react-native-video for HDR content (VLC tone-maps to SDR)
+              forceRnvPlayer={routeHasAnyHDR}
+              forceNativeFullscreen={Platform.OS !== 'web' && (isHlsStream || routeHasAnyHDR)}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{
                 title: episodeName || title || undefined,
