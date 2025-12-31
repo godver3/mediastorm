@@ -47,6 +47,8 @@ interface ControlsProps {
   hasNextEpisode?: boolean;
   onPreviousEpisode?: () => void;
   onNextEpisode?: () => void;
+  /** Shuffle mode - disables prev, enables random next */
+  shuffleMode?: boolean;
   /** Subtitle offset adjustment (for external/searched subtitles) */
   showSubtitleOffset?: boolean;
   subtitleOffset?: number;
@@ -98,6 +100,7 @@ const Controls: React.FC<ControlsProps> = ({
   hasNextEpisode = false,
   onPreviousEpisode,
   onNextEpisode,
+  shuffleMode = false,
   showSubtitleOffset = false,
   subtitleOffset = 0,
   onSubtitleOffsetEarlier,
@@ -285,13 +288,13 @@ const Controls: React.FC<ControlsProps> = ({
           {onPreviousEpisode && (
             <View style={styles.skipButtonContainer}>
               <Pressable
-                onPress={hasPreviousEpisode ? onPreviousEpisode : undefined}
-                style={[styles.episodeButton, !hasPreviousEpisode && styles.episodeButtonDisabled]}
-                disabled={!hasPreviousEpisode}>
+                onPress={hasPreviousEpisode && !shuffleMode ? onPreviousEpisode : undefined}
+                style={[styles.episodeButton, (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonDisabled]}
+                disabled={!hasPreviousEpisode || shuffleMode}>
                 <Ionicons
                   name="play-skip-back"
                   size={24}
-                  color={hasPreviousEpisode ? theme.colors.text.primary : theme.colors.text.disabled}
+                  color={hasPreviousEpisode && !shuffleMode ? theme.colors.text.primary : theme.colors.text.disabled}
                 />
               </Pressable>
             </View>
@@ -324,13 +327,13 @@ const Controls: React.FC<ControlsProps> = ({
           {onNextEpisode && (
             <View style={styles.skipButtonContainer}>
               <Pressable
-                onPress={hasNextEpisode ? onNextEpisode : undefined}
-                style={[styles.episodeButton, !hasNextEpisode && styles.episodeButtonDisabled]}
-                disabled={!hasNextEpisode}>
+                onPress={hasNextEpisode || shuffleMode ? onNextEpisode : undefined}
+                style={[styles.episodeButton, !hasNextEpisode && !shuffleMode && styles.episodeButtonDisabled]}
+                disabled={!hasNextEpisode && !shuffleMode}>
                 <Ionicons
-                  name="play-skip-forward"
+                  name={shuffleMode ? 'shuffle' : 'play-skip-forward'}
                   size={24}
-                  color={hasNextEpisode ? theme.colors.text.primary : theme.colors.text.disabled}
+                  color={hasNextEpisode || shuffleMode ? theme.colors.text.primary : theme.colors.text.disabled}
                 />
               </Pressable>
             </View>
@@ -515,32 +518,32 @@ const Controls: React.FC<ControlsProps> = ({
                 )}
                 {/* Episode navigation buttons for TV platforms */}
                 {isTvPlatform && onPreviousEpisode && (
-                  <View style={[styles.trackButtonGroup, !hasPreviousEpisode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
+                  <View style={[styles.trackButtonGroup, (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <FocusablePressable
                       icon="play-skip-back"
                       focusKey="previous-episode-button"
                       onSelect={onPreviousEpisode}
                       onFocus={handlePreviousEpisodeFocus}
                       style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode}
+                      disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode || shuffleMode}
                     />
-                    <Text style={[styles.trackLabel, !hasPreviousEpisode && styles.trackLabelDisabled]} numberOfLines={1}>
+                    <Text style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]} numberOfLines={1}>
                       Prev
                     </Text>
                   </View>
                 )}
                 {isTvPlatform && onNextEpisode && (
-                  <View style={[styles.trackButtonGroup, !hasNextEpisode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
+                  <View style={[styles.trackButtonGroup, !hasNextEpisode && !shuffleMode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <FocusablePressable
-                      icon="play-skip-forward"
+                      icon={shuffleMode ? 'shuffle' : 'play-skip-forward'}
                       focusKey="next-episode-button"
                       onSelect={onNextEpisode}
                       onFocus={handleNextEpisodeFocus}
                       style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null || !hasNextEpisode}
+                      disabled={isSeeking || activeMenu !== null || (!hasNextEpisode && !shuffleMode)}
                     />
-                    <Text style={[styles.trackLabel, !hasNextEpisode && styles.trackLabelDisabled]} numberOfLines={1}>
-                      Next
+                    <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]} numberOfLines={1}>
+                      {shuffleMode ? 'Shuffle' : 'Next'}
                     </Text>
                   </View>
                 )}

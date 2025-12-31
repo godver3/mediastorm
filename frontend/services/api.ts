@@ -316,6 +316,13 @@ export interface HlsSessionStatus {
   recoveryAttempts: number;
 }
 
+export interface HlsSeekResponse {
+  sessionId: string;
+  startOffset: number;
+  duration?: number;
+  playlistUrl: string;
+}
+
 export interface WatchProgress {
   percentage: number;
   currentSeason?: number;
@@ -1739,6 +1746,26 @@ class ApiService {
       throw new Error('Session ID is required for status');
     }
     return this.request<HlsSessionStatus>(`/video/hls/${encodeURIComponent(sessionId)}/status`);
+  }
+
+  /**
+   * Seek within an existing HLS session by restarting transcoding from a new offset.
+   * This is faster than creating a new session since it reuses the existing session structure.
+   * @param sessionId - The ID of the existing HLS session
+   * @param targetTime - The target seek position in absolute media time (seconds)
+   * @returns Updated session info with new start offset and playlist URL
+   */
+  async seekHlsSession(sessionId: string, targetTime: number): Promise<HlsSeekResponse> {
+    if (!sessionId) {
+      throw new Error('Session ID is required for seek');
+    }
+    if (targetTime < 0) {
+      throw new Error('Target time must be non-negative');
+    }
+    return this.request<HlsSeekResponse>(
+      `/video/hls/${encodeURIComponent(sessionId)}/seek?time=${targetTime}`,
+      { method: 'POST' },
+    );
   }
 
   /**

@@ -1085,7 +1085,10 @@ export default function PlayerScreen() {
 
     // For existing HLS sessions with a start offset, playbackOffsetRef was already set above
     // For new sessions or existing sessions starting from 0, start at 0
-    if (isExistingHlsSession && initialStartOffset > 0) {
+    // IMPORTANT: Skip resetting during HLS seek transition - warmStartHlsSession already set the correct offset
+    if (pausedForSeekRef.current) {
+      console.log('🎬 [player] skipping offset reset during seek transition');
+    } else if (isExistingHlsSession && initialStartOffset > 0) {
       // Existing HLS session starts at the offset (playbackOffsetRef already set above)
       sessionBufferEndRef.current = initialStartOffset;
       currentTimeRef.current = initialStartOffset;
@@ -2117,15 +2120,15 @@ export default function PlayerScreen() {
         return;
       }
 
-      // Skip updating currentTime during HLS seek transition to prevent
-      // stale progress events from overwriting the correct seek position
-      if (pausedForSeekRef.current) {
-        return;
-      }
-
       const absoluteTime = playbackOffsetRef.current + time;
-      currentTimeRef.current = absoluteTime;
-      setCurrentTime(absoluteTime);
+
+      // Skip updating currentTime during HLS seek transition to prevent
+      // stale progress events from overwriting the correct seek position.
+      // We still continue processing the rest of the function (resume logic, etc.)
+      if (!pausedForSeekRef.current) {
+        currentTimeRef.current = absoluteTime;
+        setCurrentTime(absoluteTime);
+      }
 
       // Debug: Log first 5 progress events to diagnose start position issues
       const eventCount = progressEventCountRef.current;
@@ -3998,15 +4001,15 @@ export default function PlayerScreen() {
         return;
       }
 
-      console.log('[player] navigating to episode', { season: episode.seasonNumber, episode: episode.episodeNumber });
+      console.log('[player] navigating to episode', { season: episode.seasonNumber, episode: episode.episodeNumber, shuffleMode });
 
-      // Set the next episode in playback navigation with autoPlay flag
-      playbackNavigation.setNextEpisode(seriesId, episode.seasonNumber, episode.episodeNumber, true);
+      // Set the next episode in playback navigation with autoPlay flag, preserving shuffle mode
+      playbackNavigation.setNextEpisode(seriesId, episode.seasonNumber, episode.episodeNumber, true, shuffleMode);
 
       // Navigate back to details page - it will auto-play the episode
       router.back();
     },
-    [titleId, imdbId, tvdbId],
+    [titleId, imdbId, tvdbId, shuffleMode],
   );
 
   const handlePreviousEpisode = useCallback(() => {
@@ -4018,12 +4021,24 @@ export default function PlayerScreen() {
   }, [hasPreviousEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
 
   const handleNextEpisode = useCallback(() => {
+    // Shuffle mode: pick a random episode (different from current)
+    if (shuffleMode && allEpisodes.length > 1) {
+      let randomIndex: number;
+      let nextEpisode: SeriesEpisode;
+      do {
+        randomIndex = Math.floor(Math.random() * allEpisodes.length);
+        nextEpisode = allEpisodes[randomIndex];
+      } while (nextEpisode.seasonNumber === seasonNumber && nextEpisode.episodeNumber === episodeNumber);
+      navigateToEpisode(nextEpisode);
+      return;
+    }
+    // Sequential mode
     if (!hasNextEpisode) return;
     const nextEpisode = allEpisodes[currentEpisodeIndex + 1];
     if (nextEpisode) {
       navigateToEpisode(nextEpisode);
     }
-  }, [hasNextEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
+  }, [hasNextEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode, shuffleMode, seasonNumber, episodeNumber]);
 
   // Hide loading screen on unmount (e.g., if user navigates back before video loads)
   useEffect(() => {
@@ -4273,6 +4288,7 @@ export default function PlayerScreen() {
                               onSubtitleOffsetLater={handleSubtitleOffsetLater}
                               seekBackwardSeconds={seekBackwardSeconds}
                               seekForwardSeconds={seekForwardSeconds}
+                              shuffleMode={shuffleMode}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -4378,6 +4394,7 @@ export default function PlayerScreen() {
                           onSubtitleOffsetLater={handleSubtitleOffsetLater}
                           seekBackwardSeconds={seekBackwardSeconds}
                           seekForwardSeconds={seekForwardSeconds}
+                          shuffleMode={shuffleMode}
                         />
                       </SpatialNavigationNode>
                     </View>

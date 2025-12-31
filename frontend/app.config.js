@@ -95,6 +95,7 @@ module.exports = ({ config }) => {
       name: 'strmr',
       slug: 'strmr',
       scheme: 'com.strmr.app',
+      userInterfaceStyle: 'automatic',
       icon: './assets/ios_icons/icon-1024.png',
       web: {
         favicon: './web_icons/favicon-32x32.png',
