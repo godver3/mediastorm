@@ -53,11 +53,12 @@ type UsenetSettings struct {
 }
 
 type IndexerConfig struct {
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	APIKey  string `json:"apiKey"`
-	Type    string `json:"type"` // newznab | torznab
-	Enabled bool   `json:"enabled"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	APIKey     string `json:"apiKey"`
+	Type       string `json:"type"`       // newznab | torznab
+	Categories string `json:"categories"` // Comma-separated newznab category IDs (e.g., "2000,2010,2020" for movies, "5000,5010,5020" for TV)
+	Enabled    bool   `json:"enabled"`
 }
 
 type TorrentScraperConfig struct {

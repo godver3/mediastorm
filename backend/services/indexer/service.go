@@ -873,7 +873,11 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 	if opts.Query != "" {
 		params.Set("q", opts.Query)
 	}
-	if len(opts.Categories) > 0 {
+	// Use indexer-specific categories if configured, otherwise fall back to search options
+	if cats := strings.TrimSpace(idx.Categories); cats != "" {
+		params.Set("cat", cats)
+		log.Printf("[indexer/newznab] using configured categories for %s: %s", idx.Name, cats)
+	} else if len(opts.Categories) > 0 {
 		params.Set("cat", strings.Join(opts.Categories, ","))
 	}
 

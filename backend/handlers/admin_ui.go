@@ -292,11 +292,12 @@ var SettingsSchema = map[string]interface{}{
 		"order":    2,
 		"is_array": true,
 		"fields": map[string]interface{}{
-			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name"},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "Indexer API URL"},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Indexer API key"},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab"}, "description": "Indexer type"},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this indexer"},
+			"name":       map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name", "order": 0},
+			"url":        map[string]interface{}{"type": "text", "label": "URL", "description": "Indexer API URL", "order": 1},
+			"apiKey":     map[string]interface{}{"type": "password", "label": "API Key", "description": "Indexer API key", "order": 2},
+			"type":       map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab"}, "description": "Indexer type", "order": 3},
+			"categories": map[string]interface{}{"type": "text", "label": "Categories", "description": "Comma-separated newznab category IDs to filter results (e.g., 2000,2010,2020 for movies, 5000,5010,5020 for TV). Leave empty to search all categories.", "placeholder": "2000,5000", "order": 4},
+			"enabled":    map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this indexer", "order": 5},
 		},
 	},
 	"torrentScrapers": map[string]interface{}{
