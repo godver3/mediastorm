@@ -2144,6 +2144,25 @@ func (h *VideoHandler) GetHLSSessionStatus(w http.ResponseWriter, r *http.Reques
 	h.hlsManager.GetSessionStatus(w, r, sessionID)
 }
 
+// SeekHLSSession seeks within an existing HLS session by restarting transcoding from a new offset
+// This is faster than creating a new session since it reuses the existing session structure
+func (h *VideoHandler) SeekHLSSession(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["sessionID"]
+
+	if sessionID == "" {
+		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+
+	h.hlsManager.Seek(w, r, sessionID)
+}
+
 // Shutdown gracefully shuts down the video handler and cleans up resources
 func (h *VideoHandler) Shutdown() {
 	if h.hlsManager != nil {

@@ -309,6 +309,7 @@ type HLSSession struct {
 	InputErrorDetected bool // Set to true when FFmpeg input stream fails (usenet disconnect)
 	RecoveryAttempts   int  // Number of times we've attempted to recover this session
 	forceAAC           bool // Cached forceAAC setting for recovery restarts
+	SeekInProgress     bool // Set to true during user-initiated seek to prevent recovery logic
 
 	// Fatal error tracking (unplayable streams)
 	FatalError       string // Set when stream is determined to be unplayable (persistent bitstream errors)
@@ -2447,13 +2448,25 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			exitCode = exitErr.ExitCode()
 		}
 	}
-	log.Printf("[hls] session %s: FFMPEG_EXIT - exitCode=%d waitDuration=%v err=%v ctxErr=%v",
-		session.ID, exitCode, waitDuration, err, ctx.Err())
+	thisPid := cmd.Process.Pid
+	log.Printf("[hls] session %s: FFMPEG_EXIT - exitCode=%d waitDuration=%v err=%v ctxErr=%v pid=%d",
+		session.ID, exitCode, waitDuration, err, ctx.Err(), thisPid)
 
 	// Signal monitoring goroutines to stop
 	close(perfDone)
 	close(idleDone)
 	close(rateLimitDone)
+
+	// Check if this FFmpeg instance is still the current one for this session
+	// If not, a seek has replaced this FFmpeg with a new one - just exit quietly
+	session.mu.RLock()
+	currentPid := session.FFmpegPID
+	session.mu.RUnlock()
+	if currentPid != thisPid && currentPid != 0 {
+		log.Printf("[hls] session %s: FFmpeg (pid=%d) superseded by newer FFmpeg (pid=%d), skipping completion handling",
+			session.ID, thisPid, currentPid)
+		return nil
+	}
 
 	completionTime := time.Since(startTime)
 
@@ -2627,6 +2640,17 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		session.ID, session.Duration, session.StartOffset, expectedDuration)
 	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - expectedSegments=%d actualSegments=%d (highest=%d) completion=%.1f%%",
 		session.ID, expectedSegments, actualSegments, highestSegment, completionPercent)
+
+	// Check if this completion was due to a user-initiated seek (skip recovery)
+	session.mu.RLock()
+	seekInProgress := session.SeekInProgress
+	session.mu.RUnlock()
+
+	if seekInProgress {
+		log.Printf("[hls] session %s: transcoding cancelled for user seek, skipping recovery",
+			session.ID)
+		return nil
+	}
 
 	if idleTriggered {
 		log.Printf("[hls] session %s: transcoding stopped due to IDLE_TIMEOUT after %v (bytes streamed: %d, segments: %d)",
@@ -3017,6 +3041,179 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// SeekResponse contains the response data for a seek request
+type SeekResponse struct {
+	SessionID   string  `json:"sessionId"`
+	StartOffset float64 `json:"startOffset"`
+	Duration    float64 `json:"duration,omitempty"`
+	PlaylistURL string  `json:"playlistUrl"`
+}
+
+// Seek seeks within an existing HLS session by restarting transcoding from a new offset
+// This is faster than creating a new session since it reuses the existing session structure
+// Query param: time=<seconds> specifies the target seek position in absolute media time
+func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, exists := m.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse target time from query parameter
+	timeStr := r.URL.Query().Get("time")
+	if timeStr == "" {
+		http.Error(w, "missing time parameter", http.StatusBadRequest)
+		return
+	}
+
+	targetTime, err := strconv.ParseFloat(timeStr, 64)
+	if err != nil || targetTime < 0 {
+		http.Error(w, "invalid time parameter", http.StatusBadRequest)
+		return
+	}
+
+	session.mu.RLock()
+	duration := session.Duration
+	session.mu.RUnlock()
+
+	// Clamp target time to valid range
+	if duration > 0 && targetTime >= duration {
+		targetTime = duration - 1
+	}
+	if targetTime < 0 {
+		targetTime = 0
+	}
+
+	log.Printf("[hls] session %s: seek requested to %.2fs (current offset: %.2fs)", sessionID, targetTime, session.StartOffset)
+
+	// Mark seek in progress to prevent recovery logic from triggering
+	session.mu.Lock()
+	session.SeekInProgress = true
+	if session.Cancel != nil {
+		log.Printf("[hls] session %s: cancelling current transcoding for seek", sessionID)
+		session.Cancel()
+	}
+	session.mu.Unlock()
+
+	// Wait briefly for FFmpeg to stop
+	time.Sleep(100 * time.Millisecond)
+
+	// Clear all existing segments since they're at the old time offset
+	if err := m.clearSessionSegments(session); err != nil {
+		log.Printf("[hls] session %s: warning: failed to clear segments for seek: %v", sessionID, err)
+	}
+
+	// Reset session state for the new seek position
+	session.mu.Lock()
+	session.FFmpegCmd = nil
+	session.FFmpegPID = 0
+	session.Completed = false
+	session.StartOffset = targetTime
+	session.CreatedAt = time.Now()
+	session.LastSegmentRequest = time.Now()
+	session.SegmentsCreated = 0
+	session.MinSegmentRequested = -1
+	session.MaxSegmentRequested = -1
+	session.LastPlaybackSegment = 0
+	session.EarliestBufferedSegment = 0
+	session.RecoveryAttempts = 0 // Reset recovery attempts for new seek position
+	session.SeekInProgress = false // Clear seek flag now that we're starting fresh
+	cachedForceAAC := session.forceAAC
+	session.mu.Unlock()
+
+	// Create a new context for the restarted transcoding
+	newCtx, newCancel := context.WithCancel(context.Background())
+	session.mu.Lock()
+	session.Cancel = newCancel
+	session.mu.Unlock()
+
+	// Start transcoding from the new offset in background
+	go func() {
+		if err := m.startTranscoding(newCtx, session, cachedForceAAC); err != nil {
+			log.Printf("[hls] session %s: seek transcoding failed: %v", sessionID, err)
+			session.mu.Lock()
+			session.Completed = true
+			session.mu.Unlock()
+		}
+	}()
+
+	// Wait for the playlist file to be created before returning
+	// This prevents the player from trying to load a non-existent playlist
+	session.mu.RLock()
+	outputDir := session.OutputDir
+	session.mu.RUnlock()
+	playlistPath := filepath.Join(outputDir, "stream.m3u8")
+
+	maxWait := 10 * time.Second
+	pollInterval := 100 * time.Millisecond
+	waitStart := time.Now()
+
+	for {
+		if _, err := os.Stat(playlistPath); err == nil {
+			// Playlist exists, check if it has content
+			if data, err := os.ReadFile(playlistPath); err == nil && len(data) > 50 {
+				log.Printf("[hls] session %s: playlist ready after %v (%d bytes)", sessionID, time.Since(waitStart), len(data))
+				break
+			}
+		}
+
+		if time.Since(waitStart) > maxWait {
+			log.Printf("[hls] session %s: warning: timed out waiting for playlist after %v", sessionID, maxWait)
+			break
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	// Build playlist URL (without /api/ prefix - frontend adds it)
+	playlistURL := fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID)
+
+	log.Printf("[hls] session %s: seek completed, new start offset: %.2fs", sessionID, targetTime)
+
+	response := SeekResponse{
+		SessionID:   sessionID,
+		StartOffset: targetTime,
+		Duration:    duration,
+		PlaylistURL: playlistURL,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// clearSessionSegments removes all segment files from a session's output directory
+func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
+	session.mu.RLock()
+	outputDir := session.OutputDir
+	session.mu.RUnlock()
+
+	// Remove all segment files (.ts and .m4s)
+	patterns := []string{
+		filepath.Join(outputDir, "segment*.ts"),
+		filepath.Join(outputDir, "segment*.m4s"),
+		filepath.Join(outputDir, "init.mp4"),
+		filepath.Join(outputDir, "stream.m3u8"),
+	}
+
+	var removeCount int
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			if err := os.Remove(match); err == nil {
+				removeCount++
+			}
+		}
+	}
+
+	log.Printf("[hls] session %s: cleared %d segment files for seek", session.ID, removeCount)
+	return nil
 }
 
 // HLSSessionStatus represents the status of an HLS session for frontend polling
