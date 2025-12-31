@@ -263,6 +263,10 @@
             // Load clients for this user
             await loadClientsForUser(userId);
 
+            // Recalculate whether profile has actual overrides (compare values, not just record existence)
+            recalculateUserOverrides(userId);
+            updateUserDropdownIndicators();
+
             // Show client selector if there are clients
             if (clientsForUser.length > 0) {
                 const profileHasOverrides = userOverrides && userOverrides[userId];
@@ -288,12 +292,58 @@
             });
             if (response.ok) {
                 clientsForUser = await response.json() || [];
+                // Recalculate hasOverrides for each client by loading their settings
+                await recalculateAllClientOverrides();
             } else {
                 clientsForUser = [];
             }
         } catch (e) {
             console.warn('Failed to load clients:', e);
             clientsForUser = [];
+        }
+    }
+
+    // Recalculate hasOverrides for all clients in the list
+    async function recalculateAllClientOverrides() {
+        for (const client of clientsForUser) {
+            try {
+                const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(client.id) + '/settings', {
+                    credentials: 'same-origin'
+                });
+                if (response.ok) {
+                    const settings = await response.json();
+                    // Check if any client filter fields have actual values that differ from inherited
+                    let hasActualOverrides = false;
+                    for (const key of clientFilterFields) {
+                        const clientVal = settings[key];
+                        if (clientVal === undefined || clientVal === null) continue;
+
+                        // Get the effective inherited value
+                        const globalVal = currentSettings.filtering ? currentSettings.filtering[key] : undefined;
+                        let inheritedVal;
+
+                        if (selectedUserId && userSettings && userSettings.filtering) {
+                            const profileVal = userSettings.filtering[key];
+                            if (profileVal !== undefined && profileVal !== null &&
+                                !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                                inheritedVal = profileVal;
+                            } else {
+                                inheritedVal = globalVal;
+                            }
+                        } else {
+                            inheritedVal = globalVal;
+                        }
+
+                        if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                            hasActualOverrides = true;
+                            break;
+                        }
+                    }
+                    client.hasOverrides = hasActualOverrides;
+                }
+            } catch (e) {
+                console.warn('Failed to load settings for client', client.id, e);
+            }
         }
     }
 
@@ -318,6 +368,9 @@
                 clientSettings = {};
                 originalClientSettings = {};
             }
+            // Recalculate whether client has actual overrides (compare values, not just record existence)
+            recalculateClientOverrides(clientId);
+            updateClientDropdownIndicators();
             // Show identify button when a client is selected
             if (identifyBtn) identifyBtn.style.display = 'inline-flex';
         } else {
@@ -479,6 +532,95 @@
         });
     }
 
+    // Check if user settings have any actual differences from global settings
+    // This recalculates userOverrides based on actual value comparison, not just record existence
+    function recalculateUserOverrides(userId) {
+        if (!userId || !userSettings) {
+            if (userOverrides) userOverrides[userId] = false;
+            return;
+        }
+
+        // Check all per-user sections for any actual differences
+        let hasActualOverrides = false;
+
+        // Check filtering section
+        if (userSettings.filtering) {
+            const globalFiltering = currentSettings.filtering || {};
+            for (const key of Object.keys(userSettings.filtering)) {
+                const profileVal = normalizeForComparison(userSettings.filtering[key]);
+                const globalVal = normalizeForComparison(globalFiltering[key]);
+                if (!deepEqual(profileVal, globalVal)) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
+        // Check playback section
+        if (!hasActualOverrides && userSettings.playback) {
+            const globalPlayback = currentSettings.playback || {};
+            for (const key of Object.keys(userSettings.playback)) {
+                const profileVal = normalizeForComparison(userSettings.playback[key]);
+                const globalVal = normalizeForComparison(globalPlayback[key]);
+                if (!deepEqual(profileVal, globalVal)) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
+        // Check homeShelves section
+        if (!hasActualOverrides && userSettings.homeShelves) {
+            const globalHomeShelves = currentSettings.homeShelves || {};
+            if (!deepEqual(normalizeForComparison(userSettings.homeShelves), normalizeForComparison(globalHomeShelves))) {
+                hasActualOverrides = true;
+            }
+        }
+
+        if (userOverrides) userOverrides[userId] = hasActualOverrides;
+    }
+
+    // Recalculate whether a client has actual overrides (compare to profile/global values)
+    function recalculateClientOverrides(clientId) {
+        const client = clientsForUser.find(c => c.id === clientId);
+        if (!client || !clientSettings) {
+            if (client) client.hasOverrides = false;
+            return;
+        }
+
+        // Check if any client filter fields have actual values that differ from inherited
+        let hasActualOverrides = false;
+        for (const key of clientFilterFields) {
+            const clientVal = clientSettings[key];
+            if (clientVal === undefined || clientVal === null) continue;
+
+            // Get the effective inherited value using the same logic as getInheritedValue
+            // First check if profile has a value that differs from global
+            let inheritedVal;
+            const globalVal = currentSettings.filtering ? currentSettings.filtering[key] : undefined;
+
+            if (selectedUserId && userSettings && userSettings.filtering) {
+                const profileVal = userSettings.filtering[key];
+                // Use profile value if it's set AND differs from global
+                if (profileVal !== undefined && profileVal !== null &&
+                    !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                    inheritedVal = profileVal;
+                } else {
+                    inheritedVal = globalVal;
+                }
+            } else {
+                inheritedVal = globalVal;
+            }
+
+            if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                hasActualOverrides = true;
+                break;
+            }
+        }
+
+        client.hasOverrides = hasActualOverrides;
+    }
+
     const icons = {
         'server': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
         'download': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
@@ -601,6 +743,32 @@
         return clientSettings[fieldKey] !== undefined && clientSettings[fieldKey] !== null;
     }
 
+    // Check if a client value is actually different from what it would inherit
+    function isClientValueDifferent(fieldKey) {
+        if (!selectedClientId || !clientSettings) return false;
+        const clientVal = clientSettings[fieldKey];
+        if (clientVal === undefined || clientVal === null) return false;
+
+        // Get the effective inherited value (profile if different from global, otherwise global)
+        const globalVal = currentSettings.filtering ? currentSettings.filtering[fieldKey] : undefined;
+        let inheritedVal;
+
+        if (selectedUserId && userSettings && userSettings.filtering) {
+            const profileVal = userSettings.filtering[fieldKey];
+            // Use profile value if it's set AND differs from global
+            if (profileVal !== undefined && profileVal !== null &&
+                !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                inheritedVal = profileVal;
+            } else {
+                inheritedVal = globalVal;
+            }
+        } else {
+            inheritedVal = globalVal;
+        }
+
+        return !deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal));
+    }
+
     // Clear a client setting (revert to profile default)
     function clearClientSetting(fieldKey) {
         if (selectedClientId && clientSettings) {
@@ -711,12 +879,13 @@
 
         // Check if we're editing client settings and this field supports client override
         if (selectedClientId && clientSettings && clientKey) {
-            if (clientSettings[clientKey] !== undefined && clientSettings[clientKey] !== null) {
-                // Value is set at client level - check what it would inherit from
+            // Check if client has a value that's actually different from what it would inherit
+            if (isClientValueDifferent(clientKey)) {
+                // Value is set at client level AND differs from inherited - check what it would inherit from
                 const profileHasOverride = isUserSettingSet(path) && isProfileValueDifferent(path);
                 return { source: 'client', isOverridden: true, inheritedFrom: profileHasOverride ? 'profile' : 'global' };
             }
-            // Value is inherited - check if from profile (if profile has override) or global
+            // Value is inherited (either not set, or set but same as inherited) - check if from profile or global
             if (isUserSettingSet(path) && isProfileValueDifferent(path)) {
                 return { source: 'profile', isOverridden: false, inheritedFrom: null };
             }
