@@ -732,6 +732,9 @@ function IndexScreen() {
 
   // Ref for hero carousel ScrollView
   const heroScrollRef = useRef<ScrollView>(null);
+  // Ref to store stable shuffled hero items (prevents re-shuffling on data load)
+  const stableHeroItemsRef = useRef<CardData[]>([]);
+  const heroItemKeysRef = useRef<Set<string>>(new Set());
   const isUserScrolling = useRef(false);
 
   const [focusedShelfKey, setFocusedShelfKey] = useState<string | null>(null);
@@ -848,9 +851,9 @@ function IndexScreen() {
   }, []);
 
   // Create array of hero items for mobile rotation
+  // Uses stable ordering - only shuffles new items, doesn't reshuffle on data reload
   const mobileHeroItems = useMemo<CardData[]>(() => {
-    const seen = new Set<string>();
-    const items: CardData[] = [];
+    const newItems: CardData[] = [];
 
     const addCards = (cards: CardData[]) => {
       for (const card of cards) {
@@ -858,11 +861,11 @@ function IndexScreen() {
           continue;
         }
         const key = getHeroCardKey(card);
-        if (seen.has(key)) {
+        if (heroItemKeysRef.current.has(key)) {
           continue;
         }
-        seen.add(key);
-        items.push(card);
+        heroItemKeysRef.current.add(key);
+        newItems.push(card);
       }
     };
 
@@ -871,7 +874,13 @@ function IndexScreen() {
     addCards(trendingMovieCards);
     addCards(trendingShowCards);
 
-    return shuffleArray(items).slice(0, MAX_HERO_ITEMS);
+    // If we have new items, shuffle only them and append to existing stable list
+    if (newItems.length > 0) {
+      const shuffledNew = shuffleArray(newItems);
+      stableHeroItemsRef.current = [...stableHeroItemsRef.current, ...shuffledNew].slice(0, MAX_HERO_ITEMS);
+    }
+
+    return stableHeroItemsRef.current;
   }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards]);
 
   const heroSource = useMemo<HeroContent>(() => {
