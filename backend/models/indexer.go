@@ -12,14 +12,15 @@ const (
 
 // NZBResult represents a normalized search result from a Torznab/Newznab indexer.
 type NZBResult struct {
-	Title       string             `json:"title"`
-	Indexer     string             `json:"indexer"`
-	GUID        string             `json:"guid"`
-	Link        string             `json:"link"`
-	DownloadURL string             `json:"downloadUrl"`
-	SizeBytes   int64              `json:"sizeBytes"`
-	PublishDate time.Time          `json:"publishDate"`
-	Categories  []string           `json:"categories,omitempty"`
-	Attributes  map[string]string  `json:"attributes,omitempty"`
-	ServiceType ContentServiceType `json:"serviceType,omitempty"`
+	Title        string             `json:"title"`
+	Indexer      string             `json:"indexer"`
+	GUID         string             `json:"guid"`
+	Link         string             `json:"link"`
+	DownloadURL  string             `json:"downloadUrl"`
+	SizeBytes    int64              `json:"sizeBytes"`
+	PublishDate  time.Time          `json:"publishDate"`
+	Categories   []string           `json:"categories,omitempty"`
+	Attributes   map[string]string  `json:"attributes,omitempty"`
+	ServiceType  ContentServiceType `json:"serviceType,omitempty"`
+	EpisodeCount int                `json:"episodeCount,omitempty"` // Number of episodes in pack (0 if not a pack)
 }

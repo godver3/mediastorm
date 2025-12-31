@@ -205,7 +205,10 @@ export const ManualSelection = ({
           <View style={styles.manualResultMetaRow}>
             {!demoMode && <Text style={badgeStyles}>{serviceLabel}</Text>}
             <Text style={metaStyles}>
-              {result.indexer} • {formatFileSize(result.sizeBytes)}
+              {result.indexer} •{' '}
+              {result.episodeCount && result.episodeCount > 0
+                ? `${formatFileSize(Math.floor(result.sizeBytes / result.episodeCount))}/ep (${formatFileSize(result.sizeBytes)})`
+                : formatFileSize(result.sizeBytes)}
               {serviceType === 'usenet' && result.publishDate ? ` • ${formatPublishDate(result.publishDate)}` : ''}
             </Text>
           </View>

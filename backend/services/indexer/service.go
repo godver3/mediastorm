@@ -142,14 +142,16 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 }
 
 type SearchOptions struct {
-	Query      string
-	Categories []string
-	MaxResults int
-	IMDBID     string
-	MediaType  string // "movie" or "series"
-	Year       int    // Release year (for movies)
-	UserID     string // Optional: user ID for per-user filtering settings
-	ClientID   string // Optional: client ID for per-client filtering settings
+	Query               string
+	Categories          []string
+	MaxResults          int
+	IMDBID              string
+	MediaType           string // "movie" or "series"
+	Year                int    // Release year (for movies)
+	UserID              string // Optional: user ID for per-user filtering settings
+	ClientID            string // Optional: client ID for per-client filtering settings
+	TotalSeriesEpisodes int    // Deprecated: use EpisodeResolver instead
+	EpisodeResolver     filter.EpisodeCountResolver // Optional: resolver for accurate episode counts from metadata
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
@@ -214,17 +216,20 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				resultsChan <- searchResult{err: fmt.Errorf("debrid search service not configured"), source: "debrid"}
 				return
 			}
-			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q, ClientID=%q", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID, opts.ClientID)
+			hasResolver := opts.EpisodeResolver != nil
+			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q, ClientID=%q, hasEpisodeResolver=%v", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID, opts.ClientID, hasResolver)
 			debOpts := debrid.SearchOptions{
-				Query:           opts.Query,
-				Categories:      append([]string{}, opts.Categories...),
-				MaxResults:      opts.MaxResults,
-				IMDBID:          opts.IMDBID,
-				MediaType:       opts.MediaType,
-				Year:            opts.Year,
-				AlternateTitles: append([]string{}, alternateTitles...),
-				UserID:          opts.UserID,
-				ClientID:        opts.ClientID,
+				Query:               opts.Query,
+				Categories:          append([]string{}, opts.Categories...),
+				MaxResults:          opts.MaxResults,
+				IMDBID:              opts.IMDBID,
+				MediaType:           opts.MediaType,
+				Year:                opts.Year,
+				AlternateTitles:     append([]string{}, alternateTitles...),
+				UserID:              opts.UserID,
+				ClientID:            opts.ClientID,
+				TotalSeriesEpisodes: opts.TotalSeriesEpisodes,
+				EpisodeResolver:     opts.EpisodeResolver,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			if err != nil {

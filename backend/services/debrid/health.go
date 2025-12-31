@@ -92,6 +92,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 					}
 					// 405 = Method Not Allowed means HEAD isn't supported but GET may work fine
 					// Fall through to ffprobe check instead of treating as uncached
+					// Don't check content-length for 405 - it's the error body size, not the file size
 					if resp.StatusCode == http.StatusMethodNotAllowed {
 						log.Printf("[debrid-health] pre-resolved stream %s: HEAD not supported (405), falling through to ffprobe", result.Title)
 					} else if resp.StatusCode >= 400 {
@@ -103,19 +104,19 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 							Provider:     result.Attributes["tracker"],
 							ErrorMessage: fmt.Sprintf("stream returned HTTP %d", resp.StatusCode),
 						}, nil
-					}
-
-					// Check for suspiciously small content (likely a placeholder video)
-					// Real video files are typically > 10MB, placeholders are usually < 1MB
-					if contentLength > 0 && contentLength < 1*1024*1024 {
-						log.Printf("[debrid-health] pre-resolved stream %s has suspiciously small size (%d bytes) - likely a placeholder", result.Title, contentLength)
-						return &DebridHealthCheck{
-							Healthy:      false,
-							Status:       "not_cached",
-							Cached:       false,
-							Provider:     result.Attributes["tracker"],
-							ErrorMessage: fmt.Sprintf("stream too small (%d bytes) - likely a placeholder", contentLength),
-						}, nil
+					} else {
+						// Only check content-length for successful HEAD responses (2xx/3xx)
+						// Real video files are typically > 10MB, placeholders are usually < 1MB
+						if contentLength > 0 && contentLength < 1*1024*1024 {
+							log.Printf("[debrid-health] pre-resolved stream %s has suspiciously small size (%d bytes) - likely a placeholder", result.Title, contentLength)
+							return &DebridHealthCheck{
+								Healthy:      false,
+								Status:       "not_cached",
+								Cached:       false,
+								Provider:     result.Attributes["tracker"],
+								ErrorMessage: fmt.Sprintf("stream too small (%d bytes) - likely a placeholder", contentLength),
+							}, nil
+						}
 					}
 				} else {
 					log.Printf("[debrid-health] HEAD request failed for pre-resolved stream %s: %v", result.Title, err)

@@ -175,6 +175,7 @@ export interface NZBResult {
   categories?: string[];
   attributes?: Record<string, string>;
   serviceType?: 'usenet' | 'debrid';
+  episodeCount?: number; // Number of episodes in pack (0 if not a pack)
 }
 
 export interface NZBHealthCheck {
