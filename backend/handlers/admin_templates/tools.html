@@ -252,7 +252,8 @@
                     <div id="plexLoadingSection" style="display: none;">
                         <div class="loading-box">
                             <div class="spinner"></div>
-                            <span>Loading watchlist...</span>
+                            <span id="plexWatchlistLoadingText">Loading watchlist...</span>
+                            <div id="plexWatchlistProgress" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted);"></div>
                         </div>
                     </div>
 
@@ -532,7 +533,8 @@
                     <div id="plexHistoryLoading" style="display: none;">
                         <div class="loading-box">
                             <div class="spinner"></div>
-                            <span>Loading watch history from Plex servers...</span>
+                            <span id="plexHistoryLoadingText">Loading watch history from Plex servers...</span>
+                            <div id="plexHistoryProgress" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted);"></div>
                         </div>
                     </div>
 
@@ -2084,36 +2086,67 @@
         }
 
         const fetchBtn = document.getElementById('plexFetchBtn');
+        const loadingText = document.getElementById('plexWatchlistLoadingText');
+        const progressEl = document.getElementById('plexWatchlistProgress');
+
         fetchBtn.disabled = true;
         document.getElementById('plexLoadingSection').style.display = 'block';
         document.getElementById('plexPreviewSection').style.display = 'none';
         document.getElementById('plexFetchBtnWrapper').style.display = 'none';
+        loadingText.textContent = 'Fetching watchlist from Plex...';
+        progressEl.textContent = '';
 
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/watchlist`);
+            // Use SSE for progress streaming
+            const eventSource = new EventSource(`/admin/api/plex/accounts/${accountId}/watchlist?stream=true`);
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to fetch watchlist');
-            }
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
 
-            const data = await response.json();
-            plexWatchlistItems = data.items || [];
+                if (data.type === 'progress') {
+                    switch (data.stage) {
+                        case 'fetching':
+                            loadingText.textContent = 'Fetching watchlist from Plex...';
+                            if (data.total > 0) {
+                                progressEl.textContent = `${data.current} of ${data.total} items`;
+                            }
+                            break;
+                        case 'details':
+                            loadingText.textContent = 'Fetching item details...';
+                            progressEl.textContent = `${data.current} of ${data.total} items`;
+                            break;
+                    }
+                } else if (data.type === 'complete') {
+                    eventSource.close();
+                    plexWatchlistItems = data.items || [];
 
-            plexSelectedItems.clear();
-            plexWatchlistItems.forEach(item => plexSelectedItems.add(item.ratingKey));
+                    plexSelectedItems.clear();
+                    plexWatchlistItems.forEach(item => plexSelectedItems.add(item.ratingKey));
 
-            renderPlexWatchlistTable();
-            document.getElementById('plexLoadingSection').style.display = 'none';
-            document.getElementById('plexPreviewSection').style.display = 'block';
-            document.getElementById('plexImportBtnWrapper').style.display = 'block';
-            updatePlexSelectedCount();
+                    renderPlexWatchlistTable();
+                    document.getElementById('plexLoadingSection').style.display = 'none';
+                    document.getElementById('plexPreviewSection').style.display = 'block';
+                    document.getElementById('plexImportBtnWrapper').style.display = 'block';
+                    updatePlexSelectedCount();
+                    fetchBtn.disabled = false;
+                } else if (data.type === 'error') {
+                    eventSource.close();
+                    throw new Error(data.error || 'Failed to fetch watchlist');
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                eventSource.close();
+                showToast('Connection error while fetching watchlist', 'error');
+                document.getElementById('plexLoadingSection').style.display = 'none';
+                document.getElementById('plexFetchBtnWrapper').style.display = 'block';
+                fetchBtn.disabled = false;
+            };
 
         } catch (err) {
             showToast(err.message, 'error');
             document.getElementById('plexLoadingSection').style.display = 'none';
             document.getElementById('plexFetchBtnWrapper').style.display = 'block';
-        } finally {
             fetchBtn.disabled = false;
         }
     }
@@ -2309,36 +2342,69 @@
         }
 
         const fetchBtn = document.getElementById('plexHistoryFetchBtn');
+        const loadingText = document.getElementById('plexHistoryLoadingText');
+        const progressEl = document.getElementById('plexHistoryProgress');
+
         fetchBtn.disabled = true;
         document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'none';
         document.getElementById('plexHistoryLoading').style.display = 'block';
+        loadingText.textContent = 'Connecting to Plex servers...';
+        progressEl.textContent = '';
 
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/history?limit=1000&plexUserId=${plexUserId}`);
+            // Use SSE for progress streaming
+            const eventSource = new EventSource(`/admin/api/plex/accounts/${accountId}/history?limit=1000&plexUserId=${plexUserId}&stream=true`);
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to fetch watch history');
-            }
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
 
-            const data = await response.json();
-            plexHistoryItems = data.items || [];
+                if (data.type === 'progress') {
+                    switch (data.stage) {
+                        case 'servers':
+                            loadingText.textContent = 'Finding Plex servers...';
+                            progressEl.textContent = '';
+                            break;
+                        case 'fetching':
+                            loadingText.textContent = `Fetching history from server ${data.current} of ${data.total}...`;
+                            progressEl.textContent = '';
+                            break;
+                        case 'details':
+                            loadingText.textContent = 'Fetching item details...';
+                            progressEl.textContent = `${data.current} of ${data.total} items`;
+                            break;
+                    }
+                } else if (data.type === 'complete') {
+                    eventSource.close();
+                    plexHistoryItems = data.items || [];
 
-            // Select all items by default
-            plexHistorySelectedItems.clear();
-            plexHistoryItems.forEach((item, index) => plexHistorySelectedItems.add(index));
+                    // Select all items by default
+                    plexHistorySelectedItems.clear();
+                    plexHistoryItems.forEach((item, index) => plexHistorySelectedItems.add(index));
 
-            renderPlexHistoryTable();
-            document.getElementById('plexHistoryLoading').style.display = 'none';
-            document.getElementById('plexHistoryPreview').style.display = 'block';
-            document.getElementById('plexHistoryImportBtnWrapper').style.display = 'block';
-            updatePlexHistorySelectedCount();
+                    renderPlexHistoryTable();
+                    document.getElementById('plexHistoryLoading').style.display = 'none';
+                    document.getElementById('plexHistoryPreview').style.display = 'block';
+                    document.getElementById('plexHistoryImportBtnWrapper').style.display = 'block';
+                    updatePlexHistorySelectedCount();
+                    fetchBtn.disabled = false;
+                } else if (data.type === 'error') {
+                    eventSource.close();
+                    throw new Error(data.error || 'Failed to fetch watch history');
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                eventSource.close();
+                showToast('Connection error while fetching history', 'error');
+                document.getElementById('plexHistoryLoading').style.display = 'none';
+                document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'block';
+                fetchBtn.disabled = false;
+            };
 
         } catch (err) {
             showToast(err.message, 'error');
             document.getElementById('plexHistoryLoading').style.display = 'none';
             document.getElementById('plexHistoryFetchBtnWrapper').style.display = 'block';
-        } finally {
             fetchBtn.disabled = false;
         }
     }

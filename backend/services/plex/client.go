@@ -193,6 +193,21 @@ type WatchlistPaginatedResponse struct {
 
 // GetWatchlist retrieves the user's Plex watchlist (all pages)
 func (c *Client) GetWatchlist(authToken string) ([]WatchlistItem, error) {
+	return c.GetWatchlistWithProgress(authToken, nil)
+}
+
+// WatchlistItemWithDetails contains a watchlist item with its external IDs
+type WatchlistItemWithDetails struct {
+	WatchlistItem
+	ExternalIDs map[string]string
+}
+
+// GetWatchlistWithProgress retrieves watchlist with progress reporting and parallel detail fetching
+func (c *Client) GetWatchlistWithProgress(authToken string, progress ProgressCallback) ([]WatchlistItem, error) {
+	if progress != nil {
+		progress("fetching", 0, 0)
+	}
+
 	var allItems []WatchlistItem
 	offset := 0
 	pageSize := 50 // Request 50 items per page
@@ -205,6 +220,10 @@ func (c *Client) GetWatchlist(authToken string) ([]WatchlistItem, error) {
 
 		allItems = append(allItems, items...)
 
+		if progress != nil {
+			progress("fetching", len(allItems), totalSize)
+		}
+
 		// Check if we've fetched all items
 		if len(allItems) >= totalSize || len(items) == 0 {
 			break
@@ -214,6 +233,60 @@ func (c *Client) GetWatchlist(authToken string) ([]WatchlistItem, error) {
 	}
 
 	return allItems, nil
+}
+
+// GetWatchlistDetailsWithProgress fetches external IDs for watchlist items in parallel
+func (c *Client) GetWatchlistDetailsWithProgress(authToken string, items []WatchlistItem, progress ProgressCallback) []map[string]string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	const numWorkers = 10
+	results := make([]map[string]string, len(items))
+
+	type job struct {
+		index int
+		item  WatchlistItem
+	}
+
+	jobs := make(chan job, len(items))
+	done := make(chan struct{}, len(items))
+
+	// Start workers
+	for w := 0; w < numWorkers; w++ {
+		go func() {
+			for j := range jobs {
+				externalIDs, _ := c.GetItemDetails(authToken, j.item.RatingKey)
+				if externalIDs == nil {
+					externalIDs = ParseGUID(j.item.GUID)
+				}
+				results[j.index] = externalIDs
+				done <- struct{}{}
+			}
+		}()
+	}
+
+	// Send jobs
+	for i, item := range items {
+		jobs <- job{index: i, item: item}
+	}
+	close(jobs)
+
+	// Wait for completion with progress
+	completed := 0
+	for range items {
+		<-done
+		completed++
+		if progress != nil && completed%5 == 0 {
+			progress("details", completed, len(items))
+		}
+	}
+
+	if progress != nil {
+		progress("details", len(items), len(items))
+	}
+
+	return results
 }
 
 // getWatchlistPage retrieves a single page of the watchlist
@@ -373,35 +446,116 @@ type PlexHomeUser struct {
 	Guest    bool   `json:"guest,omitempty"`
 }
 
-// GetHomeUsers retrieves the list of users in the Plex Home
+// GetHomeUsers retrieves the list of users from all owned Plex servers.
+// These are server-local account IDs which are used for filtering watch history.
 func (c *Client) GetHomeUsers(authToken string) ([]PlexHomeUser, error) {
-	req, err := http.NewRequest(http.MethodGet, plexTVBaseURL+"/home/users", nil)
+	servers, err := c.GetOwnedServers(authToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("no online owned Plex servers found")
+	}
+
+	// Use a map to dedupe users across servers (by ID)
+	userMap := make(map[int]PlexHomeUser)
+
+	for _, server := range servers {
+		users, err := c.GetServerUsers(server)
+		if err != nil {
+			continue // Try other servers
+		}
+		for _, user := range users {
+			if _, exists := userMap[user.ID]; !exists {
+				userMap[user.ID] = user
+			}
+		}
+	}
+
+	// Convert map to slice
+	users := make([]PlexHomeUser, 0, len(userMap))
+	for _, user := range userMap {
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+// GetServerUsers retrieves the list of users/accounts from a specific Plex server.
+// These IDs match the accountID field in watch history items.
+func (c *Client) GetServerUsers(server PlexResource) ([]PlexHomeUser, error) {
+	// Find the best connection to use
+	var serverURL string
+	for _, conn := range server.Connections {
+		if !conn.Relay && conn.Protocol == "https" {
+			serverURL = conn.URI
+			break
+		}
+	}
+	if serverURL == "" {
+		for _, conn := range server.Connections {
+			if !conn.Relay {
+				serverURL = conn.URI
+				break
+			}
+		}
+	}
+	if serverURL == "" && len(server.Connections) > 0 {
+		serverURL = server.Connections[0].URI
+	}
+	if serverURL == "" {
+		return nil, fmt.Errorf("no available connection for server %s", server.Name)
+	}
+
+	accountsURL := fmt.Sprintf("%s/accounts?X-Plex-Token=%s", serverURL, server.AccessToken)
+
+	req, err := http.NewRequest(http.MethodGet, accountsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	c.setPlexHeaders(req)
-	req.Header.Set("X-Plex-Token", authToken)
+	req.Header.Set("X-Plex-Token", server.AccessToken)
 
-	resp, err := c.httpClient.Do(req)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("plex api request: %w", err)
+		return nil, fmt.Errorf("plex server request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("plex home users failed: %s - %s", resp.Status, string(body))
+		return nil, fmt.Errorf("plex accounts failed: %s - %s", resp.Status, string(body))
 	}
 
-	var homeResp struct {
-		Users []PlexHomeUser `json:"users"`
+	var accountsResp struct {
+		MediaContainer struct {
+			Account []struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"Account"`
+		} `json:"MediaContainer"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&homeResp); err != nil {
+
+	if err := json.NewDecoder(resp.Body).Decode(&accountsResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	return homeResp.Users, nil
+	users := make([]PlexHomeUser, 0, len(accountsResp.MediaContainer.Account))
+	for _, acc := range accountsResp.MediaContainer.Account {
+		// Skip system accounts (ID 0 or 1) and accounts with no name
+		if acc.ID <= 1 || acc.Name == "" {
+			continue
+		}
+		users = append(users, PlexHomeUser{
+			ID:    acc.ID,
+			Title: acc.Name,
+		})
+	}
+
+	return users, nil
 }
 
 // PlexResource represents a Plex server or client resource
@@ -693,9 +847,21 @@ func (c *Client) GetServerItemDetails(server PlexResource, ratingKey string) (*W
 	return result, nil
 }
 
+// ProgressCallback is called to report progress during long operations
+type ProgressCallback func(stage string, current, total int)
+
 // GetAllWatchHistory fetches watch history from all owned servers
 // If accountID > 0, filters history to only that Plex user account
 func (c *Client) GetAllWatchHistory(authToken string, limit int, accountID int) ([]WatchHistoryItem, error) {
+	return c.GetAllWatchHistoryWithProgress(authToken, limit, accountID, nil)
+}
+
+// GetAllWatchHistoryWithProgress fetches watch history with progress reporting
+func (c *Client) GetAllWatchHistoryWithProgress(authToken string, limit int, accountID int, progress ProgressCallback) ([]WatchHistoryItem, error) {
+	if progress != nil {
+		progress("servers", 0, 0)
+	}
+
 	servers, err := c.GetOwnedServers(authToken)
 	if err != nil {
 		return nil, err
@@ -708,30 +874,19 @@ func (c *Client) GetAllWatchHistory(authToken string, limit int, accountID int) 
 	var allHistory []WatchHistoryItem
 	var lastErr error
 
-	for _, server := range servers {
+	for serverIdx, server := range servers {
+		if progress != nil {
+			progress("fetching", serverIdx+1, len(servers))
+		}
+
 		history, err := c.GetServerWatchHistory(server, limit, accountID)
 		if err != nil {
 			lastErr = err
 			continue // Try other servers
 		}
 
-		// Fetch details for each item to get external IDs
-		for i, item := range history {
-			details, err := c.GetServerItemDetails(server, item.RatingKey)
-			if err == nil && details != nil {
-				history[i].ExternalIDs = details.ExternalIDs
-				history[i].GUID = details.GUID
-				history[i].Year = details.Year
-				// For episodes, also fetch show details
-				if item.Type == "episode" && item.GrandparentRatingKey != "" {
-					showDetails, err := c.GetServerItemDetails(server, item.GrandparentRatingKey)
-					if err == nil && showDetails != nil {
-						// Copy show's external IDs
-						history[i].ExternalIDs = showDetails.ExternalIDs
-					}
-				}
-			}
-		}
+		// Fetch details in parallel with worker pool
+		c.fetchDetailsParallel(server, history, progress)
 
 		allHistory = append(allHistory, history...)
 	}
@@ -742,4 +897,65 @@ func (c *Client) GetAllWatchHistory(authToken string, limit int, accountID int) 
 	}
 
 	return allHistory, nil
+}
+
+// detailsJob represents a job to fetch details for a history item
+type detailsJob struct {
+	index int
+	item  *WatchHistoryItem
+}
+
+// fetchDetailsParallel fetches item details concurrently using a worker pool
+func (c *Client) fetchDetailsParallel(server PlexResource, history []WatchHistoryItem, progress ProgressCallback) {
+	if len(history) == 0 {
+		return
+	}
+
+	const numWorkers = 10 // Concurrent requests to Plex server
+
+	jobs := make(chan detailsJob, len(history))
+	done := make(chan struct{}, len(history))
+
+	// Start workers
+	for w := 0; w < numWorkers; w++ {
+		go func() {
+			for job := range jobs {
+				details, err := c.GetServerItemDetails(server, job.item.RatingKey)
+				if err == nil && details != nil {
+					job.item.ExternalIDs = details.ExternalIDs
+					job.item.GUID = details.GUID
+					job.item.Year = details.Year
+					// For episodes, also fetch show details
+					if job.item.Type == "episode" && job.item.GrandparentRatingKey != "" {
+						showDetails, err := c.GetServerItemDetails(server, job.item.GrandparentRatingKey)
+						if err == nil && showDetails != nil {
+							job.item.ExternalIDs = showDetails.ExternalIDs
+						}
+					}
+				}
+				done <- struct{}{}
+			}
+		}()
+	}
+
+	// Send jobs
+	for i := range history {
+		jobs <- detailsJob{index: i, item: &history[i]}
+	}
+	close(jobs)
+
+	// Wait for completion with progress updates
+	completed := 0
+	for range history {
+		<-done
+		completed++
+		if progress != nil && completed%5 == 0 { // Update every 5 items to reduce overhead
+			progress("details", completed, len(history))
+		}
+	}
+
+	// Final progress update
+	if progress != nil {
+		progress("details", len(history), len(history))
+	}
 }

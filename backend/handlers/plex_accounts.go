@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -456,6 +457,7 @@ type PlexHistoryItemResponse struct {
 
 // GetHistory fetches watch history from connected Plex servers.
 // GET /admin/api/plex/accounts/{accountID}/history
+// Supports SSE streaming with ?stream=true for progress updates
 func (h *PlexAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	session := adminSessionFromContext(r.Context())
 	if session == nil {
@@ -514,7 +516,13 @@ func (h *PlexAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Fetch watch history from all connected servers, optionally filtered by Plex user
+	// Check if streaming is requested
+	if r.URL.Query().Get("stream") == "true" {
+		h.getHistoryStream(w, r, account.AuthToken, limit, plexUserID)
+		return
+	}
+
+	// Non-streaming: fetch all at once
 	historyItems, err := h.plexClient.GetAllWatchHistory(account.AuthToken, limit, plexUserID)
 	if err != nil {
 		jsonError(w, "Failed to fetch watch history: "+err.Error(), http.StatusInternalServerError)
@@ -522,6 +530,71 @@ func (h *PlexAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Convert to response format
+	items := h.convertHistoryItems(historyItems)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": items,
+		"count": len(items),
+	})
+}
+
+// getHistoryStream streams watch history with SSE progress updates
+func (h *PlexAccountsHandler) getHistoryStream(w http.ResponseWriter, r *http.Request, authToken string, limit, plexUserID int) {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send progress updates via SSE
+	sendProgress := func(stage string, current, total int) {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":    "progress",
+			"stage":   stage,
+			"current": current,
+			"total":   total,
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Progress callback
+	progress := func(stage string, current, total int) {
+		sendProgress(stage, current, total)
+	}
+
+	// Fetch with progress
+	historyItems, err := h.plexClient.GetAllWatchHistoryWithProgress(authToken, limit, plexUserID, progress)
+	if err != nil {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":  "error",
+			"error": err.Error(),
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+		return
+	}
+
+	// Convert and send final result
+	items := h.convertHistoryItems(historyItems)
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":  "complete",
+		"items": items,
+		"count": len(items),
+	})
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+}
+
+// convertHistoryItems converts plex history items to response format
+func (h *PlexAccountsHandler) convertHistoryItems(historyItems []plex.WatchHistoryItem) []PlexHistoryItemResponse {
 	items := make([]PlexHistoryItemResponse, 0, len(historyItems))
 	for _, item := range historyItems {
 		respItem := PlexHistoryItemResponse{
@@ -543,12 +616,7 @@ func (h *PlexAccountsHandler) GetHistory(w http.ResponseWriter, r *http.Request)
 
 		items = append(items, respItem)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"items": items,
-		"count": len(items),
-	})
+	return items
 }
 
 // GetServers returns the list of online owned Plex servers for an account.
@@ -636,6 +704,7 @@ type PlexWatchlistItemResponse struct {
 
 // GetWatchlist fetches watchlist from Plex for a specific account.
 // GET /admin/api/plex/accounts/{accountID}/watchlist
+// Supports SSE streaming with ?stream=true for progress updates
 func (h *PlexAccountsHandler) GetWatchlist(w http.ResponseWriter, r *http.Request) {
 	session := adminSessionFromContext(r.Context())
 	if session == nil {
@@ -678,18 +747,96 @@ func (h *PlexAccountsHandler) GetWatchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Fetch watchlist
+	// Check if streaming is requested
+	if r.URL.Query().Get("stream") == "true" {
+		h.getWatchlistStream(w, r, account.AuthToken)
+		return
+	}
+
+	// Non-streaming: fetch all at once
 	watchlistItems, err := h.plexClient.GetWatchlist(account.AuthToken)
 	if err != nil {
 		jsonError(w, "Failed to fetch watchlist: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Convert to response format with external IDs
+	// Fetch details in parallel
+	externalIDsList := h.plexClient.GetWatchlistDetailsWithProgress(account.AuthToken, watchlistItems, nil)
+
+	// Convert to response format
+	items := h.convertWatchlistItems(watchlistItems, externalIDsList)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": items,
+		"count": len(items),
+	})
+}
+
+// getWatchlistStream streams watchlist with SSE progress updates
+func (h *PlexAccountsHandler) getWatchlistStream(w http.ResponseWriter, r *http.Request, authToken string) {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send progress updates via SSE
+	sendProgress := func(stage string, current, total int) {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":    "progress",
+			"stage":   stage,
+			"current": current,
+			"total":   total,
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Fetch watchlist with progress
+	watchlistItems, err := h.plexClient.GetWatchlistWithProgress(authToken, func(stage string, current, total int) {
+		sendProgress(stage, current, total)
+	})
+	if err != nil {
+		data, _ := json.Marshal(map[string]interface{}{
+			"type":  "error",
+			"error": err.Error(),
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+		return
+	}
+
+	// Fetch details in parallel with progress
+	externalIDsList := h.plexClient.GetWatchlistDetailsWithProgress(authToken, watchlistItems, func(stage string, current, total int) {
+		sendProgress(stage, current, total)
+	})
+
+	// Convert and send final result
+	items := h.convertWatchlistItems(watchlistItems, externalIDsList)
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":  "complete",
+		"items": items,
+		"count": len(items),
+	})
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+}
+
+// convertWatchlistItems converts plex watchlist items to response format
+func (h *PlexAccountsHandler) convertWatchlistItems(watchlistItems []plex.WatchlistItem, externalIDsList []map[string]string) []PlexWatchlistItemResponse {
 	items := make([]PlexWatchlistItemResponse, 0, len(watchlistItems))
-	for _, item := range watchlistItems {
-		// Try to get external IDs from item details
-		externalIDs, _ := h.plexClient.GetItemDetails(account.AuthToken, item.RatingKey)
+	for i, item := range watchlistItems {
+		var externalIDs map[string]string
+		if externalIDsList != nil && i < len(externalIDsList) {
+			externalIDs = externalIDsList[i]
+		}
 		if externalIDs == nil {
 			externalIDs = plex.ParseGUID(item.GUID)
 		}
@@ -705,10 +852,5 @@ func (h *PlexAccountsHandler) GetWatchlist(w http.ResponseWriter, r *http.Reques
 
 		items = append(items, respItem)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"items": items,
-		"count": len(items),
-	})
+	return items
 }
