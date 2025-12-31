@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   ActivityIndicator,
   Clipboard,
@@ -2882,7 +2883,7 @@ function SettingsScreen() {
                 ? 'Downloading...'
                 : updateStatus === 'ready'
                   ? 'Restart to Apply'
-                  : 'Check for Updates';
+                  : 'Check for Frontend Updates';
 
           return (
             <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing, styles.versionInfoContainer]}>
@@ -2901,6 +2902,12 @@ function SettingsScreen() {
                   disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
                   style={styles.debugButton}
                 />
+              </View>
+              <View style={styles.backendInfoNote}>
+                <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
+                <Text style={styles.backendInfoNoteText}>
+                  Backend is updated independently via Docker
+                </Text>
               </View>
             </View>
           );
@@ -3079,12 +3086,18 @@ function SettingsScreen() {
                             ? 'Downloading...'
                             : updateStatus === 'ready'
                               ? 'Restart to Apply'
-                              : 'Check for Updates'
+                              : 'Check for Frontend Updates'
                       }
                       onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
                       disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
                       style={[styles.debugButton, { marginTop: 12 }]}
                     />
+                    <View style={styles.backendInfoNoteMobile}>
+                      <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
+                      <Text style={styles.backendInfoNoteTextMobile}>
+                        Backend is updated independently via Docker
+                      </Text>
+                    </View>
                   </View>
                 )}
 
@@ -4156,6 +4169,34 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     versionButtonContainer: {
       marginTop: theme.spacing.md * atvScale,
+    },
+    backendInfoNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
+      marginTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
+      paddingTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+    },
+    backendInfoNoteText: {
+      ...(isNonTvosTV ? theme.typography.caption.sm : theme.typography.body.md),
+      color: theme.colors.text.muted,
+    },
+    backendInfoNoteMobile: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.lg,
+      paddingTop: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+    },
+    backendInfoNoteTextMobile: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      flex: 1,
     },
     loadingRow: {
       flexDirection: 'row',
