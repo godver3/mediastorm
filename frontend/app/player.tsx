@@ -872,6 +872,12 @@ export default function PlayerScreen() {
   const hasAttemptedInitialWarmStartRef = useRef(false);
   const hasReceivedPlayerLoadRef = useRef(false);
   const hlsSessionRetryCountRef = useRef(0);
+  // Track when we're recreating HLS sessions (for track change or seek) vs loading a new video
+  // When true, the reset effect should preserve current track selections
+  const isRecreatingHlsSessionRef = useRef(false);
+  // Track when we should skip re-applying language preferences in metadata effect
+  // Set when recreating HLS sessions, cleared after metadata effect runs
+  const skipTrackPreferencesRef = useRef(false);
   const isRetryingHlsSessionRef = useRef(false);
   const isSeekingRef = useRef<boolean>(false);
   const pausedForSeekRef = useRef<boolean>(false); // Track if we paused for HLS session seek or track switching
@@ -2007,6 +2013,9 @@ export default function PlayerScreen() {
           newPlaylistUrl: playlistWithKey.substring(0, 80),
           newSubtitleUrl: playlistWithKey.replace(/stream\.m3u8/, 'subtitles.vtt').substring(0, 80),
         });
+        // Mark that we're recreating HLS session to preserve track selections
+        isRecreatingHlsSessionRef.current = true;
+        skipTrackPreferencesRef.current = true;
         setCurrentMovieUrl(playlistWithKey);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
@@ -3671,6 +3680,9 @@ export default function PlayerScreen() {
         sessionBufferEndRef.current = sessionStart;
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
+        // Mark that we're recreating HLS session to preserve track selections
+        isRecreatingHlsSessionRef.current = true;
+        skipTrackPreferencesRef.current = true;
         setCurrentMovieUrl(playlistWithKey);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
@@ -3732,6 +3744,30 @@ export default function PlayerScreen() {
   );
 
   useEffect(() => {
+    // When recreating HLS sessions (for track change or seek), preserve track selections
+    // Only reset tracks when loading a completely different video
+    const isRecreating = isRecreatingHlsSessionRef.current;
+    if (isRecreating) {
+      console.log('[player] HLS session recreation - preserving track selections', resolvedMovie);
+      isRecreatingHlsSessionRef.current = false;
+      // Still reset some state but preserve track selections
+      durationRef.current = 0;
+      setDuration(0);
+      hasReceivedPlayerLoadRef.current = false;
+      if (parsedDurationHint && parsedDurationHint > 0) {
+        console.log('[player] using duration hint from URL params:', parsedDurationHint);
+        setMetadataDuration(parsedDurationHint);
+        updateDuration(parsedDurationHint, 'url-param-hint');
+      } else {
+        setMetadataDuration(0);
+      }
+      setHasStartedPlaying(false);
+      if (usesSystemManagedControls) {
+        setPaused(false);
+      }
+      return;
+    }
+
     console.log('[player] resetting state for new movie', resolvedMovie);
     durationRef.current = 0;
     setDuration(0);
@@ -3877,6 +3913,26 @@ export default function PlayerScreen() {
           updateDuration(fullDuration, 'metadata');
         } else {
           console.log('[player] metadata duration unavailable', metadata);
+        }
+
+        // When recreating HLS sessions (seek/track change), skip re-applying language preferences
+        // The current track selections should be preserved from the previous session
+        const shouldSkipTrackPreferences = skipTrackPreferencesRef.current;
+        if (shouldSkipTrackPreferences) {
+          console.log('[player] HLS session recreation - skipping track preference application');
+          skipTrackPreferencesRef.current = false;
+          // Still build and set audio options so the track menu shows correctly
+          const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
+          setAudioTrackOptions(audioOptions);
+          // Also set subtitle options for the menu
+          const subtitleOptions = buildSubtitleTrackOptions(
+            metadata.subtitleStreams ?? [],
+            metadata.selectedSubtitleIndex,
+          );
+          setSubtitleTrackOptions(subtitleOptions);
+          // Skip the rest - track selections are already preserved from reset effect
+          hasAppliedInitialTracksRef.current = true;
+          return;
         }
 
         const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
