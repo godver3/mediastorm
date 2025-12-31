@@ -2126,7 +2126,7 @@ function SettingsScreen() {
         type: 'header',
         id: 'support-header',
         title: 'Support',
-        description: 'Submit logs to help diagnose issues. The URL can be shared with developers.',
+        description: 'Submit logs to help diagnose issues. The URL can be shared with the developer.',
       },
       {
         type: 'button',
@@ -3068,7 +3068,7 @@ function SettingsScreen() {
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Support</Text>
                     <Text style={styles.sectionDescription}>
-                      Submit logs to help diagnose issues. The URL can be shared with developers.
+                      Submit logs to help diagnose issues. The URL can be shared with the developer.
                     </Text>
                     <FocusablePressable
                       text={isSubmittingLogs ? 'Submitting...' : 'Submit Logs'}
