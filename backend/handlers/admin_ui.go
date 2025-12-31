@@ -280,6 +280,9 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"playlistUrl":           map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL"},
 			"playlistCacheTtlHours": map[string]interface{}{"type": "number", "label": "Cache TTL (hours)", "description": "Playlist cache duration"},
+			"probeSizeMb":           map[string]interface{}{"type": "number", "label": "Probe Size (MB)", "description": "FFmpeg probesize for stream analysis (0 = default ~5MB). Higher values improve stability but increase initial buffering."},
+			"analyzeDurationSec":    map[string]interface{}{"type": "number", "label": "Analyze Duration (sec)", "description": "FFmpeg analyzeduration in seconds (0 = default ~5s). Higher values help with problematic streams."},
+			"lowLatency":            map[string]interface{}{"type": "boolean", "label": "Low Latency Mode", "description": "Reduce buffering for lower latency (may cause instability with poor connections)"},
 		},
 	},
 	"indexers": map[string]interface{}{

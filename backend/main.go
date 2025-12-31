@@ -348,7 +348,7 @@ func main() {
 		videoHandler.SetConfigManager(cfgManager)
 	}
 
-	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours)
+	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency)
 
 	// Create debug video handler with MP4Box for DV/HDR testing
 	debugVideoHandler := handlers.NewDebugVideoHandler("MP4Box", settings.Transmux.FFprobePath)

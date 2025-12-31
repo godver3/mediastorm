@@ -184,6 +184,9 @@ type PlaybackSettings struct {
 type LiveSettings struct {
 	PlaylistURL           string `json:"playlistUrl"`
 	PlaylistCacheTTLHours int    `json:"playlistCacheTtlHours"`
+	ProbeSizeMB           int    `json:"probeSizeMb"`           // FFmpeg probesize in MB (0 = default ~5MB)
+	AnalyzeDurationSec    int    `json:"analyzeDurationSec"`    // FFmpeg analyzeduration in seconds (0 = default ~5s)
+	LowLatency            bool   `json:"lowLatency"`            // Enable low-latency mode (nobuffer + low_delay flags)
 }
 
 // ShelfConfig represents a configurable home screen shelf.

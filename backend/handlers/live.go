@@ -30,18 +30,21 @@ const (
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
-	client          *http.Client
-	maxSize         int64
-	transmuxEnabled bool
-	ffmpegPath      string
-	cacheTTL        time.Duration
-	cacheMu         sync.RWMutex
+	client             *http.Client
+	maxSize            int64
+	transmuxEnabled    bool
+	ffmpegPath         string
+	cacheTTL           time.Duration
+	cacheMu            sync.RWMutex
+	probeSizeMB        int  // FFmpeg probesize in MB (0 = default)
+	analyzeDurationSec int  // FFmpeg analyzeduration in seconds (0 = default)
+	lowLatency         bool // Enable low-latency mode
 }
 
 // NewLiveHandler creates a handler capable of fetching remote playlists.
 // The provided client may be nil, in which case a client with sensible
 // defaults will be created. cacheTTLHours specifies how long to cache playlists.
-func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int) *LiveHandler {
+func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int, probeSizeMB int, analyzeDurationSec int, lowLatency bool) *LiveHandler {
 	if client == nil {
 		client = &http.Client{
 			Timeout: defaultPlaylistTimeout,
@@ -59,11 +62,14 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 	}
 
 	return &LiveHandler{
-		client:          client,
-		maxSize:         defaultMaxPlaylistSize,
-		transmuxEnabled: transmuxEnabled,
-		ffmpegPath:      strings.TrimSpace(ffmpegPath),
-		cacheTTL:        cacheTTL,
+		client:             client,
+		maxSize:            defaultMaxPlaylistSize,
+		transmuxEnabled:    transmuxEnabled,
+		ffmpegPath:         strings.TrimSpace(ffmpegPath),
+		cacheTTL:           cacheTTL,
+		probeSizeMB:        probeSizeMB,
+		analyzeDurationSec: analyzeDurationSec,
+		lowLatency:         lowLatency,
 	}
 }
 
@@ -160,13 +166,34 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), liveStreamTimeout)
 	defer cancel()
 
+	// Build FFmpeg args with optional buffering settings
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+	}
+
+	// Add probesize if configured (value in MB, convert to bytes)
+	if h.probeSizeMB > 0 {
+		args = append(args, "-probesize", fmt.Sprintf("%d", h.probeSizeMB*1024*1024))
+	}
+
+	// Add analyzeduration if configured (value in seconds, convert to microseconds)
+	if h.analyzeDurationSec > 0 {
+		args = append(args, "-analyzeduration", fmt.Sprintf("%d", h.analyzeDurationSec*1000000))
+	}
+
+	// Low latency mode: reduce buffering
+	if h.lowLatency {
+		args = append(args, "-fflags", "+genpts+nobuffer+discardcorrupt", "-flags", "+low_delay")
+	} else {
+		args = append(args, "-fflags", "+genpts")
+	}
+
+	// Reconnection options
+	args = append(args,
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
-		"-fflags", "+genpts",
 		"-i", targetURL.String(),
 		"-c:v", "copy",
 		"-c:a", "aac",
@@ -177,7 +204,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		"-f", "mp4",
 		"-reset_timestamps", "1",
 		"pipe:1",
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, h.ffmpegPath, args...)
 	stdout, err := cmd.StdoutPipe()
