@@ -114,7 +114,7 @@ const FocusablePressable = ({
                   style={[
                     isFocused ? styles.watchButtonTextFocused : styles.watchButtonText,
                     isFocused ? focusedTextStyle : textStyle,
-                    loading && icon && { opacity: 0 },
+                    loading && { opacity: 0 },
                   ]}>
                   {text}
                 </Text>
