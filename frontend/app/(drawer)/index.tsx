@@ -29,10 +29,21 @@ import { Direction } from '@bam.tech/lrud';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Animated, {
   useAnimatedRef,
   scrollTo as reanimatedScrollTo,
@@ -718,6 +729,11 @@ function IndexScreen() {
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
   const [mobileHeroIndex, setMobileHeroIndex] = useState(0);
+
+  // Ref for hero carousel ScrollView
+  const heroScrollRef = useRef<ScrollView>(null);
+  const isUserScrolling = useRef(false);
+
   const [focusedShelfKey, setFocusedShelfKey] = useState<string | null>(null);
   const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [shelfResetCounter, setShelfResetCounter] = useState(0);
@@ -902,6 +918,30 @@ function IndexScreen() {
     settingsLoading,
   ]);
 
+  // Calculate hero width for carousel scrolling (90% of screen width with spacing between items)
+  const heroGap = theme.spacing.md;
+  const heroWidth = Math.round(screenWidth * 0.9);
+  const heroSnapInterval = heroWidth + heroGap;
+  // Padding to center the first/last items
+  const heroPadding = (screenWidth - heroWidth) / 2;
+
+  // Handle hero carousel scroll
+  const handleHeroScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = event.nativeEvent.contentOffset.x;
+      const newIndex = Math.round(offsetX / heroSnapInterval);
+      if (newIndex !== mobileHeroIndex && newIndex >= 0 && newIndex < mobileHeroItems.length) {
+        isUserScrolling.current = true;
+        setMobileHeroIndex(newIndex);
+        // Reset flag after a short delay
+        setTimeout(() => {
+          isUserScrolling.current = false;
+        }, 100);
+      }
+    },
+    [heroSnapInterval, mobileHeroIndex, mobileHeroItems.length],
+  );
+
   // Auto-rotate hero on mobile
   useEffect(() => {
     if (!shouldUseMobileLayout || mobileHeroItems.length <= 1 || !isFocused) {
@@ -909,11 +949,17 @@ function IndexScreen() {
     }
 
     const interval = setInterval(() => {
-      setMobileHeroIndex((prev) => (prev + 1) % mobileHeroItems.length);
+      if (isUserScrolling.current) return; // Don't auto-rotate while user is swiping
+      setMobileHeroIndex((prev) => {
+        const nextIndex = (prev + 1) % mobileHeroItems.length;
+        // Scroll to next item
+        heroScrollRef.current?.scrollTo({ x: nextIndex * heroSnapInterval, animated: true });
+        return nextIndex;
+      });
     }, 5000); // Rotate every 5 seconds
 
     return () => clearInterval(interval);
-  }, [shouldUseMobileLayout, mobileHeroItems.length, isFocused]);
+  }, [shouldUseMobileLayout, mobileHeroItems.length, isFocused, heroSnapInterval]);
 
   const handleCardSelect = useCallback(
     (card: CardData) => {
@@ -1079,19 +1125,16 @@ function IndexScreen() {
     [continueWatchingItems, handleTitlePress, router],
   );
 
-  const handleContinueWatchingLongPress = useCallback(
-    (item: Title) => {
-      // Extract the series ID from the item
-      // For continue watching items, the id is either the seriesId directly (for movies)
-      // or "seriesId:S01E02" format (for series with next episode)
-      const seriesId = String(item.id).split(':S')[0];
+  const handleContinueWatchingLongPress = useCallback((item: Title) => {
+    // Extract the series ID from the item
+    // For continue watching items, the id is either the seriesId directly (for movies)
+    // or "seriesId:S01E02" format (for series with next episode)
+    const seriesId = String(item.id).split(':S')[0];
 
-      // Show confirmation modal instead of immediately removing
-      setPendingRemoveItem({ id: seriesId, name: item.name });
-      setIsRemoveConfirmVisible(true);
-    },
-    [],
-  );
+    // Show confirmation modal instead of immediately removing
+    setPendingRemoveItem({ id: seriesId, name: item.name });
+    setIsRemoveConfirmVisible(true);
+  }, []);
 
   // Handle confirmation of removal from Continue Watching
   const handleConfirmRemove = useCallback(() => {
@@ -1379,32 +1422,94 @@ function IndexScreen() {
             onLayout={handleMobileScrollLayout}
             onContentSizeChange={handleMobileContentSizeChange}
           >
-            <Pressable
-              style={mobileStyles.hero}
-              onPress={() => {
-                const currentHeroItem = mobileHeroItems[mobileHeroIndex % mobileHeroItems.length];
-                if (currentHeroItem) {
-                  handleCardSelect(currentHeroItem);
-                }
-              }}
-            >
-              <Image source={heroSource.headerImage} style={mobileStyles.heroImage} contentFit="cover" />
-              <LinearGradient
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
-                locations={[0, 0.6, 1]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 0, y: 1 }}
-                style={mobileStyles.heroGradient}
-              />
-              <View style={mobileStyles.heroTextContainer}>
-                <Text style={mobileStyles.heroTitle} numberOfLines={2}>
-                  {heroSource.title}
-                </Text>
-                <Text style={mobileStyles.heroDescription} numberOfLines={3}>
-                  {heroSource.description}
-                </Text>
-              </View>
-            </Pressable>
+            <View style={mobileStyles.heroContainer}>
+              {mobileHeroItems.length > 1 ? (
+                <>
+                  <ScrollView
+                    ref={heroScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={handleHeroScroll}
+                    scrollEventThrottle={16}
+                    snapToInterval={heroSnapInterval}
+                    snapToAlignment="start"
+                    decelerationRate="fast"
+                    contentContainerStyle={{ paddingHorizontal: heroPadding }}
+                  >
+                    {mobileHeroItems.map((item, index) => (
+                      <Pressable
+                        key={`hero-${item.id}-${index}`}
+                        style={[mobileStyles.hero, { width: heroWidth, marginRight: heroGap }]}
+                        onPress={() => handleCardSelect(item)}
+                      >
+                        <Image
+                          source={item.backdropUrl || item.headerImage}
+                          style={mobileStyles.heroImage}
+                          contentFit="cover"
+                        />
+                        <LinearGradient
+                          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
+                          locations={[0, 0.6, 1]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 0, y: 1 }}
+                          style={mobileStyles.heroGradient}
+                        />
+                        <View style={mobileStyles.heroTextContainer}>
+                          <Text style={mobileStyles.heroTitle} numberOfLines={2}>
+                            {item.title}
+                          </Text>
+                          <Text style={mobileStyles.heroDescription} numberOfLines={3}>
+                            {item.seriesOverview ?? item.description}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                  {/* Pagination dots */}
+                  <View style={mobileStyles.heroPagination}>
+                    {mobileHeroItems.map((_, index) => (
+                      <Pressable
+                        key={index}
+                        style={[mobileStyles.heroDot, index === mobileHeroIndex && mobileStyles.heroDotActive]}
+                        onPress={() => {
+                          setMobileHeroIndex(index);
+                          heroScrollRef.current?.scrollTo({ x: index * heroSnapInterval, animated: true });
+                        }}
+                        hitSlop={{ top: 10, bottom: 10, left: 5, right: 5 }}
+                      />
+                    ))}
+                  </View>
+                </>
+              ) : (
+                // Fallback for 0 or 1 hero items - show single hero without carousel
+                <Pressable
+                  style={[mobileStyles.hero, mobileStyles.heroSingle]}
+                  onPress={() => {
+                    const currentHeroItem = mobileHeroItems[0];
+                    if (currentHeroItem) {
+                      handleCardSelect(currentHeroItem);
+                    }
+                  }}
+                >
+                  <Image source={heroSource.headerImage} style={mobileStyles.heroImage} contentFit="cover" />
+                  <LinearGradient
+                    colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
+                    locations={[0, 0.6, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 0, y: 1 }}
+                    style={mobileStyles.heroGradient}
+                  />
+                  <View style={mobileStyles.heroTextContainer}>
+                    <Text style={mobileStyles.heroTitle} numberOfLines={2}>
+                      {heroSource.title}
+                    </Text>
+                    <Text style={mobileStyles.heroDescription} numberOfLines={3}>
+                      {heroSource.description}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            </View>
 
             {mobileShelfConfig
               .filter((config) => config.enabled)
@@ -1434,7 +1539,12 @@ function IndexScreen() {
         </FixedSafeAreaView>
 
         {/* Remove from Continue Watching Confirmation Modal (Mobile) */}
-        <Modal visible={isRemoveConfirmVisible} transparent={true} animationType="fade" onRequestClose={handleCancelRemove}>
+        <Modal
+          visible={isRemoveConfirmVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={handleCancelRemove}
+        >
           <View style={mobileStyles.modalOverlay}>
             <View style={mobileStyles.modalContainer}>
               <Text style={mobileStyles.modalTitle}>Remove from Continue Watching?</Text>
@@ -1445,7 +1555,10 @@ function IndexScreen() {
                 <Pressable onPress={handleCancelRemove} style={mobileStyles.modalButton}>
                   <Text style={mobileStyles.modalButtonText}>Cancel</Text>
                 </Pressable>
-                <Pressable onPress={handleConfirmRemove} style={[mobileStyles.modalButton, mobileStyles.modalButtonDanger]}>
+                <Pressable
+                  onPress={handleConfirmRemove}
+                  style={[mobileStyles.modalButton, mobileStyles.modalButtonDanger]}
+                >
                   <Text style={[mobileStyles.modalButtonText, mobileStyles.modalButtonDangerText]}>Remove</Text>
                 </Pressable>
               </View>
@@ -1454,12 +1567,18 @@ function IndexScreen() {
         </Modal>
 
         {/* Version Mismatch Warning Modal (Mobile) */}
-        <Modal visible={isVersionMismatchVisible} transparent={true} animationType="fade" onRequestClose={handleDismissVersionMismatch}>
+        <Modal
+          visible={isVersionMismatchVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={handleDismissVersionMismatch}
+        >
           <View style={mobileStyles.modalOverlay}>
             <View style={mobileStyles.modalContainer}>
               <Text style={mobileStyles.modalTitle}>Version Mismatch</Text>
               <Text style={mobileStyles.modalSubtitle}>
-                Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may experience unexpected behavior. Consider updating.
+                Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may
+                experience unexpected behavior. Consider updating.
               </Text>
               <View style={mobileStyles.modalActions}>
                 <Pressable onPress={handleDismissVersionMismatch} style={mobileStyles.modalButton}>
@@ -1694,9 +1813,15 @@ function IndexScreen() {
                   text="Remove"
                   onSelect={handleConfirmRemove}
                   style={[desktopStyles.styles.tvModalButton, desktopStyles.styles.tvModalButtonDanger]}
-                  focusedStyle={[desktopStyles.styles.tvModalButtonFocused, desktopStyles.styles.tvModalButtonDangerFocused]}
+                  focusedStyle={[
+                    desktopStyles.styles.tvModalButtonFocused,
+                    desktopStyles.styles.tvModalButtonDangerFocused,
+                  ]}
                   textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
-                  focusedTextStyle={[desktopStyles.styles.tvModalButtonTextFocused, desktopStyles.styles.tvModalButtonDangerTextFocused]}
+                  focusedTextStyle={[
+                    desktopStyles.styles.tvModalButtonTextFocused,
+                    desktopStyles.styles.tvModalButtonDangerTextFocused,
+                  ]}
                 />
               </View>
             </SpatialNavigationNode>
@@ -1708,7 +1833,8 @@ function IndexScreen() {
           <View style={desktopStyles.styles.tvModalContainer}>
             <Text style={desktopStyles.styles.tvModalTitle}>Version Mismatch</Text>
             <Text style={desktopStyles.styles.tvModalSubtitle}>
-              Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may experience unexpected behavior. Consider updating.
+              Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may
+              experience unexpected behavior. Consider updating.
             </Text>
             <SpatialNavigationNode orientation="horizontal">
               <View style={desktopStyles.styles.tvModalActions}>
@@ -1967,9 +2093,9 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
 }
 
 function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
-  const heroMin = 230;
-  const heroMax = Math.round(screenHeight * 0.45);
-  const heroHeight = Math.min(Math.max(Math.round(screenHeight * 0.32), heroMin), heroMax);
+  const heroMin = 280;
+  const heroMax = Math.round(screenHeight * 0.5);
+  const heroHeight = Math.min(Math.max(Math.round(screenHeight * 0.38), heroMin), heroMax);
 
   const verticalPadding = theme.spacing['2xl'] * 2 + theme.spacing['3xl'];
   const availableBelowHero = Math.max(screenHeight - heroHeight - verticalPadding, theme.spacing['2xl']);
@@ -2089,17 +2215,43 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.8 : 1.5) * tvScale),
       color: theme.colors.text.secondary,
     },
+    heroContainer: {
+      marginTop: theme.spacing['2xl'],
+    },
+    heroScrollContent: {
+      paddingHorizontal: theme.spacing['2xl'],
+    },
     hero: {
       height: heroHeight,
       borderRadius: theme.radius.lg,
       overflow: 'hidden',
-      marginHorizontal: theme.spacing['2xl'],
-      marginTop: theme.spacing['2xl'],
       position: 'relative',
+    },
+    heroSingle: {
+      marginHorizontal: theme.spacing['2xl'],
     },
     heroImage: {
       width: '100%',
       height: '100%',
+    },
+    heroPagination: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.md,
+    },
+    heroDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    },
+    heroDotActive: {
+      backgroundColor: theme.colors.accent.primary,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
     },
     heroGradient: {
       ...StyleSheet.absoluteFillObject,
@@ -2379,10 +2531,20 @@ function createMobileStyles(theme: NovaTheme) {
       paddingBottom: theme.spacing['3xl'],
       gap: theme.spacing['2xl'],
     },
+    heroContainer: {
+      marginTop: theme.spacing.lg,
+    },
+    heroScrollContent: {
+      paddingHorizontal: theme.spacing.lg,
+    },
     hero: {
-      overflow: 'visible',
+      overflow: 'hidden',
       aspectRatio: 16 / 9,
       position: 'relative',
+      borderRadius: theme.radius.lg,
+    },
+    heroSingle: {
+      marginHorizontal: theme.spacing.lg,
     },
     heroImage: {
       width: '100%',
@@ -2395,16 +2557,36 @@ function createMobileStyles(theme: NovaTheme) {
       position: 'absolute',
       left: theme.spacing.lg,
       right: theme.spacing.lg,
-      bottom: theme.spacing.lg - 30,
-      gap: theme.spacing.sm,
+      bottom: theme.spacing.lg,
+      gap: theme.spacing.xs,
     },
     heroTitle: {
       ...theme.typography.title.lg,
       color: theme.colors.text.primary,
     },
     heroDescription: {
-      ...theme.typography.body.md,
+      ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+    },
+    heroPagination: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+    },
+    heroDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    },
+    heroDotActive: {
+      backgroundColor: theme.colors.accent.primary,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
     },
     section: {
       gap: theme.spacing.md,
