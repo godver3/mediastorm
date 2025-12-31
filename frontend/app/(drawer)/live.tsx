@@ -608,7 +608,7 @@ function LiveScreen() {
       await refreshSettings();
       showToast('Settings refreshed', { tone: 'success' });
     } catch {
-      showToast('Failed to refresh settings', { tone: 'error' });
+      showToast('Failed to refresh settings', { tone: 'danger' });
     } finally {
       setIsRefreshing(false);
     }

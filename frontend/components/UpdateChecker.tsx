@@ -55,7 +55,7 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
       return;
     }
 
-    let timeoutId: NodeJS.Timeout | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
 
     const checkForUpdates = async () => {
