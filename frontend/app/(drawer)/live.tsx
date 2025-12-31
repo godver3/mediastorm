@@ -17,6 +17,7 @@ import { Image } from '@/components/Image';
 import { CategoryFilterModal } from '@/components/CategoryFilterModal';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
+import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useLiveCategories, useLiveFavorites, useLiveHiddenChannels } from '@/components/LiveContext';
 import LoadingIndicator from '@/components/LoadingIndicator';
 import { useMenuContext } from '@/components/MenuContext';
@@ -213,6 +214,7 @@ function LiveScreen() {
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
   const { showToast } = useToast();
+  const { refreshSettings } = useBackendSettings();
   const { pendingPinUserId } = useUserProfiles();
   const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false);
   const [actionChannel, setActionChannel] = useState<LiveChannel | null>(null);
@@ -599,6 +601,19 @@ function LiveScreen() {
     router.push('/settings');
   }, [router]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefreshSettings = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshSettings();
+      showToast('Settings refreshed', { tone: 'success' });
+    } catch {
+      showToast('Failed to refresh settings', { tone: 'error' });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshSettings, showToast]);
+
   const handleHideChannel = useCallback(
     async (channel: LiveChannel) => {
       await hideChannel(channel.id);
@@ -880,8 +895,13 @@ function LiveScreen() {
                 <Text style={styles.emptyMessage}>
                   Provide an M3U playlist URL in Settings to load channels for Live TV playback.
                 </Text>
-                <View style={{ width: '100%', alignItems: 'center' }}>
+                <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
                   <FocusablePressable text="Open Settings" onSelect={handleOpenSettings} />
+                  <FocusablePressable
+                    text="Refresh"
+                    onSelect={handleRefreshSettings}
+                    loading={isRefreshing}
+                  />
                 </View>
               </View>
             ) : (

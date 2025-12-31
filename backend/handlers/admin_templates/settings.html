@@ -265,7 +265,8 @@
 
             // Show client selector if there are clients
             if (clientsForUser.length > 0) {
-                clientSelector.innerHTML = '<option value="">Profile Defaults</option>' +
+                const profileHasOverrides = userOverrides && userOverrides[userId];
+                clientSelector.innerHTML = `<option value="">Profile Defaults${profileHasOverrides ? ' ●' : ''}</option>` +
                     clientsForUser.map(c => `<option value="${c.id}">${c.name}${c.hasOverrides ? ' ●' : ''}</option>`).join('');
                 clientSelector.style.display = 'block';
             } else {
@@ -425,6 +426,7 @@
                     // Update user overrides tracking
                     if (userOverrides) userOverrides[selectedUserId] = false;
                     updateUserDropdownIndicators();
+                    updateClientDropdownIndicators(); // Update "Profile Defaults" indicator
                 }
 
                 updateRevertButtonVisibility();
@@ -460,6 +462,14 @@
         const clientSelector = document.getElementById('clientSelector');
         if (!clientSelector) return;
 
+        // Update "Profile Defaults" option
+        const profileDefaultsOption = clientSelector.querySelector('option[value=""]');
+        if (profileDefaultsOption && selectedUserId) {
+            const profileHasOverrides = userOverrides && userOverrides[selectedUserId];
+            profileDefaultsOption.text = profileHasOverrides ? 'Profile Defaults ●' : 'Profile Defaults';
+        }
+
+        // Update individual client options
         clientsForUser.forEach(client => {
             const option = clientSelector.querySelector(`option[value="${client.id}"]`);
             if (option) {
@@ -1083,6 +1093,11 @@
                     originalUserSettings = JSON.parse(JSON.stringify(userSettings));
                     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
                     showToast('Settings saved successfully');
+                    // Update override indicators
+                    if (userOverrides) userOverrides[selectedUserId] = true;
+                    updateUserDropdownIndicators();
+                    updateClientDropdownIndicators();
+                    updateRevertButtonVisibility();
                     setTimeout(() => renderSettings(), 500);
                 } else {
                     const result = await response.text();
@@ -2045,6 +2060,7 @@
                     // Update user override indicator (settings were saved, so they have overrides now)
                     if (userOverrides) userOverrides[selectedUserId] = true;
                     updateUserDropdownIndicators();
+                    updateClientDropdownIndicators(); // Update "Profile Defaults" indicator
                     updateRevertButtonVisibility();
                 } else {
                     const result = await response.text();

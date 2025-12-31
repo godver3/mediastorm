@@ -172,7 +172,17 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
       if ((err as Error)?.name === 'AbortError') {
         return;
       }
-      const message = err instanceof Error ? err.message : 'Failed to load playlist.';
+      // Handle network errors (status 0) and other failures gracefully
+      let message = 'Failed to load playlist.';
+      if (err instanceof Error) {
+        if (err.message.includes('status') && err.message.includes('0')) {
+          message = 'Unable to reach playlist server. The server may be down or unreachable.';
+        } else if (err.name === 'RangeError') {
+          message = 'Unable to reach playlist server. The server may be down or unreachable.';
+        } else {
+          message = err.message;
+        }
+      }
       setError(message);
       setAllChannels([]);
     } finally {
