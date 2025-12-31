@@ -21,6 +21,7 @@ import {
 import { AuthProvider, useAuth } from '../components/AuthContext';
 import { BackendSettingsProvider } from '../components/BackendSettingsContext';
 import { LiveProvider } from '../components/LiveContext';
+import { UpdateChecker } from '../components/UpdateChecker';
 import { LoadingScreenProvider } from '../components/LoadingScreenContext';
 import { MenuProvider } from '../components/MenuContext';
 import { ContinueWatchingProvider } from '../components/ContinueWatchingContext';
@@ -268,11 +269,13 @@ export default function RootLayout() {
       <SafeAreaProvider initialMetrics={safeAreaInitialMetrics}>
         {__DEV__ && Platform.OS === 'ios' ? <SafeAreaDebugLogger /> : null}
         <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
-          <BackendSettingsProvider>
-            <AuthProvider>
-              <AuthGate />
-            </AuthProvider>
-          </BackendSettingsProvider>
+          <UpdateChecker>
+            <BackendSettingsProvider>
+              <AuthProvider>
+                <AuthGate />
+              </AuthProvider>
+            </BackendSettingsProvider>
+          </UpdateChecker>
         </View>
       </SafeAreaProvider>
     </GestureHandlerRootView>
