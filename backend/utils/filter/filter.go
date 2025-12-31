@@ -107,18 +107,64 @@ type filteredResult struct {
 // resolutionToNumeric converts a resolution string to a numeric value for comparison.
 // Higher values = higher resolution. Returns 0 for unknown resolutions.
 func resolutionToNumeric(res string) int {
-	switch strings.ToLower(res) {
+	res = strings.ToLower(res)
+	switch res {
 	case "480p":
 		return 480
 	case "720p":
 		return 720
 	case "1080p":
 		return 1080
-	case "2160p", "4k":
+	case "2160p", "4k", "uhd":
 		return 2160
 	default:
 		return 0
 	}
+}
+
+// resolutionToString converts a numeric resolution back to a display string.
+func resolutionToString(res int) string {
+	switch res {
+	case 480:
+		return "480p"
+	case 720:
+		return "720p"
+	case 1080:
+		return "1080p"
+	case 2160:
+		return "2160p"
+	default:
+		return ""
+	}
+}
+
+// extractResolutionFromTitle extracts resolution from the title using simple string matching.
+// This is a fallback for when parsett doesn't detect resolution (e.g., underscore-separated titles).
+func extractResolutionFromTitle(title string) int {
+	title = strings.ToLower(title)
+
+	// Check for 4K/UHD (highest priority)
+	if strings.Contains(title, "2160p") || strings.Contains(title, "4k") || strings.Contains(title, "uhd") {
+		return 2160
+	}
+	// Check for 1080p
+	if strings.Contains(title, "1080p") || strings.Contains(title, "1080i") {
+		return 1080
+	}
+	// Check for 720p
+	if strings.Contains(title, "720p") || strings.Contains(title, "720i") {
+		return 720
+	}
+	// Check for 576p (PAL)
+	if strings.Contains(title, "576p") || strings.Contains(title, "576i") {
+		return 576
+	}
+	// Check for 480p (NTSC)
+	if strings.Contains(title, "480p") || strings.Contains(title, "480i") {
+		return 480
+	}
+
+	return 0
 }
 
 // Results filters NZB search results based on parsed title information
@@ -285,13 +331,25 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 		}
 
 		// Check resolution limits if configured
-		if opts.MaxResolution != "" && parsed.Resolution != "" {
+		if opts.MaxResolution != "" {
 			maxRes := resolutionToNumeric(opts.MaxResolution)
-			parsedRes := resolutionToNumeric(parsed.Resolution)
+			var parsedRes int
+			var resSource string
+			if parsed.Resolution != "" {
+				parsedRes = resolutionToNumeric(parsed.Resolution)
+				resSource = parsed.Resolution
+			}
+			// Fallback: extract resolution from title if parsett didn't detect it
+			if parsedRes == 0 {
+				parsedRes = extractResolutionFromTitle(result.Title)
+				if parsedRes > 0 {
+					resSource = resolutionToString(parsedRes)
+				}
+			}
 			// Only filter if we can parse both resolutions
 			if maxRes > 0 && parsedRes > 0 && parsedRes > maxRes {
 				log.Printf("[filter] Rejecting %q: resolution %s > %s limit",
-					result.Title, parsed.Resolution, opts.MaxResolution)
+					result.Title, resSource, opts.MaxResolution)
 				continue
 			}
 		}
