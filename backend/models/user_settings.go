@@ -62,13 +62,14 @@ const (
 
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB   float64     `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB float64     `json:"maxSizeEpisodeGb"`
-	MaxResolution    string      `json:"maxResolution"`  // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	HDRDVPolicy      HDRDVPolicy `json:"hdrDvPolicy"`    // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
-	PrioritizeHdr    bool        `json:"prioritizeHdr"`  // Prioritize HDR/DV content in search results
-	FilterOutTerms   []string    `json:"filterOutTerms"` // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms   []string    `json:"preferredTerms"` // Terms to prioritize in results (case-insensitive match in title)
+	MaxSizeMovieGB                   float64     `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB                 float64     `json:"maxSizeEpisodeGb"`
+	MaxResolution                    string      `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy                      HDRDVPolicy `json:"hdrDvPolicy"`                      // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	PrioritizeHdr                    bool        `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
+	FilterOutTerms                   []string    `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms                   []string    `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
+	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
 }
 
 // DefaultUserSettings returns the default settings for a new user.
