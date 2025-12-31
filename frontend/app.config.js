@@ -24,6 +24,7 @@ module.exports = ({ config }) => {
   const plugins = [
     'expo-router',
     './plugins/with-now-playing-manager',
+    './plugins/with-android-pip',
     [
       'expo-build-properties',
       {
