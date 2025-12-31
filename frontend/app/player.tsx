@@ -48,6 +48,12 @@ import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import {
+  updateNowPlaying,
+  updatePlaybackPosition,
+  clearNowPlaying,
+  setupRemoteCommands,
+} from 'now-playing-manager';
 
 type ConsoleLevel = 'log' | 'warn' | 'error';
 
@@ -851,6 +857,7 @@ export default function PlayerScreen() {
   const hlsSessionIdRef = useRef<string | null>(null);
   const currentTimeRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
+  const nowPlayingLastUpdateRef = useRef<number>(0); // Throttle iOS Now Playing updates
   const playbackOffsetRef = useRef<number>(initialStartOffset);
   const sessionBufferEndRef = useRef<number>(initialStartOffset);
   const warmStartTokenRef = useRef(0);
@@ -2256,6 +2263,17 @@ export default function PlayerScreen() {
       if (currentDuration > 0 && absoluteTime >= 0) {
         reportProgress(absoluteTime, currentDuration);
       }
+
+      // Update iOS Now Playing position (throttled to every 10 seconds)
+      if (Platform.OS === 'ios' && hasStartedPlaying && currentDuration > 0) {
+        const now = Date.now();
+        if (now - nowPlayingLastUpdateRef.current >= 10000) {
+          nowPlayingLastUpdateRef.current = now;
+          updatePlaybackPosition(absoluteTime, currentDuration, paused ? 0 : 1).catch(() => {
+            // Silently ignore errors
+          });
+        }
+      }
     },
     [
       hasStartedPlaying,
@@ -2266,6 +2284,7 @@ export default function PlayerScreen() {
       isHlsStream,
       applyPendingSessionSeek,
       hideLoadingScreen,
+      paused,
     ],
   );
 
@@ -2379,6 +2398,72 @@ export default function PlayerScreen() {
       }
     };
   }, []);
+
+  // iOS Now Playing integration - setup remote commands on mount, clear on unmount
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      setupRemoteCommands().catch((err) => {
+        console.warn('[player] Failed to setup remote commands:', err);
+      });
+    }
+    return () => {
+      if (Platform.OS === 'ios') {
+        clearNowPlaying().catch((err) => {
+          console.warn('[player] Failed to clear Now Playing:', err);
+        });
+      }
+    };
+  }, []);
+
+  // iOS Now Playing - update info when playback starts
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !hasStartedPlaying) {
+      return;
+    }
+
+    // Build Now Playing info
+    const nowPlayingTitle =
+      mediaType === 'episode' && seriesTitle ? seriesTitle : (displayName ?? title ?? 'Unknown');
+    let nowPlayingSubtitle: string | undefined;
+    if (mediaType === 'episode' && seasonNumber && episodeNumber) {
+      const episodeCode = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+      nowPlayingSubtitle = episodeName ? `${episodeCode} - ${episodeName}` : episodeCode;
+    } else if (year) {
+      nowPlayingSubtitle = String(year);
+    }
+
+    const imageUri = Array.isArray(headerImage) ? headerImage[0] : headerImage;
+
+    console.log('[player] Updating iOS Now Playing info:', {
+      title: nowPlayingTitle,
+      subtitle: nowPlayingSubtitle,
+      imageUri: imageUri?.substring(0, 50),
+      duration: durationRef.current,
+    });
+
+    updateNowPlaying({
+      title: nowPlayingTitle,
+      subtitle: nowPlayingSubtitle,
+      duration: durationRef.current > 0 ? durationRef.current : undefined,
+      currentTime: currentTimeRef.current,
+      playbackRate: paused ? 0 : 1,
+      imageUri,
+    }).catch((err) => {
+      console.warn('[player] Failed to update Now Playing:', err);
+    });
+  }, [
+    hasStartedPlaying,
+    mediaType,
+    seriesTitle,
+    displayName,
+    title,
+    seasonNumber,
+    episodeNumber,
+    episodeName,
+    year,
+    headerImage,
+    paused,
+  ]);
 
   // Check if we should set next episode on unmount (when exiting player early but close to end)
   useEffect(() => {
