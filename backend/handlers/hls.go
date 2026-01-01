@@ -383,7 +383,7 @@ const (
 	hlsMaxRecoveryAttempts = 3
 
 	// HLS segment duration in seconds (must match -hls_time value)
-	hlsSegmentDuration = 4.0
+	hlsSegmentDuration = 2.0
 
 	// Rate limiting: pause FFmpeg when buffer gets too far ahead of player
 	// Note: Players keep buffering even when paused, so we need generous thresholds
@@ -1649,33 +1649,37 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		"-y", // Overwrite output files - prevents race condition with on-demand subtitle extraction
 		"-loglevel", "error",
 		// A/V sync flags: generate PTS if missing, discard corrupt packets
-		// This helps prevent audio/video desync issues especially with HLS streams
 		"-fflags", "+genpts+discardcorrupt",
 	}
 	// NOTE: -strict unofficial is added AFTER -i as an output option (see below)
 	// Placing it before -i doesn't enable writing dvcC boxes to the output
 
-	// Seeking strategy:
-	// - With proxy URL: use INPUT seeking (-ss before -i) - FFmpeg can seek via HTTP Range
-	// - With pipe: use INPUT seeking - FFmpeg reads and discards at I/O speed
-	if session.StartOffset > 0 {
-		// INPUT seeking (-ss before -i): allows FFmpeg to seek via HTTP Range when using URL,
-		// or reads and discards quickly when using pipe
+	// Seeking strategy - hybrid approach:
+	// - Small seeks (< 30s): OUTPUT seeking (-ss after -i) - faster startup, no HTTP Range delays
+	// - Large seeks (>= 30s): INPUT seeking (-ss before -i) - uses HTTP Range to skip data
+	const outputSeekThreshold = 30.0 // seconds
+
+	useOutputSeeking := session.StartOffset > 0 && session.StartOffset < outputSeekThreshold
+
+	// For INPUT seeking, add -ss before -i
+	if session.StartOffset >= outputSeekThreshold {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-		if proxyURL != "" {
-			log.Printf("[hls] session %s: using INPUT seeking to %.3fs via HTTP Range (proxy URL)", session.ID, session.StartOffset)
-		} else {
-			log.Printf("[hls] session %s: using INPUT seeking to skip to %.3fs (pipe mode)", session.ID, session.StartOffset)
-		}
+		log.Printf("[hls] session %s: using INPUT seeking to %.3fs (HTTP Range, skips data)", session.ID, session.StartOffset)
 	}
 
-	// Add input source - use proxy URL if available (for HTTP Range seeking), otherwise use pipe
+	// Add input source - use proxy URL if available, otherwise use pipe
 	if proxyURL != "" {
 		args = append(args, "-i", proxyURL)
 		log.Printf("[hls] session %s: FFmpeg input set to proxy URL: %s", session.ID, proxyURL)
 	} else {
 		args = append(args, "-i", "pipe:0")
 		log.Printf("[hls] session %s: FFmpeg input set to pipe:0", session.ID)
+	}
+
+	// For OUTPUT seeking, add -ss after -i
+	if useOutputSeeking {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
+		log.Printf("[hls] session %s: using OUTPUT seeking to %.3fs (faster startup, reads from start)", session.ID, session.StartOffset)
 	}
 
 	// If we're seeking and know the total duration, tell FFmpeg how much content to expect
@@ -1931,7 +1935,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// First output: HLS stream with video and audio only
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "4",
+			"-hls_time", "2",
 			"-hls_list_size", "0",
 			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments+temp_file",
@@ -1965,7 +1969,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// so no separate -hls_subtitle_path is needed (which expects a file pattern, not directory)
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "4",
+			"-hls_time", "2",
 			"-hls_list_size", "0",
 			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments+temp_file",

@@ -219,7 +219,7 @@ func (m *MP4BoxHLSManager) startMP4BoxHLS(ctx context.Context, session *MP4BoxSe
 		"-c:a", "copy",
 		"-strict", "unofficial", // Enable DV metadata writing
 		"-f", "hls",
-		"-hls_time", "4",
+		"-hls_time", "1",
 		"-hls_list_size", "0",
 		"-hls_playlist_type", "event",
 		"-hls_flags", "independent_segments+temp_file",
