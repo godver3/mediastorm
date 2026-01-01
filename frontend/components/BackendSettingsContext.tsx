@@ -60,6 +60,7 @@ export interface BackendWebDAVSettings {
 
 export type StreamingServiceMode = 'usenet' | 'debrid' | 'hybrid';
 export type StreamingServicePriority = 'none' | 'usenet' | 'debrid';
+export type MultiProviderMode = 'fastest' | 'preferred';
 
 export interface BackendDebridProvider {
   name: string;
@@ -73,6 +74,7 @@ export interface BackendStreamingSettings {
   maxCacheSizeMB: number;
   serviceMode: StreamingServiceMode;
   servicePriority: StreamingServicePriority;
+  multiProviderMode?: MultiProviderMode;
   debridProviders: BackendDebridProvider[];
 }
 
