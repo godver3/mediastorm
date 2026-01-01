@@ -347,6 +347,72 @@
         }
     }
 
+    // Recalculate hasOverrides for all users on page load
+    // This compares actual values to global defaults, not just record existence
+    async function recalculateAllUserOverrides() {
+        if (!userOverrides) return;
+
+        const userIds = Object.keys(userOverrides).filter(id => userOverrides[id]);
+        for (const userId of userIds) {
+            try {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
+                    credentials: 'same-origin'
+                });
+                if (response.ok) {
+                    const settings = await response.json();
+                    if (!settings || Object.keys(settings).length === 0) {
+                        userOverrides[userId] = false;
+                        continue;
+                    }
+
+                    // Check all per-user sections for any actual differences
+                    let hasActualOverrides = false;
+
+                    // Check filtering section
+                    if (settings.filtering) {
+                        const globalFiltering = currentSettings.filtering || {};
+                        for (const key of Object.keys(settings.filtering)) {
+                            const profileVal = normalizeForComparison(settings.filtering[key]);
+                            const globalVal = normalizeForComparison(globalFiltering[key]);
+                            if (!deepEqual(profileVal, globalVal)) {
+                                hasActualOverrides = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Check playback section
+                    if (!hasActualOverrides && settings.playback) {
+                        const globalPlayback = currentSettings.playback || {};
+                        for (const key of Object.keys(settings.playback)) {
+                            const profileVal = normalizeForComparison(settings.playback[key]);
+                            const globalVal = normalizeForComparison(globalPlayback[key]);
+                            if (!deepEqual(profileVal, globalVal)) {
+                                hasActualOverrides = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Check homeShelves section
+                    if (!hasActualOverrides && settings.homeShelves) {
+                        const globalHomeShelves = currentSettings.homeShelves || {};
+                        if (!deepEqual(normalizeForComparison(settings.homeShelves), normalizeForComparison(globalHomeShelves))) {
+                            hasActualOverrides = true;
+                        }
+                    }
+
+                    userOverrides[userId] = hasActualOverrides;
+                } else {
+                    userOverrides[userId] = false;
+                }
+            } catch (e) {
+                console.warn('Failed to load settings for user', userId, e);
+            }
+        }
+        updateUserDropdownIndicators();
+    }
+
     async function handleClientChange(clientId) {
         selectedClientId = clientId;
         const identifyBtn = document.getElementById('identifyClientBtn');
@@ -2275,6 +2341,9 @@
                 await handleUserChange(selector.value);
                 return; // handleUserChange will call renderSettings
             }
+            // Recalculate all user overrides on initial load (compare actual values to global)
+            // This fixes the indicator showing for profiles with saved settings that match global
+            await recalculateAllUserOverrides();
         } else {
             await loadProfiles();
             // For non-admin, auto-select the first profile
