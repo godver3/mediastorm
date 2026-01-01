@@ -222,12 +222,10 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // On native platforms (iOS/Android), always use HLS streaming for react-native-video
-  // - Provides consistent playback experience with proper codec/container support
-  // - iOS AVPlayer doesn't support MKV containers natively
-  // - Enables proper audio track selection and subtitle handling
-  // - HDR (Dolby Vision/HDR10) is properly passed through
-  const useHlsOnNative = Platform.OS !== 'web';
+  // On native platforms (iOS/Android), use HLS streaming only for HDR content
+  // - HDR (Dolby Vision/HDR10) requires HLS for proper passthrough to react-native-video
+  // - SDR content uses direct streaming to VLC player (which handles MKV natively)
+  const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10);
   console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`);
 
   if (useHlsOnNative) {
@@ -883,7 +881,7 @@ export const initiatePlayback = async (
   const hasAnyHDR = hasDolbyVision || hasHDR10;
 
   // Build stream URL
-  // On native platforms: Always use HLS streaming for react-native-video
+  // On native platforms: HDR uses HLS for react-native-video, SDR uses direct streaming for VLC
   // On web: Use direct streaming with transmux as needed
   let streamUrl = buildStreamUrl(playback.webdavPath, settings, {
     hasDolbyVision,
@@ -894,6 +892,8 @@ export const initiatePlayback = async (
     subtitleTrack: selectedSubtitleTrack,
     profileId: options.profileId,
     profileName: options.profileName,
+    // Disable transmux for native SDR - VLC handles MKV natively
+    disableTransmux: isNativePlatform && !hasAnyHDR,
   });
 
   // If HLS session URL (native platforms), fetch the actual playlist URL

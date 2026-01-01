@@ -4568,7 +4568,7 @@ export default function PlayerScreen() {
               onTracksAvailable={handleTracksAvailable}
               // Use react-native-video for HDR content (VLC tone-maps to SDR)
               forceRnvPlayer={routeHasAnyHDR}
-              forceNativeFullscreen={Platform.OS !== 'web' && (isHlsStream || routeHasAnyHDR)}
+              forceNativeFullscreen={Platform.OS !== 'web' && routeHasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{
                 title: episodeName || title || undefined,
