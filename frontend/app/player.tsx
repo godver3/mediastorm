@@ -2413,6 +2413,17 @@ export default function PlayerScreen() {
       if (pendingSessionSeekRef.current !== null) {
         applyPendingSessionSeek('player-load');
       }
+
+      // Resume playback if we paused for seek or audio track change.
+      // On Android, ExoPlayer doesn't emit progress events when paused,
+      // so we can't rely on handleProgressUpdate to resume playback.
+      // Instead, resume here as soon as the video loads.
+      if (pausedForSeekRef.current) {
+        console.log('[player] resuming playback after load (paused for seek/track change)');
+        pausedForSeekRef.current = false;
+        setIsVideoBuffering(false);
+        setPaused(false);
+      }
     },
     [applyPendingSessionSeek, updateDuration],
   );
