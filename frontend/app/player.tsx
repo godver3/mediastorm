@@ -401,7 +401,7 @@ const findSubtitleTrackByPreference = (
 };
 
 export default function PlayerScreen() {
-  const { settings, userSettings } = useBackendSettings();
+  const { settings, userSettings, refreshSettings } = useBackendSettings();
   const { hideLoadingScreen } = useLoadingScreen();
   const { showToast } = useToast();
   const {
@@ -798,6 +798,14 @@ export default function PlayerScreen() {
       return String(effectiveMovie).includes('/video/hls/');
     }
   }, [effectiveMovie]);
+
+  // Refresh settings on playback start to ensure latest values (e.g., subtitle size)
+  useEffect(() => {
+    refreshSettings().catch((err) => {
+      console.warn('[player] Failed to refresh settings on mount:', err);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
 
   // Prevent screen saver / display sleep while video is playing
   // This is needed because VLC player on Android doesn't handle this automatically
