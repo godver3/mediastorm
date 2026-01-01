@@ -170,6 +170,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 	filterSettings := models.FilterSettings{
 		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
 		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxResolution:    globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,

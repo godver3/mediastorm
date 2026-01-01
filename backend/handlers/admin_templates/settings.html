@@ -49,6 +49,13 @@
             </svg>
             Revert
         </button>
+        <button id="propagateBtn" class="btn btn-secondary" style="display: none;" onclick="propagateSettings()" title="Propagate settings to children">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14"/>
+                <path d="M19 12l-7 7-7-7"/>
+            </svg>
+            Propagate
+        </button>
         <button class="btn btn-primary" onclick="saveAllSettings()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -476,7 +483,7 @@
     // Update revert button visibility based on selection and overrides
     function updateRevertButtonVisibility() {
         const revertBtn = document.getElementById('revertBtn');
-        if (!revertBtn) return;
+        const propagateBtn = document.getElementById('propagateBtn');
 
         let showRevert = false;
         let hasOverrides = false;
@@ -491,10 +498,33 @@
             showRevert = hasOverrides;
         }
 
-        revertBtn.style.display = showRevert ? 'inline-flex' : 'none';
-        revertBtn.title = selectedClientId
-            ? 'Reset all device settings to profile defaults'
-            : 'Reset all profile settings to global defaults';
+        if (revertBtn) {
+            revertBtn.style.display = showRevert ? 'inline-flex' : 'none';
+            revertBtn.title = selectedClientId
+                ? 'Reset all device settings to profile defaults'
+                : 'Reset all profile settings to global defaults';
+        }
+
+        // Propagate button: show at global level or profile level (not client level)
+        // Only show for admin users
+        if (propagateBtn && isAdmin) {
+            let showPropagate = false;
+            if (!selectedClientId) {
+                // At global level (no user selected) or profile level (user selected)
+                // Show propagate if there are profiles/clients to propagate to
+                if (!selectedUserId) {
+                    // Global level - always show if there are users
+                    showPropagate = true;
+                } else {
+                    // Profile level - show if there are clients for this user
+                    showPropagate = clientsForUser.length > 0;
+                }
+            }
+            propagateBtn.style.display = showPropagate ? 'inline-flex' : 'none';
+            propagateBtn.title = selectedUserId
+                ? 'Propagate profile settings to all devices'
+                : 'Propagate global settings to all profiles and devices';
+        }
     }
 
     // Revert all settings to parent defaults (global for profile, profile for client)
@@ -556,6 +586,69 @@
             }
         } catch (e) {
             showToast('Failed to reset settings: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
+
+    // Propagate settings from global to all profiles+clients, or from profile to its clients
+    async function propagateSettings() {
+        const isProfileLevel = !!selectedUserId;
+        const targetDesc = isProfileLevel
+            ? 'all devices for this profile'
+            : 'all profiles and their devices';
+
+        if (!confirm(`Are you sure you want to propagate current settings to ${targetDesc}? This will overwrite their filter settings.`)) {
+            return;
+        }
+
+        const btn = document.getElementById('propagateBtn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Propagating...';
+
+        try {
+            let url = basePath + '/api/settings/propagate';
+            if (isProfileLevel) {
+                url += '?userId=' + encodeURIComponent(selectedUserId);
+            }
+
+            const response = await fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showToast(result.message || 'Settings propagated successfully');
+
+                // Refresh the view to show updated states
+                if (isProfileLevel) {
+                    // Reload clients for this user
+                    await loadClientsForUser(selectedUserId);
+                    updateClientDropdownIndicators();
+                } else {
+                    // At global level, all profiles now have overrides
+                    // Mark all users as having overrides
+                    const userSelector = document.getElementById('userSelector');
+                    if (userSelector) {
+                        Array.from(userSelector.options).forEach(option => {
+                            if (option.value) {
+                                userOverrides[option.value] = true;
+                            }
+                        });
+                    }
+                    updateUserDropdownIndicators();
+                }
+
+                updateRevertButtonVisibility();
+            } else {
+                const err = await response.text();
+                showToast('Failed to propagate settings: ' + err, 'error');
+            }
+        } catch (e) {
+            showToast('Failed to propagate settings: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHTML;

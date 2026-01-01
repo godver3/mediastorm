@@ -474,27 +474,29 @@ var SettingsSchema = map[string]interface{}{
 
 // AdminUIHandler serves the admin dashboard UI
 type AdminUIHandler struct {
-	settingsTemplate    *template.Template
-	statusTemplate      *template.Template
-	historyTemplate     *template.Template
-	toolsTemplate       *template.Template
-	searchTemplate      *template.Template
-	loginTemplate       *template.Template
-	registerTemplate    *template.Template
-	accountsTemplate    *template.Template
-	settingsPath        string
-	hlsManager          *HLSManager
-	usersService        *users.Service
-	userSettingsService *user_settings.Service
-	historyService      *history.Service
-	watchlistService    *watchlist.Service
-	accountsService     *accounts.Service
-	invitationsService  *invitations.Service
-	sessionsService     *sessions.Service
-	plexClient          *plex.Client
-	traktClient         *trakt.Client
-	configManager   *config.Manager
-	metadataService MetadataService
+	settingsTemplate      *template.Template
+	statusTemplate        *template.Template
+	historyTemplate       *template.Template
+	toolsTemplate         *template.Template
+	searchTemplate        *template.Template
+	loginTemplate         *template.Template
+	registerTemplate      *template.Template
+	accountsTemplate      *template.Template
+	settingsPath          string
+	hlsManager            *HLSManager
+	usersService          *users.Service
+	userSettingsService   *user_settings.Service
+	historyService        *history.Service
+	watchlistService      *watchlist.Service
+	accountsService       *accounts.Service
+	invitationsService    *invitations.Service
+	sessionsService       *sessions.Service
+	plexClient            *plex.Client
+	traktClient           *trakt.Client
+	configManager         *config.Manager
+	metadataService       MetadataService
+	clientsService        clientsService
+	clientSettingsService clientSettingsService
 }
 
 // MetadataService interface for metadata operations
@@ -532,6 +534,16 @@ func (h *AdminUIHandler) SetInvitationsService(is *invitations.Service) {
 // SetSessionsService sets the sessions service for session management
 func (h *AdminUIHandler) SetSessionsService(ss *sessions.Service) {
 	h.sessionsService = ss
+}
+
+// SetClientsService sets the clients service for propagation
+func (h *AdminUIHandler) SetClientsService(cs clientsService) {
+	h.clientsService = cs
+}
+
+// SetClientSettingsService sets the client settings service for propagation
+func (h *AdminUIHandler) SetClientSettingsService(css clientSettingsService) {
+	h.clientSettingsService = css
 }
 
 // NewAdminUIHandler creates a new admin UI handler
@@ -1148,6 +1160,117 @@ func (h *AdminUIHandler) ResetUserSettings(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "User settings reset to global defaults",
+	})
+}
+
+// PropagateSettings propagates settings from global to all profiles+clients, or from a profile to its clients
+func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("userId")
+
+	if h.userSettingsService == nil {
+		writeJSONError(w, "User settings service not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Load global settings
+	globalSettings, err := h.configManager.Load()
+	if err != nil {
+		writeJSONError(w, "Failed to load global settings", http.StatusInternalServerError)
+		return
+	}
+
+	// Build the filtering settings from global
+	globalFilterSettings := models.FilterSettings{
+		MaxSizeMovieGB:                   globalSettings.Filtering.MaxSizeMovieGB,
+		MaxSizeEpisodeGB:                 globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxResolution:                    globalSettings.Filtering.MaxResolution,
+		HDRDVPolicy:                      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		PrioritizeHdr:                    globalSettings.Filtering.PrioritizeHdr,
+		FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
+		BypassFilteringForAIOStreamsOnly: globalSettings.Filtering.BypassFilteringForAIOStreamsOnly,
+	}
+
+	var propagatedProfiles, propagatedClients int
+
+	if userID == "" {
+		// Propagate from global to all profiles and their clients
+		allUsers := h.usersService.ListAll()
+		for _, user := range allUsers {
+			// Get or create user settings
+			existingSettings, _ := h.userSettingsService.Get(user.ID)
+			var newSettings models.UserSettings
+			if existingSettings != nil {
+				newSettings = *existingSettings
+			} else {
+				// Start with defaults
+				newSettings = models.UserSettings{
+					Playback: models.PlaybackSettings{
+						PreferredPlayer:           globalSettings.Playback.PreferredPlayer,
+						PreferredAudioLanguage:    globalSettings.Playback.PreferredAudioLanguage,
+						PreferredSubtitleLanguage: globalSettings.Playback.PreferredSubtitleLanguage,
+						PreferredSubtitleMode:     globalSettings.Playback.PreferredSubtitleMode,
+						UseLoadingScreen:          globalSettings.Playback.UseLoadingScreen,
+						SubtitleSize:              globalSettings.Playback.SubtitleSize,
+					},
+					HomeShelves: models.HomeShelvesSettings{
+						Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),
+						TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
+					},
+				}
+			}
+			// Override filtering with global settings
+			newSettings.Filtering = globalFilterSettings
+			if err := h.userSettingsService.Update(user.ID, newSettings); err != nil {
+				writeJSONError(w, "Failed to update user "+user.ID+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			propagatedProfiles++
+
+			// Also propagate to this user's clients
+			if h.clientsService != nil && h.clientSettingsService != nil {
+				clients := h.clientsService.ListByUser(user.ID)
+				for _, client := range clients {
+					// Delete client overrides so they inherit from profile
+					_ = h.clientSettingsService.Delete(client.ID)
+					propagatedClients++
+				}
+			}
+		}
+	} else {
+		// Propagate from profile to its clients only
+		// Get the profile's effective settings
+		profileSettings, err := h.userSettingsService.Get(userID)
+		if err != nil {
+			writeJSONError(w, "Failed to get profile settings: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// If profile has no overrides, use global filtering settings
+		filterSettingsToPropagate := globalFilterSettings
+		if profileSettings != nil {
+			filterSettingsToPropagate = profileSettings.Filtering
+		}
+
+		if h.clientsService != nil && h.clientSettingsService != nil {
+			clients := h.clientsService.ListByUser(userID)
+			for _, client := range clients {
+				// Delete client overrides so they inherit from profile
+				_ = h.clientSettingsService.Delete(client.ID)
+				propagatedClients++
+			}
+			// If we want to explicitly set settings on clients instead of just deleting overrides:
+			// We delete them so they inherit, which is cleaner
+			_ = filterSettingsToPropagate // Used for logging/future enhancement
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":            true,
+		"propagatedProfiles": propagatedProfiles,
+		"propagatedClients":  propagatedClients,
+		"message":            fmt.Sprintf("Settings propagated to %d profiles and %d clients", propagatedProfiles, propagatedClients),
 	})
 }
 

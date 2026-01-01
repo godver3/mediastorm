@@ -397,6 +397,8 @@ func main() {
 	adminUIHandler.SetAccountsService(accountsService)
 	adminUIHandler.SetInvitationsService(invitationsService)
 	adminUIHandler.SetSessionsService(sessionsService)
+	adminUIHandler.SetClientsService(clientsService)
+	adminUIHandler.SetClientSettingsService(clientSettingsService)
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
@@ -419,6 +421,7 @@ func main() {
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/settings/propagate", adminUIHandler.RequireAuth(adminUIHandler.PropagateSettings)).Methods(http.MethodPost)
 
 	// Global settings endpoint (master only)
 	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.GetSettings)).Methods(http.MethodGet)
