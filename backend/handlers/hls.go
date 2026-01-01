@@ -1129,6 +1129,18 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				result.HasCompatibleAudio = true
 			}
 		case "subtitle":
+			// Only include text-based subtitle codecs that can be converted to WebVTT
+			textSubtitleCodecs := map[string]bool{
+				"subrip": true, "srt": true, "ass": true, "ssa": true,
+				"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+				"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+				"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+				"subviewer": true, "subviewer1": true, "vplayer": true,
+			}
+			if !textSubtitleCodecs[codec] {
+				// Skip bitmap/unsupported subtitle formats
+				continue
+			}
 			isForced := false
 			isDefault := false
 			if stream.Disposition != nil {
@@ -1418,13 +1430,26 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 		return nil, err
 	}
 
+	// Only include text-based subtitle codecs that can be converted to WebVTT
+	textSubtitleCodecs := map[string]bool{
+		"subrip": true, "srt": true, "ass": true, "ssa": true,
+		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+		"subviewer": true, "subviewer1": true, "vplayer": true,
+	}
+
 	streams = make([]subtitleStreamInfo, 0, len(result.Streams))
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		if !textSubtitleCodecs[codec] {
+			// Skip bitmap/unsupported subtitle formats
+			continue
+		}
 		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
 	}
 
-	log.Printf("[hls] subtitle probe results: streams=%d", len(streams))
+	log.Printf("[hls] subtitle probe results: streams=%d (text-based only)", len(streams))
 	return streams, nil
 }
 
@@ -1462,13 +1487,26 @@ func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string
 		return nil, err
 	}
 
+	// Only include text-based subtitle codecs that can be converted to WebVTT
+	textSubtitleCodecs := map[string]bool{
+		"subrip": true, "srt": true, "ass": true, "ssa": true,
+		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+		"subviewer": true, "subviewer1": true, "vplayer": true,
+	}
+
 	streams = make([]subtitleStreamInfo, 0, len(result.Streams))
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		if !textSubtitleCodecs[codec] {
+			// Skip bitmap/unsupported subtitle formats
+			continue
+		}
 		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
 	}
 
-	log.Printf("[hls] subtitle probe from URL results: streams=%d", len(streams))
+	log.Printf("[hls] subtitle probe from URL results: streams=%d (text-based only)", len(streams))
 	return streams, nil
 }
 
