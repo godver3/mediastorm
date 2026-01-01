@@ -408,6 +408,27 @@ const Controls: React.FC<ControlsProps> = ({
                     )}
                   </View>
                 )}
+                {/* Mobile landscape: track selection in main row */}
+                {isMobile && isLandscape && (hasAudioSelection || hasSubtitleSelection) && (
+                  <View style={styles.mobileTrackGroup}>
+                    {hasAudioSelection && audioSummary && (
+                      <Pressable onPress={handleOpenAudioMenu} style={styles.mobileTrackButton}>
+                        <Ionicons name="musical-notes" size={18} color={theme.colors.text.primary} />
+                        <Text style={styles.mobileTrackLabel} numberOfLines={1}>
+                          {audioSummary}
+                        </Text>
+                      </Pressable>
+                    )}
+                    {hasSubtitleSelection && subtitleSummary && (
+                      <Pressable onPress={handleOpenSubtitlesMenu} style={styles.mobileTrackButton}>
+                        <Ionicons name="chatbubble-ellipses" size={18} color={theme.colors.text.primary} />
+                        <Text style={styles.mobileTrackLabel} numberOfLines={1}>
+                          {subtitleSummary}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
                 <View style={[styles.seekContainer, isMobile && styles.seekContainerMobile]} pointerEvents="box-none">
                   <SeekBar
                     currentTime={currentTime}
@@ -448,7 +469,8 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </View>
           )}
-          {(hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
+          {/* Secondary row: hidden in mobile landscape (track selection moved to main row) */}
+          {!(isMobile && isLandscape) && (hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
             <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
@@ -730,7 +752,7 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       borderRadius: theme.radius.md,
     },
     bottomControlsMobileLandscape: {
-      bottom: theme.spacing.md,
+      bottom: theme.spacing.xs,
     },
     mainRow: {
       flexDirection: 'row',
@@ -794,6 +816,29 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     seekingDisabled: {
       opacity: 0.3,
+    },
+    // Mobile landscape: compact track selection in main row
+    mobileTrackGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginRight: theme.spacing.md,
+      marginTop: -2, // lift buttons slightly
+    },
+    mobileTrackButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'rgba(255, 255, 255, 0.15)',
+      borderRadius: theme.radius.sm,
+      paddingVertical: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.sm,
+      gap: theme.spacing.xs,
+    },
+    mobileTrackLabel: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.primary,
+      fontSize: 12,
+      maxWidth: 80,
     },
     buttonGroup: {
       flexDirection: 'row',

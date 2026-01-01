@@ -4,6 +4,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
+import { getTVScaleMultiplier, ANDROID_TV_TO_TVOS_RATIO } from '@/theme/tokens/tvScale';
 
 export interface VTTCue {
   startTime: number; // seconds
@@ -20,10 +21,6 @@ interface SubtitleOverlayProps {
   enabled: boolean;
   /** Offset to add to subtitle times (for seek/warm start) */
   timeOffset?: number;
-  /** Video natural width (for positioning subtitles at video content boundary) */
-  videoWidth?: number;
-  /** Video natural height (for positioning subtitles at video content boundary) */
-  videoHeight?: number;
   /** Size scale factor for subtitles (1.0 = default) */
   sizeScale?: number;
   /** Whether player controls are visible (subtitles bump up to avoid overlap) */
@@ -33,6 +30,10 @@ interface SubtitleOverlayProps {
    * When provided, this is used instead of the currentTime prop for smoother subtitle sync
    */
   currentTimeRef?: React.MutableRefObject<number>;
+  /** Video natural width (used for portrait mode positioning) */
+  videoWidth?: number;
+  /** Video natural height (used for portrait mode positioning) */
+  videoHeight?: number;
 }
 
 /**
@@ -142,11 +143,11 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   currentTime,
   enabled,
   timeOffset = 0,
-  videoWidth,
-  videoHeight,
   sizeScale = 1.0,
   controlsVisible = false,
   currentTimeRef: externalTimeRef,
+  videoWidth,
+  videoHeight,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -206,45 +207,90 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Effective time to use for subtitle matching
   const effectiveTime = externalTimeRef ? polledTime : currentTime;
 
-  // Calculate subtitle positioning based on actual video content bounds
-  // When using resizeMode="contain", the video may have letterboxing (black bars)
-  // We need to position subtitles at the bottom of the actual video, not the screen
+  // Calculate subtitle positioning based on orientation:
+  // - Landscape: bottom of screen (in letterbox bars for widescreen content)
+  // - Portrait: bottom of video content (above any letterbox bars)
   const subtitleBottomOffset = useMemo(() => {
-    // Small padding from video content edge (not screen edge)
-    // This just provides a slight margin above the video's bottom border
-    // Android TV: 40% lower positioning (25% + 20%)
     const basePadding = isAndroidTV ? 12 : Platform.isTV ? 20 : 10;
 
-    // If we don't have video or container dimensions, use default positioning
-    if (!videoWidth || !videoHeight || !containerSize) {
+    if (!containerSize) {
       return basePadding;
     }
 
     const { width: containerWidth, height: containerHeight } = containerSize;
     const isLandscape = containerWidth > containerHeight;
 
-    // Extra offset when controls are visible to avoid overlap with control bar (landscape only)
-    // Control bar heights: ~120px mobile, ~180px tvOS, ~72px Android TV (60% less shift)
-    const tvControlsOffset = isAndroidTV ? 72 : 180;
-    const controlsOffset = controlsVisible && isLandscape ? (Platform.isTV ? tvControlsOffset : 120) : 0;
+    // Calculate control bar height based on actual component dimensions
+    // This mirrors the styling in Controls.tsx and FocusablePressable.tsx
+    let controlsOffset = 0;
+    if (controlsVisible && isLandscape) {
+      if (Platform.isTV) {
+        // TV control bar calculation:
+        // - Theme spacing uses legacy scale factors: tvOS 0.85, Android TV 0.5
+        // - FocusablePressable uses: scale = (android ? 1.71875 : 1.375) * getTVScaleMultiplier()
+        const themeScaleFactor = isAndroidTV ? 0.5 : 0.85;
+        const buttonScale = (isAndroidTV ? 1.71875 : 1.375) * getTVScaleMultiplier();
+
+        // Base spacing values (before theme scaling)
+        const baseSpacingSm = 8;
+        const baseSpacingMd = 12;
+        const baseSpacingLg = 16;
+
+        // Scaled spacing (as theme would provide)
+        const spacingSm = baseSpacingSm * themeScaleFactor;
+        const spacingMd = baseSpacingMd * themeScaleFactor;
+        const spacingLg = baseSpacingLg * themeScaleFactor;
+
+        // Button dimensions (icon button in FocusablePressable)
+        // Icon size: tvScale(24 * 1.375, 24) - designed for tvOS, auto-scaled for Android TV
+        const tvosIconSize = 24 * 1.375; // 33
+        const iconSize = isAndroidTV ? Math.round(tvosIconSize * ANDROID_TV_TO_TVOS_RATIO) : tvosIconSize;
+        const buttonPaddingVertical = spacingSm * buttonScale;
+        const buttonHeight = iconSize + buttonPaddingVertical * 2;
+
+        // Control bar: container padding + main row + secondary row + bottom offset
+        const containerPadding = spacingMd * 2;
+        const secondaryRowMargin = spacingSm;
+        const bottomOffset = spacingLg;
+
+        // Total: bottom offset + container padding + two rows of buttons + secondary row margin + extra padding
+        const extraPadding = isAndroidTV ? 8 : 16; // Buffer between subtitle and controls
+        controlsOffset = bottomOffset + containerPadding + buttonHeight * 2 + secondaryRowMargin + extraPadding;
+      } else {
+        // Mobile landscape: single row with track selection + seek bar
+        // bottomControlsMobile: paddingVertical = 8 (theme.spacing.sm)
+        // bottomControlsMobileLandscape: bottom = 4 (theme.spacing.xs)
+        // Seek bar height ~32px
+        const containerPadding = 8 * 2; // theme.spacing.sm top + bottom
+        const bottomOffset = 4; // theme.spacing.xs
+        const contentHeight = 32; // seek bar height
+        const extraPadding = 10; // buffer between subtitle and controls
+        controlsOffset = bottomOffset + containerPadding + contentHeight + extraPadding;
+      }
+    }
+
+    // Landscape: position at screen bottom (subtitles in letterbox bars)
+    if (isLandscape) {
+      return basePadding + controlsOffset;
+    }
+
+    // Portrait: position at video content bottom (above letterbox bars)
+    if (!videoWidth || !videoHeight) {
+      return basePadding;
+    }
 
     const videoAspectRatio = videoWidth / videoHeight;
     const containerAspectRatio = containerWidth / containerHeight;
 
     // Video is wider than container: letterboxing on top/bottom
-    // Video height will be less than container height
     if (videoAspectRatio > containerAspectRatio) {
-      // Video fills container width, calculate actual video height
       const actualVideoHeight = containerWidth / videoAspectRatio;
       const letterboxHeight = (containerHeight - actualVideoHeight) / 2;
-      return letterboxHeight + basePadding + controlsOffset;
+      return letterboxHeight + basePadding;
     }
 
-    // Video is taller than container: letterboxing on left/right
-    // Video fills height, no bottom offset needed beyond base padding
-    // Add extra safe area padding in landscape mode (Android TV: 40% less)
-    const landscapeExtra = isLandscape ? (isAndroidTV ? 12 : 20) : 0;
-    return basePadding + landscapeExtra + controlsOffset;
+    // Video fills height or is taller - no bottom letterbox
+    return basePadding;
   }, [videoWidth, videoHeight, containerSize, controlsVisible]);
 
   // Fetch and parse VTT file
