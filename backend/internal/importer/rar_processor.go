@@ -186,10 +186,24 @@ func (rh *rarProcessor) AnalyzeRarContentFromNzbProgressive(ctx context.Context,
 func (rh *rarProcessor) analyzeRarWithStreamingProgressive(ctx context.Context, cp nntppool.UsenetConnectionPool, sortFiles []ParsedFile, mainRarFile string, callback FileDiscoveryCallback) ([]rarContent, error) {
 	rh.log.Info("Using streaming approach for progressive RAR analysis")
 
+	// Check for context cancellation before starting
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	// Create Usenet filesystem for RAR access
 	ufs := NewUsenetFileSystem(ctx, cp, sortFiles, rh.maxWorkers, rh.maxCacheSizeMB)
 
 	analysisStart := time.Now()
+
+	// Check for context cancellation before volume discovery
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	// Use lower-level rarlist API to get progressive results
 	// First, discover all RAR volumes

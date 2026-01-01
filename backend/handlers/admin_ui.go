@@ -220,6 +220,11 @@ var SettingsSchema = map[string]interface{}{
 				"description": "How to select provider when multiple debrid providers are enabled",
 				"options":     []string{"fastest", "preferred"},
 			},
+			"usenetResolutionTimeoutSec": map[string]interface{}{
+				"type":        "number",
+				"label":       "Usenet Resolution Timeout (seconds)",
+				"description": "Maximum time to wait for usenet content resolution (0 = no limit)",
+			},
 		},
 	},
 	"debridProviders": map[string]interface{}{

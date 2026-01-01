@@ -709,6 +709,38 @@ func (m *HLSManager) buildLocalWebDAVURL(session *HLSSession) (string, bool) {
 	return full, true
 }
 
+// buildLocalWebDAVURLFromPath builds a WebDAV URL from just a path (no session required).
+// This is used for probing usenet content where we don't have a session yet.
+func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
+	m.localAccessMu.RLock()
+	base := m.localWebDAVBaseURL
+	prefix := m.localWebDAVPrefix
+	m.localAccessMu.RUnlock()
+
+	if base == "" || prefix == "" {
+		return "", false
+	}
+
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+
+	// Normalize path to start with /
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	// If path starts with /webdav, use it directly; otherwise prepend the prefix
+	if !strings.HasPrefix(path, prefix) {
+		path = prefix + path
+	}
+
+	full := strings.TrimRight(base, "/") + path
+	log.Printf("[hls] built local WebDAV URL from path: %s", full)
+	return full, true
+}
+
 // CreateSession starts a new HLS transcoding session
 func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string) (*HLSSession, error) {
 	sessionID := generateSessionID()
@@ -971,6 +1003,16 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 		}
 	}
 
+	// Try local WebDAV URL as fallback (for usenet content)
+	if webdavURL, ok := m.buildLocalWebDAVURLFromPath(path); ok {
+		log.Printf("[hls] probing all metadata using local WebDAV URL for path: %s", path)
+		result, err = m.probeAllMetadataFromURL(ctx, webdavURL)
+		if err == nil && result != nil {
+			m.CacheProbe(path, result)
+		}
+		return result, err
+	}
+
 	// Fall back to pipe-based probe
 	if m.streamer == nil {
 		return nil, fmt.Errorf("stream provider not configured")
@@ -1191,8 +1233,14 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 			log.Printf("[hls] probing audio using direct URL for path: %s", path)
 			return m.probeAudioStreamsFromURL(ctx, directURL)
 		} else if err != nil {
-			log.Printf("[hls] failed to get direct URL for audio probe, falling back to pipe: %v", err)
+			log.Printf("[hls] failed to get direct URL for audio probe: %v", err)
 		}
+	}
+
+	// Try local WebDAV URL as fallback (for usenet content)
+	if webdavURL, ok := m.buildLocalWebDAVURLFromPath(path); ok {
+		log.Printf("[hls] probing audio using local WebDAV URL for path: %s", path)
+		return m.probeAudioStreamsFromURL(ctx, webdavURL)
 	}
 
 	// Fall back to pipe-based probe with first 16MB
@@ -1365,8 +1413,14 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 			log.Printf("[hls] probing subtitles using direct URL for path: %s", path)
 			return m.probeSubtitleStreamsFromURL(ctx, directURL)
 		} else if err != nil {
-			log.Printf("[hls] failed to get direct URL for subtitle probe, falling back to pipe: %v", err)
+			log.Printf("[hls] failed to get direct URL for subtitle probe: %v", err)
 		}
+	}
+
+	// Try local WebDAV URL as fallback (for usenet content)
+	if webdavURL, ok := m.buildLocalWebDAVURLFromPath(path); ok {
+		log.Printf("[hls] probing subtitles using local WebDAV URL for path: %s", path)
+		return m.probeSubtitleStreamsFromURL(ctx, webdavURL)
 	}
 
 	// Fall back to pipe-based probe with first 16MB

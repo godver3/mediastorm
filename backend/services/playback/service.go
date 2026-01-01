@@ -154,8 +154,20 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	service := s.nzbSystem.ImporterService()
 	log.Printf("[playback] processing NZB immediately fileName=%q", fileName)
 
-	storagePath, err := service.ProcessNZBImmediately(ctx, fileName, nzbBytes)
+	// Apply usenet resolution timeout if configured
+	processCtx := ctx
+	if cfg.Streaming.UsenetResolutionTimeoutSec > 0 {
+		var cancel context.CancelFunc
+		processCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.Streaming.UsenetResolutionTimeoutSec)*time.Second)
+		defer cancel()
+		log.Printf("[playback] usenet resolution timeout set to %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
+	}
+
+	storagePath, err := service.ProcessNZBImmediately(processCtx, fileName, nzbBytes)
 	if err != nil {
+		if processCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("usenet resolution timed out after %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
+		}
 		return nil, fmt.Errorf("process NZB immediately: %w", err)
 	}
 
@@ -391,8 +403,20 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 	service := s.nzbSystem.ImporterService()
 	log.Printf("[playback] processing NZB immediately fileName=%q", result.FileName)
 
-	storagePath, err := service.ProcessNZBImmediately(ctx, result.FileName, result.NZBBytes)
+	// Apply usenet resolution timeout if configured
+	processCtx := ctx
+	if cfg.Streaming.UsenetResolutionTimeoutSec > 0 {
+		var cancel context.CancelFunc
+		processCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.Streaming.UsenetResolutionTimeoutSec)*time.Second)
+		defer cancel()
+		log.Printf("[playback] usenet resolution timeout set to %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
+	}
+
+	storagePath, err := service.ProcessNZBImmediately(processCtx, result.FileName, result.NZBBytes)
 	if err != nil {
+		if processCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("usenet resolution timed out after %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
+		}
 		return nil, fmt.Errorf("process NZB immediately: %w", err)
 	}
 

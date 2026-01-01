@@ -136,6 +136,13 @@ func (proc *Processor) ProcessNzbFile(ctx context.Context, filePath, relativePat
 		ctx = context.Background()
 	}
 
+	// Check for context cancellation before starting
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+
 	proc.ensureRarProcessorConfig()
 
 	// Open and parse the file
@@ -159,8 +166,12 @@ func (proc *Processor) ProcessNzbFile(ctx context.Context, filePath, relativePat
 			return "", NewNonRetryableError("STRM validation failed", err)
 		}
 	} else {
-		parsed, err = proc.parser.ParseFile(file, filePath)
+		parsed, err = proc.parser.ParseFileWithContext(ctx, file, filePath)
 		if err != nil {
+			// Check if this was a context cancellation
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			return "", NewNonRetryableError("failed to parse NZB file", err)
 		}
 
@@ -168,6 +179,13 @@ func (proc *Processor) ProcessNzbFile(ctx context.Context, filePath, relativePat
 		if err := proc.parser.ValidateNzb(parsed); err != nil {
 			return "", NewNonRetryableError("NZB validation failed", err)
 		}
+	}
+
+	// Check for context cancellation after parsing
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
 	}
 
 	// Calculate the relative virtual directory path for this file
@@ -179,6 +197,13 @@ func (proc *Processor) ProcessNzbFile(ctx context.Context, filePath, relativePat
 		"type", parsed.Type,
 		"total_size", parsed.TotalSize,
 		"files", len(parsed.Files))
+
+	// Check for context cancellation before expensive processing
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
 
 	// Process based on file type
 	switch parsed.Type {

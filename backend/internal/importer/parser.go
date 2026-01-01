@@ -88,6 +88,18 @@ func NewParser(poolManager pool.Manager) *Parser {
 
 // ParseFile parses an NZB file from a reader
 func (p *Parser) ParseFile(r io.Reader, nzbPath string) (*ParsedNzb, error) {
+	return p.ParseFileWithContext(context.Background(), r, nzbPath)
+}
+
+// ParseFileWithContext parses an NZB file from a reader with context support for cancellation
+func (p *Parser) ParseFileWithContext(ctx context.Context, r io.Reader, nzbPath string) (*ParsedNzb, error) {
+	// Check for context cancellation before starting
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	n, err := nzbparser.Parse(r)
 	if err != nil {
 		return nil, NewNonRetryableError("failed to parse NZB XML", err)
@@ -125,6 +137,13 @@ func (p *Parser) ParseFile(r io.Reader, nzbPath string) (*ParsedNzb, error) {
 		return nil, NewNonRetryableError("NZB file contains no valid files (only PAR2)", nil)
 	}
 
+	// Check for context cancellation before parallel processing
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	// Use conc pool for parallel processing with proper error handling
 	type fileResult struct {
 		parsedFile *ParsedFile
@@ -136,7 +155,14 @@ func (p *Parser) ParseFile(r io.Reader, nzbPath string) (*ParsedNzb, error) {
 	// Process files in parallel using conc pool
 	for _, file := range validFiles {
 		concPool.Go(func() fileResult {
-			parsedFile, err := p.parseFile(file, n.Meta, n.Files, parsed.Filename)
+			// Check for context cancellation before processing each file
+			select {
+			case <-ctx.Done():
+				return fileResult{err: ctx.Err()}
+			default:
+			}
+
+			parsedFile, err := p.parseFileWithContext(ctx, file, n.Meta, n.Files, parsed.Filename)
 
 			return fileResult{
 				parsedFile: parsedFile,
@@ -148,10 +174,21 @@ func (p *Parser) ParseFile(r io.Reader, nzbPath string) (*ParsedNzb, error) {
 	// Wait for all goroutines to complete and collect results
 	results := concPool.Wait()
 
+	// Check for context cancellation after parallel processing
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	// Check for errors and collect valid results
 	var parsedFiles []*ParsedFile
 	for i, result := range results {
 		if result.err != nil {
+			// If it's a context error, return it directly
+			if result.err == context.Canceled || result.err == context.DeadlineExceeded {
+				return nil, result.err
+			}
 			return nil, fmt.Errorf("failed to parse file %s: %w", validFiles[i].Subject, result.err)
 		}
 		parsedFiles = append(parsedFiles, result.parsedFile)
@@ -185,14 +222,33 @@ func (p *Parser) ParseFile(r io.Reader, nzbPath string) (*ParsedNzb, error) {
 	return parsed, nil
 }
 
-// parseFile processes a single file entry from the NZB
+// parseFile processes a single file entry from the NZB (legacy, no context)
 func (p *Parser) parseFile(file nzbparser.NzbFile, meta map[string]string, allFiles []nzbparser.NzbFile, nzbFilename string) (*ParsedFile, error) {
+	return p.parseFileWithContext(context.Background(), file, meta, allFiles, nzbFilename)
+}
+
+// parseFileWithContext processes a single file entry from the NZB with context support
+func (p *Parser) parseFileWithContext(ctx context.Context, file nzbparser.NzbFile, meta map[string]string, allFiles []nzbparser.NzbFile, nzbFilename string) (*ParsedFile, error) {
+	// Check for context cancellation before starting
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	sort.Sort(file.Segments)
 
 	// Fetch yEnc headers from the first segment to get correct filename and file size, some nzbs have wrong filename in the segments
 	var yencFilename string
 	var yencFileSize int64
 	if p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) > 0 {
+		// Check for context cancellation before network call
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		firstPartHeaders, err := p.fetchYencHeaders(file.Segments[0], nil)
 		if err != nil {
 			// If we can't fetch yEnc headers, log and continue with original sizes
@@ -208,6 +264,13 @@ func (p *Parser) parseFile(file nzbparser.NzbFile, meta map[string]string, allFi
 	// This is required for all file types including RAR/7z since archive analysis
 	// depends on accurate segment sizes for seeking within files
 	if p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) >= 2 {
+		// Check for context cancellation before network call
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		err := p.normalizeSegmentSizesWithYenc(file.Segments)
 		if err != nil {
 			// Log the error but continue with original segment sizes

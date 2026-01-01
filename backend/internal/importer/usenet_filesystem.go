@@ -174,6 +174,13 @@ func (uf *UsenetFile) Read(p []byte) (n int, err error) {
 		return 0, fs.ErrClosed
 	}
 
+	// Check for context cancellation
+	select {
+	case <-uf.ctx.Done():
+		return 0, uf.ctx.Err()
+	default:
+	}
+
 	// Try to serve from buffer first
 	if uf.bufferStart >= 0 && uf.position >= uf.bufferStart && uf.position < uf.bufferStart+int64(uf.bufferSize) {
 		// Position is in buffer, serve from cache
