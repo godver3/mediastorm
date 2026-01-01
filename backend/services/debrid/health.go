@@ -17,6 +17,7 @@ import (
 	"novastream/config"
 	"novastream/internal/mediaresolve"
 	"novastream/models"
+	"novastream/utils"
 )
 
 // HealthService checks debrid item health by verifying cached status.
@@ -68,7 +69,14 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 			headCtx, headCancel := context.WithTimeout(ctx, 20*time.Second)
 			defer headCancel()
 
-			headReq, err := http.NewRequestWithContext(headCtx, http.MethodHead, streamURL, nil)
+			// Encode URL properly (handles spaces and special characters)
+			encodedStreamURL, encErr := utils.EncodeURLWithSpaces(streamURL)
+			if encErr != nil {
+				log.Printf("[debrid-health] failed to encode stream URL: %v", encErr)
+				encodedStreamURL = streamURL // Fall back to original
+			}
+
+			headReq, err := http.NewRequestWithContext(headCtx, http.MethodHead, encodedStreamURL, nil)
 			if err == nil {
 				headReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
 				if resp, err := http.DefaultClient.Do(headReq); err == nil {
