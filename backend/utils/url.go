@@ -13,8 +13,12 @@ func EncodeURLWithSpaces(rawURL string) (string, error) {
 		return "", err
 	}
 
-	// Build URL with properly encoded path and query
-	encoded := parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.EscapedPath()
+	// Build URL with properly encoded path and query, preserving userinfo if present
+	encoded := parsedURL.Scheme + "://"
+	if parsedURL.User != nil {
+		encoded += parsedURL.User.String() + "@"
+	}
+	encoded += parsedURL.Host + parsedURL.EscapedPath()
 	if parsedURL.RawQuery != "" {
 		// Encode spaces in query string as %20
 		encodedQuery := strings.ReplaceAll(parsedURL.RawQuery, " ", "%20")

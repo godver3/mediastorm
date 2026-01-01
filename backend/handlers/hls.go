@@ -148,6 +148,13 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract userinfo from URL and set Basic Auth header
+	// Go's http.Client doesn't automatically use URL-embedded credentials
+	if parsedURL, parseErr := url.Parse(p.targetURL); parseErr == nil && parsedURL.User != nil {
+		password, _ := parsedURL.User.Password()
+		req.SetBasicAuth(parsedURL.User.Username(), password)
+	}
+
 	// Forward Range header for seeking support
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
@@ -1897,12 +1904,22 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// All subtitles are served via sidecar VTT files (on-demand extraction).
 	// For fMP4, we also do upfront extraction as additional ffmpeg outputs.
 	// For MPEG-TS, we skip embedding entirely and rely on sidecar extraction.
+	// Text-based subtitle codecs that can be converted to WebVTT
+	// Using a whitelist approach to avoid unknown bitmap codecs slipping through
+	textSubtitleCodecs := map[string]bool{
+		"subrip": true, "srt": true, "ass": true, "ssa": true,
+		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+		"subviewer": true, "subviewer1": true, "vplayer": true,
+	}
+
 	if needsFmp4 {
 		// For fMP4 (DV/HDR), extract ALL text-based subtitle tracks to sidecar VTT files
 		// This allows track switching without re-downloading the source file
 		for pos, stream := range subtitleStreams {
-			if stream.Codec == "hdmv_pgs_subtitle" || stream.Codec == "pgs" || stream.Codec == "dvd_subtitle" {
-				log.Printf("[hls] session %s: skipping bitmap subtitle stream %d (codec=%s) for sidecar extraction",
+			if !textSubtitleCodecs[stream.Codec] {
+				log.Printf("[hls] session %s: skipping non-text subtitle stream %d (codec=%q) for sidecar extraction",
 					session.ID, stream.Index, stream.Codec)
 				continue
 			}
@@ -1916,7 +1933,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			log.Printf("[hls] session %s: will extract %d text-based subtitle tracks to sidecar VTT files",
 				session.ID, len(sidecarSubtitles))
 		} else if len(subtitleStreams) > 0 {
-			log.Printf("[hls] session %s: no text-based subtitles found for sidecar extraction (%d bitmap streams skipped)",
+			log.Printf("[hls] session %s: no text-based subtitles found for sidecar extraction (%d non-text streams skipped)",
 				session.ID, len(subtitleStreams))
 		}
 	} else {
@@ -3715,9 +3732,19 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 	log.Printf("[hls] extracting subtitle track (absoluteIndex=%d relativeIndex=%d streamIndex=%d codec=%s) to %s",
 		trackIndex, relativeIndex, actualStreamIndex, codec, outputPath)
 
-	// Check for unsupported subtitle codecs (bitmap-based)
-	if codec == "hdmv_pgs_subtitle" || codec == "pgs" || codec == "dvd_subtitle" {
-		return fmt.Errorf("unsupported subtitle codec: %s (bitmap-based subtitles cannot be converted to VTT)", codec)
+	// Text-based subtitle codecs that can be converted to WebVTT
+	// Using a whitelist approach to avoid unknown bitmap codecs slipping through
+	textSubtitleCodecs := map[string]bool{
+		"subrip": true, "srt": true, "ass": true, "ssa": true,
+		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+		"subviewer": true, "subviewer1": true, "vplayer": true,
+	}
+
+	// Check for unsupported subtitle codecs (bitmap-based or unknown)
+	if !textSubtitleCodecs[codec] {
+		return fmt.Errorf("unsupported subtitle codec: %q (bitmap-based or unknown subtitles cannot be converted to VTT)", codec)
 	}
 
 	// Get the stream URL (convert virtual path to direct URL if needed)
