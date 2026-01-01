@@ -127,7 +127,9 @@ module.exports = ({ config }) => {
         policy: 'appVersion',
       },
       updates: {
+        enabled: true,
         url: 'https://u.expo.dev/1032d688-62d3-4a77-904f-3a4a3f72fcf5',
+        checkAutomatically: 'ON_LOAD',
         requestHeaders: {
           'expo-channel-name': 'production',
         },
