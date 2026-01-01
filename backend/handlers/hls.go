@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"novastream/services/streaming"
+	"novastream/utils"
 )
 
 // debugReader wraps an io.Reader to log bytes read and detect EOF
@@ -132,9 +133,17 @@ func newThrottlingProxy(targetURL string, session *HLSSession) (*throttlingProxy
 }
 
 func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
-	// Create request to target URL
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, p.targetURL, nil)
+	// Encode URL properly (handles spaces and special characters)
+	encodedURL, err := utils.EncodeURLWithSpaces(p.targetURL)
 	if err != nil {
+		log.Printf("[hls] session %s: failed to encode URL: %v", p.session.ID, err)
+		http.Error(w, "failed to encode URL", http.StatusInternalServerError)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, encodedURL, nil)
+	if err != nil {
+		log.Printf("[hls] session %s: failed to create request: %v", p.session.ID, err)
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
@@ -153,6 +162,11 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	// Log upstream response status for debugging
+	if resp.StatusCode >= 400 {
+		log.Printf("[hls] session %s: proxy upstream returned %d %s for URL: %s", p.session.ID, resp.StatusCode, resp.Status, p.targetURL)
+	}
 
 	// Copy response headers
 	for key, values := range resp.Header {
@@ -558,8 +572,14 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 		},
 	}
 
+	// Encode URL properly (handles spaces and special characters)
+	encodedURL, err := utils.EncodeURLWithSpaces(externalURL)
+	if err != nil {
+		return "", fmt.Errorf("encode URL: %w", err)
+	}
+
 	// First try HEAD request (faster, no body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, externalURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -586,7 +606,7 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 	log.Printf("[hls] HEAD returned %d, trying GET with Range header", resp.StatusCode)
 	finalURL = "" // Reset for new request
 
-	req, err = http.NewRequestWithContext(ctx, http.MethodGet, externalURL, nil)
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, encodedURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create GET request: %w", err)
 	}

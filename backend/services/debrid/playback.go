@@ -13,6 +13,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/utils"
 )
 
 // PlaybackService handles debrid playback resolution.
@@ -284,7 +285,15 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 
 		// Verify the download URL is accessible with a HEAD request
 		log.Printf("[debrid-playback] verifying download URL is accessible: %s", downloadURL)
-		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, downloadURL, nil)
+
+		// Encode URL properly (handles spaces and special characters)
+		encodedDownloadURL, encErr := utils.EncodeURLWithSpaces(downloadURL)
+		if encErr != nil {
+			log.Printf("[debrid-playback] failed to encode download URL: %v", encErr)
+			encodedDownloadURL = downloadURL // Fall back to original
+		}
+
+		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedDownloadURL, nil)
 		if err != nil {
 			_ = client.DeleteTorrent(ctx, torrentID)
 			return nil, fmt.Errorf("failed to create HEAD request: %w", err)
