@@ -260,11 +260,11 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         // Mobile landscape: single row with track selection + seek bar
         // bottomControlsMobile: paddingVertical = 8 (theme.spacing.sm)
         // bottomControlsMobileLandscape: bottom = 4 (theme.spacing.xs)
-        // Seek bar height ~32px
+        // Content height includes SeekBar (~40px with touch targets) + track buttons
         const containerPadding = 8 * 2; // theme.spacing.sm top + bottom
         const bottomOffset = 4; // theme.spacing.xs
-        const contentHeight = 32; // seek bar height
-        const extraPadding = 10; // buffer between subtitle and controls
+        const contentHeight = 48; // seek bar with touch targets and track buttons
+        const extraPadding = 12; // buffer between subtitle and controls
         controlsOffset = bottomOffset + containerPadding + contentHeight + extraPadding;
       }
     }
