@@ -7,6 +7,14 @@ type UserSettings struct {
 	HomeShelves HomeShelvesSettings `json:"homeShelves"`
 	Filtering   FilterSettings      `json:"filtering"`
 	LiveTV      LiveTVSettings      `json:"liveTV"`
+	Display     DisplaySettings     `json:"display"`
+}
+
+// DisplaySettings controls UI display preferences.
+type DisplaySettings struct {
+	// BadgeVisibility controls which badges appear on media cards.
+	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+	BadgeVisibility []string `json:"badgeVisibility"`
 }
 
 // LiveTVSettings contains per-user Live TV preferences.
@@ -99,6 +107,9 @@ func DefaultUserSettings() UserSettings {
 			HiddenChannels:     []string{},
 			FavoriteChannels:   []string{},
 			SelectedCategories: []string{},
+		},
+		Display: DisplaySettings{
+			BadgeVisibility: []string{"watchProgress"},
 		},
 	}
 }

@@ -94,6 +94,7 @@ func (s *Service) GetUsersWithOverrides() map[string]bool {
 
 // GetWithDefaults returns the user's settings merged with defaults.
 // If the user has no custom settings, returns the defaults.
+// If the user has settings but is missing new sections, those are filled from defaults.
 func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (models.UserSettings, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -104,6 +105,11 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	defer s.mu.RUnlock()
 
 	if settings, ok := s.settings[userID]; ok {
+		// Fill in any missing sections from defaults
+		// This handles cases where new sections are added after user settings were created
+		if settings.Display.BadgeVisibility == nil {
+			settings.Display = defaults.Display
+		}
 		return settings, nil
 	}
 

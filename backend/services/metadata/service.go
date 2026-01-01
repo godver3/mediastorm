@@ -1576,6 +1576,11 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		seriesTitle.Network = extended.Network
 	}
 
+	// Set series status (Continuing, Ended, Upcoming, etc.)
+	if extended.Status.Name != "" {
+		seriesTitle.Status = extended.Status.Name
+	}
+
 	if img := newTVDBImage(extended.Poster, "poster", 0, 0); img != nil {
 		seriesTitle.Poster = img
 	} else if img := newTVDBImage(extended.Image, "poster", 0, 0); img != nil {
@@ -1936,6 +1941,11 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 
 	if extended.Network != "" {
 		seriesTitle.Network = extended.Network
+	}
+
+	// Set series status (Continuing, Ended, Upcoming, etc.)
+	if extended.Status.Name != "" {
+		seriesTitle.Status = extended.Status.Name
 	}
 
 	// Apply artworks (poster and backdrop)

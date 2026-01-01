@@ -122,6 +122,10 @@ export interface BackendFilterSettings {
   filterOutTerms?: string[];
 }
 
+export interface BackendDisplaySettings {
+  badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+}
+
 export interface BackendSettings {
   server: BackendServerSettings;
   usenet: BackendUsenetSettings[];
@@ -136,6 +140,7 @@ export interface BackendSettings {
   live: BackendLiveSettings;
   homeShelves: BackendHomeShelvesSettings;
   filtering: BackendFilterSettings;
+  display?: BackendDisplaySettings;
   demoMode?: boolean;
 }
 
@@ -446,31 +451,28 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     [applyApiBaseUrl, persistBackendUrl, refreshSettings],
   );
 
-  const updateBackendSettings = useCallback(
-    async (next: BackendSettings) => {
-      setSaving(true);
-      try {
-        const updated = (await apiService.updateSettings(next)) as BackendSettings;
-        if (mountedRef.current) {
-          setSettings(updated);
-          setError(null);
-          setLastLoadedAt(Date.now());
-        }
-        return updated;
-      } catch (err) {
-        const message = formatErrorMessage(err);
-        if (mountedRef.current) {
-          setError(message);
-        }
-        throw err;
-      } finally {
-        if (mountedRef.current) {
-          setSaving(false);
-        }
+  const updateBackendSettings = useCallback(async (next: BackendSettings) => {
+    setSaving(true);
+    try {
+      const updated = (await apiService.updateSettings(next)) as BackendSettings;
+      if (mountedRef.current) {
+        setSettings(updated);
+        setError(null);
+        setLastLoadedAt(Date.now());
       }
-    },
-    [],
-  );
+      return updated;
+    } catch (err) {
+      const message = formatErrorMessage(err);
+      if (mountedRef.current) {
+        setError(message);
+      }
+      throw err;
+    } finally {
+      if (mountedRef.current) {
+        setSaving(false);
+      }
+    }
+  }, []);
 
   const loadUserSettings = useCallback(async (userId: string): Promise<UserSettings> => {
     if (!userId?.trim()) {

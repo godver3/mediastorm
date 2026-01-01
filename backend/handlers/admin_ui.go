@@ -352,6 +352,26 @@ var SettingsSchema = map[string]interface{}{
 			"order":   map[string]interface{}{"type": "number", "label": "Order", "description": "Sort order (lower = first)"},
 		},
 	},
+	"display": map[string]interface{}{
+		"label": "Display",
+		"icon":  "eye",
+		"group": "experience",
+		"order": 2,
+		"fields": map[string]interface{}{
+			"badgeVisibility": map[string]interface{}{
+				"type":        "checkboxes",
+				"label":       "Badge Visibility",
+				"description": "Choose which badges to display on media cards",
+				"order":       0,
+				"options": []map[string]interface{}{
+					{"value": "watchProgress", "label": "Watch Progress"},
+					{"value": "releaseStatus", "label": "Release Status (Coming Soon)", "disabled": true},
+					{"value": "watchState", "label": "Watch State (Coming Soon)", "disabled": true},
+					{"value": "unwatchedCount", "label": "Unwatched Episode Count (Coming Soon)", "disabled": true},
+				},
+			},
+		},
+	},
 	"metadata": map[string]interface{}{
 		"label": "Metadata",
 		"icon":  "film",
@@ -1043,6 +1063,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			HiddenChannels:     []string{},
 			FavoriteChannels:   []string{},
 			SelectedCategories: []string{},
+		},
+		Display: models.DisplaySettings{
+			BadgeVisibility: globalSettings.Display.BadgeVisibility,
 		},
 	}
 
@@ -4392,16 +4415,16 @@ func (h *AdminUIHandler) TraktImportHistory(w http.ResponseWriter, r *http.Reque
 				itemID = tvdbID
 			}
 		} else if item.MediaType == "episode" {
-			// For episodes, construct composite ID like tmdb:tv:SHOWID:S01E02
+			// For episodes, construct composite ID like tmdb:tv:SHOWID:s01e02 (lowercase for consistency)
 			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
 				seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
-				itemID = fmt.Sprintf("tmdb:tv:%s:S%02dE%02d", tmdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Season, item.Episode)
 			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
 				seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
-				itemID = fmt.Sprintf("tvdb:series:%s:S%02dE%02d", tvdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Season, item.Episode)
 			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
 				seriesID = fmt.Sprintf("imdb:%s", imdbID)
-				itemID = fmt.Sprintf("imdb:%s:S%02dE%02d", imdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Season, item.Episode)
 			}
 		}
 
@@ -4529,19 +4552,19 @@ func (h *AdminUIHandler) PlexImportHistory(w http.ResponseWriter, r *http.Reques
 				itemID = "plex:" + item.RatingKey
 			}
 		} else if item.MediaType == "episode" {
-			// For episodes, construct composite ID like tmdb:tv:SHOWID:S01E02
+			// For episodes, construct composite ID like tmdb:tv:SHOWID:s01e02 (lowercase for consistency)
 			if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
 				seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
-				itemID = fmt.Sprintf("tmdb:tv:%s:S%02dE%02d", tmdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Season, item.Episode)
 			} else if tvdbID, ok := item.ExternalIDs["tvdb"]; ok && tvdbID != "" {
 				seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
-				itemID = fmt.Sprintf("tvdb:series:%s:S%02dE%02d", tvdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Season, item.Episode)
 			} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
 				seriesID = fmt.Sprintf("imdb:%s", imdbID)
-				itemID = fmt.Sprintf("imdb:%s:S%02dE%02d", imdbID, item.Season, item.Episode)
+				itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Season, item.Episode)
 			} else if item.RatingKey != "" {
 				seriesID = "plex:series:" + item.RatingKey
-				itemID = fmt.Sprintf("plex:series:%s:S%02dE%02d", item.RatingKey, item.Season, item.Episode)
+				itemID = fmt.Sprintf("plex:series:%s:s%02de%02d", item.RatingKey, item.Season, item.Episode)
 			}
 		}
 
