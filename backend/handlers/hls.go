@@ -3037,14 +3037,33 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 			session.EarliestBufferedSegment = bufferStartSegment
 		}
 	}
+
+	// Capture timing info while we have the lock
+	startOffset := session.StartOffset
+	duration := session.Duration
 	session.mu.Unlock()
 
 	log.Printf("[hls] session %s: keepalive received, extended idle timeout", sessionID)
 
+	// Return segment timing info for accurate subtitle sync
+	// The frontend can use this to calculate precise media time:
+	// mediaTime = startOffset + (segmentIndex * segmentDuration) + positionInSegment
+	response := struct {
+		Status        string  `json:"status"`
+		StartOffset   float64 `json:"startOffset"`
+		SegmentDuration float64 `json:"segmentDuration"`
+		Duration      float64 `json:"duration,omitempty"`
+	}{
+		Status:          "ok",
+		StartOffset:     startOffset,
+		SegmentDuration: hlsSegmentDuration,
+		Duration:        duration,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+	json.NewEncoder(w).Encode(response)
 }
 
 // SeekResponse contains the response data for a seek request
