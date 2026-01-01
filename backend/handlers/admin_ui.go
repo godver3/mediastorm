@@ -214,6 +214,12 @@ var SettingsSchema = map[string]interface{}{
 				"description": "Prioritize results from a specific service type",
 				"options":     []string{"none", "usenet", "debrid"},
 			},
+			"multiProviderMode": map[string]interface{}{
+				"type":        "select",
+				"label":       "Multi-Provider Mode",
+				"description": "How to select provider when multiple debrid providers are enabled",
+				"options":     []string{"fastest", "preferred"},
+			},
 		},
 	},
 	"debridProviders": map[string]interface{}{
@@ -225,10 +231,17 @@ var SettingsSchema = map[string]interface{}{
 		"parent":   "streaming",
 		"key":      "debridProviders",
 		"fields": map[string]interface{}{
-			"name":     map[string]interface{}{"type": "text", "label": "Name", "description": "Provider display name"},
-			"provider": map[string]interface{}{"type": "select", "label": "Provider", "options": []string{"realdebrid", "torbox", "alldebrid"}, "description": "Provider type"},
-			"apiKey":   map[string]interface{}{"type": "password", "label": "API Key", "description": "Provider API key"},
-			"enabled":  map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this provider"},
+			"name":     map[string]interface{}{"type": "text", "label": "Name", "description": "Provider display name", "order": 1},
+			"provider": map[string]interface{}{"type": "select", "label": "Provider", "options": []string{"realdebrid", "torbox", "alldebrid"}, "description": "Provider type", "order": 2},
+			"apiKey":   map[string]interface{}{"type": "password", "label": "API Key", "description": "Provider API key", "order": 3},
+			"enabled":  map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this provider", "order": 4},
+			"config.autoClearQueue": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Auto-Clear Queue (Torbox)",
+				"description": "Clear downloading torrents when hitting active download limit",
+				"order":       5,
+				"showWhen":    "provider=torbox",
+			},
 		},
 	},
 	"usenet": map[string]interface{}{

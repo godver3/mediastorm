@@ -29,6 +29,7 @@ import {
   type PlaybackPreference,
   type StreamingServiceMode,
   type StreamingServicePriority,
+  type MultiProviderMode,
   type TrendingMovieSource,
 } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
@@ -242,6 +243,7 @@ interface EditableBackendSettings {
   streaming: {
     serviceMode: StreamingServiceMode;
     servicePriority: StreamingServicePriority;
+    multiProviderMode: MultiProviderMode;
     maxDownloadWorkers: string;
     maxCacheSizeMB: string;
     debridProviders: EditableDebridProvider[];
@@ -560,6 +562,7 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
     streaming: {
       serviceMode: (streamingSettings.serviceMode ?? 'usenet') as StreamingServiceMode,
       servicePriority: (streamingSettings.servicePriority ?? 'none') as StreamingServicePriority,
+      multiProviderMode: (streamingSettings.multiProviderMode ?? 'fastest') as MultiProviderMode,
       maxDownloadWorkers: String(streamingMaxDownloadWorkers),
       maxCacheSizeMB: String(streamingMaxCacheSize),
       debridProviders: (streamingSettings.debridProviders ?? []).map((provider) => ({
@@ -685,6 +688,9 @@ const toBackendPayload = (editable: EditableBackendSettings, baseline: BackendSe
       servicePriority: (editable.streaming.servicePriority ||
         baselineStreaming.servicePriority ||
         'none') as StreamingServicePriority,
+      multiProviderMode: (editable.streaming.multiProviderMode ||
+        baselineStreaming.multiProviderMode ||
+        'fastest') as MultiProviderMode,
       maxDownloadWorkers: toNumber(
         editable.streaming.maxDownloadWorkers,
         baselineStreaming.maxDownloadWorkers ?? 15,
@@ -999,6 +1005,14 @@ function SettingsScreen() {
       { value: 'none' as StreamingServicePriority, label: 'None' },
       { value: 'usenet' as StreamingServicePriority, label: 'Usenet' },
       { value: 'debrid' as StreamingServicePriority, label: 'Debrid' },
+    ],
+    [],
+  );
+
+  const multiProviderModeOptions = useMemo(
+    () => [
+      { value: 'fastest' as MultiProviderMode, label: 'Fastest (race)' },
+      { value: 'preferred' as MultiProviderMode, label: 'Preferred (by order)' },
     ],
     [],
   );
@@ -1551,6 +1565,21 @@ function SettingsScreen() {
     );
   }, []);
 
+  const updateMultiProviderMode = useCallback((mode: MultiProviderMode) => {
+    setDirty(true);
+    setEditableSettings((current) =>
+      current
+        ? {
+            ...current,
+            streaming: {
+              ...current.streaming,
+              multiProviderMode: mode,
+            },
+          }
+        : current,
+    );
+  }, []);
+
   const updateDebridProvider = useCallback(
     (index: number, field: keyof EditableDebridProvider, value: string | boolean) => {
       setDirty(true);
@@ -1579,6 +1608,21 @@ function SettingsScreen() {
     },
     [],
   );
+
+  const moveDebridProvider = useCallback((index: number, direction: 'up' | 'down') => {
+    setDirty(true);
+    setEditableSettings((current) => {
+      if (!current) return current;
+      const providers = [...current.streaming.debridProviders];
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= providers.length) return current;
+      [providers[index], providers[newIndex]] = [providers[newIndex], providers[index]];
+      return {
+        ...current,
+        streaming: { ...current.streaming, debridProviders: providers },
+      };
+    });
+  }, []);
 
   const handleAddDebridProvider = useCallback(() => {
     setDirty(true);
@@ -3252,6 +3296,65 @@ function SettingsScreen() {
                       )}
                       {(editableSettings?.streaming?.debridProviders ?? []).map((provider, index) =>
                         renderDebridProvider(provider, index),
+                      )}
+                      {(editableSettings?.streaming?.debridProviders?.filter((p) => p.enabled && p.apiKey)
+                        ?.length ?? 0) >= 2 && (
+                        <View style={{ marginTop: 16 }}>
+                          <DropdownField
+                            label="Multi-Provider Mode"
+                            value={editableSettings.streaming.multiProviderMode}
+                            options={multiProviderModeOptions}
+                            onChange={(val) => updateMultiProviderMode(val as MultiProviderMode)}
+                            styles={styles}
+                          />
+                          <Text style={styles.sectionDescription}>
+                            {editableSettings.streaming.multiProviderMode === 'preferred'
+                              ? 'Checks all providers, uses cached result from highest-priority provider (top of list).'
+                              : 'Uses whichever provider returns a cached result first.'}
+                          </Text>
+                          {editableSettings.streaming.multiProviderMode === 'preferred' && (
+                            <View style={{ marginTop: 12 }}>
+                              <Text style={[styles.fieldLabel, { marginBottom: 8 }]}>Provider Priority</Text>
+                              {editableSettings.streaming.debridProviders.map((provider, index) => (
+                                <View
+                                  key={`reorder-${index}`}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
+                                    backgroundColor: 'rgba(255,255,255,0.05)',
+                                    borderRadius: 6,
+                                    marginBottom: 4,
+                                  }}
+                                >
+                                  <Text style={{ color: '#888', marginRight: 12, width: 20 }}>{index + 1}.</Text>
+                                  <Text style={{ flex: 1, color: provider.enabled && provider.apiKey ? '#fff' : '#666' }}>
+                                    {provider.name || provider.provider || `Provider ${index + 1}`}
+                                    {(!provider.enabled || !provider.apiKey) && ' (disabled)'}
+                                  </Text>
+                                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <FocusablePressable
+                                      text="▲"
+                                      onSelect={() => moveDebridProvider(index, 'up')}
+                                      disabled={index === 0}
+                                      style={{ opacity: index === 0 ? 0.3 : 1, paddingHorizontal: 12 }}
+                                    />
+                                    <FocusablePressable
+                                      text="▼"
+                                      onSelect={() => moveDebridProvider(index, 'down')}
+                                      disabled={index === editableSettings.streaming.debridProviders.length - 1}
+                                      style={{
+                                        opacity: index === editableSettings.streaming.debridProviders.length - 1 ? 0.3 : 1,
+                                        paddingHorizontal: 12,
+                                      }}
+                                    />
+                                  </View>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </View>
                       )}
                     </View>
 

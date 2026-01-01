@@ -18,13 +18,15 @@ import (
 // TorboxClient handles API interactions with Torbox service.
 // It implements the Provider interface.
 type TorboxClient struct {
-	apiKey     string
-	httpClient *http.Client
-	baseURL    string
+	apiKey         string
+	httpClient     *http.Client
+	baseURL        string
+	autoClearQueue bool // If true, auto-clear downloading torrents when hitting active limit
 }
 
-// Ensure TorboxClient implements Provider interface.
+// Ensure TorboxClient implements Provider and Configurable interfaces.
 var _ Provider = (*TorboxClient)(nil)
+var _ Configurable = (*TorboxClient)(nil)
 
 // NewTorboxClient creates a new Torbox API client.
 func NewTorboxClient(apiKey string) *TorboxClient {
@@ -38,6 +40,16 @@ func NewTorboxClient(apiKey string) *TorboxClient {
 // Name returns the provider identifier.
 func (c *TorboxClient) Name() string {
 	return "torbox"
+}
+
+// Configure sets provider-specific options from a config map.
+func (c *TorboxClient) Configure(config map[string]string) {
+	if config == nil {
+		return
+	}
+	if val, ok := config["autoClearQueue"]; ok {
+		c.autoClearQueue = val == "true" || val == "1"
+	}
 }
 
 func init() {
@@ -170,7 +182,35 @@ func (c *TorboxClient) AddMagnet(ctx context.Context, magnetURL string) (*AddMag
 	}
 
 	if !result.Success {
+		// Check for active download limit error - try auto-clearing if enabled
+		if strings.Contains(result.Error, "ACTIVE_LIMIT") && c.autoClearQueue {
+			log.Printf("[torbox] hit active download limit, auto-clearing downloading torrents...")
+			cleared, clearErr := c.clearDownloadingTorrents(ctx)
+			if clearErr != nil {
+				log.Printf("[torbox] failed to clear queue: %v", clearErr)
+				return nil, fmt.Errorf("add magnet failed: %s (error: %s) - auto-clear also failed: %v", result.Detail, result.Error, clearErr)
+			}
+
+			if cleared > 0 {
+				// Retry the request
+				log.Printf("[torbox] cleared %d torrents, retrying add magnet...", cleared)
+				return c.AddMagnet(ctx, magnetURL) // Recursive retry
+			}
+
+			// Nothing was cleared (all were cached), still at limit
+			return nil, fmt.Errorf("add magnet failed: %s (error: %s) - no downloading torrents to clear", result.Detail, result.Error)
+		}
+
 		return nil, fmt.Errorf("add magnet failed: %s (error: %s)", result.Detail, result.Error)
+	}
+
+	// Check for valid torrent ID - if 0, the torrent may already exist or response format is different
+	if result.Data.TorrentID == 0 {
+		log.Printf("[torbox] WARNING: add magnet returned torrent_id=0, response: %s", string(body))
+
+		// Try to find existing torrent by hash if we can extract it from the magnet
+		// For now, return an error as ID 0 is not usable
+		return nil, fmt.Errorf("add magnet returned invalid torrent_id=0 (torrent may already exist or API error)")
 	}
 
 	log.Printf("[torbox] magnet added: torrent_id=%d hash=%s name=%s", result.Data.TorrentID, result.Data.Hash, result.Data.Name)
@@ -273,6 +313,11 @@ func (c *TorboxClient) GetTorrentInfo(ctx context.Context, torrentID string) (*T
 		return nil, fmt.Errorf("torrent ID is required")
 	}
 
+	// ID 0 is invalid - Torbox uses positive integers for torrent IDs
+	if trimmedID == "0" {
+		return nil, fmt.Errorf("invalid torrent ID: 0 (torrent may not have been added)")
+	}
+
 	endpoint := fmt.Sprintf("%s/torrents/mylist?id=%s", c.baseURL, trimmedID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -295,17 +340,39 @@ func (c *TorboxClient) GetTorrentInfo(ctx context.Context, torrentID string) (*T
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
 
-	// When requesting by ID, Torbox returns a single torrent object in data
-	var result torboxResponse[torboxTorrent]
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("decode torrent info response: %w (body: %s)", err, string(body))
-	}
+	// Torbox API can return either a single torrent object or an array
+	// Try single object first, then fall back to array
+	var torrent torboxTorrent
 
-	if !result.Success {
-		return nil, fmt.Errorf("get torrent info failed: %s (error: %s)", result.Detail, result.Error)
-	}
+	var singleResult torboxResponse[torboxTorrent]
+	if err := json.Unmarshal(body, &singleResult); err == nil && singleResult.Success {
+		torrent = singleResult.Data
+	} else {
+		// Try parsing as array response
+		var arrayResult torboxResponse[[]torboxTorrent]
+		if err := json.Unmarshal(body, &arrayResult); err != nil {
+			return nil, fmt.Errorf("decode torrent info response: %w (body: %.500s)", err, string(body))
+		}
 
-	torrent := result.Data
+		if !arrayResult.Success {
+			return nil, fmt.Errorf("get torrent info failed: %s (error: %s)", arrayResult.Detail, arrayResult.Error)
+		}
+
+		// Find our torrent in the array by ID
+		targetID, _ := strconv.Atoi(trimmedID)
+		found := false
+		for _, t := range arrayResult.Data {
+			if t.ID == targetID {
+				torrent = t
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("torrent ID %s not found in Torbox response", trimmedID)
+		}
+	}
 
 	// Convert to provider-agnostic TorrentInfo
 	info := &TorrentInfo{
@@ -497,6 +564,66 @@ func (c *TorboxClient) UnrestrictLink(ctx context.Context, link string) (*Unrest
 		ID:          fmt.Sprintf("%s:%s", torrentID, fileID),
 		DownloadURL: downloadURL,
 	}, nil
+}
+
+// listTorrents returns all torrents in the user's Torbox account.
+func (c *TorboxClient) listTorrents(ctx context.Context) ([]torboxTorrent, error) {
+	endpoint := fmt.Sprintf("%s/torrents/mylist", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build list torrents request: %w", err)
+	}
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("list torrents request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	var result torboxResponse[[]torboxTorrent]
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode list torrents response: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("list torrents failed: %s", result.Detail)
+	}
+
+	return result.Data, nil
+}
+
+// clearDownloadingTorrents deletes all non-cached torrents (downloading, queued, etc.)
+// to free up slots when hitting the active download limit.
+func (c *TorboxClient) clearDownloadingTorrents(ctx context.Context) (int, error) {
+	torrents, err := c.listTorrents(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list torrents: %w", err)
+	}
+
+	cleared := 0
+	for _, t := range torrents {
+		// Skip cached/completed torrents - only delete actively downloading ones
+		state := strings.ToLower(t.DownloadState)
+		if state == "cached" || state == "completed" {
+			continue
+		}
+
+		log.Printf("[torbox] clearing downloading torrent: id=%d name=%s state=%s", t.ID, t.Name, t.DownloadState)
+		if err := c.DeleteTorrent(ctx, strconv.Itoa(t.ID)); err != nil {
+			log.Printf("[torbox] failed to delete torrent %d: %v", t.ID, err)
+			continue
+		}
+		cleared++
+	}
+
+	log.Printf("[torbox] cleared %d downloading torrents", cleared)
+	return cleared, nil
 }
 
 // CheckInstantAvailability checks if a torrent hash is cached on Torbox.

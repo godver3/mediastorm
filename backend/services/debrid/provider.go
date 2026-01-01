@@ -38,6 +38,12 @@ type Provider interface {
 	CheckInstantAvailability(ctx context.Context, infoHash string) (bool, error)
 }
 
+// Configurable is an optional interface for providers that support runtime configuration.
+type Configurable interface {
+	// Configure sets provider-specific options from a config map.
+	Configure(config map[string]string)
+}
+
 // AddMagnetResult contains the result of adding a magnet link.
 type AddMagnetResult struct {
 	ID  string // Provider-specific torrent/download ID

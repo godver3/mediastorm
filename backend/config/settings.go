@@ -119,8 +119,9 @@ type StreamingSettings struct {
 	MaxDownloadWorkers int                      `json:"maxDownloadWorkers"`
 	MaxCacheSizeMB     int                      `json:"maxCacheSizeMB"`
 	ServiceMode        StreamingServiceMode     `json:"serviceMode"`
-	ServicePriority    StreamingServicePriority `json:"servicePriority"`  // Priority for service type in search results
+	ServicePriority    StreamingServicePriority `json:"servicePriority"`       // Priority for service type in search results
 	DebridProviders    []DebridProviderSettings `json:"debridProviders,omitempty"`
+	MultiProviderMode  MultiProviderMode        `json:"multiProviderMode,omitempty"` // How to select provider when multiple are enabled
 }
 
 type StreamingServicePriority string
@@ -140,11 +141,22 @@ const (
 )
 
 type DebridProviderSettings struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
-	Enabled  bool   `json:"enabled"`
+	Name     string            `json:"name"`
+	Provider string            `json:"provider"`
+	APIKey   string            `json:"apiKey"`
+	Enabled  bool              `json:"enabled"`
+	Config   map[string]string `json:"config,omitempty"` // Provider-specific settings (e.g., "autoClearQueue": "true" for Torbox)
 }
+
+// MultiProviderMode determines how multiple debrid providers are used
+type MultiProviderMode string
+
+const (
+	// MultiProviderModeFastest uses whichever provider returns a cached result first (race)
+	MultiProviderModeFastest MultiProviderMode = "fastest"
+	// MultiProviderModePreferred waits for all providers and uses the highest-priority cached result
+	MultiProviderModePreferred MultiProviderMode = "preferred"
+)
 
 // ImportSettings defines import/queue processing configuration
 type ImportSettings struct {
@@ -668,6 +680,10 @@ func (m *Manager) Load() (Settings, error) {
 			{Name: "Torbox", Provider: "torbox"},
 			{Name: "AllDebrid", Provider: "alldebrid"},
 		}
+	}
+	// Backfill MultiProviderMode if not set (default to fastest for best UX)
+	if s.Streaming.MultiProviderMode == "" {
+		s.Streaming.MultiProviderMode = MultiProviderModeFastest
 	}
 
 	// Backfill Import settings

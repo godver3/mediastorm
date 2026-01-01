@@ -20,6 +20,7 @@ import (
 type PlaybackService struct {
 	cfg           *config.Manager
 	healthService *HealthService
+	multiProvider *MultiProviderService
 }
 
 // NewPlaybackService creates a new debrid playback service.
@@ -36,6 +37,7 @@ func NewPlaybackService(cfg *config.Manager, healthService *HealthService) *Play
 	return &PlaybackService{
 		cfg:           cfg,
 		healthService: healthService,
+		multiProvider: NewMultiProviderService(cfg),
 	}
 }
 
@@ -115,36 +117,41 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	// Determine provider - use attribute if specified, otherwise use first enabled provider
-	provider := strings.TrimSpace(candidate.Attributes["provider"])
+	// Check if provider is explicitly specified in the result
+	explicitProvider := strings.TrimSpace(candidate.Attributes["provider"])
 
-	var providerConfig *config.DebridProviderSettings
-	for i := range settings.Streaming.DebridProviders {
-		p := &settings.Streaming.DebridProviders[i]
-		if !p.Enabled {
-			continue
-		}
-		// If provider specified, match it; otherwise use first enabled
-		if provider == "" || strings.EqualFold(p.Provider, provider) {
-			providerConfig = p
-			break
+	if explicitProvider != "" {
+		// Provider specified - use single provider path
+		return s.resolveSingleProvider(ctx, candidate, explicitProvider, settings, infoHash, torrentURL)
+	}
+
+	// Count enabled providers with API keys
+	enabledCount := 0
+	for _, p := range settings.Streaming.DebridProviders {
+		if p.Enabled && strings.TrimSpace(p.APIKey) != "" {
+			enabledCount++
 		}
 	}
 
-	if providerConfig == nil {
-		if provider == "" {
-			return nil, fmt.Errorf("no debrid provider configured or enabled")
-		}
-		return nil, fmt.Errorf("provider %q not configured or not enabled", provider)
+	if enabledCount == 0 {
+		return nil, fmt.Errorf("no debrid providers configured or enabled")
 	}
 
-	// Get provider from registry
-	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
-	if !ok {
-		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	if enabledCount == 1 {
+		// Only one provider - use single provider path
+		return s.resolveSingleProvider(ctx, candidate, "", settings, infoHash, torrentURL)
 	}
 
-	return s.resolveWithProvider(ctx, client, candidate, infoHash, torrentURL)
+	// Multiple providers enabled - use multi-provider checking
+	log.Printf("[debrid-playback] checking %d providers in %s mode", enabledCount, settings.Streaming.MultiProviderMode)
+
+	result, err := s.multiProvider.CheckCacheAcrossProviders(ctx, candidate, settings.Streaming.MultiProviderMode)
+	if err != nil {
+		return nil, err
+	}
+
+	// We have a winning provider with cached result - complete the resolution
+	return s.completeResolution(ctx, result.Client, result.TorrentID, candidate)
 }
 
 func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash, torrentURL string) (*models.PlaybackResolution, error) {
@@ -324,6 +331,157 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 		HealthStatus:  "cached",
 		FileSize:      candidate.SizeBytes,
 		SourceNZBPath: downloadURL, // Store the actual download URL here
+	}
+
+	log.Printf("[debrid-playback] resolution successful: webdavPath=%s downloadURL=%s", webdavPath, downloadURL)
+	return resolution, nil
+}
+
+// resolveSingleProvider handles resolution when a specific provider is requested or only one is enabled.
+func (s *PlaybackService) resolveSingleProvider(
+	ctx context.Context,
+	candidate models.NZBResult,
+	explicitProvider string,
+	settings config.Settings,
+	infoHash, torrentURL string,
+) (*models.PlaybackResolution, error) {
+	var providerConfig *config.DebridProviderSettings
+	for i := range settings.Streaming.DebridProviders {
+		p := &settings.Streaming.DebridProviders[i]
+		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" {
+			continue
+		}
+		// If provider specified, match it; otherwise use first enabled
+		if explicitProvider == "" || strings.EqualFold(p.Provider, explicitProvider) {
+			providerConfig = p
+			break
+		}
+	}
+
+	if providerConfig == nil {
+		if explicitProvider == "" {
+			return nil, fmt.Errorf("no debrid provider configured or enabled")
+		}
+		return nil, fmt.Errorf("provider %q not configured or not enabled", explicitProvider)
+	}
+
+	// Get provider from registry
+	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
+	if !ok {
+		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	}
+
+	return s.resolveWithProvider(ctx, client, candidate, infoHash, torrentURL)
+}
+
+// completeResolution finishes resolution for a winning provider from multi-provider check.
+// The torrent is already added and verified as cached, we just need to get links and build the path.
+func (s *PlaybackService) completeResolution(
+	ctx context.Context,
+	client Provider,
+	torrentID string,
+	candidate models.NZBResult,
+) (*models.PlaybackResolution, error) {
+	providerName := client.Name()
+	log.Printf("[debrid-playback] completing resolution with %s torrent %s", providerName, torrentID)
+
+	// Get torrent info to get file list and links
+	info, err := client.GetTorrentInfo(ctx, torrentID)
+	if err != nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("get torrent info: %w", err)
+	}
+
+	// Select the most relevant media file
+	selection := selectMediaFiles(info.Files, buildSelectionHints(candidate, info.Filename))
+	if selection == nil || len(selection.OrderedIDs) == 0 {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("no media files found in torrent")
+	}
+
+	if selection.PreferredID != "" {
+		log.Printf("[debrid-playback] primary file candidate: %q (reason: %s, id=%s)", selection.PreferredLabel, selection.PreferredReason, selection.PreferredID)
+	}
+
+	logSelectedFileDetails(info.Files, selection)
+
+	if len(info.Links) == 0 {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("no download links available")
+	}
+
+	restrictedLink, filename, preferredLinkIdx, matched := resolveRestrictedLink(info, selection.PreferredID)
+	if !matched && selection.PreferredID != "" {
+		log.Printf("[debrid-playback] preferred file id %s not found among %s links; defaulting to index %d", selection.PreferredID, providerName, preferredLinkIdx)
+	}
+	if filename != "" {
+		log.Printf("[debrid-playback] resolved filename: %s", filename)
+	}
+
+	downloadURL := restrictedLink
+	if selection.PreferredLabel != "" {
+		log.Printf("[debrid-playback] using download link #%d for %q (reason: %s)", preferredLinkIdx, selection.PreferredLabel, selection.PreferredReason)
+	} else {
+		log.Printf("[debrid-playback] using download link #%d for selected file (id=%s)", preferredLinkIdx, selection.PreferredID)
+	}
+
+	log.Printf("[debrid-playback] keeping torrent %s in %s for playback", torrentID, providerName)
+
+	// Build WebDAV path
+	webdavPath := fmt.Sprintf("/debrid/%s/%s", providerName, torrentID)
+	if selection.PreferredID != "" {
+		webdavPath = fmt.Sprintf("%s/file/%s", webdavPath, selection.PreferredID)
+	}
+	if filename != "" {
+		webdavPath = fmt.Sprintf("%s/%s", webdavPath, filename)
+	}
+
+	// Verify download URL if it's an actual URL
+	isActualURL := strings.HasPrefix(downloadURL, "http://") || strings.HasPrefix(downloadURL, "https://")
+
+	if isActualURL {
+		if archiveExt := detectArchiveExtension(downloadURL); archiveExt != "" {
+			_ = client.DeleteTorrent(ctx, torrentID)
+			return nil, fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
+		}
+
+		log.Printf("[debrid-playback] verifying download URL is accessible: %s", downloadURL)
+
+		encodedDownloadURL, encErr := utils.EncodeURLWithSpaces(downloadURL)
+		if encErr != nil {
+			log.Printf("[debrid-playback] failed to encode download URL: %v", encErr)
+			encodedDownloadURL = downloadURL
+		}
+
+		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedDownloadURL, nil)
+		if err != nil {
+			_ = client.DeleteTorrent(ctx, torrentID)
+			return nil, fmt.Errorf("failed to create HEAD request: %w", err)
+		}
+
+		headResp, err := http.DefaultClient.Do(headReq)
+		if err != nil {
+			_ = client.DeleteTorrent(ctx, torrentID)
+			return nil, fmt.Errorf("download URL not accessible: %w", err)
+		}
+		defer headResp.Body.Close()
+
+		if headResp.StatusCode >= 400 {
+			_ = client.DeleteTorrent(ctx, torrentID)
+			return nil, fmt.Errorf("download URL returned error status: %d %s", headResp.StatusCode, headResp.Status)
+		}
+
+		log.Printf("[debrid-playback] download URL verified accessible (status: %d)", headResp.StatusCode)
+	} else {
+		log.Printf("[debrid-playback] download link is internal reference, will be resolved at stream time: %s", downloadURL)
+	}
+
+	resolution := &models.PlaybackResolution{
+		QueueID:       0,
+		WebDAVPath:    webdavPath,
+		HealthStatus:  "cached",
+		FileSize:      candidate.SizeBytes,
+		SourceNZBPath: downloadURL,
 	}
 
 	log.Printf("[debrid-playback] resolution successful: webdavPath=%s downloadURL=%s", webdavPath, downloadURL)

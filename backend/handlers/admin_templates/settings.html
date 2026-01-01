@@ -1038,7 +1038,9 @@
         const invalidClass = fieldError ? ' invalid' : '';
         switch (fieldDef.type) {
             case 'boolean':
-                return '<label class="toggle"><input type="checkbox" id="'+id+'" '+(value ? 'checked' : '')+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.checked)"><span class="toggle-slider"></span></label>';
+                // Handle both boolean and string "true"/"false" values
+                const isChecked = value === true || value === 'true';
+                return '<label class="toggle"><input type="checkbox" id="'+id+'" '+(isChecked ? 'checked' : '')+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.checked)"><span class="toggle-slider"></span></label>';
             case 'select':
                 const options = fieldDef.options.map(opt => {
                     const optValue = typeof opt === 'object' ? opt.value : opt;
@@ -1071,6 +1073,11 @@
         }
     }
     function handleFieldChange(basePath, fieldKey, value) {
+        // For nested config fields (e.g., config.autoClearQueue), convert booleans to strings
+        // because Config is map[string]string in Go
+        if (fieldKey.startsWith('config.') && typeof value === 'boolean') {
+            value = value ? 'true' : 'false';
+        }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
         // Re-render to update validation indicators (renderSettings runs validation)
         renderSettings();
@@ -1400,14 +1407,26 @@
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
                     let shouldShow = false;
-                    if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
+                    if (typeof showWhen === 'string' && showWhen.includes('=')) {
+                        // Simple string format: "field=value"
+                        const [field, value] = showWhen.split('=');
+                        shouldShow = item[field] === value;
+                    } else if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
                         shouldShow = showWhen.conditions.some(cond => item[cond.field] === cond.value);
-                    } else {
+                    } else if (showWhen.field) {
                         shouldShow = item[showWhen.field] === showWhen.value;
                     }
                     if (!shouldShow) return '';
                 }
-                return '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, item[fieldKey], basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
+                // Handle nested field paths like "config.autoClearQueue"
+                let fieldValue;
+                if (fieldKey.includes('.')) {
+                    const parts = fieldKey.split('.');
+                    fieldValue = parts.reduce((obj, key) => obj?.[key], item);
+                } else {
+                    fieldValue = item[fieldKey];
+                }
+                return '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
             const testResult = isTestable ? '<span id="test-result-'+sectionKey+'-'+index+'" class="test-result"></span>' : '';
@@ -1415,6 +1434,122 @@
         }).join('');
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
+    // Render provider priority reorder UI for streaming section
+    function renderProviderPriorityUI() {
+        const multiProviderMode = getValue('streaming.multiProviderMode') || 'fastest';
+        if (multiProviderMode !== 'preferred') return '';
+
+        const debridProviders = currentSettings.streaming?.debridProviders || [];
+        const enabledCount = debridProviders.filter(p => p.enabled && p.apiKey).length;
+        if (enabledCount < 2) return '';
+
+        const rows = debridProviders.map((p, i) => {
+            const isEnabled = p.enabled && p.apiKey;
+            const nameStyle = isEnabled ? '' : 'color: #666;';
+            const disabledLabel = isEnabled ? '' : ' (disabled)';
+            return '<div class="priority-row" data-index="'+i+'">'+
+                '<span class="priority-handle">☰</span>'+
+                '<span class="priority-num">'+(i+1)+'.</span>'+
+                '<span class="priority-name" style="'+nameStyle+'">'+(p.name || p.provider || 'Provider '+(i+1))+disabledLabel+'</span>'+
+            '</div>';
+        }).join('');
+
+        const styles = '<style>'+
+            '.priority-container{position:relative;}'+
+            '.priority-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;cursor:grab;user-select:none;touch-action:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease;}'+
+            '.priority-row:active{cursor:grabbing;}'+
+            '.priority-row.dragging{background:rgba(138,43,226,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;transform:scale(1.02);}'+
+            '.priority-row.drag-over{border-top:2px solid #8a2be2;margin-top:-2px;}'+
+            '.priority-handle{color:#666;margin-right:12px;font-size:16px;}'+
+            '.priority-num{color:#888;margin-right:10px;min-width:24px;text-align:right;}'+
+            '.priority-name{flex:1;}'+
+            '</style>';
+
+        return '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color);">'+
+            styles+
+            '<label class="form-label">Provider Priority</label>'+
+            '<p class="form-hint" style="margin-bottom:8px;">Drag to reorder. #1 has highest priority when multiple have cached results.</p>'+
+            '<div class="priority-container" id="priorityContainer">'+rows+'</div>'+
+            '</div>';
+    }
+
+    // Drag and drop state
+    let dragState = null;
+
+    function initPriorityDragDrop() {
+        const container = document.getElementById('priorityContainer');
+        if (!container) return;
+
+        container.addEventListener('touchstart', handleDragStart, {passive: false});
+        container.addEventListener('touchmove', handleDragMove, {passive: false});
+        container.addEventListener('touchend', handleDragEnd);
+        container.addEventListener('mousedown', handleDragStart);
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+    }
+
+    function handleDragStart(e) {
+        const row = e.target.closest('.priority-row');
+        if (!row) return;
+
+        e.preventDefault();
+        const touch = e.touches ? e.touches[0] : e;
+        const rect = row.getBoundingClientRect();
+
+        dragState = {
+            row: row,
+            index: parseInt(row.dataset.index),
+            startY: touch.clientY,
+            offsetY: touch.clientY - rect.top,
+            rowHeight: rect.height + 6 // include margin
+        };
+
+        row.classList.add('dragging');
+    }
+
+    function handleDragMove(e) {
+        if (!dragState) return;
+        e.preventDefault();
+
+        const touch = e.touches ? e.touches[0] : e;
+        const container = document.getElementById('priorityContainer');
+        const rows = container.querySelectorAll('.priority-row');
+        const containerRect = container.getBoundingClientRect();
+
+        // Calculate new position
+        const y = touch.clientY - containerRect.top - dragState.offsetY;
+        let newIndex = Math.round(y / dragState.rowHeight);
+        newIndex = Math.max(0, Math.min(newIndex, rows.length - 1));
+
+        // Update visual feedback
+        rows.forEach((r, i) => {
+            r.classList.remove('drag-over');
+            if (i === newIndex && i !== dragState.index) {
+                r.classList.add('drag-over');
+            }
+        });
+
+        dragState.newIndex = newIndex;
+    }
+
+    function handleDragEnd(e) {
+        if (!dragState) return;
+
+        const container = document.getElementById('priorityContainer');
+        const rows = container.querySelectorAll('.priority-row');
+        rows.forEach(r => r.classList.remove('dragging', 'drag-over'));
+
+        // Perform the reorder if position changed
+        if (dragState.newIndex !== undefined && dragState.newIndex !== dragState.index) {
+            const providers = currentSettings.streaming?.debridProviders || [];
+            const [moved] = providers.splice(dragState.index, 1);
+            providers.splice(dragState.newIndex, 0, moved);
+            renderSettings();
+        }
+
+        dragState = null;
+    }
+
     function renderObjectSection(sectionKey, sectionDef) {
         // Use getValue for proper three-tier cascade (global → profile → client)
         const fieldsHtml = Object.entries(sectionDef.fields)
@@ -1429,6 +1564,12 @@
                 return '<div class="form-group'+invalidClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
             }).join('');
 
+        // Add provider priority UI for streaming section
+        let customHtml = '';
+        if (sectionKey === 'streaming') {
+            customHtml = renderProviderPriorityUI();
+        }
+
         // Add test button for testable object sections
         let testHtml = '';
         if (sectionDef.testable) {
@@ -1437,7 +1578,7 @@
                 '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection</button>'+
                 '<span id="test-result-'+sectionKey+'" class="test-result"></span></div>';
         }
-        return fieldsHtml + testHtml;
+        return fieldsHtml + customHtml + testHtml;
     }
 
     // Test object section (non-array sections like subtitles)
@@ -2261,6 +2402,9 @@
             const section = document.getElementById('section-'+window.location.hash.substring(1));
             if (section) { section.classList.add('open'); section.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
         }
+
+        // Initialize drag-drop for provider priority
+        initPriorityDragDrop();
     }
     async function saveAllSettings() {
         try {
