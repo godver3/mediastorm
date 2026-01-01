@@ -29,7 +29,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, BackHandler, Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  Animated,
+  AppState,
+  BackHandler,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 // TVMenuControl is available on tvOS but not typed in RN types
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -43,17 +53,17 @@ import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
-import type { AudioStreamMetadata, SubtitleStreamMetadata, SeriesEpisode, PrequeueStatusResponse } from '@/services/api';
+import type {
+  AudioStreamMetadata,
+  SubtitleStreamMetadata,
+  SeriesEpisode,
+  PrequeueStatusResponse,
+} from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import {
-  updateNowPlaying,
-  updatePlaybackPosition,
-  clearNowPlaying,
-  setupRemoteCommands,
-} from 'now-playing-manager';
+import { updateNowPlaying, updatePlaybackPosition, clearNowPlaying, setupRemoteCommands } from 'now-playing-manager';
 
 type ConsoleLevel = 'log' | 'warn' | 'error';
 
@@ -348,9 +358,17 @@ const findSubtitleTrackByPreference = (
   // For forced-only mode: only consider forced tracks
   if (mode === 'forced-only') {
     const forcedStreams = streams.filter((s) => isStreamForced(s) && matchesLanguage(s));
-    console.log('[player][subtitle-debug] forced-only mode: found', forcedStreams.length, 'forced streams matching language');
+    console.log(
+      '[player][subtitle-debug] forced-only mode: found',
+      forcedStreams.length,
+      'forced streams matching language',
+    );
     if (forcedStreams.length > 0) {
-      console.log('[player][subtitle-debug] Selected forced track:', { index: forcedStreams[0].index, language: forcedStreams[0].language, title: forcedStreams[0].title });
+      console.log('[player][subtitle-debug] Selected forced track:', {
+        index: forcedStreams[0].index,
+        language: forcedStreams[0].language,
+        title: forcedStreams[0].title,
+      });
       return forcedStreams[0].index;
     }
     // No forced subtitles available for this language
@@ -362,37 +380,61 @@ const findSubtitleTrackByPreference = (
   if (mode === 'on') {
     // Get all non-forced streams matching the language
     const nonForcedMatches = streams.filter((s) => !isStreamForced(s) && matchesLanguage(s));
-    console.log('[player][subtitle-debug] on mode: found', nonForcedMatches.length, 'non-forced streams matching language');
+    console.log(
+      '[player][subtitle-debug] on mode: found',
+      nonForcedMatches.length,
+      'non-forced streams matching language',
+    );
 
     if (nonForcedMatches.length > 0) {
       // Priority 1: SDH subtitles
       const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s));
       if (sdhMatch) {
-        console.log('[player][subtitle-debug] Selected SDH track:', { index: sdhMatch.index, language: sdhMatch.language, title: sdhMatch.title });
+        console.log('[player][subtitle-debug] Selected SDH track:', {
+          index: sdhMatch.index,
+          language: sdhMatch.language,
+          title: sdhMatch.title,
+        });
         return sdhMatch.index;
       }
 
       // Priority 2: No title (plain/full subtitles)
       const plainMatch = nonForcedMatches.find((s) => !s.title || s.title.trim() === '');
       if (plainMatch) {
-        console.log('[player][subtitle-debug] Selected plain track (no title):', { index: plainMatch.index, language: plainMatch.language, title: plainMatch.title });
+        console.log('[player][subtitle-debug] Selected plain track (no title):', {
+          index: plainMatch.index,
+          language: plainMatch.language,
+          title: plainMatch.title,
+        });
         return plainMatch.index;
       }
 
       // Priority 3: Any non-forced match
-      console.log('[player][subtitle-debug] Selected first non-forced track:', { index: nonForcedMatches[0].index, language: nonForcedMatches[0].language, title: nonForcedMatches[0].title });
+      console.log('[player][subtitle-debug] Selected first non-forced track:', {
+        index: nonForcedMatches[0].index,
+        language: nonForcedMatches[0].language,
+        title: nonForcedMatches[0].title,
+      });
       return nonForcedMatches[0].index;
     }
 
     // Fallback: if no non-forced matches, try any stream matching language (including forced)
     const anyMatch = streams.filter((s) => matchesLanguage(s));
     if (anyMatch.length > 0) {
-      console.log('[player][subtitle-debug] Fallback to any matching track:', { index: anyMatch[0].index, language: anyMatch[0].language, title: anyMatch[0].title });
+      console.log('[player][subtitle-debug] Fallback to any matching track:', {
+        index: anyMatch[0].index,
+        language: anyMatch[0].language,
+        title: anyMatch[0].title,
+      });
       return anyMatch[0].index;
     }
 
     // Last resort: first available stream
-    console.log('[player][subtitle-debug] Last resort, first available:', { index: streams[0].index, language: streams[0].language, title: streams[0].title });
+    console.log('[player][subtitle-debug] Last resort, first available:', {
+      index: streams[0].index,
+      language: streams[0].language,
+      title: streams[0].title,
+    });
     return streams[0].index;
   }
 
@@ -2616,8 +2658,7 @@ export default function PlayerScreen() {
     }
 
     // Build Now Playing info
-    const nowPlayingTitle =
-      mediaType === 'episode' && seriesTitle ? seriesTitle : (displayName ?? title ?? 'Unknown');
+    const nowPlayingTitle = mediaType === 'episode' && seriesTitle ? seriesTitle : (displayName ?? title ?? 'Unknown');
     let nowPlayingSubtitle: string | undefined;
     if (mediaType === 'episode' && seasonNumber && episodeNumber) {
       const episodeCode = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
@@ -3614,9 +3655,8 @@ export default function PlayerScreen() {
           }));
 
           // Use the same selection logic as metadata path
-          const validMode = preferredMode === 'on' || preferredMode === 'off' || preferredMode === 'forced-only'
-            ? preferredMode
-            : 'on'; // Default to 'on' if not set
+          const validMode =
+            preferredMode === 'on' || preferredMode === 'off' || preferredMode === 'forced-only' ? preferredMode : 'on'; // Default to 'on' if not set
 
           const selectedIndex = findSubtitleTrackByPreference(
             streamsForSelection,
@@ -4353,7 +4393,12 @@ export default function PlayerScreen() {
   // Reset prequeue state when episode changes
   useEffect(() => {
     hasTriggeredNextEpisodePrequeue.current = false;
-    nextEpisodePrequeueRef.current = { prequeueId: null, targetEpisode: null, statusResponse: null, isShuffleEpisode: false };
+    nextEpisodePrequeueRef.current = {
+      prequeueId: null,
+      targetEpisode: null,
+      statusResponse: null,
+      isShuffleEpisode: false,
+    };
     setNextEpisodePrequeueReady(false);
     nextEpisodePrequeuePollingRef.current = false;
   }, [seasonNumber, episodeNumber]);
@@ -4460,7 +4505,12 @@ export default function PlayerScreen() {
     <SpatialNavigationRoot isActive={Platform.isTV && !isModalOpen && !controlsVisible}>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar style="light" hidden={shouldHideStatusBar} animated />
-      <FixedSafeAreaView style={styles.safeArea} edges={isPortrait ? ['top'] : []}>
+      {/* On Android, don't apply top safe area to the container (which would shift the video when status bar toggles).
+          Instead, safe area is applied to the controls overlay only. On iOS, apply top edge in portrait. */}
+      <FixedSafeAreaView
+        style={styles.safeArea}
+        edges={Platform.OS === 'android' && !Platform.isTV ? [] : isPortrait ? ['top'] : []}
+      >
         <View
           style={styles.container}
           nativeID="player-fullscreen-root"
@@ -4739,7 +4789,15 @@ export default function PlayerScreen() {
                       pointerEvents="none"
                     />
                   </>
-                  <View style={styles.overlayContent} pointerEvents="box-none">
+                  <View
+                    style={[
+                      styles.overlayContent,
+                      // On Android mobile, apply safe area padding to controls overlay (not the container)
+                      // so the video doesn't shift when status bar toggles
+                      Platform.OS === 'android' && !Platform.isTV && isPortrait && { paddingTop: safeAreaInsets.top },
+                    ]}
+                    pointerEvents="box-none"
+                  >
                     <View style={styles.overlayTopRow} pointerEvents="box-none">
                       <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
                       <MediaInfoDisplay
