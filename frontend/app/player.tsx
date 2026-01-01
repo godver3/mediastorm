@@ -3787,8 +3787,8 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     // Only recreate session for HLS streams (HDR/DV content)
-    // Use routeHasDolbyVision (from route params) since hasDolbyVision state is currently disabled
-    if (!isHlsStream || !sourcePath || !routeHasDolbyVision) {
+    // Check for either DV or HDR10 content since both use HLS streaming
+    if (!isHlsStream || !sourcePath || !(routeHasDolbyVision || routeHasHDR10)) {
       return;
     }
 
