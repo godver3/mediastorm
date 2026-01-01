@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -2931,55 +2932,9 @@ func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OpenSubtitles.org uses XML-RPC API at https://api.opensubtitles.org/xml-rpc
-	// We'll test by calling the LogIn method
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	// Build XML-RPC request for LogIn
-	xmlPayload := fmt.Sprintf(`<?xml version="1.0"?>
-<methodCall>
-  <methodName>LogIn</methodName>
-  <params>
-    <param><value><string>%s</string></value></param>
-    <param><value><string>%s</string></value></param>
-    <param><value><string>en</string></value></param>
-    <param><value><string>strmr v1.0</string></value></param>
-  </params>
-</methodCall>`, req.Username, req.Password)
-
-	apiReq, err := http.NewRequest(http.MethodPost, "https://api.opensubtitles.org/xml-rpc", strings.NewReader(xmlPayload))
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to create request: %v", err),
-		})
-		return
-	}
-	apiReq.Header.Set("Content-Type", "text/xml")
-
-	resp, err := client.Do(apiReq)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("Connection failed: %v", err),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to read response: %v", err),
-		})
-		return
-	}
-
-	bodyStr := string(body)
-
-	// Check for successful login (status 200 OK in the XML response)
-	if strings.Contains(bodyStr, "<name>status</name>") && strings.Contains(bodyStr, "200 OK") {
+	// Try XML-RPC first, fall back to subliminal library if that fails
+	success, xmlErr := testOpenSubtitlesXMLRPC(req.Username, req.Password)
+	if success {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": "OpenSubtitles login successful",
@@ -2987,28 +2942,146 @@ func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for common error statuses
-	if strings.Contains(bodyStr, "401") {
+	// XML-RPC failed, try using subliminal library as fallback
+	// This matches exactly what the actual subtitle search uses
+	success, subliminalErr := testOpenSubtitlesSubliminal(req.Username, req.Password)
+	if success {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Invalid username or password",
+			"success": true,
+			"message": "OpenSubtitles login successful (via subliminal)",
 		})
 		return
 	}
 
-	if strings.Contains(bodyStr, "411") {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Invalid user agent (API blocked)",
-		})
-		return
+	// Both methods failed - return the more specific error
+	errMsg := xmlErr
+	if subliminalErr != "" && subliminalErr != "unknown error" {
+		errMsg = subliminalErr
 	}
-
-	// Generic failure
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": false,
-		"error":   "Login failed - check credentials",
+		"error":   errMsg,
 	})
+}
+
+// testOpenSubtitlesXMLRPC tests credentials using direct XML-RPC call
+func testOpenSubtitlesXMLRPC(username, password string) (bool, string) {
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	// Escape special XML characters in credentials
+	escapedUsername := template.HTMLEscapeString(username)
+	escapedPassword := template.HTMLEscapeString(password)
+
+	// Build XML-RPC request for LogIn
+	// Use VLSub user agent to match subliminal library (registered with OpenSubtitles)
+	xmlPayload := fmt.Sprintf(`<?xml version="1.0"?>
+<methodCall>
+  <methodName>LogIn</methodName>
+  <params>
+    <param><value><string>%s</string></value></param>
+    <param><value><string>%s</string></value></param>
+    <param><value><string>en</string></value></param>
+    <param><value><string>VLSub 0.11.1</string></value></param>
+  </params>
+</methodCall>`, escapedUsername, escapedPassword)
+
+	apiReq, err := http.NewRequest(http.MethodPost, "https://api.opensubtitles.org/xml-rpc", strings.NewReader(xmlPayload))
+	if err != nil {
+		return false, fmt.Sprintf("Failed to create request: %v", err)
+	}
+	apiReq.Header.Set("Content-Type", "text/xml")
+
+	resp, err := client.Do(apiReq)
+	if err != nil {
+		return false, fmt.Sprintf("Connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to read response: %v", err)
+	}
+
+	bodyStr := string(body)
+
+	// Check for successful login (status 200 OK in the XML response)
+	if strings.Contains(bodyStr, "<name>status</name>") && strings.Contains(bodyStr, "200 OK") {
+		return true, ""
+	}
+
+	// Check for common error statuses
+	if strings.Contains(bodyStr, "401") {
+		return false, "Invalid username or password"
+	}
+	if strings.Contains(bodyStr, "411") {
+		return false, "Invalid user agent (API blocked)"
+	}
+
+	return false, "Login failed - check credentials"
+}
+
+// testOpenSubtitlesSubliminal tests credentials using the subliminal Python library
+// This is the same library used for actual subtitle searches
+func testOpenSubtitlesSubliminal(username, password string) (bool, string) {
+	// Find Python path (Docker or local)
+	var pythonPath string
+	if _, err := os.Stat("/.venv/bin/python3"); err == nil {
+		pythonPath = "/.venv/bin/python3"
+	} else {
+		pythonPath = filepath.Join("..", ".venv", "bin", "python3")
+		if _, err := os.Stat(pythonPath); err != nil {
+			// Try from backend directory
+			pythonPath = filepath.Join(".venv", "bin", "python3")
+		}
+	}
+
+	// Python script to test OpenSubtitles login using subliminal
+	script := `
+import sys
+import json
+from subliminal.providers.opensubtitles import OpenSubtitlesProvider
+
+try:
+    params = json.loads(sys.argv[1])
+    provider = OpenSubtitlesProvider(username=params['username'], password=params['password'])
+    provider.initialize()  # This performs the login
+    provider.terminate()   # Logout
+    print(json.dumps({"success": True}))
+except Exception as e:
+    error_msg = str(e)
+    if "Unauthorized" in error_msg or "401" in error_msg:
+        error_msg = "Invalid username or password"
+    elif "UnknownUserAgent" in error_msg or "414" in error_msg:
+        error_msg = "Invalid user agent"
+    print(json.dumps({"success": False, "error": error_msg}))
+`
+
+	paramsJSON, _ := json.Marshal(map[string]string{
+		"username": username,
+		"password": password,
+	})
+
+	cmd := exec.Command(pythonPath, "-c", script, string(paramsJSON))
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return false, string(exitErr.Stderr)
+		}
+		return false, err.Error()
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return false, "Failed to parse response"
+	}
+
+	if result.Success {
+		return true, ""
+	}
+	return false, result.Error
 }
 
 // TestDebridProvider tests a debrid provider by checking their API
