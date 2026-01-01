@@ -128,6 +128,9 @@ module.exports = ({ config }) => {
       },
       updates: {
         url: 'https://u.expo.dev/1032d688-62d3-4a77-904f-3a4a3f72fcf5',
+        requestHeaders: {
+          'expo-channel-name': 'production',
+        },
       },
       ios: {
         bundleIdentifier: isTV ? 'com.strmr.app.tv' : 'com.strmr.app',
