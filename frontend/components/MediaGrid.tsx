@@ -34,6 +34,7 @@ interface MediaGridProps {
   layout?: 'carousel' | 'grid'; // carousel = horizontal scroll, grid = vertical 2-column grid
   defaultFocusFirstItem?: boolean; // when entering from above, focus first item (TV)
   disableFocusScroll?: boolean; // disable programmatic scroll on focus (TV)
+  badgeVisibility?: string[]; // Which badges to show on MediaItem cards
 }
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
@@ -241,6 +242,7 @@ const MediaGrid = React.memo(
     layout = 'carousel', // Default to carousel for backwards compatibility
     defaultFocusFirstItem = false,
     disableFocusScroll = false,
+    badgeVisibility,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth } = useWindowDimensions();
@@ -328,14 +330,16 @@ const MediaGrid = React.memo(
             <ScrollView
               style={styles.scrollView}
               contentContainerStyle={styles.grid}
-              showsVerticalScrollIndicator={false}>
+              showsVerticalScrollIndicator={false}
+            >
               <View style={styles.mobileGridContainer}>
                 {items.map((item, index) => (
                   <Pressable
                     key={keyExtractor(item, index)}
                     style={styles.mobileCard}
                     onPress={() => onItemPress?.(item)}
-                    android_ripple={{ color: theme.colors.accent.primary + '30' }}>
+                    android_ripple={{ color: theme.colors.accent.primary + '30' }}
+                  >
                     <View style={styles.cardImageContainer}>
                       {item.poster?.url ? (
                         <Image source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
@@ -392,11 +396,13 @@ const MediaGrid = React.memo(
                   {
                     marginRight: index === items.length - 1 ? 0 : gap,
                   },
-                ]}>
+                ]}
+              >
                 <MediaItem
                   title={item}
                   onPress={() => onItemPress?.(item)}
                   onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
+                  badgeVisibility={badgeVisibility}
                 />
               </Animated.View>
             )}
@@ -428,7 +434,8 @@ const MediaGrid = React.memo(
           // Android TV: prevent native focus-based scrolling
           focusable={false}
           // @ts-ignore - TV-specific prop
-          isTVSelectable={false}>
+          isTVSelectable={false}
+        >
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;
@@ -438,7 +445,8 @@ const MediaGrid = React.memo(
                   ref={(ref) => {
                     rowRefs.current[rowKey] = ref;
                   }}
-                  style={styles.rowContainer}>
+                  style={styles.rowContainer}
+                >
                   <SpatialNavigationNode orientation="horizontal">
                     <View style={[styles.gridRow, { marginHorizontal: -halfGap }]}>
                       {row.map((item, colIndex) => {
@@ -448,12 +456,14 @@ const MediaGrid = React.memo(
                             title={item}
                             onPress={() => onItemPress?.(item)}
                             onFocus={() => scrollToRow(rowKey)}
+                            badgeVisibility={badgeVisibility}
                           />
                         );
                         return (
                           <View
                             key={keyExtractor(item, index)}
-                            style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}>
+                            style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}
+                          >
                             {defaultFocusFirstItem && index === 0 ? <DefaultFocus>{content}</DefaultFocus> : content}
                           </View>
                         );
@@ -489,7 +499,8 @@ const MediaGrid = React.memo(
       prevProps.error === nextProps.error &&
       prevProps.numColumns === nextProps.numColumns &&
       prevProps.layout === nextProps.layout &&
-      prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem
+      prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
+      prevProps.badgeVisibility === nextProps.badgeVisibility
       // onItemPress is omitted - function reference changes are expected
     );
   },

@@ -507,6 +507,9 @@ type tvdbSeriesExtendedData struct {
 		Type       int    `json:"type"`
 		SourceName string `json:"sourceName"`
 	} `json:"remoteIds"`
+	Status struct {
+		Name string `json:"name"` // "Continuing", "Ended", "Upcoming"
+	} `json:"status"`
 }
 
 type tvdbMovieExtendedData struct {

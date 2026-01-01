@@ -49,6 +49,7 @@ type Title struct {
 	TMDBID          int64     `json:"tmdbId,omitempty"`
 	Popularity      float64   `json:"popularity,omitempty"`
 	Network         string    `json:"network,omitempty"`
+	Status          string    `json:"status,omitempty"` // For series: Continuing, Ended, Upcoming, etc.
 	PrimaryTrailer  *Trailer  `json:"primaryTrailer,omitempty"`
 	Trailers        []Trailer `json:"trailers,omitempty"`
 	Releases        []Release `json:"releases,omitempty"`

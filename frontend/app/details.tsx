@@ -1342,12 +1342,20 @@ export default function DetailsScreen() {
   }, [getItem, mediaType, titleId]);
 
   const isWatchlisted = Boolean(watchlistItem);
+  // For series, check the current episode's watched status; for movies, check the title
+  const currentEpisodeForWatchState = activeEpisode || nextUpEpisode;
   const isWatched = useMemo(() => {
     if (!titleId) {
       return false;
     }
+    // For series with a current episode, check the episode's watched status
+    if (isSeries && currentEpisodeForWatchState && seriesIdentifier) {
+      const episodeId = `${seriesIdentifier}:s${String(currentEpisodeForWatchState.seasonNumber).padStart(2, '0')}e${String(currentEpisodeForWatchState.episodeNumber).padStart(2, '0')}`;
+      return isItemWatched('episode', episodeId);
+    }
+    // For movies or series without a current episode, check the title-level status
     return isItemWatched(mediaType, titleId);
-  }, [isItemWatched, mediaType, titleId]);
+  }, [isItemWatched, mediaType, titleId, isSeries, currentEpisodeForWatchState, seriesIdentifier]);
   const canToggleWatchlist = Boolean(titleId && mediaType);
 
   const watchlistButtonLabel = isWatchlisted ? 'Remove' : 'Watchlist';

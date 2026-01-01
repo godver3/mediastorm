@@ -1540,6 +1540,7 @@ function IndexScreen() {
                       loading={data.loading}
                       onItemPress={data.onItemPress}
                       onItemLongPress={data.onItemLongPress}
+                      badgeVisibility={userSettings?.display?.badgeVisibility}
                     />
                   </View>
                 );

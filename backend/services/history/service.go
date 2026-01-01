@@ -232,10 +232,12 @@ func (s *Service) RecordEpisode(userID string, payload models.EpisodeWatchPayloa
 	episode := normaliseEpisode(payload.Episode)
 
 	// Record episode to watch history
+	// Build episode-specific ItemID: seriesID:s01e02 format (lowercase for consistency)
+	episodeItemID := fmt.Sprintf("%s:s%02de%02d", seriesID, episode.SeasonNumber, episode.EpisodeNumber)
 	watched := true
 	update := models.WatchHistoryUpdate{
 		MediaType:     "episode",
-		ItemID:        seriesID, // Will be enhanced with season/episode in key
+		ItemID:        episodeItemID,
 		Name:          episode.Title,
 		Year:          payload.Year,
 		Watched:       &watched,
@@ -1425,7 +1427,9 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
-	key := makeWatchKey(update.MediaType, update.ItemID)
+	// Normalize itemID to lowercase for consistent key matching
+	normalizedItemID := strings.ToLower(update.ItemID)
+	key := makeWatchKey(update.MediaType, normalizedItemID)
 	item, exists := perUser[key]
 
 	now := time.Now().UTC()
@@ -1434,7 +1438,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 		item = models.WatchHistoryItem{
 			ID:        key,
 			MediaType: strings.ToLower(update.MediaType),
-			ItemID:    update.ItemID,
+			ItemID:    normalizedItemID,
 			Watched:   true,
 			WatchedAt: now,
 		}
@@ -1520,7 +1524,9 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
-	key := makeWatchKey(update.MediaType, update.ItemID)
+	// Normalize itemID to lowercase for consistent key matching
+	normalizedItemID := strings.ToLower(update.ItemID)
+	key := makeWatchKey(update.MediaType, normalizedItemID)
 	item, exists := perUser[key]
 
 	now := time.Now().UTC()
@@ -1528,7 +1534,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		item = models.WatchHistoryItem{
 			ID:        key,
 			MediaType: strings.ToLower(update.MediaType),
-			ItemID:    update.ItemID,
+			ItemID:    normalizedItemID,
 			Watched:   false,
 		}
 	}
@@ -1635,14 +1641,16 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 	progressCleared := false
 
 	for _, update := range updates {
-		key := makeWatchKey(update.MediaType, update.ItemID)
+		// Normalize itemID to lowercase for consistent key matching
+		normalizedItemID := strings.ToLower(update.ItemID)
+		key := makeWatchKey(update.MediaType, normalizedItemID)
 		item, exists := perUser[key]
 
 		if !exists {
 			item = models.WatchHistoryItem{
 				ID:        key,
 				MediaType: strings.ToLower(update.MediaType),
-				ItemID:    update.ItemID,
+				ItemID:    normalizedItemID,
 				Watched:   false,
 			}
 		}
@@ -1765,6 +1773,7 @@ func (s *Service) loadWatchHistory() error {
 	}
 
 	s.watchHistory = make(map[string]map[string]models.WatchHistoryItem)
+	needsSave := false
 	for userID, items := range loaded {
 		userID = strings.TrimSpace(userID)
 		if userID == "" {
@@ -1772,10 +1781,58 @@ func (s *Service) loadWatchHistory() error {
 		}
 		perUser := make(map[string]models.WatchHistoryItem, len(items))
 		for _, item := range items {
+			// Normalize itemID and ID to lowercase for consistent key matching
+			normalizedItemID := strings.ToLower(item.ItemID)
+			normalizedID := strings.ToLower(item.ID)
+			if item.ItemID != normalizedItemID || item.ID != normalizedID {
+				needsSave = true
+				item.ItemID = normalizedItemID
+				item.ID = normalizedID
+			}
+
+			// Migrate old-format episode entries: if itemID is just the series ID but
+			// has season/episode numbers, convert to new format (seriesId:s01e02)
+			if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
+				// Check if itemID lacks episode suffix (old format)
+				hasEpisodeSuffix := strings.Contains(item.ItemID, ":s") || strings.Contains(item.ItemID, ":S")
+				if !hasEpisodeSuffix {
+					// Convert to new format
+					newItemID := fmt.Sprintf("%s:s%02de%02d", item.ItemID, item.SeasonNumber, item.EpisodeNumber)
+					newID := fmt.Sprintf("episode:%s", newItemID)
+					log.Printf("[history] migrating old episode format: %s -> %s", item.ID, newID)
+					item.ItemID = newItemID
+					item.ID = newID
+					needsSave = true
+				}
+			}
+
 			key := makeWatchKey(item.MediaType, item.ItemID)
-			perUser[key] = item
+			// If duplicate exists, keep the one that is watched (or most recently watched)
+			if existing, exists := perUser[key]; exists {
+				// Prefer watched over unwatched
+				if item.Watched && !existing.Watched {
+					perUser[key] = item
+				} else if existing.Watched && !item.Watched {
+					// Keep existing (it's watched)
+				} else if item.WatchedAt.After(existing.WatchedAt) {
+					// Both same status, keep more recent
+					perUser[key] = item
+				}
+				needsSave = true // Mark that we merged duplicates
+			} else {
+				perUser[key] = item
+			}
 		}
 		s.watchHistory[userID] = perUser
+	}
+
+	// Save if we normalized any keys or merged duplicates
+	if needsSave {
+		if err := s.saveWatchHistoryLocked(); err != nil {
+			log.Printf("[history] warning: failed to save normalized watch history: %v", err)
+		} else {
+			log.Printf("[history] normalized watch history keys to lowercase")
+		}
 	}
 
 	return nil
@@ -1812,7 +1869,7 @@ func (s *Service) saveWatchHistoryLocked() error {
 }
 
 func makeWatchKey(mediaType, itemID string) string {
-	return strings.ToLower(mediaType) + ":" + itemID
+	return strings.ToLower(mediaType) + ":" + strings.ToLower(itemID)
 }
 
 // Playback Progress Methods
@@ -1837,7 +1894,9 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	defer s.mu.Unlock()
 
 	perUser := s.ensurePlaybackProgressUserLocked(userID)
-	key := makeWatchKey(update.MediaType, update.ItemID)
+	// Normalize itemID to lowercase for consistent key matching
+	normalizedItemID := strings.ToLower(update.ItemID)
+	key := makeWatchKey(update.MediaType, normalizedItemID)
 
 	// Calculate percent watched
 	percentWatched := (update.Position / update.Duration) * 100
@@ -1850,7 +1909,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	progress := models.PlaybackProgress{
 		ID:             key,
 		MediaType:      strings.ToLower(update.MediaType),
-		ItemID:         update.ItemID,
+		ItemID:         normalizedItemID,
 		Position:       update.Position,
 		Duration:       update.Duration,
 		PercentWatched: percentWatched,
@@ -2042,6 +2101,7 @@ func (s *Service) loadPlaybackProgress() error {
 	}
 
 	s.playbackProgress = make(map[string]map[string]models.PlaybackProgress)
+	needsSave := false
 	for userID, items := range loaded {
 		userID = strings.TrimSpace(userID)
 		if userID == "" {
@@ -2049,10 +2109,36 @@ func (s *Service) loadPlaybackProgress() error {
 		}
 		perUser := make(map[string]models.PlaybackProgress, len(items))
 		for _, item := range items {
+			// Normalize itemID and ID to lowercase for consistent key matching
+			normalizedItemID := strings.ToLower(item.ItemID)
+			normalizedID := strings.ToLower(item.ID)
+			if item.ItemID != normalizedItemID || item.ID != normalizedID {
+				needsSave = true
+				item.ItemID = normalizedItemID
+				item.ID = normalizedID
+			}
+
 			key := makeWatchKey(item.MediaType, item.ItemID)
-			perUser[key] = item
+			// If duplicate exists, keep the most recent one
+			if existing, exists := perUser[key]; exists {
+				if item.UpdatedAt.After(existing.UpdatedAt) {
+					perUser[key] = item
+				}
+				needsSave = true
+			} else {
+				perUser[key] = item
+			}
 		}
 		s.playbackProgress[userID] = perUser
+	}
+
+	// Save if we normalized any keys or merged duplicates
+	if needsSave {
+		if err := s.savePlaybackProgressLocked(); err != nil {
+			log.Printf("[history] warning: failed to save normalized playback progress: %v", err)
+		} else {
+			log.Printf("[history] normalized playback progress keys to lowercase")
+		}
 	}
 
 	return nil

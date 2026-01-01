@@ -91,7 +91,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV'];
+    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -1059,8 +1059,11 @@
                 const checkboxesHtml = (fieldDef.options || []).map(opt => {
                     const optValue = typeof opt === 'object' ? opt.value : opt;
                     const optLabel = typeof opt === 'object' ? opt.label : opt;
+                    const isDisabled = typeof opt === 'object' && opt.disabled;
                     const isChecked = selectedValues.includes(optValue) ? 'checked' : '';
-                    return '<label class="checkbox-option"><input type="checkbox" value="'+optValue+'" '+isChecked+' onchange="handleCheckboxChange(\''+basePath+'\', \''+fieldKey+'\', \''+optValue+'\', this.checked)"><span>'+optLabel+'</span></label>';
+                    const disabledAttr = isDisabled ? 'disabled' : '';
+                    const disabledClass = isDisabled ? ' checkbox-option-disabled' : '';
+                    return '<label class="checkbox-option'+disabledClass+'"><input type="checkbox" value="'+optValue+'" '+isChecked+' '+disabledAttr+' onchange="handleCheckboxChange(\''+basePath+'\', \''+fieldKey+'\', \''+optValue+'\', this.checked)"><span>'+optLabel+'</span></label>';
                 }).join('');
                 return '<div class="checkboxes-group'+invalidClass+'" id="'+id+'_container">'+checkboxesHtml+'</div>';
             default:

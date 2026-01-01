@@ -66,6 +66,7 @@ export interface Title {
   tmdbId?: number;
   popularity?: number;
   network?: string;
+  status?: string; // For series: "Continuing", "Ended", "Upcoming", etc.
   primaryTrailer?: Trailer;
   trailers?: Trailer[];
   releases?: ReleaseWindow[];
@@ -547,11 +548,16 @@ export interface UserLiveTVSettings {
   selectedCategories: string[];
 }
 
+export interface UserDisplaySettings {
+  badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+}
+
 export interface UserSettings {
   playback: UserPlaybackSettings;
   homeShelves: UserHomeShelvesSettings;
   filtering: UserFilterSettings;
   liveTV: UserLiveTVSettings;
+  display: UserDisplaySettings;
 }
 
 // Prequeue types for pre-loading playback streams
@@ -1438,18 +1444,11 @@ class ApiService {
     return response.accounts;
   }
 
-  async createTraktAccount(
-    name: string,
-    clientId: string,
-    clientSecret: string,
-  ): Promise<TraktAccount> {
-    const response = await this.request<{ success: boolean; account: TraktAccount }>(
-      '/trakt/accounts',
-      {
-        method: 'POST',
-        body: JSON.stringify({ name, clientId, clientSecret }),
-      },
-    );
+  async createTraktAccount(name: string, clientId: string, clientSecret: string): Promise<TraktAccount> {
+    const response = await this.request<{ success: boolean; account: TraktAccount }>('/trakt/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, clientId, clientSecret }),
+    });
     return response.account;
   }
 
@@ -1470,12 +1469,9 @@ class ApiService {
   }
 
   async startTraktAuth(accountId: string): Promise<TraktDeviceCodeResponse> {
-    return this.request<TraktDeviceCodeResponse>(
-      `/trakt/accounts/${encodeURIComponent(accountId)}/auth/start`,
-      {
-        method: 'POST',
-      },
-    );
+    return this.request<TraktDeviceCodeResponse>(`/trakt/accounts/${encodeURIComponent(accountId)}/auth/start`, {
+      method: 'POST',
+    });
   }
 
   async checkTraktAuth(accountId: string, deviceCode: string): Promise<TraktAuthCheckResponse> {
@@ -1485,12 +1481,9 @@ class ApiService {
   }
 
   async disconnectTraktAccount(accountId: string): Promise<void> {
-    await this.request<{ success: boolean }>(
-      `/trakt/accounts/${encodeURIComponent(accountId)}/disconnect`,
-      {
-        method: 'POST',
-      },
-    );
+    await this.request<{ success: boolean }>(`/trakt/accounts/${encodeURIComponent(accountId)}/disconnect`, {
+      method: 'POST',
+    });
   }
 
   async setTraktScrobbling(accountId: string, enabled: boolean): Promise<void> {
@@ -1777,10 +1770,9 @@ class ApiService {
     if (targetTime < 0) {
       throw new Error('Target time must be non-negative');
     }
-    return this.request<HlsSeekResponse>(
-      `/video/hls/${encodeURIComponent(sessionId)}/seek?time=${targetTime}`,
-      { method: 'POST' },
-    );
+    return this.request<HlsSeekResponse>(`/video/hls/${encodeURIComponent(sessionId)}/seek?time=${targetTime}`, {
+      method: 'POST',
+    });
   }
 
   /**
@@ -1808,16 +1800,11 @@ class ApiService {
    * @param subtitleTrack - The subtitle track index to extract
    * @returns Session info with the VTT URL
    */
-  async startSubtitleExtract(
-    path: string,
-    subtitleTrack: number,
-  ): Promise<{ sessionId: string; subtitleUrl: string }> {
+  async startSubtitleExtract(path: string, subtitleTrack: number): Promise<{ sessionId: string; subtitleUrl: string }> {
     const search = new URLSearchParams();
     search.set('path', path);
     search.set('subtitleTrack', subtitleTrack.toString());
-    return this.request<{ sessionId: string; subtitleUrl: string }>(
-      `/video/subtitles/start?${search.toString()}`,
-    );
+    return this.request<{ sessionId: string; subtitleUrl: string }>(`/video/subtitles/start?${search.toString()}`);
   }
 
   // Watch Status API methods (now using History API)

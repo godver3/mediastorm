@@ -1,3 +1,4 @@
+import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import MediaGrid from '@/components/MediaGrid';
@@ -32,6 +33,7 @@ export default function WatchlistScreen() {
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const { pendingPinUserId } = useUserProfiles();
+  const { userSettings } = useBackendSettings();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
   const { items, loading, error } = useWatchlist();
@@ -148,6 +150,7 @@ export default function WatchlistScreen() {
               layout="grid"
               numColumns={screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4}
               defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
+              badgeVisibility={userSettings?.display?.badgeVisibility}
             />
           </SpatialNavigationNode>
 

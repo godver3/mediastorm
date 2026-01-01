@@ -29,6 +29,7 @@ type Settings struct {
 	HomeShelves     HomeShelvesSettings    `json:"homeShelves"`
 	Filtering       FilterSettings         `json:"filtering"`
 	UI              UISettings             `json:"ui"`
+	Display         DisplaySettings        `json:"display"`
 	Subtitles       SubtitleSettings       `json:"subtitles"`
 	MDBList         MDBListSettings        `json:"mdblist"`
 	Trakt           TraktSettings          `json:"trakt,omitempty"`
@@ -241,6 +242,13 @@ type UISettings struct {
 	LoadingAnimationEnabled bool `json:"loadingAnimationEnabled"`
 }
 
+// DisplaySettings controls UI display preferences.
+type DisplaySettings struct {
+	// BadgeVisibility controls which badges appear on media cards.
+	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+	BadgeVisibility []string `json:"badgeVisibility"`
+}
+
 // SubtitleSettings defines subtitle provider configuration.
 type SubtitleSettings struct {
 	OpenSubtitlesUsername string `json:"openSubtitlesUsername"`
@@ -404,6 +412,9 @@ func DefaultSettings() Settings {
 		},
 		UI: UISettings{
 			LoadingAnimationEnabled: true,
+		},
+		Display: DisplaySettings{
+			BadgeVisibility: []string{"watchProgress"},
 		},
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
@@ -715,6 +726,11 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults
+
+	// Backfill Display settings
+	if len(s.Display.BadgeVisibility) == 0 {
+		s.Display.BadgeVisibility = []string{"watchProgress"}
+	}
 
 	// Backfill Log settings
 	if strings.TrimSpace(s.Log.File) == "" {
