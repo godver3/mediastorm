@@ -1016,8 +1016,36 @@ export default function PlayerScreen() {
       // Send keepalive ping with current playback time for rate limiting
       // Also send bufferStart (using currentTime as approximation since players buffer from current position forward)
       // Backend uses this to avoid deleting segments the player still needs
+      // Response includes segment timing info for accurate subtitle sync
       try {
-        await apiService.keepaliveHlsSession(sessionId, currentTimeRef.current, currentTimeRef.current);
+        const response = await apiService.keepaliveHlsSession(
+          sessionId,
+          currentTimeRef.current,
+          currentTimeRef.current,
+        );
+        // Validate playback offset matches server's startOffset
+        // This catches any desync between frontend and backend
+        if (response.startOffset !== undefined) {
+          const offsetDelta = Math.abs(response.startOffset - playbackOffsetRef.current);
+          if (offsetDelta > 0.5) {
+            console.warn('[player] keepalive: playback offset mismatch, correcting', {
+              serverStartOffset: response.startOffset,
+              clientPlaybackOffset: playbackOffsetRef.current,
+              segmentDuration: response.segmentDuration,
+              delta: offsetDelta,
+            });
+            playbackOffsetRef.current = response.startOffset;
+          } else {
+            // Log periodically to confirm sync is working (every 60s worth of keepalives)
+            if (Math.floor(currentTimeRef.current / 60) !== Math.floor((currentTimeRef.current - 10) / 60)) {
+              console.log('[player] keepalive: segment timing in sync', {
+                startOffset: response.startOffset,
+                segmentDuration: response.segmentDuration,
+                currentTime: currentTimeRef.current,
+              });
+            }
+          }
+        }
       } catch (error) {
         console.warn('[player] keepalive ping failed:', error);
       }
@@ -4271,6 +4299,7 @@ export default function PlayerScreen() {
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
+              currentTimeRef={currentTimeRef}
               timeOffset={-playbackOffsetRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
@@ -4287,6 +4316,7 @@ export default function PlayerScreen() {
             <SubtitleOverlay
               vttUrl={extractedSubtitleUrl}
               currentTime={currentTime}
+              currentTimeRef={currentTimeRef}
               timeOffset={-subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
@@ -4302,6 +4332,7 @@ export default function PlayerScreen() {
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}
+              currentTimeRef={currentTimeRef}
               timeOffset={-subtitleOffset}
               enabled={true}
               videoWidth={videoSize?.width}

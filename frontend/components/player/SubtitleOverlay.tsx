@@ -14,7 +14,7 @@ export interface VTTCue {
 interface SubtitleOverlayProps {
   /** URL to fetch the VTT file from */
   vttUrl: string | null;
-  /** Current playback time in seconds */
+  /** Current playback time in seconds (fallback if currentTimeRef not provided) */
   currentTime: number;
   /** Whether subtitles are enabled */
   enabled: boolean;
@@ -28,6 +28,11 @@ interface SubtitleOverlayProps {
   sizeScale?: number;
   /** Whether player controls are visible (subtitles bump up to avoid overlap) */
   controlsVisible?: boolean;
+  /**
+   * Ref to current playback time - enables high-frequency updates via requestAnimationFrame
+   * When provided, this is used instead of the currentTime prop for smoother subtitle sync
+   */
+  currentTimeRef?: React.MutableRefObject<number>;
 }
 
 /**
@@ -141,6 +146,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   videoHeight,
   sizeScale = 1.0,
   controlsVisible = false,
+  currentTimeRef: externalTimeRef,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -153,6 +159,52 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastUrlRef = useRef<string | null>(null);
   const lastSyncTimeRef = useRef<number>(currentTime);
+
+  // High-frequency time polling via requestAnimationFrame
+  // When externalTimeRef is provided, poll it frequently for smoother subtitle sync
+  const [polledTime, setPolledTime] = useState(currentTime);
+  const rafIdRef = useRef<number | null>(null);
+  const lastPolledTimeRef = useRef<number>(currentTime);
+
+  useEffect(() => {
+    // If no external ref, just use the prop directly
+    if (!externalTimeRef) {
+      setPolledTime(currentTime);
+      return;
+    }
+
+    if (!enabled) {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      return;
+    }
+
+    // Poll the external ref at ~30fps for smooth subtitle updates
+    // Only trigger re-render if time changed enough to potentially affect cue display
+    const pollTime = () => {
+      const newTime = externalTimeRef.current;
+      // Only update state if time changed by more than 50ms to reduce renders
+      if (Math.abs(newTime - lastPolledTimeRef.current) > 0.05) {
+        lastPolledTimeRef.current = newTime;
+        setPolledTime(newTime);
+      }
+      rafIdRef.current = requestAnimationFrame(pollTime);
+    };
+
+    rafIdRef.current = requestAnimationFrame(pollTime);
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, [externalTimeRef, enabled, currentTime]);
+
+  // Effective time to use for subtitle matching
+  const effectiveTime = externalTimeRef ? polledTime : currentTime;
 
   // Calculate subtitle positioning based on actual video content bounds
   // When using resizeMode="contain", the video may have letterboxing (black bars)
@@ -258,11 +310,11 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   }, [vttUrl, enabled, fetchVTT]);
 
   // Keep refs updated for use in sync interval
-  const currentTimeRef = useRef(currentTime);
+  const internalTimeRef = useRef(effectiveTime);
   const timeOffsetRef = useRef(timeOffset);
   useEffect(() => {
-    currentTimeRef.current = currentTime;
-  }, [currentTime]);
+    internalTimeRef.current = effectiveTime;
+  }, [effectiveTime]);
   useEffect(() => {
     timeOffsetRef.current = timeOffset;
   }, [timeOffset]);
@@ -283,7 +335,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
     // Check for drift every 3 seconds
     syncIntervalRef.current = setInterval(() => {
-      const now = currentTimeRef.current;
+      const now = internalTimeRef.current;
 
       // Skip drift detection on first tick - just establish baseline
       // This prevents false positives when resuming playback at a non-zero position
@@ -324,9 +376,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const SUBTITLE_DELAY_SECONDS = 0;
   const activeCues = useMemo(() => {
     if (!enabled || cues.length === 0) return [];
-    const adjustedTime = currentTime + timeOffset - SUBTITLE_DELAY_SECONDS;
+    const adjustedTime = effectiveTime + timeOffset - SUBTITLE_DELAY_SECONDS;
     return findActiveCues(cues, adjustedTime);
-  }, [cues, currentTime, timeOffset, enabled, syncTick]);
+  }, [cues, effectiveTime, timeOffset, enabled, syncTick]);
 
   // Render subtitle text with outline effect by layering
   // Multiple offset black text layers create the outline, white text on top

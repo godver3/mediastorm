@@ -323,6 +323,13 @@ export interface HlsSeekResponse {
   playlistUrl: string;
 }
 
+export interface HlsKeepaliveResponse {
+  status: string;
+  startOffset: number;
+  segmentDuration: number;
+  duration?: number;
+}
+
 export interface WatchProgress {
   percentage: number;
   currentSeason?: number;
@@ -1719,8 +1726,13 @@ class ApiService {
    * @param sessionId - The HLS session ID
    * @param currentTime - Optional current playback time in seconds for rate limiting
    * @param bufferStart - Optional earliest time still in player's buffer (for safe segment cleanup)
+   * @returns Segment timing info for accurate subtitle sync
    */
-  async keepaliveHlsSession(sessionId: string, currentTime?: number, bufferStart?: number): Promise<void> {
+  async keepaliveHlsSession(
+    sessionId: string,
+    currentTime?: number,
+    bufferStart?: number,
+  ): Promise<HlsKeepaliveResponse> {
     if (!sessionId) {
       throw new Error('Session ID is required for keepalive');
     }
@@ -1732,9 +1744,12 @@ class ApiService {
       params.set('bufferStart', String(bufferStart));
     }
     const queryString = params.toString();
-    await this.request(`/video/hls/${encodeURIComponent(sessionId)}/keepalive${queryString ? `?${queryString}` : ''}`, {
-      method: 'POST',
-    });
+    return this.request<HlsKeepaliveResponse>(
+      `/video/hls/${encodeURIComponent(sessionId)}/keepalive${queryString ? `?${queryString}` : ''}`,
+      {
+        method: 'POST',
+      },
+    );
   }
 
   /**
