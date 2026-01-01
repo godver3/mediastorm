@@ -47,6 +47,8 @@ interface ControlsProps {
   hasNextEpisode?: boolean;
   onPreviousEpisode?: () => void;
   onNextEpisode?: () => void;
+  /** Green indicator when next episode is prequeued and ready */
+  nextEpisodePrequeueReady?: boolean;
   /** Shuffle mode - disables prev, enables random next */
   shuffleMode?: boolean;
   /** Subtitle offset adjustment (for external/searched subtitles) */
@@ -100,6 +102,7 @@ const Controls: React.FC<ControlsProps> = ({
   hasNextEpisode = false,
   onPreviousEpisode,
   onNextEpisode,
+  nextEpisodePrequeueReady = false,
   shuffleMode = false,
   showSubtitleOffset = false,
   subtitleOffset = 0,
@@ -335,6 +338,9 @@ const Controls: React.FC<ControlsProps> = ({
                   size={24}
                   color={hasNextEpisode || shuffleMode ? theme.colors.text.primary : theme.colors.text.disabled}
                 />
+                {nextEpisodePrequeueReady && (
+                  <View style={styles.prequeueReadyIndicator} />
+                )}
               </Pressable>
             </View>
           )}
@@ -534,14 +540,19 @@ const Controls: React.FC<ControlsProps> = ({
                 )}
                 {isTvPlatform && onNextEpisode && (
                   <View style={[styles.trackButtonGroup, !hasNextEpisode && !shuffleMode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
-                    <FocusablePressable
-                      icon={shuffleMode ? 'shuffle' : 'play-skip-forward'}
-                      focusKey="next-episode-button"
-                      onSelect={onNextEpisode}
-                      onFocus={handleNextEpisodeFocus}
-                      style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null || (!hasNextEpisode && !shuffleMode)}
-                    />
+                    <View>
+                      <FocusablePressable
+                        icon={shuffleMode ? 'shuffle' : 'play-skip-forward'}
+                        focusKey="next-episode-button"
+                        onSelect={onNextEpisode}
+                        onFocus={handleNextEpisodeFocus}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null || (!hasNextEpisode && !shuffleMode)}
+                      />
+                      {nextEpisodePrequeueReady && (
+                        <View style={styles.prequeueReadyIndicatorTv} />
+                      )}
+                    </View>
                     <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]} numberOfLines={1}>
                       {shuffleMode ? 'Shuffle' : 'Next'}
                     </Text>
@@ -655,6 +666,28 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     episodeButtonDisabled: {
       opacity: 0.4,
       borderColor: 'rgba(255, 255, 255, 0.15)',
+    },
+    prequeueReadyIndicator: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: '#22c55e', // green-500
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.6)',
+    },
+    prequeueReadyIndicatorTv: {
+      position: 'absolute',
+      top: 4,
+      right: 4,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: '#22c55e', // green-500
+      borderWidth: 1.5,
+      borderColor: 'rgba(255, 255, 255, 0.6)',
     },
     skipButtonContent: {
       alignItems: 'center',

@@ -547,10 +547,29 @@ export default function DetailsScreen() {
       if (titleId) {
         const nextEp = playbackNavigation.consumeNextEpisode(titleId);
         if (nextEp) {
-          console.log('[Details] Found next episode from playback:', nextEp);
+          console.log('[Details] Found next episode from playback:', nextEp, {
+            hasPrequeueId: !!nextEp.prequeueId,
+            hasPrequeueStatus: !!nextEp.prequeueStatus,
+            prequeueStatusReady: nextEp.prequeueStatus ? apiService.isPrequeueReady(nextEp.prequeueStatus.status) : false,
+          });
           setNextEpisodeFromPlayback(nextEp);
           // Restore shuffle mode from playback navigation
           setIsShuffleMode(nextEp.shuffleMode);
+
+          // Store prequeue data from navigation if present
+          if (nextEp.prequeueId) {
+            setPrequeueId(nextEp.prequeueId);
+            setPrequeueTargetEpisode({
+              seasonNumber: nextEp.seasonNumber,
+              episodeNumber: nextEp.episodeNumber,
+            });
+            // Cache the ready status so resolveAndPlay can use it directly
+            if (nextEp.prequeueStatus && apiService.isPrequeueReady(nextEp.prequeueStatus.status)) {
+              navigationPrequeueStatusRef.current = nextEp.prequeueStatus;
+              setPrequeueReady(true);
+              console.log('[Details] Cached navigation prequeue status (ready)');
+            }
+          }
 
           // Try to select/play the episode immediately if we have the episodes loaded
           if (allEpisodesRef.current.length > 0) {
@@ -714,6 +733,8 @@ export default function DetailsScreen() {
     id: string;
     targetEpisode: { seasonNumber: number; episodeNumber: number } | null;
   } | null> | null>(null);
+  // Cache prequeue status from navigation (player already resolved it)
+  const navigationPrequeueStatusRef = useRef<PrequeueStatusResponse | null>(null);
 
   // Debug: Track resume modal visibility changes
   useEffect(() => {
@@ -1995,12 +2016,14 @@ export default function DetailsScreen() {
       limit = 5,
       selectionMessage,
       useDebugPlayer = false,
+      targetEpisode,
     }: {
       query: string;
       friendlyLabel: string;
       limit?: number;
       selectionMessage?: string | null;
       useDebugPlayer?: boolean;
+      targetEpisode?: { seasonNumber: number; episodeNumber: number };
     }) => {
       if (isResolving) {
         return;
@@ -2011,7 +2034,26 @@ export default function DetailsScreen() {
         prequeueIdState: prequeueId ?? 'null',
         prequeuePromiseExists: !!prequeuePromiseRef.current,
         prequeueTargetEpisode,
+        targetEpisode,
       });
+
+      // Check for navigation prequeue first (passed from player's next episode prequeue)
+      // This takes priority over any pending prequeue promise from the page's own useEffect
+      const navPrequeue = navigationPrequeueStatusRef.current;
+      if (navPrequeue && targetEpisode && apiService.isPrequeueReady(navPrequeue.status)) {
+        const navTarget = navPrequeue.targetEpisode;
+        if (
+          navTarget &&
+          navTarget.seasonNumber === targetEpisode.seasonNumber &&
+          navTarget.episodeNumber === targetEpisode.episodeNumber
+        ) {
+          console.log('[prequeue] Using navigation prequeue from player:', navPrequeue.prequeueId);
+          navigationPrequeueStatusRef.current = null; // Clear after use
+          setSelectionInfo(null);
+          await launchFromPrequeue(navPrequeue);
+          return;
+        }
+      }
 
       // Wait for any pending prequeue request to complete first
       let currentPrequeueId = prequeueId;
@@ -2061,7 +2103,19 @@ export default function DetailsScreen() {
         setIsResolving(true);
 
         try {
-          const status = await apiService.getPrequeueStatus(currentPrequeueId);
+          // Check if we have a cached ready status from navigation
+          let status: PrequeueStatusResponse;
+          if (
+            navigationPrequeueStatusRef.current &&
+            navigationPrequeueStatusRef.current.prequeueId === currentPrequeueId &&
+            apiService.isPrequeueReady(navigationPrequeueStatusRef.current.status)
+          ) {
+            console.log('[prequeue] Using cached navigation prequeue status');
+            status = navigationPrequeueStatusRef.current;
+            navigationPrequeueStatusRef.current = null; // Clear after use
+          } else {
+            status = await apiService.getPrequeueStatus(currentPrequeueId);
+          }
           console.log('[prequeue] Got prequeue status:', {
             status: status.status,
             streamPath: status.streamPath ? 'set' : 'null',
@@ -2436,7 +2490,7 @@ export default function DetailsScreen() {
         }
       }
     },
-    [fetchIndexerResults, isResolving, title, titleId, imdbId],
+    [fetchIndexerResults, isResolving, title, titleId, imdbId, launchFromPrequeue],
   );
 
   const handlePlaySeason = useCallback(
@@ -2626,7 +2680,13 @@ export default function DetailsScreen() {
       const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
       const friendlyLabel = `${baseTitle} ${episodeCode}${episode.name ? ` – "${episode.name}"` : ''}`;
       const selectionMessage = `${baseTitle} • ${episodeCode}`;
-      await resolveAndPlay({ query, friendlyLabel, limit: 50, selectionMessage });
+      await resolveAndPlay({
+        query,
+        friendlyLabel,
+        limit: 50,
+        selectionMessage,
+        targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber },
+      });
       // Don't automatically record episode playback - let progress tracking handle it
       // recordEpisodePlayback(episode);
     },

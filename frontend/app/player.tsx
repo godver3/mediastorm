@@ -43,7 +43,7 @@ import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
-import type { AudioStreamMetadata, SubtitleStreamMetadata, SeriesEpisode } from '@/services/api';
+import type { AudioStreamMetadata, SubtitleStreamMetadata, SeriesEpisode, PrequeueStatusResponse } from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
 import type { NovaTheme } from '@/theme';
@@ -776,6 +776,16 @@ export default function PlayerScreen() {
   const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
   // Video dimensions for subtitle positioning (relative to video content, not screen)
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  // Next episode prequeue state (triggered at 90% of current episode)
+  const [nextEpisodePrequeueReady, setNextEpisodePrequeueReady] = useState(false);
+  const nextEpisodePrequeueRef = useRef<{
+    prequeueId: string | null;
+    targetEpisode: { seasonNumber: number; episodeNumber: number } | null;
+    statusResponse: PrequeueStatusResponse | null;
+    isShuffleEpisode: boolean;
+  }>({ prequeueId: null, targetEpisode: null, statusResponse: null, isShuffleEpisode: false });
+  const hasTriggeredNextEpisodePrequeue = useRef(false);
+  const nextEpisodePrequeuePollingRef = useRef<boolean>(false);
   const effectiveMovie = useMemo(() => currentMovieUrl ?? resolvedMovie ?? null, [currentMovieUrl, resolvedMovie]);
   const isHlsStream = useMemo(() => {
     if (!effectiveMovie) {
@@ -863,6 +873,7 @@ export default function PlayerScreen() {
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoEndedNaturallyRef = useRef(false); // Track if video ended naturally (vs user exit)
+  const userNavigatedToEpisodeRef = useRef(false); // Track if user explicitly navigated (via Next/Prev button)
   const warmStartDebounceResolveRef = useRef<((value: boolean) => void) | null>(null);
   const pendingSessionSeekRef = useRef<number | null>(null);
   const pendingSeekAttemptRef = useRef<{ attempts: number; lastAttemptMs: number }>({
@@ -2311,6 +2322,20 @@ export default function PlayerScreen() {
           });
         }
       }
+
+      // Trigger prequeue for next episode when at 90% of current episode
+      if (
+        mediaType === 'episode' &&
+        currentDuration > 0 &&
+        !hasTriggeredNextEpisodePrequeue.current &&
+        (hasNextEpisode || shuffleMode)
+      ) {
+        const percentWatched = (absoluteTime / currentDuration) * 100;
+        if (percentWatched >= 90) {
+          hasTriggeredNextEpisodePrequeue.current = true;
+          triggerNextEpisodePrequeue();
+        }
+      }
     },
     [
       hasStartedPlaying,
@@ -2322,6 +2347,10 @@ export default function PlayerScreen() {
       applyPendingSessionSeek,
       hideLoadingScreen,
       paused,
+      mediaType,
+      hasNextEpisode,
+      shuffleMode,
+      triggerNextEpisodePrequeue,
     ],
   );
 
@@ -2341,6 +2370,126 @@ export default function PlayerScreen() {
   const handleBufferState = useCallback((isBuffering: boolean) => {
     setIsVideoBuffering(isBuffering);
   }, []);
+
+  // Poll for next episode prequeue status
+  const pollNextEpisodePrequeue = useCallback(async (prequeueId: string) => {
+    if (nextEpisodePrequeuePollingRef.current) return;
+    nextEpisodePrequeuePollingRef.current = true;
+
+    const maxPolls = 20; // ~30 seconds at 1.5s interval
+    let polls = 0;
+
+    while (polls < maxPolls) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      polls++;
+
+      // Stop if prequeue was cleared or component unmounted
+      if (nextEpisodePrequeueRef.current?.prequeueId !== prequeueId) {
+        nextEpisodePrequeuePollingRef.current = false;
+        return;
+      }
+
+      try {
+        const status = await apiService.getPrequeueStatus(prequeueId);
+
+        if (apiService.isPrequeueReady(status.status)) {
+          nextEpisodePrequeueRef.current.statusResponse = status;
+          setNextEpisodePrequeueReady(true);
+          console.log('[player] Next episode prequeue ready:', prequeueId);
+          nextEpisodePrequeuePollingRef.current = false;
+          return;
+        }
+
+        if (status.status === 'failed' || status.status === 'expired') {
+          console.log('[player] Next episode prequeue failed/expired:', status.status);
+          nextEpisodePrequeuePollingRef.current = false;
+          return;
+        }
+      } catch (error) {
+        console.warn('[player] Next episode prequeue poll error:', error);
+        nextEpisodePrequeuePollingRef.current = false;
+        return;
+      }
+    }
+
+    nextEpisodePrequeuePollingRef.current = false;
+  }, []);
+
+  // Trigger prequeue for next episode when at 90% of current episode
+  const triggerNextEpisodePrequeue = useCallback(async () => {
+    const seriesId = titleId || imdbId || tvdbId;
+    if (!seriesId || allEpisodes.length === 0) return;
+
+    // Find the current episode index
+    const currentIndex = allEpisodes.findIndex(
+      (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
+    );
+
+    let nextEpisode: SeriesEpisode | undefined;
+    let isShuffleEpisode = false;
+
+    if (shuffleMode && allEpisodes.length > 1) {
+      // Shuffle mode: pick a random episode (different from current)
+      let randomIndex: number;
+      do {
+        randomIndex = Math.floor(Math.random() * allEpisodes.length);
+      } while (
+        allEpisodes[randomIndex].seasonNumber === seasonNumber &&
+        allEpisodes[randomIndex].episodeNumber === episodeNumber
+      );
+      nextEpisode = allEpisodes[randomIndex];
+      isShuffleEpisode = true;
+    } else if (currentIndex >= 0 && currentIndex < allEpisodes.length - 1) {
+      // Sequential mode: get next episode
+      nextEpisode = allEpisodes[currentIndex + 1];
+    }
+
+    if (!nextEpisode) return;
+
+    console.log('[player] Triggering prequeue for next episode:', {
+      season: nextEpisode.seasonNumber,
+      episode: nextEpisode.episodeNumber,
+      shuffleMode: isShuffleEpisode,
+    });
+
+    try {
+      const response = await apiService.prequeuePlayback({
+        titleId: seriesId,
+        titleName: cleanSeriesTitle || title || '',
+        mediaType: 'series',
+        userId: activeUserId,
+        seasonNumber: nextEpisode.seasonNumber,
+        episodeNumber: nextEpisode.episodeNumber,
+      });
+
+      nextEpisodePrequeueRef.current = {
+        prequeueId: response.prequeueId,
+        targetEpisode: {
+          seasonNumber: nextEpisode.seasonNumber,
+          episodeNumber: nextEpisode.episodeNumber,
+        },
+        statusResponse: null,
+        isShuffleEpisode,
+      };
+
+      // Start polling for ready status
+      pollNextEpisodePrequeue(response.prequeueId);
+    } catch (error) {
+      console.warn('[player] Next episode prequeue failed (non-fatal):', error);
+    }
+  }, [
+    titleId,
+    imdbId,
+    tvdbId,
+    allEpisodes,
+    seasonNumber,
+    episodeNumber,
+    shuffleMode,
+    cleanSeriesTitle,
+    title,
+    activeUserId,
+    pollNextEpisodePrequeue,
+  ]);
 
   const hideControls = useCallback(
     (options: { immediate?: boolean } = {}) => {
@@ -2508,6 +2657,12 @@ export default function PlayerScreen() {
       // Skip if video ended naturally - handleVideoEnd already handled autoPlay
       if (videoEndedNaturallyRef.current) {
         console.log('[player] Skipping unmount next episode logic - video ended naturally');
+        return;
+      }
+
+      // Skip if user explicitly navigated via Next/Prev button - navigateToEpisode already set it
+      if (userNavigatedToEpisodeRef.current) {
+        console.log('[player] Skipping unmount next episode logic - user explicitly navigated');
         return;
       }
 
@@ -3137,6 +3292,32 @@ export default function PlayerScreen() {
     if (mediaType === 'episode' && seasonNumber && episodeNumber) {
       const seriesId = titleId || imdbId || tvdbId;
 
+      // Check if we have a prequeued episode to use (works for both shuffle and sequential)
+      const prequeueData = nextEpisodePrequeueRef.current;
+      if (prequeueData?.prequeueId && prequeueData.targetEpisode && seriesId) {
+        console.log('🎬 Using prequeued episode', {
+          season: prequeueData.targetEpisode.seasonNumber,
+          episode: prequeueData.targetEpisode.episodeNumber,
+          isShuffleEpisode: prequeueData.isShuffleEpisode,
+        });
+
+        playbackNavigation.setNextEpisode(
+          seriesId,
+          prequeueData.targetEpisode.seasonNumber,
+          prequeueData.targetEpisode.episodeNumber,
+          true,
+          prequeueData.isShuffleEpisode,
+          prequeueData.prequeueId,
+          prequeueData.statusResponse ?? undefined,
+        );
+
+        setTimeout(() => {
+          router.back();
+        }, 500);
+        return;
+      }
+
+      // No prequeue - fall back to existing logic
       // Shuffle mode: pick a random episode (different from current)
       if (shuffleMode && allEpisodes.length > 1) {
         let randomIndex: number;
@@ -4161,19 +4342,56 @@ export default function PlayerScreen() {
   const hasPreviousEpisode = currentEpisodeIndex > 0;
   const hasNextEpisode = currentEpisodeIndex >= 0 && currentEpisodeIndex < allEpisodes.length - 1;
 
+  // Reset prequeue state when episode changes
+  useEffect(() => {
+    hasTriggeredNextEpisodePrequeue.current = false;
+    nextEpisodePrequeueRef.current = { prequeueId: null, targetEpisode: null, statusResponse: null, isShuffleEpisode: false };
+    setNextEpisodePrequeueReady(false);
+    nextEpisodePrequeuePollingRef.current = false;
+  }, [seasonNumber, episodeNumber]);
+
   // Navigate to previous/next episode
   const navigateToEpisode = useCallback(
-    (episode: SeriesEpisode) => {
+    (episode: SeriesEpisode, usePrequeue: boolean = false) => {
       const seriesId = titleId || imdbId || tvdbId;
       if (!seriesId) {
         console.warn('[player] no series identifier for episode navigation');
         return;
       }
 
-      console.log('[player] navigating to episode', { season: episode.seasonNumber, episode: episode.episodeNumber, shuffleMode });
+      console.log('[player] navigating to episode', {
+        season: episode.seasonNumber,
+        episode: episode.episodeNumber,
+        shuffleMode,
+        usePrequeue,
+      });
 
-      // Set the next episode in playback navigation with autoPlay flag, preserving shuffle mode
-      playbackNavigation.setNextEpisode(seriesId, episode.seasonNumber, episode.episodeNumber, true, shuffleMode);
+      // Check if we have prequeue data for this episode
+      const prequeueData = nextEpisodePrequeueRef.current;
+      const hasMatchingPrequeue =
+        usePrequeue &&
+        prequeueData?.prequeueId &&
+        prequeueData.targetEpisode?.seasonNumber === episode.seasonNumber &&
+        prequeueData.targetEpisode?.episodeNumber === episode.episodeNumber;
+
+      if (hasMatchingPrequeue) {
+        // Pass prequeue data to the navigation
+        playbackNavigation.setNextEpisode(
+          seriesId,
+          episode.seasonNumber,
+          episode.episodeNumber,
+          true,
+          prequeueData.isShuffleEpisode ? true : shuffleMode,
+          prequeueData.prequeueId ?? undefined,
+          prequeueData.statusResponse ?? undefined,
+        );
+      } else {
+        // No prequeue data, normal navigation
+        playbackNavigation.setNextEpisode(seriesId, episode.seasonNumber, episode.episodeNumber, true, shuffleMode);
+      }
+
+      // Mark that user explicitly navigated to prevent unmount cleanup from overwriting
+      userNavigatedToEpisodeRef.current = true;
 
       // Navigate back to details page - it will auto-play the episode
       router.back();
@@ -4190,6 +4408,20 @@ export default function PlayerScreen() {
   }, [hasPreviousEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
 
   const handleNextEpisode = useCallback(() => {
+    // Check if we have a prequeued episode to use
+    const prequeueData = nextEpisodePrequeueRef.current;
+    if (prequeueData?.prequeueId && prequeueData.targetEpisode) {
+      // Use the prequeued episode (works for both shuffle and sequential)
+      const prequeuedEpisode: SeriesEpisode = {
+        seasonNumber: prequeueData.targetEpisode.seasonNumber,
+        episodeNumber: prequeueData.targetEpisode.episodeNumber,
+        name: '',
+      };
+      navigateToEpisode(prequeuedEpisode, true);
+      return;
+    }
+
+    // No prequeue - fall back to existing logic
     // Shuffle mode: pick a random episode (different from current)
     if (shuffleMode && allEpisodes.length > 1) {
       let randomIndex: number;
@@ -4454,6 +4686,7 @@ export default function PlayerScreen() {
                               hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
                               onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
                               onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
+                              nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
                               showSubtitleOffset={isUsingSidecarSubtitles}
                               subtitleOffset={subtitleOffset}
                               onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
@@ -4560,6 +4793,7 @@ export default function PlayerScreen() {
                           hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
                           onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
                           onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
+                          nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
                           showSubtitleOffset={isUsingSidecarSubtitles}
                           subtitleOffset={subtitleOffset}
                           onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}

@@ -3,6 +3,8 @@
  * Used to coordinate between player and details screens
  */
 
+import type { PrequeueStatusResponse } from './api';
+
 interface NextEpisodeInfo {
   titleId: string;
   seasonNumber: number;
@@ -10,6 +12,9 @@ interface NextEpisodeInfo {
   autoPlay: boolean; // When true, automatically start playback instead of just selecting
   shuffleMode: boolean; // When true, continue picking random episodes
   timestamp: number; // To invalidate stale data
+  // Prequeue data for instant playback
+  prequeueId?: string;
+  prequeueStatus?: PrequeueStatusResponse;
 }
 
 let nextEpisodeToShow: NextEpisodeInfo | null = null;
@@ -21,6 +26,8 @@ export const playbackNavigation = {
    * Set the next episode to show when returning to details page
    * @param autoPlay - When true, automatically start playback of the episode
    * @param shuffleMode - When true, continue picking random episodes
+   * @param prequeueId - Optional prequeue ID for instant playback
+   * @param prequeueStatus - Optional prequeue status with stream data
    */
   setNextEpisode(
     titleId: string,
@@ -28,6 +35,8 @@ export const playbackNavigation = {
     episodeNumber: number,
     autoPlay: boolean = false,
     shuffleMode: boolean = false,
+    prequeueId?: string,
+    prequeueStatus?: PrequeueStatusResponse,
   ) {
     nextEpisodeToShow = {
       titleId,
@@ -36,7 +45,33 @@ export const playbackNavigation = {
       autoPlay,
       shuffleMode,
       timestamp: Date.now(),
+      prequeueId,
+      prequeueStatus,
     };
+  },
+
+  /**
+   * Peek at the next episode without consuming it (for checking prequeue data)
+   */
+  peekNextEpisode(
+    titleId: string,
+  ): NextEpisodeInfo | null {
+    if (!nextEpisodeToShow) {
+      return null;
+    }
+
+    // Check if it matches the current title
+    if (nextEpisodeToShow.titleId !== titleId) {
+      return null;
+    }
+
+    // Check if it's still fresh (not too old)
+    const age = Date.now() - nextEpisodeToShow.timestamp;
+    if (age > MAX_AGE_MS) {
+      return null;
+    }
+
+    return nextEpisodeToShow;
   },
 
   /**
@@ -44,7 +79,14 @@ export const playbackNavigation = {
    */
   consumeNextEpisode(
     titleId: string,
-  ): { seasonNumber: number; episodeNumber: number; autoPlay: boolean; shuffleMode: boolean } | null {
+  ): {
+    seasonNumber: number;
+    episodeNumber: number;
+    autoPlay: boolean;
+    shuffleMode: boolean;
+    prequeueId?: string;
+    prequeueStatus?: PrequeueStatusResponse;
+  } | null {
     if (!nextEpisodeToShow) {
       return null;
     }
@@ -68,6 +110,8 @@ export const playbackNavigation = {
       episodeNumber: nextEpisodeToShow.episodeNumber,
       autoPlay: nextEpisodeToShow.autoPlay,
       shuffleMode: nextEpisodeToShow.shuffleMode,
+      prequeueId: nextEpisodeToShow.prequeueId,
+      prequeueStatus: nextEpisodeToShow.prequeueStatus,
     };
     nextEpisodeToShow = null;
     return result;
