@@ -1,6 +1,14 @@
-import * as Updates from 'expo-updates';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+
+// Lazy load expo-updates to avoid crash on builds without the native module
+const getUpdates = (): typeof import('expo-updates') | null => {
+  try {
+    return require('expo-updates');
+  } catch {
+    return null;
+  }
+};
 
 type UpdateState = 'checking' | 'downloading' | 'ready' | 'none' | 'error';
 
@@ -49,8 +57,9 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
       return;
     }
 
-    // Skip if Updates module is not available (e.g., in Expo Go)
-    if (!Updates.checkForUpdateAsync) {
+    // Skip if Updates module is not available (e.g., in Expo Go or builds without it)
+    const Updates = getUpdates();
+    if (!Updates?.checkForUpdateAsync) {
       setUpdateState('none');
       return;
     }

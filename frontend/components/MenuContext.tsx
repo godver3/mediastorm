@@ -37,10 +37,20 @@ export const MenuProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return <MenuContext.Provider value={value}>{children}</MenuContext.Provider>;
 };
 
+// Default no-op context for when provider is not available (e.g., during route evaluation)
+const defaultContext: MenuContextType = {
+  isOpen: false,
+  toggleMenu: () => {},
+  openMenu: () => {},
+  closeMenu: () => {},
+};
+
 export const useMenuContext = (): MenuContextType => {
   const context = useContext(MenuContext);
+  // Return default context instead of throwing - expo-router may evaluate routes
+  // before the provider tree is fully established
   if (context === undefined) {
-    throw new Error('useMenuContext must be used within a MenuProvider');
+    return defaultContext;
   }
   return context;
 };

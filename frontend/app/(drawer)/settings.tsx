@@ -62,12 +62,15 @@ import { APP_VERSION } from '@/version';
 import { router, Stack } from 'expo-router';
 
 // expo-updates may not be available in all builds (e.g., development builds without it)
-let Updates: typeof import('expo-updates') | null = null;
-try {
-  Updates = require('expo-updates');
-} catch {
-  // Module not available - updates functionality will be disabled
-}
+// Use a getter to lazily load the module only when actually accessed
+const getUpdates = (): typeof import('expo-updates') | null => {
+  try {
+    return require('expo-updates');
+  } catch {
+    // Module not available - updates functionality will be disabled
+    return null;
+  }
+};
 
 type SettingsTab = 'connection' | 'content' | 'playback' | 'home' | 'advanced' | 'live' | 'filtering';
 
@@ -1365,6 +1368,7 @@ function SettingsScreen() {
   }, [isSubmittingLogs, showToast]);
 
   const handleCheckForUpdates = useCallback(async () => {
+    const Updates = getUpdates();
     if (!Updates) {
       showToast('Updates not available in this build', { tone: 'info' });
       return;
@@ -1396,6 +1400,7 @@ function SettingsScreen() {
   }, [updateStatus, showToast]);
 
   const handleApplyUpdate = useCallback(async () => {
+    const Updates = getUpdates();
     if (!Updates) {
       showToast('Updates not available in this build', { tone: 'info' });
       return;
