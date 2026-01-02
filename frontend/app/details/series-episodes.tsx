@@ -2,7 +2,7 @@
  * Series and episodes functionality for the details screen
  */
 
-import { apiService, type SeriesDetails, type SeriesEpisode, type SeriesSeason } from '@/services/api';
+import { type SeriesDetails, type SeriesEpisode, type SeriesSeason } from '@/services/api';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -25,6 +25,8 @@ interface SeriesEpisodesProps {
   tvdbId?: string;
   titleId?: string;
   yearNumber?: number;
+  seriesDetails?: SeriesDetails | null;
+  seriesDetailsLoading?: boolean;
   initialSeasonNumber?: number | null;
   initialEpisodeNumber?: number | null;
   isTouchSeasonLayout: boolean;
@@ -54,6 +56,8 @@ export const SeriesEpisodes = ({
   tvdbId,
   titleId,
   yearNumber,
+  seriesDetails,
+  seriesDetailsLoading = false,
   initialSeasonNumber,
   initialEpisodeNumber,
   isTouchSeasonLayout,
@@ -77,9 +81,6 @@ export const SeriesEpisodes = ({
   renderContent = true,
 }: SeriesEpisodesProps) => {
   const styles = useMemo(() => createSeriesEpisodesStyles(theme), [theme]);
-  const [seriesDetails, setSeriesDetails] = useState<SeriesDetails | null>(null);
-  const [seriesDetailsLoading, setSeriesDetailsLoading] = useState(false);
-  const [seriesDetailsError, setSeriesDetailsError] = useState<string | null>(null);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<number | null>(null);
   const [seasonPickerVisible, setSeasonPickerVisible] = useState(false);
   const initialEpisodeAppliedRef = useRef(false);
@@ -113,11 +114,19 @@ export const SeriesEpisodes = ({
     if (!orderedSeasons.length) {
       return null;
     }
-    const match = selectedSeasonNumber
-      ? orderedSeasons.find((season) => season.number === selectedSeasonNumber)
-      : undefined;
-    return match ?? orderedSeasons.find((season) => season.number > 0) ?? orderedSeasons[0];
-  }, [orderedSeasons, selectedSeasonNumber]);
+    // First try the explicitly selected season
+    if (selectedSeasonNumber) {
+      const match = orderedSeasons.find((season) => season.number === selectedSeasonNumber);
+      if (match) return match;
+    }
+    // Then try the initial season from navigation params
+    if (initialSeasonNumber !== null && initialSeasonNumber !== undefined) {
+      const initialMatch = orderedSeasons.find((season) => season.number === initialSeasonNumber);
+      if (initialMatch) return initialMatch;
+    }
+    // Finally fall back to first non-specials season or first season
+    return orderedSeasons.find((season) => season.number > 0) ?? orderedSeasons[0];
+  }, [orderedSeasons, selectedSeasonNumber, initialSeasonNumber]);
 
   const episodesBySeason = useMemo(() => {
     const map = new Map<number, SeriesEpisode[]>();
@@ -378,85 +387,42 @@ export const SeriesEpisodes = ({
     }
   }, [shouldUseSeasonModal]);
 
+  // Handle initial season selection when seriesDetails changes (from parent prop)
   useEffect(() => {
-    if (!isSeries) {
-      setSeriesDetails(null);
-      setSeriesDetailsError(null);
-      setSeriesDetailsLoading(false);
+    if (!isSeries || !seriesDetails?.seasons?.length) {
       setSelectedSeasonNumber(null);
       setSeasonPickerVisible(false);
       return;
     }
 
-    const normalizedTitle = title.trim();
-    if (!normalizedTitle && !tvdbId && !titleId) {
-      return;
-    }
-
-    let cancelled = false;
-    setSeriesDetailsLoading(true);
-    setSeriesDetailsError(null);
-
-    apiService
-      .getSeriesDetails({
-        tvdbId: tvdbId || undefined,
-        titleId: titleId || undefined,
-        name: normalizedTitle || undefined,
-        year: yearNumber,
-      })
-      .then((details) => {
-        if (cancelled) {
-          return;
-        }
-        setSeriesDetails(details);
-        setSelectedSeasonNumber((current): number | null => {
-          console.log('[SeriesEpisodes] Setting initial season:', {
-            initialSeasonNumber,
-            currentSeasonNumber: current,
-            availableSeasons: details.seasons.map((s) => s.number),
-          });
-
-          if (
-            initialSeasonNumber !== null &&
-            initialSeasonNumber !== undefined &&
-            details.seasons.some((season) => season.number === initialSeasonNumber)
-          ) {
-            console.log('[SeriesEpisodes] Using initialSeasonNumber:', initialSeasonNumber);
-            return initialSeasonNumber;
-          }
-          if (current && details.seasons.some((season) => season.number === current)) {
-            console.log('[SeriesEpisodes] Using current season:', current);
-            return current;
-          }
-          const primarySeason = details.seasons.find((season) => season.number > 0) ?? details.seasons[0];
-          if (primarySeason && typeof primarySeason.number === 'number') {
-            console.log('[SeriesEpisodes] Using primary season:', primarySeason.number);
-            return primarySeason.number;
-          }
-          console.log('[SeriesEpisodes] No season found, returning null');
-          return null;
-        });
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Unable to load season data.';
-        setSeriesDetailsError(message);
-        setSeriesDetails(null);
-        setSelectedSeasonNumber(null);
-        setSeasonPickerVisible(false);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSeriesDetailsLoading(false);
-        }
+    setSelectedSeasonNumber((current): number | null => {
+      console.log('[SeriesEpisodes] Setting initial season:', {
+        initialSeasonNumber,
+        currentSeasonNumber: current,
+        availableSeasons: seriesDetails.seasons.map((s) => s.number),
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isSeries, title, tvdbId, titleId, yearNumber]);
+      if (
+        initialSeasonNumber !== null &&
+        initialSeasonNumber !== undefined &&
+        seriesDetails.seasons.some((season) => season.number === initialSeasonNumber)
+      ) {
+        console.log('[SeriesEpisodes] Using initialSeasonNumber:', initialSeasonNumber);
+        return initialSeasonNumber;
+      }
+      if (current && seriesDetails.seasons.some((season) => season.number === current)) {
+        console.log('[SeriesEpisodes] Using current season:', current);
+        return current;
+      }
+      const primarySeason = seriesDetails.seasons.find((season) => season.number > 0) ?? seriesDetails.seasons[0];
+      if (primarySeason && typeof primarySeason.number === 'number') {
+        console.log('[SeriesEpisodes] Using primary season:', primarySeason.number);
+        return primarySeason.number;
+      }
+      console.log('[SeriesEpisodes] No season found, returning null');
+      return null;
+    });
+  }, [isSeries, seriesDetails, initialSeasonNumber]);
 
   const openSeasonPicker = useCallback(() => {
     setSeasonPickerVisible(true);
@@ -514,11 +480,10 @@ export const SeriesEpisodes = ({
     <View style={styles.seriesContainer}>
       <Text style={styles.seriesHeading}>Seasons & Episodes</Text>
       {seriesDetailsLoading && <Text style={styles.seriesStatus}>Loading season data…</Text>}
-      {!seriesDetailsLoading && seriesDetailsError && <Text style={styles.seriesError}>{seriesDetailsError}</Text>}
-      {!seriesDetailsLoading && !seriesDetailsError && orderedSeasons.length === 0 && (
+      {!seriesDetailsLoading && orderedSeasons.length === 0 && (
         <Text style={styles.seriesStatus}>Season data not available yet.</Text>
       )}
-      {!seriesDetailsLoading && !seriesDetailsError && orderedSeasons.length > 0 && (
+      {!seriesDetailsLoading && orderedSeasons.length > 0 && (
         <View style={[styles.seasonAndEpisodeWrapper, isTouchSeasonLayout && styles.seasonAndEpisodeWrapperStacked]}>
           {shouldUseSeasonModal ? (
             <>

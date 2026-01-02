@@ -17,6 +17,7 @@ import {
   type NZBResult,
   type PrequeueStatusResponse,
   type Rating,
+  type SeriesDetails,
   type SeriesEpisode,
   type SeriesSeason,
   type Title,
@@ -286,9 +287,12 @@ export default function DetailsScreen() {
   const posterUrlParam = toStringParam(params.posterUrl) || headerImageParam;
   const backdropUrlParam = toStringParam(params.backdropUrl) || headerImageParam;
 
-  // State to hold fetched details for backdrop updates
-  const [seriesDetailsForBackdrop, setSeriesDetailsForBackdrop] = useState<Title | null>(null);
+  // State to hold fetched details for backdrop updates and episodes
+  const [seriesDetailsData, setSeriesDetailsData] = useState<SeriesDetails | null>(null);
   const [movieDetails, setMovieDetails] = useState<Title | null>(null);
+
+  // Derive the title from series details for poster/backdrop
+  const seriesDetailsForBackdrop = seriesDetailsData?.title ?? null;
 
   const tmdbId = toStringParam(params.tmdbId);
   const imdbId = toStringParam(params.imdbId);
@@ -1169,17 +1173,17 @@ export default function DetailsScreen() {
     };
   }, [movieDetailsQuery]);
 
-  // Fetch series details for backdrop updates (separate from SeriesEpisodes component)
+  // Fetch series details for backdrop updates AND episodes (shared with SeriesEpisodes)
   useEffect(() => {
     if (!isSeries) {
-      setSeriesDetailsForBackdrop(null);
+      setSeriesDetailsData(null);
       setSeriesDetailsLoading(false);
       return;
     }
 
     const normalizedTitle = title?.trim();
     if (!normalizedTitle && !tvdbIdNumber && !titleId) {
-      setSeriesDetailsForBackdrop(null);
+      setSeriesDetailsData(null);
       setSeriesDetailsLoading(false);
       return;
     }
@@ -1199,15 +1203,16 @@ export default function DetailsScreen() {
         if (cancelled) {
           return;
         }
-        setSeriesDetailsForBackdrop(details.title);
+        // Store full SeriesDetails for sharing with SeriesEpisodes
+        setSeriesDetailsData(details);
         setSeriesDetailsLoading(false);
       })
       .catch((error) => {
         if (cancelled) {
           return;
         }
-        console.warn('[details] series metadata fetch for backdrop failed', error);
-        setSeriesDetailsForBackdrop(null);
+        console.warn('[details] series metadata fetch failed', error);
+        setSeriesDetailsData(null);
         setSeriesDetailsLoading(false);
       });
 
@@ -3837,6 +3842,8 @@ export default function DetailsScreen() {
                 tvdbId={tvdbId}
                 titleId={titleId}
                 yearNumber={yearNumber}
+                seriesDetails={seriesDetailsData}
+                seriesDetailsLoading={seriesDetailsLoading}
                 initialSeasonNumber={initialSeasonNumber}
                 initialEpisodeNumber={initialEpisodeNumber}
                 isTouchSeasonLayout={isTouchSeasonLayout}
