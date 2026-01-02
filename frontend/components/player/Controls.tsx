@@ -8,7 +8,8 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 interface ControlsProps {
   paused: boolean;
@@ -112,7 +113,7 @@ const Controls: React.FC<ControlsProps> = ({
   seekForwardSeconds = 30,
 }) => {
   const theme = useTheme();
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useTVDimensions();
   const styles = useMemo(() => useControlsStyles(theme, width), [theme, width]);
   const showVolume = Platform.OS === 'web';
   const isTvPlatform = Platform.isTV;
@@ -387,24 +388,30 @@ const Controls: React.FC<ControlsProps> = ({
                       />
                     </DefaultFocus>
                     {onSkipBackward && (
-                      <FocusablePressable
-                        icon="play-skip-back"
-                        focusKey="skip-back-button"
-                        onSelect={onSkipBackward}
-                        onFocus={handleSkipBackFocus}
-                        style={styles.controlButton}
-                        disabled={isSeeking}
-                      />
+                      <View style={styles.tvSkipButtonContainer}>
+                        <FocusablePressable
+                          icon="play-back"
+                          focusKey="skip-back-button"
+                          onSelect={onSkipBackward}
+                          onFocus={handleSkipBackFocus}
+                          style={styles.controlButton}
+                          disabled={isSeeking}
+                        />
+                        <Text style={styles.tvSkipLabel}>{seekBackwardSeconds}s</Text>
+                      </View>
                     )}
                     {onSkipForward && (
-                      <FocusablePressable
-                        icon="play-skip-forward"
-                        focusKey="skip-forward-button"
-                        onSelect={onSkipForward}
-                        onFocus={handleSkipForwardFocus}
-                        style={styles.controlButton}
-                        disabled={isSeeking}
-                      />
+                      <View style={styles.tvSkipButtonContainer}>
+                        <FocusablePressable
+                          icon="play-forward"
+                          focusKey="skip-forward-button"
+                          onSelect={onSkipForward}
+                          onFocus={handleSkipForwardFocus}
+                          style={styles.controlButton}
+                          disabled={isSeeking}
+                        />
+                        <Text style={styles.tvSkipLabel}>{seekForwardSeconds}s</Text>
+                      </View>
                     )}
                   </View>
                 )}
@@ -548,7 +555,7 @@ const Controls: React.FC<ControlsProps> = ({
                 {isTvPlatform && onPreviousEpisode && (
                   <View style={[styles.trackButtonGroup, (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <FocusablePressable
-                      icon="play-skip-back"
+                      icon="chevron-back-circle"
                       focusKey="previous-episode-button"
                       onSelect={onPreviousEpisode}
                       onFocus={handlePreviousEpisodeFocus}
@@ -556,7 +563,7 @@ const Controls: React.FC<ControlsProps> = ({
                       disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode || shuffleMode}
                     />
                     <Text style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]} numberOfLines={1}>
-                      Prev
+                      Prev Ep
                     </Text>
                   </View>
                 )}
@@ -564,7 +571,7 @@ const Controls: React.FC<ControlsProps> = ({
                   <View style={[styles.trackButtonGroup, !hasNextEpisode && !shuffleMode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
                     <View>
                       <FocusablePressable
-                        icon={shuffleMode ? 'shuffle' : 'play-skip-forward'}
+                        icon={shuffleMode ? 'shuffle' : 'chevron-forward-circle'}
                         focusKey="next-episode-button"
                         onSelect={onNextEpisode}
                         onFocus={handleNextEpisodeFocus}
@@ -576,7 +583,7 @@ const Controls: React.FC<ControlsProps> = ({
                       )}
                     </View>
                     <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]} numberOfLines={1}>
-                      {shuffleMode ? 'Shuffle' : 'Next'}
+                      {shuffleMode ? 'Shuffle' : 'Next Ep'}
                     </Text>
                   </View>
                 )}
@@ -843,6 +850,18 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     buttonGroup: {
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    // TV skip button with label showing seek amount
+    tvSkipButtonContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    tvSkipLabel: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontSize: isAndroidTV ? 10 : 12,
+      marginLeft: isAndroidTV ? -theme.spacing.xs : -theme.spacing.sm,
+      marginRight: theme.spacing.md,
     },
     // Mobile subtitle offset styles
     subtitleOffsetContainer: {
