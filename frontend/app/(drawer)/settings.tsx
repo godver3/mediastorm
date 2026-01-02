@@ -827,13 +827,18 @@ function SettingsScreen() {
     isFocused && !isMenuOpen && !isHiddenChannelsModalOpen && !isUnplayableReleasesModalOpen && !textInputModal.visible && !pendingPinUserId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
+  const [clientId, setClientId] = useState<string | null>(null);
 
-  // Fetch backend version on mount
+  // Fetch backend version and client ID on mount
   useEffect(() => {
     apiService
       .getBackendVersion()
       .then((res) => setBackendVersion(res.version))
       .catch(() => setBackendVersion(null));
+
+    getClientId()
+      .then((id) => setClientId(id))
+      .catch(() => setClientId(null));
   }, []);
 
   // Ping polling for device identification
@@ -2944,6 +2949,23 @@ function SettingsScreen() {
                 <Text style={styles.versionInfoLabel}>Backend</Text>
                 <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
               </View>
+              <Pressable
+                style={styles.versionInfoRow}
+                onPress={() => {
+                  if (clientId) {
+                    Clipboard.setString(clientId);
+                    showToast('Device ID copied to clipboard', { tone: 'success' });
+                  }
+                }}>
+                <Text style={styles.versionInfoLabel}>Device ID</Text>
+                <Text
+                  style={styles.deviceIdValueTV}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.6}>
+                  {clientId ?? 'Loading...'}
+                </Text>
+              </Pressable>
               <View style={styles.versionButtonContainer}>
                 <FocusablePressable
                   text={updateButtonText}
@@ -2984,9 +3006,11 @@ function SettingsScreen() {
       setDirty,
       shelfPulses,
       backendVersion,
+      clientId,
       updateStatus,
       handleCheckForUpdates,
       handleApplyUpdate,
+      showToast,
     ],
   );
 
@@ -3126,6 +3150,19 @@ function SettingsScreen() {
                         <Text style={styles.versionInfoLabel}>Backend</Text>
                         <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
                       </View>
+                      <Pressable
+                        style={styles.deviceIdRowMobile}
+                        onPress={() => {
+                          if (clientId) {
+                            Clipboard.setString(clientId);
+                            showToast('Device ID copied to clipboard', { tone: 'success' });
+                          }
+                        }}>
+                        <Text style={styles.versionInfoLabel}>Device ID</Text>
+                        <Text style={styles.deviceIdValueMobile} numberOfLines={1}>
+                          {clientId ?? 'Loading...'}
+                        </Text>
+                      </Pressable>
                     </View>
                     <FocusablePressable
                       text={
@@ -4274,6 +4311,34 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontWeight: '600',
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
       ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
+    },
+    deviceIdValue: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      flex: 1,
+    },
+    deviceIdValueTV: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      flex: 1,
+      ...(isNonTvosTV && { fontSize: theme.typography.body.sm.fontSize * atvScale }),
+    },
+    deviceIdRowMobile: {
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      gap: theme.spacing.xs,
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.lg,
+    },
+    deviceIdValueMobile: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     },
     versionButtonContainer: {
       marginTop: theme.spacing.md * atvScale,

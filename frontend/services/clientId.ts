@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
+import DeviceInfo from "react-native-device-info";
 import { APP_VERSION } from "@/version";
 
 const CLIENT_ID_KEY = "strmr.clientId";
@@ -9,6 +10,7 @@ let cachedClientId: string | null = null;
 /**
  * Generate a UUID-like string without requiring native crypto modules.
  * Uses Math.random() which is sufficient for device identification purposes.
+ * Only used as a fallback when DeviceInfo is unavailable.
  */
 function generateId(): string {
   const timestamp = Date.now().toString(16);
@@ -21,14 +23,29 @@ function generateId(): string {
 }
 
 /**
- * Get or generate a unique client ID for this device.
- * The ID is stored in AsyncStorage and persists across app restarts.
+ * Get a deterministic unique client ID for this device.
+ * Uses react-native-device-info for hardware-based IDs that persist across reinstalls:
+ * - Android: ANDROID_ID (persists until factory reset)
+ * - iOS: Vendor identifier (persists across reinstalls for same vendor)
+ * Falls back to AsyncStorage-based ID if DeviceInfo fails.
  */
 export async function getClientId(): Promise<string> {
   if (cachedClientId) {
     return cachedClientId;
   }
 
+  try {
+    // Use deterministic hardware-based ID from react-native-device-info
+    const deviceId = await DeviceInfo.getUniqueId();
+    if (deviceId) {
+      cachedClientId = deviceId;
+      return cachedClientId;
+    }
+  } catch (error) {
+    // DeviceInfo failed, fall through to AsyncStorage fallback
+  }
+
+  // Fallback to AsyncStorage-based ID (non-deterministic, clears on reinstall)
   try {
     let clientId = await AsyncStorage.getItem(CLIENT_ID_KEY);
     if (!clientId) {
@@ -38,7 +55,7 @@ export async function getClientId(): Promise<string> {
     cachedClientId = clientId;
     return clientId;
   } catch (error) {
-    // Fallback to a session-only ID if storage fails
+    // Final fallback to a session-only ID if storage fails
     if (!cachedClientId) {
       cachedClientId = generateId();
     }
