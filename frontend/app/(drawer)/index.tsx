@@ -2793,12 +2793,12 @@ function mapContinueWatchingToCards(
 
       // Check if this is a movie (no nextEpisode) or a series
       if (isMovie) {
-        // Movie resume - use progress info from lastWatched.overview
-        const progressText = item.lastWatched?.overview || 'Resume watching';
+        // Movie resume - use overview from API response, falling back to lastWatched.overview
+        const movieOverview = item.overview || item.lastWatched?.overview || '';
         return {
           id: item.seriesId,
           title: item.seriesTitle,
-          description: progressText,
+          description: movieOverview || 'Resume watching',
           headerImage,
           cardImage,
           mediaType: 'movie',
@@ -2809,6 +2809,7 @@ function mapContinueWatchingToCards(
           tvdbId: parseNumeric(item.externalIds?.tvdb),
           year: item.year,
           percentWatched: displayPercent,
+          seriesOverview: movieOverview, // Store for details page
         };
       }
 
@@ -2816,7 +2817,8 @@ function mapContinueWatchingToCards(
       const code = formatEpisodeCode(next?.seasonNumber, next?.episodeNumber);
       const baseSeriesId = item.seriesId;
       const watchlistItem = watchlistItems?.find((w) => w.id === baseSeriesId);
-      const seriesOverview = seriesOverviews?.get(baseSeriesId) ?? watchlistItem?.overview ?? '';
+      // Prefer overview from API response, then async-fetched cache, then watchlist
+      const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistItem?.overview || '';
       return {
         id: `${item.seriesId}:${code}`,
         title: item.seriesTitle,

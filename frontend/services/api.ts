@@ -411,6 +411,7 @@ export interface EpisodeReference {
 export interface SeriesWatchState {
   seriesId: string;
   seriesTitle: string;
+  overview?: string;
   posterUrl?: string;
   backdropUrl?: string;
   year?: number;

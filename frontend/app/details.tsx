@@ -330,6 +330,23 @@ export default function DetailsScreen() {
     return backdropUrlParam;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop, backdropUrlParam]);
 
+  // Compute final description/overview, preferring params but falling back to fetched metadata
+  const displayDescription = useMemo(() => {
+    // If we have a description from params, use it
+    if (description) {
+      return description;
+    }
+    // For series, fall back to fetched series details
+    if (isSeries && seriesDetailsForBackdrop?.overview) {
+      return seriesDetailsForBackdrop.overview;
+    }
+    // For movies, fall back to fetched movie details
+    if (!isSeries && movieDetails?.overview) {
+      return movieDetails.overview;
+    }
+    return '';
+  }, [description, isSeries, seriesDetailsForBackdrop, movieDetails]);
+
   // On mobile, prefer portrait poster for background; on desktop/TV, prefer landscape backdrop
   const headerImage = useMemo(() => {
     const result = shouldUseAdaptiveHeroSizing ? posterUrl || backdropUrl : backdropUrl || posterUrl;
@@ -696,6 +713,16 @@ export default function DetailsScreen() {
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
   const descriptionHeight = useSharedValue(0);
+
+  // Reset description height measurements when displayDescription changes
+  // This ensures the container re-measures when overview loads asynchronously
+  useEffect(() => {
+    setCollapsedHeight(0);
+    setExpandedHeight(0);
+    descriptionHeight.value = 0;
+    setIsDescriptionExpanded(false);
+  }, [displayDescription]);
+
   const [nextUpEpisode, setNextUpEpisode] = useState<SeriesEpisode | null>(null);
   const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
   const [isShuffleMode, setIsShuffleMode] = useState(false);
@@ -3592,7 +3619,7 @@ export default function DetailsScreen() {
                     descriptionHeight.value = bufferedHeight;
                   }
                 }}>
-                {description}
+                {displayDescription}
               </Text>
               {/* Hidden text to measure full height */}
               <Text
@@ -3604,7 +3631,7 @@ export default function DetailsScreen() {
                     setExpandedHeight(height + 4);
                   }
                 }}>
-                {description}
+                {displayDescription}
               </Text>
               {/* Visible animated container */}
               <Animated.View
@@ -3612,7 +3639,7 @@ export default function DetailsScreen() {
                 <Text
                   style={[styles.description, { marginBottom: 0 }]}
                   numberOfLines={isDescriptionExpanded ? undefined : 4}>
-                  {description}
+                  {displayDescription}
                 </Text>
               </Animated.View>
             </View>
@@ -3621,7 +3648,7 @@ export default function DetailsScreen() {
             )}
           </Pressable>
         ) : (
-          <Text style={styles.description}>{description}</Text>
+          <Text style={styles.description}>{displayDescription}</Text>
         )}
       </View>
       <SpatialNavigationNode
