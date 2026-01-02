@@ -31,8 +31,8 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 type ResultTitle = Title & { uniqueKey: string };
 
@@ -89,7 +89,7 @@ function calculateSimilarity(query: string, title: string): number {
 
 export default function SearchScreen() {
   const theme = useTheme();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const inputRef = useRef<TextInput>(null);
   const router = useRouter();

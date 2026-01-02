@@ -21,13 +21,14 @@ import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
 export default function WatchlistScreen() {
   const theme = useTheme();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const isFocused = useIsFocused();

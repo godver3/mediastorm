@@ -48,8 +48,8 @@ import {
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -220,7 +220,7 @@ export default function DetailsScreen() {
   const isMobile = !isWeb && !isTV;
   const tvScale = isTV ? getTVScaleMultiplier() : 1;
   const shouldShowDebugPlayerButton = false;
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useTVDimensions();
   const overlayGradientColors = useMemo(
     () => ['rgba(0, 0, 0, 0)', theme.colors.overlay.scrim, theme.colors.background.base] as const,
     [theme.colors.overlay.scrim, theme.colors.background.base],

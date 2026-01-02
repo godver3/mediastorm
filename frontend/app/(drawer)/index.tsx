@@ -41,9 +41,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
   useAnimatedRef,
   scrollTo as reanimatedScrollTo,
@@ -162,7 +162,7 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 function IndexScreen() {
-  const { height: screenHeight, width: screenWidth } = useWindowDimensions();
+  const { height: screenHeight, width: screenWidth } = useTVDimensions();
   const theme = useTheme();
   const router = useRouter();
   const isFocused = useIsFocused();

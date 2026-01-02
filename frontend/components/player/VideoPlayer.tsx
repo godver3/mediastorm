@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { Platform, UIManager, View, useWindowDimensions, type ViewStyle } from 'react-native';
+import { Platform, UIManager, View, type ViewStyle } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { isMobileWeb } from './isMobileWeb';
 
@@ -206,7 +207,7 @@ const MobileSystemVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerP
   } = props;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useTVDimensions();
   const styles = useMemo(() => createSystemPlayerStyles({ width, height }), [height, width]);
   const resolvedVolume = clampVolume(volume);
 

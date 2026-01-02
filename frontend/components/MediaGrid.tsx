@@ -9,12 +9,12 @@ import {
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import Animated, { Easing, FadeOut, Layout } from 'react-native-reanimated';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import { Title } from '../services/api';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
+import { useTVDimensions } from '../hooks/useTVDimensions';
 import type { ColumnOverride } from '../hooks/useResponsiveColumns';
 import { useTheme } from '../theme';
 import type { NovaTheme } from '../theme';
@@ -245,7 +245,7 @@ const MediaGrid = React.memo(
     badgeVisibility,
   }: MediaGridProps) {
     const theme = useTheme();
-    const { width: screenWidth } = useWindowDimensions();
+    const { width: screenWidth } = useTVDimensions();
     const isCompact = theme.breakpoint === 'compact';
 
     // For grid layout on mobile, account for parent container padding (watchlist has theme.spacing.xl)

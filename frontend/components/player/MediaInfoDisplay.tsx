@@ -1,7 +1,8 @@
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
-import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useState, useEffect, useRef } from 'react';
 
 interface HdrInfo {
@@ -87,7 +88,7 @@ export default function MediaInfoDisplay({
   safeAreaInsets,
 }: MediaInfoDisplayProps) {
   const theme = useTheme();
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useTVDimensions();
   const isLandscape = width > height;
   const [showFilename, setShowFilename] = useState(false);
   const styles = createStyles(theme, safeAreaInsets, showFilename, isLandscape);

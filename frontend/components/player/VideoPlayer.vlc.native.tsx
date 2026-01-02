@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 // @ts-ignore - VLC player is only available on native platforms
 import { VLCPlayer, type VideoInfo, type VLCPlayerSource } from 'react-native-vlc-media-player';
 
@@ -33,7 +34,7 @@ const VlcVideoPlayerInner = (
   }: VideoPlayerProps,
   ref: React.ForwardedRef<VideoPlayerHandle>,
 ) => {
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useTVDimensions();
   const styles = useVideoPlayerStyles(width, height, mediaType);
   const videoRef = useRef<any>(null);
   const lastDurationRef = useRef<number>(0);
@@ -646,7 +647,8 @@ const useVideoPlayerStyles = (screenWidth: number, screenHeight: number, mediaTy
         left: 0,
         bottom: 0,
         right: 0,
-        backgroundColor: '#000',
+        // Note: backgroundColor not supported by RCTVLCPlayer on Android
+        // Parent containers (root, videoContainer) provide black background
       },
       poster: {
         ...StyleSheet.absoluteFillObject,

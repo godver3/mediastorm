@@ -12,7 +12,6 @@ import {
   Switch,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
   type TextStyle,
   type ViewStyle,
@@ -36,6 +35,7 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useAuth } from '@/components/AuthContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useLiveHiddenChannels, useLiveFavorites, useLiveCategories } from '@/components/LiveContext';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
@@ -805,7 +805,7 @@ function SettingsScreen() {
   const theme = useTheme();
   const { showToast } = useToast();
   const { account, logout } = useAuth();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(
     () => createStyles(theme, screenWidth, screenHeight) as unknown as CompatibleStyles,
     [theme, screenWidth, screenHeight],

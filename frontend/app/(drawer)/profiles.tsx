@@ -7,9 +7,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
@@ -60,7 +60,7 @@ const formatErrorMessage = (err: unknown) => {
 
 export default function ProfilesScreen() {
   const theme = useTheme();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as KeepAwake from 'expo-keep-awake';
@@ -114,7 +115,7 @@ const getLayoutPositions = (
 export default function MultiscreenPage() {
   const theme = useTheme();
   const router = useRouter();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { channels: channelsParam } = useLocalSearchParams<{ channels: string }>();
   const { setActiveAudioIndex } = useMultiscreen();

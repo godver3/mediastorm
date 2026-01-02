@@ -7,9 +7,9 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -137,7 +137,7 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
 
 export const PinEntryModal: React.FC = () => {
   const theme = useTheme();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth } = useTVDimensions();
   const isLargeScreen = screenWidth >= 600;
   const styles = useMemo(() => createStyles(theme, isLargeScreen), [theme, isLargeScreen]);
   const {
