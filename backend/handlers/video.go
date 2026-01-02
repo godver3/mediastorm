@@ -2440,6 +2440,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 			}
 			info := SubtitleStreamInfo{
 				Index:     stream.Index,
+				Codec:     codecName,
 				Language:  normalizeTag(stream.Tags, "language"),
 				Title:     normalizeTag(stream.Tags, "title"),
 				IsForced:  isForced,
@@ -2592,6 +2593,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 			}
 			info := SubtitleStreamInfo{
 				Index:     s.Index,
+				Codec:     codecName,
 				Language:  normalizeTag(s.Tags, "language"),
 				Title:     normalizeTag(s.Tags, "title"),
 				IsForced:  isForced,
@@ -2641,6 +2643,7 @@ func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *Vide
 	for _, ss := range cached.SubtitleStreams {
 		result.SubtitleStreams = append(result.SubtitleStreams, SubtitleStreamInfo{
 			Index:     ss.Index,
+			Codec:     ss.Codec,
 			Language:  ss.Language,
 			Title:     ss.Title,
 			IsForced:  ss.IsForced,
@@ -2678,6 +2681,7 @@ func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *Unified
 	for _, ss := range result.SubtitleStreams {
 		cached.SubtitleStreams = append(cached.SubtitleStreams, subtitleStreamInfo{
 			Index:     ss.Index,
+			Codec:     ss.Codec,
 			Language:  ss.Language,
 			Title:     ss.Title,
 			IsForced:  ss.IsForced,

@@ -71,6 +71,7 @@ type AudioStreamInfo struct {
 // SubtitleStreamInfo contains subtitle stream metadata for track selection
 type SubtitleStreamInfo struct {
 	Index     int
+	Codec     string // e.g., "subrip", "ass" - needed for sidecar VTT extraction
 	Language  string
 	Title     string
 	IsForced  bool
