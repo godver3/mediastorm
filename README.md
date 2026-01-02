@@ -47,27 +47,19 @@ The cache folder will contain user settings and stream metadata.
 docker-compose up -d
 ```
 
-The backend will be available at `http://localhost:7777`. The backend logs will include a generated PIN to use to connect the frontend to the backend. You will need to add the PIN and your backend URL in the frontend app.
+The backend will be available at `http://localhost:7777`. The default login is `admin`/`admin` for both the frontend app and the admin web UI.
 
 ## Configuration
 
-Access the admin panel at `http://localhost:7777/admin` to configure settings that are not available in the mobile/TV apps, including:
-
-- Service credentials
-- M3U link
-
-Required settings are indicated in the web UI settings page.
+Access the admin panel at `http://localhost:7777/admin` to configure all settings. Required settings are indicated in the web UI settings page.
 
 ## Roadmap
 
-Current roadmap:
+See Discord for more planning details.
 
-- cli_debrid style filtering
-- Fine-grained ranking
-- AIOstreams, Mediafusion, Jackett/Prowlarr support
 - Non-M3U IPTV support
 - Custom shelf content
-- View Watch History
+- Mediafusion support
 
 ## What to test?
 
@@ -96,7 +88,7 @@ Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
 
 Thanks to [nzbdav](https://github.com/nzbdav-dev/nzbdav) and [altmount](https://github.com/javi11/altmount) for paving the way with usenet streaming.
 
-Inspired by [plex_debrid](https://github.com/itsToggle/plex_debrid) and [riven](https://github.com/rivenmedia/riven).
+Inspired by [plex_debrid](https://github.com/itsToggle/plex_debrid) and [Riven](https://github.com/rivenmedia/riven).
 
 Special thanks to [Parsett (PTT)](https://github.com/dreulavelle/PTT) for media title parsing.
 
