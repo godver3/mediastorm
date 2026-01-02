@@ -565,6 +565,7 @@ export const launchNativePlayer = (
     tvdbId?: string;
     debugPlayer?: boolean;
     shuffleMode?: boolean;
+    preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
   } = {},
 ) => {
   const {
@@ -588,6 +589,7 @@ export const launchNativePlayer = (
     tvdbId,
     debugPlayer,
     shuffleMode,
+    preExtractedSubtitles,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -622,6 +624,7 @@ export const launchNativePlayer = (
       ...(imdbId ? { imdbId } : {}),
       ...(tvdbId ? { tvdbId } : {}),
       ...(shuffleMode ? { shuffleMode: '1' } : {}),
+      ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
     },
   });
 };
@@ -954,6 +957,12 @@ export const initiatePlayback = async (
     Platform.OS,
   );
 
+  // Build pre-extracted subtitles JSON for SDR content (VLC path)
+  const preExtractedSubtitles =
+    playback.subtitleSessions && Object.keys(playback.subtitleSessions).length > 0
+      ? JSON.stringify(Object.values(playback.subtitleSessions))
+      : undefined;
+
   launchNativePlayer(streamUrl, headerImage, title, router, {
     ...options,
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
@@ -964,6 +973,7 @@ export const initiatePlayback = async (
     ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
     ...(hasHDR10 ? { hdr10: true } : {}),
     ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
+    ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
   });
 };
 

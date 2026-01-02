@@ -754,6 +754,205 @@ func (h *VideoHandler) ServeExtractedSubtitles(w http.ResponseWriter, r *http.Re
 	h.subtitleExtractManager.ServeSubtitles(w, r, session)
 }
 
+// IsExtractionComplete returns whether the extraction has finished
+func (s *SubtitleExtractSession) IsExtractionComplete() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.extractionDone
+}
+
+// GetExtractionError returns the extraction error, if any
+func (s *SubtitleExtractSession) GetExtractionError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.extractionErr
+}
+
+// isTextBasedSubtitle checks if a codec is a text-based subtitle format
+func isTextBasedSubtitle(codec string) bool {
+	codec = strings.ToLower(codec)
+	switch codec {
+	case "subrip", "srt", "ass", "ssa", "webvtt", "vtt", "mov_text", "text", "dvd_subtitle", "dvdsub":
+		return true
+	default:
+		return false
+	}
+}
+
+// StartPreExtraction starts extraction for all text-based subtitle tracks using ONE ffmpeg process
+// This is much more efficient than spawning one ffmpeg per track (which overwhelms debrid providers)
+// Returns a map of track index -> session
+func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo) map[int]*SubtitleExtractSession {
+	sessions := make(map[int]*SubtitleExtractSession)
+
+	// Filter to text-based subtitles only
+	var textTracks []SubtitleTrackInfo
+	for _, track := range tracks {
+		if isTextBasedSubtitle(track.Codec) {
+			textTracks = append(textTracks, track)
+		} else {
+			log.Printf("[subtitle-extract] skipping non-text track %d (codec=%s)", track.Index, track.Codec)
+		}
+	}
+
+	if len(textTracks) == 0 {
+		log.Printf("[subtitle-extract] no text-based subtitle tracks to extract")
+		return sessions
+	}
+
+	// Create a shared output directory for all tracks
+	batchID := uuid.New().String()
+	outputDir, err := os.MkdirTemp("", "subtitle-batch-"+batchID)
+	if err != nil {
+		log.Printf("[subtitle-extract] failed to create batch output dir: %v", err)
+		return sessions
+	}
+
+	// Create session objects for each track (all share the same output dir)
+	for _, track := range textTracks {
+		vttPath := filepath.Join(outputDir, fmt.Sprintf("subtitles_%d.vtt", track.Index))
+		sessionID := uuid.New().String()
+
+		session := &SubtitleExtractSession{
+			ID:            sessionID,
+			Path:          path,
+			SubtitleTrack: track.Index,
+			OutputDir:     outputDir,
+			VTTPath:       vttPath,
+			CreatedAt:     time.Now(),
+			LastAccess:    time.Now(),
+		}
+
+		m.mu.Lock()
+		m.sessions[sessionID] = session
+		m.mu.Unlock()
+
+		sessions[track.Index] = session
+		log.Printf("[subtitle-extract] created pre-extraction session %s for track %d (lang=%s)", sessionID, track.Index, track.Language)
+	}
+
+	// Start ONE ffmpeg process to extract all tracks
+	go m.startBatchExtraction(path, outputDir, textTracks, sessions)
+
+	log.Printf("[subtitle-extract] batch pre-extraction started for %d tracks with one ffmpeg process", len(textTracks))
+	return sessions
+}
+
+// startBatchExtraction extracts all subtitle tracks in one ffmpeg invocation
+func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tracks []SubtitleTrackInfo, sessions map[int]*SubtitleExtractSession) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Store cancel func in all sessions so they can be cancelled
+	for _, session := range sessions {
+		session.mu.Lock()
+		session.cancel = cancel
+		session.mu.Unlock()
+	}
+
+	markAllDone := func(err error) {
+		for _, session := range sessions {
+			session.mu.Lock()
+			session.extractionDone = true
+			session.extractionErr = err
+			session.mu.Unlock()
+		}
+	}
+
+	// Get stream URL
+	var streamURL string
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		streamURL = path
+	} else if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+		url, err := directProvider.GetDirectURL(ctx, path)
+		if err == nil && url != "" {
+			streamURL = url
+		} else {
+			webdavURL := m.buildWebDAVURL(path)
+			if webdavURL != "" {
+				streamURL = webdavURL
+			} else {
+				log.Printf("[subtitle-extract] batch extraction: failed to get URL: %v", err)
+				markAllDone(fmt.Errorf("failed to get stream URL: %w", err))
+				return
+			}
+		}
+	} else {
+		webdavURL := m.buildWebDAVURL(path)
+		if webdavURL != "" {
+			streamURL = webdavURL
+		} else {
+			markAllDone(fmt.Errorf("no URL provider available"))
+			return
+		}
+	}
+
+	// Build ffmpeg args with multiple -map outputs (like HLS does)
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "warning",
+		"-i", streamURL,
+	}
+
+	// Add each subtitle track as a separate output
+	for _, track := range tracks {
+		vttPath := filepath.Join(outputDir, fmt.Sprintf("subtitles_%d.vtt", track.Index))
+		subtitleMap := fmt.Sprintf("0:s:%d", track.Index) // relative subtitle index
+		args = append(args,
+			"-map", subtitleMap,
+			"-c", "webvtt",
+			"-f", "webvtt",
+			"-flush_packets", "1",
+			vttPath,
+		)
+	}
+
+	log.Printf("[subtitle-extract] batch extraction starting: %d tracks from %s", len(tracks), streamURL)
+
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
+
+	// Capture stderr for logging
+	stderr, _ := cmd.StderrPipe()
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("[subtitle-extract] batch extraction failed to start: %v", err)
+		markAllDone(err)
+		return
+	}
+
+	// Log stderr output
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stderr.Read(buf)
+			if n > 0 {
+				log.Printf("[subtitle-extract] batch ffmpeg: %s", strings.TrimSpace(string(buf[:n])))
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	err := cmd.Wait()
+	if err != nil {
+		log.Printf("[subtitle-extract] batch extraction ffmpeg error: %v", err)
+		markAllDone(err)
+		return
+	}
+
+	log.Printf("[subtitle-extract] batch extraction completed successfully for %d tracks", len(tracks))
+	markAllDone(nil)
+}
+
+// GetSession retrieves a session by ID
+func (m *SubtitleExtractManager) GetSession(sessionID string) (*SubtitleExtractSession, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	session, exists := m.sessions[sessionID]
+	return session, exists
+}
+
 // Shutdown cleans up all subtitle extraction sessions
 func (m *SubtitleExtractManager) Shutdown() {
 	close(m.cleanupDone)

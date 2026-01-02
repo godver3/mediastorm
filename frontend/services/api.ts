@@ -198,12 +198,26 @@ export interface DebridHealthCheck {
   errorMessage?: string;
 }
 
+// SubtitleSessionInfo represents a pre-extracted subtitle track session
+export interface SubtitleSessionInfo {
+  sessionId: string;
+  vttUrl: string;
+  trackIndex: number;
+  language: string;
+  title: string;
+  codec: string;
+  isForced: boolean;
+  isExtracting: boolean; // true if extraction is still in progress
+}
+
 export interface PlaybackResolutionResponse {
   queueId: number;
   webdavPath?: string;
   healthStatus: string;
   fileSize?: number;
   sourceNzbPath?: string;
+  // Pre-extracted subtitles (for manual selection path)
+  subtitleSessions?: Record<number, SubtitleSessionInfo>;
 }
 
 export type PlaybackResolution = PlaybackResolutionResponse & {
@@ -622,6 +636,9 @@ export interface PrequeueStatusResponse {
   // Selected tracks (based on user preferences, -1 = default/none)
   selectedAudioTrack?: number;
   selectedSubtitleTrack?: number;
+
+  // Pre-extracted subtitle sessions (for direct streaming/VLC path)
+  subtitleSessions?: Record<number, SubtitleSessionInfo>;
 
   // On failure:
   error?: string;

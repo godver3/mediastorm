@@ -1987,6 +1987,10 @@ export default function DetailsScreen() {
           ...(titleId ? { titleId } : {}),
           ...(imdbId ? { imdbId } : {}),
           ...(tvdbId ? { tvdbId } : {}),
+          // Pass pre-extracted subtitle sessions for SDR content (VLC path)
+          ...(prequeueStatus.subtitleSessions && Object.keys(prequeueStatus.subtitleSessions).length > 0
+            ? { preExtractedSubtitles: JSON.stringify(Object.values(prequeueStatus.subtitleSessions)) }
+            : {}),
         },
       });
     },

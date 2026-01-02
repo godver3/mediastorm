@@ -340,6 +340,14 @@ func main() {
 		prequeueHandler.SetClientSettingsService(clientSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
 		prequeueHandler.SetMetadataService(metadataService) // For episode counting in pack size filtering
+
+		// Wire up subtitle pre-extraction for direct streaming (SDR content)
+		if subtitleMgr := videoHandler.GetSubtitleExtractManager(); subtitleMgr != nil {
+			prequeueHandler.SetSubtitleExtractor(subtitleMgr)
+			playbackHandler.SetSubtitleExtractor(subtitleMgr)
+			playbackHandler.SetVideoProber(videoHandler) // For probing subtitle streams
+			log.Printf("[main] Subtitle pre-extraction configured for prequeue and playback handlers")
+		}
 		log.Printf("[main] Prequeue handler configured with video prober, HLS creator, full prober, user settings, client settings, config, and metadata")
 
 		// Configure video handler with user settings for HDR/DV policy checks
