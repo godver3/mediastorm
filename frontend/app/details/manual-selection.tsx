@@ -199,6 +199,22 @@ export const ManualSelection = ({
         }
       }
 
+      // Check if this is an aiostreams result with passthrough format enabled
+      const usePassthroughFormat =
+        result.attributes?.passthrough_format === 'true' &&
+        result.attributes?.raw_name &&
+        result.attributes?.raw_description;
+
+      if (usePassthroughFormat) {
+        return (
+          <View style={containerStyles}>
+            <Text style={titleStyles}>{result.attributes!.raw_name}</Text>
+            <Text style={[metaStyles, styles.manualResultDescription]}>{result.attributes!.raw_description}</Text>
+            {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
+          </View>
+        );
+      }
+
       return (
         <View style={containerStyles}>
           <Text style={titleStyles}>{result.title}</Text>
@@ -638,6 +654,10 @@ const createManualSelectionStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: theme.spacing.sm,
+    },
+    manualResultDescription: {
+      marginTop: theme.spacing.xs,
+      whiteSpace: 'pre-wrap',
     },
     manualResultBadge: {
       ...theme.typography.caption.sm,

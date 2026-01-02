@@ -18,16 +18,18 @@ import (
 // AIOStreamsScraper queries AIOStreams for pre-resolved debrid streams.
 // AIOStreams aggregates multiple Stremio addons and returns ready-to-play URLs.
 type AIOStreamsScraper struct {
-	name       string // User-configured name for display
-	baseURL    string
-	httpClient *http.Client
+	name              string // User-configured name for display
+	baseURL           string
+	httpClient        *http.Client
+	passthroughFormat bool // When true, pass raw aiostreams format to manual selection
 }
 
 // NewAIOStreamsScraper constructs a scraper for AIOStreams.
 // The name parameter is the user-configured display name (empty falls back to "aiostreams").
 // The baseURL should be the full path including the user config portion,
 // e.g., "https://aiostreams.elfhosted.com/stremio/{userId}/{configToken}"
-func NewAIOStreamsScraper(baseURL, name string, client *http.Client) *AIOStreamsScraper {
+// The passthroughFormat parameter controls whether raw aiostreams format is shown in manual selection.
+func NewAIOStreamsScraper(baseURL, name string, passthroughFormat bool, client *http.Client) *AIOStreamsScraper {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -35,9 +37,10 @@ func NewAIOStreamsScraper(baseURL, name string, client *http.Client) *AIOStreams
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/manifest.json")
 	return &AIOStreamsScraper{
-		name:       strings.TrimSpace(name),
-		baseURL:    baseURL,
-		httpClient: client,
+		name:              strings.TrimSpace(name),
+		baseURL:           baseURL,
+		httpClient:        client,
+		passthroughFormat: passthroughFormat,
 	}
 }
 
@@ -100,6 +103,11 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 			}
 			seen[guid] = struct{}{}
 
+			attrs := stream.attributes()
+			if a.passthroughFormat {
+				attrs["passthrough_format"] = "true"
+			}
+
 			results = append(results, ScrapeResult{
 				Title:       stream.filename,
 				Indexer:     a.Name(),
@@ -114,7 +122,7 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 				MetaName:    stream.title,
 				MetaID:      imdbID,
 				Source:      a.Name(),
-				Attributes:  stream.attributes(),
+				Attributes:  attrs,
 				ServiceType: models.ServiceTypeDebrid,
 			})
 
@@ -157,7 +165,8 @@ type aiostreamsStream struct {
 	hdr        string // e.g., "HDR", "DV", "HDR10"
 	codec      string // e.g., "HEVC"
 	audio      string // e.g., "DTS-HD MA", "Atmos"
-	rawDesc    string
+	rawName    string // Raw name from aiostreams response (contains quality badge)
+	rawDesc    string // Raw description from aiostreams response (emoji-formatted details)
 }
 
 func (s aiostreamsStream) attributes() map[string]string {
@@ -186,6 +195,12 @@ func (s aiostreamsStream) attributes() map[string]string {
 	}
 	if len(s.languages) > 0 {
 		attrs["languages"] = strings.Join(s.languages, ",")
+	}
+	if s.rawName != "" {
+		attrs["raw_name"] = s.rawName
+	}
+	if s.rawDesc != "" {
+		attrs["raw_description"] = s.rawDesc
 	}
 	// Mark as pre-resolved so downstream knows not to resolve again
 	attrs["preresolved"] = "true"
@@ -266,6 +281,7 @@ func (a *AIOStreamsScraper) fetchStreams(ctx context.Context, mediaType, id stri
 			hdr:        parsed.hdr,
 			codec:      parsed.codec,
 			audio:      parsed.audio,
+			rawName:    stream.Name,
 			rawDesc:    stream.Description,
 		})
 	}
