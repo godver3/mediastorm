@@ -102,14 +102,31 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           naturalSize: data.naturalSize,
           audioTracks: data.audioTracks?.length ?? 0,
           textTracks: data.textTracks?.length ?? 0,
+          durationHint,
         });
 
         // Log full data for debugging black screen issues
         console.log('[RNVideoPlayer] onLoad FULL DATA', JSON.stringify(data, null, 2));
 
-        if (data.duration && data.duration > 0) {
-          lastDurationRef.current = data.duration;
-          onLoad?.(data.duration);
+        // Use durationHint if available and valid, otherwise use reported duration.
+        // This is critical for HLS streams where the playlist starts with only a few segments
+        // and reports an incomplete duration (e.g., 34s instead of the full 1984s).
+        const effectiveDuration =
+          durationHint && durationHint > 0 && Number.isFinite(durationHint)
+            ? durationHint
+            : data.duration && data.duration > 0
+              ? data.duration
+              : 0;
+
+        if (effectiveDuration > 0) {
+          lastDurationRef.current = effectiveDuration;
+          onLoad?.(effectiveDuration);
+          if (durationHint && durationHint > 0 && data.duration !== durationHint) {
+            console.log('[RNVideoPlayer] Using durationHint instead of reported duration', {
+              reported: data.duration,
+              hint: durationHint,
+            });
+          }
         }
 
         // Report video dimensions for subtitle positioning
@@ -136,7 +153,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         // This allows our custom controls overlay and subtitle overlay to remain visible
         // The video still renders HDR correctly in the inline player
       },
-      [onBuffer, onLoad, onTracksAvailable, onVideoSize],
+      [onBuffer, onLoad, onTracksAvailable, onVideoSize, durationHint],
     );
 
     const handleProgress = useCallback(

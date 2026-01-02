@@ -1787,6 +1787,11 @@ export default function DetailsScreen() {
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const authToken = apiService.getAuthToken();
         streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+        // Use duration from prequeue (extracted via ffprobe during prequeue processing)
+        if (typeof prequeueStatus.duration === 'number' && prequeueStatus.duration > 0) {
+          hlsDuration = prequeueStatus.duration;
+          console.log('[prequeue] Using duration from prequeue:', hlsDuration);
+        }
         console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl);
       } else if (needsHLS && Platform.OS !== 'web') {
         // HDR/TrueHD content - create HLS session with start offset
@@ -1909,6 +1914,11 @@ export default function DetailsScreen() {
           queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
         }
         streamUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
+        // Use duration from prequeue (extracted via ffprobe during prequeue processing)
+        if (typeof prequeueStatus.duration === 'number' && prequeueStatus.duration > 0) {
+          hlsDuration = prequeueStatus.duration;
+          console.log('[prequeue] Using duration from prequeue:', hlsDuration);
+        }
         console.log('[prequeue] Using direct stream URL:', streamUrl);
       }
 

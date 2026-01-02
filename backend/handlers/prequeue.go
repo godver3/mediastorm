@@ -670,6 +670,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		var dvProfile string
 
 		// Reuse cached probe result if we already probed during DV check
+		var duration float64
 		if cachedProbeResult != nil {
 			audioStreams = cachedProbeResult.AudioStreams
 			subtitleStreams = cachedProbeResult.SubtitleStreams
@@ -678,8 +679,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			dvProfile = cachedProbeResult.DolbyVisionProfile
 			hasTrueHD = cachedProbeResult.HasTrueHD
 			hasCompatibleAudio = cachedProbeResult.HasCompatibleAudio
-			log.Printf("[prequeue] Using cached probe result: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
-				hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams))
+			duration = cachedProbeResult.Duration
+			log.Printf("[prequeue] Using cached probe result: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d duration=%.2fs",
+				hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams), duration)
 		} else if h.fullProber != nil {
 			// Single ffprobe call for both HDR detection and track metadata
 			fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
@@ -693,8 +695,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 				dvProfile = fullResult.DolbyVisionProfile
 				hasTrueHD = fullResult.HasTrueHD
 				hasCompatibleAudio = fullResult.HasCompatibleAudio
-				log.Printf("[prequeue] Unified probe: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
-					hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams))
+				duration = fullResult.Duration
+				log.Printf("[prequeue] Unified probe: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d duration=%.2fs",
+					hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams), duration)
 			}
 		} else {
 			// Fallback: separate probes (legacy path)
@@ -751,10 +754,13 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			}
 		}
 
-		// Store selected tracks
+		// Store selected tracks and duration
 		h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 			e.SelectedAudioTrack = selectedAudioTrack
 			e.SelectedSubtitleTrack = selectedSubtitleTrack
+			if duration > 0 {
+				e.Duration = duration
+			}
 		})
 
 		// Handle HDR content or incompatible audio (TrueHD, DTS, etc.)

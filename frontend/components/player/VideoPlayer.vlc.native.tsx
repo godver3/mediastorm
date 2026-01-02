@@ -342,6 +342,15 @@ const VlcVideoPlayerInner = (
 
       if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
         console.log('⏱️ VLC onLoad received non-finite duration, raw payload:', info.duration);
+        // Even if VLC reports invalid duration, we can still use durationHint if available
+        if (durationHint && Number.isFinite(durationHint) && durationHint > 0) {
+          console.log('⏱️ VLC using durationHint despite invalid VLC duration', { durationHint });
+          mediaDurationRef.current = durationHint;
+          if (durationHint !== lastDurationRef.current) {
+            lastDurationRef.current = durationHint;
+            onLoad(durationHint);
+          }
+        }
         return;
       }
 

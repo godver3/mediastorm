@@ -616,6 +616,7 @@ export interface PrequeueStatusResponse {
   // For HLS (HDR content or audio transcoding):
   hlsSessionId?: string;
   hlsPlaylistUrl?: string;
+  duration?: number; // Total duration in seconds (from ffprobe)
 
   // Selected tracks (based on user preferences, -1 = default/none)
   selectedAudioTrack?: number;
