@@ -1,7 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
-import DeviceInfo from "react-native-device-info";
 import { APP_VERSION } from "@/version";
+
+// Safely import DeviceInfo - may not be available on older builds
+let DeviceInfo: typeof import("react-native-device-info").default | null = null;
+try {
+  DeviceInfo = require("react-native-device-info").default;
+} catch {
+  // Module not available, will use fallback
+}
 
 const CLIENT_ID_KEY = "strmr.clientId";
 
@@ -34,15 +41,17 @@ export async function getClientId(): Promise<string> {
     return cachedClientId;
   }
 
-  try {
-    // Use deterministic hardware-based ID from react-native-device-info
-    const deviceId = await DeviceInfo.getUniqueId();
-    if (deviceId) {
-      cachedClientId = deviceId;
-      return cachedClientId;
+  if (DeviceInfo) {
+    try {
+      // Use deterministic hardware-based ID from react-native-device-info
+      const deviceId = await DeviceInfo.getUniqueId();
+      if (deviceId) {
+        cachedClientId = deviceId;
+        return cachedClientId;
+      }
+    } catch {
+      // DeviceInfo failed, fall through to AsyncStorage fallback
     }
-  } catch (error) {
-    // DeviceInfo failed, fall through to AsyncStorage fallback
   }
 
   // Fallback to AsyncStorage-based ID (non-deterministic, clears on reinstall)
