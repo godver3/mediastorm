@@ -577,6 +577,10 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 				// Get lightweight series info (poster, backdrop, external IDs only - no episodes)
 				seriesInfo, err := s.getSeriesInfoWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
 				if err == nil && seriesInfo != nil {
+					// Add overview from metadata
+					if seriesInfo.Overview != "" {
+						state.Overview = seriesInfo.Overview
+					}
 					// Add poster/backdrop from metadata
 					if seriesInfo.Poster != nil {
 						state.PosterURL = seriesInfo.Poster.URL
@@ -650,6 +654,10 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 				// Enrich with metadata from series details
 				if seriesDetails != nil {
+					// Add overview from metadata
+					if seriesDetails.Title.Overview != "" {
+						state.Overview = seriesDetails.Title.Overview
+					}
 					// Add poster/backdrop from metadata
 					if seriesDetails.Title.Poster != nil {
 						state.PosterURL = seriesDetails.Title.Poster.URL
@@ -733,6 +741,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 				// Use metadata overview (the key fix - populate overview from metadata)
 				if movieDetails.Overview != "" {
+					movieState.Overview = movieDetails.Overview
 					movieState.LastWatched.Overview = movieDetails.Overview
 				}
 

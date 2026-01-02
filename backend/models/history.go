@@ -19,6 +19,7 @@ type EpisodeReference struct {
 type SeriesWatchState struct {
 	SeriesID        string                      `json:"seriesId"`
 	SeriesTitle     string                      `json:"seriesTitle"`
+	Overview        string                      `json:"overview,omitempty"`
 	PosterURL       string                      `json:"posterUrl,omitempty"`
 	BackdropURL     string                      `json:"backdropUrl,omitempty"`
 	Year            int                         `json:"year,omitempty"`
