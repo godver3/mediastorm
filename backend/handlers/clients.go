@@ -22,6 +22,7 @@ type clientsService interface {
 	ListByUser(userID string) []models.Client
 	Rename(id, name string) (models.Client, error)
 	SetFilterEnabled(id string, enabled bool) (models.Client, error)
+	ReassignUser(id, newUserID string) (models.Client, error)
 	UpdateLastSeen(id string) error
 	Delete(id string) error
 }
@@ -393,6 +394,46 @@ func (h *ClientsHandler) CheckPing(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"ping": hasPing,
 	})
+}
+
+// ReassignRequest is the request body for reassigning a client to a different profile
+type ReassignRequest struct {
+	UserID string `json:"userId"`
+}
+
+// Reassign handles POST /api/clients/{clientID}/reassign
+// Reassigns a client to a different profile/user
+func (h *ClientsHandler) Reassign(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := strings.TrimSpace(vars["clientID"])
+	if clientID == "" {
+		writeJSONError(w, "client id is required", http.StatusBadRequest)
+		return
+	}
+
+	var req ReassignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(req.UserID) == "" {
+		writeJSONError(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	client, err := h.clients.ReassignUser(clientID, req.UserID)
+	if err != nil {
+		if errors.Is(err, clients.ErrClientNotFound) {
+			writeJSONError(w, "client not found", http.StatusNotFound)
+			return
+		}
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(client)
 }
 
 // Options handles OPTIONS requests for CORS

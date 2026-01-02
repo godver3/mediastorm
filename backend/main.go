@@ -539,6 +539,7 @@ func main() {
 	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.ResetSettings)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/clients/{clientID}/reassign", adminUIHandler.RequireAuth(clientsHandler.Reassign)).Methods(http.MethodPost)
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 
@@ -586,6 +587,8 @@ func main() {
 	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.UpdateSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/clients/{clientID}/settings", adminUIHandler.RequireAuth(clientsHandler.ResetSettings)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/clients/{clientID}/reassign", adminUIHandler.RequireAuth(clientsHandler.Reassign)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/clients/{clientID}", adminUIHandler.RequireAuth(clientsHandler.Delete)).Methods(http.MethodDelete)
 
 	// Protected account routes - History API
 	r.HandleFunc("/account/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)

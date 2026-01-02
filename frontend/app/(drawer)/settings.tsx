@@ -2560,7 +2560,6 @@ function SettingsScreen() {
         case 'header': {
           // Only wrap topmost headers (first header of each tab) with focusable view for scroll
           const topmostHeaders = [
-            'connection-header',
             'playback-player-header',
             'filtering-size-header',
             'home-shelves-header',
@@ -2949,14 +2948,7 @@ function SettingsScreen() {
                 <Text style={styles.versionInfoLabel}>Backend</Text>
                 <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
               </View>
-              <Pressable
-                style={styles.versionInfoRow}
-                onPress={() => {
-                  if (clientId) {
-                    Clipboard.setString(clientId);
-                    showToast('Device ID copied to clipboard', { tone: 'success' });
-                  }
-                }}>
+              <View style={styles.versionInfoRow}>
                 <Text style={styles.versionInfoLabel}>Device ID</Text>
                 <Text
                   style={styles.deviceIdValueTV}
@@ -2965,7 +2957,7 @@ function SettingsScreen() {
                   minimumFontScale={0.6}>
                   {clientId ?? 'Loading...'}
                 </Text>
-              </Pressable>
+              </View>
               <View style={styles.versionButtonContainer}>
                 <FocusablePressable
                   text={updateButtonText}
@@ -2973,12 +2965,12 @@ function SettingsScreen() {
                   disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
                   style={styles.debugButton}
                 />
-              </View>
-              <View style={styles.backendInfoNote}>
-                <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
-                <Text style={styles.backendInfoNoteText}>
-                  Backend is updated independently via Docker
-                </Text>
+                <View style={styles.backendInfoNote}>
+                  <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
+                  <Text style={styles.backendInfoNoteText}>
+                    Backend is updated independently via Docker
+                  </Text>
+                </View>
               </View>
             </View>
           );
@@ -4342,11 +4334,12 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     versionButtonContainer: {
       marginTop: theme.spacing.md * atvScale,
+      alignSelf: 'flex-start',
     },
     backendInfoNote: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       gap: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
       marginTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
       paddingTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
@@ -4817,7 +4810,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     tvGridHeader: {
       paddingTop: isNonTvosTV ? theme.spacing.xs : theme.spacing.md,
-      paddingBottom: isNonTvosTV ? theme.spacing.sm : theme.spacing['2xl'],
+      paddingBottom: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
       paddingHorizontal: theme.spacing.sm * atvScale,
     },
     tvGridHeaderTitle: {
@@ -4829,7 +4822,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
       marginTop: theme.spacing.xs * atvScale,
-      marginBottom: theme.spacing.xl * atvScale * 0.5,
+      marginBottom: theme.spacing.xs * atvScale,
       // Keep description size larger on non-tvOS TV
     },
     tvGridToggleRow: {

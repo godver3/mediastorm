@@ -263,6 +263,36 @@ func (s *Service) Delete(id string) error {
 	return s.saveLocked()
 }
 
+// ReassignUser changes a client's associated profile/user.
+func (s *Service) ReassignUser(id, newUserID string) (models.Client, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.Client{}, ErrClientIDRequired
+	}
+
+	newUserID = strings.TrimSpace(newUserID)
+	if newUserID == "" {
+		return models.Client{}, errors.New("new user ID is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	client, ok := s.clients[id]
+	if !ok {
+		return models.Client{}, ErrClientNotFound
+	}
+
+	client.UserID = newUserID
+	s.clients[id] = client
+
+	if err := s.saveLocked(); err != nil {
+		return models.Client{}, err
+	}
+
+	return client, nil
+}
+
 func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -170,6 +170,64 @@
 
 </div>
 
+<!-- DEVICES CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">Devices</div>
+
+    <!-- Client Management Section -->
+    <div class="section" id="clientManagementSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                Client Management
+            </div>
+            <span id="clientCountBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Manage registered client devices. Ping to identify devices, reassign them to different profiles, or remove them.
+            </p>
+
+            <!-- Filter by profile -->
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label class="form-label">Filter by Profile</label>
+                <select id="clientProfileFilter" class="form-select" style="max-width: 300px;" onchange="filterClientsByProfile()">
+                    <option value="">All Profiles</option>
+                    {{range .Users}}
+                    <option value="{{.ID}}">{{.Name}}</option>
+                    {{end}}
+                </select>
+            </div>
+
+            <!-- Clients List -->
+            <div id="clientsList" style="margin-bottom: 1rem;">
+                <div class="loading-box">
+                    <div class="spinner"></div>
+                    <span>Loading clients...</span>
+                </div>
+            </div>
+
+            <!-- Empty state -->
+            <div id="clientsEmptyState" style="display: none; text-align: center; padding: 2rem; color: var(--text-muted);">
+                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5; margin-bottom: 1rem;">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                <p>No client devices registered yet.</p>
+                <p style="font-size: 0.875rem;">Devices will appear here when they connect to the server.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- IMPORT CATEGORY -->
 <div class="settings-group">
     <div class="group-title">Import</div>
@@ -1058,6 +1116,105 @@
         display: flex;
         gap: 0.5rem;
     }
+    /* Client Management Cards */
+    .client-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .client-card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+    .client-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 0.875rem 1rem;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border);
+        gap: 1rem;
+    }
+    .client-info {
+        flex: 1;
+        min-width: 0;
+    }
+    .client-name {
+        font-weight: 500;
+        font-size: 0.9375rem;
+        word-break: break-word;
+    }
+    .client-meta {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 0.25rem;
+    }
+    .client-id {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+        font-family: monospace;
+        margin-top: 0.25rem;
+    }
+    .client-last-seen {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+        padding: 0.25rem 0.5rem;
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+    }
+    .client-card-body {
+        padding: 0.875rem 1rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .client-profile-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 1;
+        min-width: 200px;
+    }
+    .client-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+    .client-profile-select {
+        flex: 1;
+        max-width: 200px;
+        font-size: 0.875rem;
+    }
+    .client-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .client-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    /* Mobile adjustments */
+    @media (max-width: 480px) {
+        .client-card-body {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        .client-profile-row {
+            min-width: 100%;
+        }
+        .client-profile-select {
+            max-width: none;
+        }
+        .client-actions {
+            justify-content: flex-end;
+        }
+    }
 </style>
 {{end}}
 
@@ -1089,11 +1246,17 @@
     let traktPollInterval = null;
     let userProfiles = [];
 
+    // ========== Client Management State ==========
+    let allClients = [];
+    let filteredClients = [];
+    const basePath = '{{.BasePath}}';
+
     // ========== Initialize ==========
     document.addEventListener('DOMContentLoaded', async function() {
-        // Load accounts first, then profiles (to avoid race condition in rendering)
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts()]);
+        // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
+        // Then load everything else in parallel
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadClients()]);
     });
 
     // ========== Plex Account Functions ==========
@@ -2588,6 +2751,207 @@
 
             // Load users for the first account
             onPlexHistoryAccountChange();
+        }
+    }
+
+    // ========== Client Management Functions ==========
+    async function loadClients() {
+        try {
+            const response = await fetch(basePath + '/api/clients', { credentials: 'same-origin' });
+            if (!response.ok) throw new Error('Failed to load clients');
+            allClients = await response.json();
+            filterClientsByProfile();
+            updateClientCountBadge();
+        } catch (err) {
+            console.error('Failed to load clients:', err);
+            document.getElementById('clientsList').innerHTML = `
+                <div style="color: var(--error); padding: 1rem;">
+                    Failed to load clients: ${escapeHtml(err.message)}
+                </div>
+            `;
+        }
+    }
+
+    function updateClientCountBadge() {
+        const badge = document.getElementById('clientCountBadge');
+        if (allClients.length > 0) {
+            badge.textContent = `${allClients.length} Device${allClients.length !== 1 ? 's' : ''}`;
+            badge.className = 'status-badge connected';
+        } else {
+            badge.textContent = '';
+            badge.className = 'status-badge';
+        }
+    }
+
+    function filterClientsByProfile() {
+        const filterValue = document.getElementById('clientProfileFilter').value;
+        if (filterValue) {
+            filteredClients = allClients.filter(c => c.userId === filterValue);
+        } else {
+            filteredClients = [...allClients];
+        }
+        renderClientsList();
+    }
+
+    function getProfileName(userId) {
+        const profile = userProfiles.find(p => p.id === userId);
+        return profile ? profile.name : 'Unknown Profile';
+    }
+
+    function formatRelativeTime(dateStr) {
+        if (!dateStr) return 'Never';
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    }
+
+    function renderClientsList() {
+        const container = document.getElementById('clientsList');
+        const emptyState = document.getElementById('clientsEmptyState');
+
+        if (filteredClients.length === 0) {
+            container.innerHTML = '';
+            emptyState.style.display = 'block';
+            return;
+        }
+
+        emptyState.style.display = 'none';
+
+        // Use card layout for better mobile experience
+        container.innerHTML = `
+            <div class="client-cards">
+                ${filteredClients.map(client => `
+                    <div class="client-card" data-client-id="${client.id}">
+                        <div class="client-card-header">
+                            <div class="client-info">
+                                <div class="client-name">${escapeHtml(client.name || 'Unknown Device')}</div>
+                                <div class="client-meta">
+                                    ${escapeHtml(client.deviceType || '')}${client.os ? ' • ' + escapeHtml(client.os) : ''}${client.appVersion ? ' • v' + escapeHtml(client.appVersion) : ''}
+                                </div>
+                                <div class="client-id">ID: ${escapeHtml(client.id.substring(0, 8))}...</div>
+                            </div>
+                            <div class="client-last-seen">${formatRelativeTime(client.lastSeenAt)}</div>
+                        </div>
+                        <div class="client-card-body">
+                            <div class="client-profile-row">
+                                <label class="client-label">Profile:</label>
+                                <select class="form-select client-profile-select"
+                                        onchange="reassignClient('${client.id}', this.value)"
+                                        data-original="${client.userId}">
+                                    ${userProfiles.map(p => `
+                                        <option value="${p.id}" ${p.id === client.userId ? 'selected' : ''}>
+                                            ${escapeHtml(p.name)}
+                                        </option>
+                                    `).join('')}
+                                </select>
+                            </div>
+                            <div class="client-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="pingClient('${client.id}')" title="Send ping to identify device">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <polyline points="12 6 12 12 16 14"/>
+                                    </svg>
+                                    Ping
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteClient('${client.id}', '${escapeHtml(client.name || 'this device')}')" title="Remove device">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                    </svg>
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    async function pingClient(clientId) {
+        try {
+            const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/ping', {
+                method: 'POST',
+                credentials: 'same-origin'
+            });
+            if (response.ok) {
+                showToast('Ping sent! If the device is active, it will flash.');
+            } else {
+                const data = await response.json();
+                showToast(data.error || 'Failed to send ping', 'error');
+            }
+        } catch (err) {
+            showToast('Failed to send ping: ' + err.message, 'error');
+        }
+    }
+
+    async function reassignClient(clientId, newUserId) {
+        const select = document.querySelector(`.client-card[data-client-id="${clientId}"] select`);
+        const originalValue = select.dataset.original;
+
+        try {
+            const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/reassign', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ userId: newUserId })
+            });
+
+            if (response.ok) {
+                const updatedClient = await response.json();
+                // Update local state
+                const idx = allClients.findIndex(c => c.id === clientId);
+                if (idx !== -1) {
+                    allClients[idx] = updatedClient;
+                }
+                select.dataset.original = newUserId;
+                showToast('Client reassigned to ' + getProfileName(newUserId));
+                // Re-filter in case the filter is active
+                filterClientsByProfile();
+            } else {
+                const data = await response.json();
+                showToast(data.error || 'Failed to reassign client', 'error');
+                // Revert select
+                select.value = originalValue;
+            }
+        } catch (err) {
+            showToast('Failed to reassign client: ' + err.message, 'error');
+            select.value = originalValue;
+        }
+    }
+
+    async function deleteClient(clientId, clientName) {
+        if (!confirm(`Are you sure you want to remove "${clientName}"?\n\nThis will delete the device registration. The device can re-register when it next connects.`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId), {
+                method: 'DELETE',
+                credentials: 'same-origin'
+            });
+
+            if (response.ok || response.status === 204) {
+                // Remove from local state
+                allClients = allClients.filter(c => c.id !== clientId);
+                filterClientsByProfile();
+                updateClientCountBadge();
+                showToast('Device removed successfully');
+            } else {
+                const data = await response.json();
+                showToast(data.error || 'Failed to remove device', 'error');
+            }
+        } catch (err) {
+            showToast('Failed to remove device: ' + err.message, 'error');
         }
     }
 </script>
