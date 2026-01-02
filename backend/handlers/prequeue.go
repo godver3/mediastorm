@@ -28,19 +28,20 @@ type SeriesDetailsProvider interface {
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
 type PrequeueHandler struct {
-	store             *playback.PrequeueStore
-	indexerSvc        *indexer.Service
-	playbackSvc       *playback.Service
-	historySvc        *history.Service
-	videoProber       VideoProber
-	hlsCreator        HLSCreator
-	metadataProber    VideoMetadataProber
-	fullProber        VideoFullProber // Combined prober for single ffprobe call
-	userSettingsSvc   *user_settings.Service
-	clientSettingsSvc ClientSettingsProvider
-	configManager     *config.Manager
-	metadataSvc       SeriesDetailsProvider // For episode counting
-	demoMode          bool
+	store              *playback.PrequeueStore
+	indexerSvc         *indexer.Service
+	playbackSvc        *playback.Service
+	historySvc         *history.Service
+	videoProber        VideoProber
+	hlsCreator         HLSCreator
+	metadataProber     VideoMetadataProber
+	fullProber         VideoFullProber // Combined prober for single ffprobe call
+	userSettingsSvc    *user_settings.Service
+	clientSettingsSvc  ClientSettingsProvider
+	configManager      *config.Manager
+	metadataSvc        SeriesDetailsProvider // For episode counting
+	subtitleExtractor  SubtitlePreExtractor  // For pre-extracting subtitles
+	demoMode           bool
 }
 
 // ClientSettingsProvider interface for accessing per-client filter settings
@@ -121,6 +122,11 @@ type HLSSessionResult struct {
 	PlaylistURL string
 }
 
+// SubtitlePreExtractor interface for pre-extracting subtitles
+type SubtitlePreExtractor interface {
+	StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo) map[int]*SubtitleExtractSession
+}
+
 // NewPrequeueHandler creates a new prequeue handler
 func NewPrequeueHandler(
 	indexerSvc *indexer.Service,
@@ -182,6 +188,11 @@ func (h *PrequeueHandler) SetClientSettingsService(svc ClientSettingsProvider) {
 // SetMetadataService sets the metadata service for episode counting
 func (h *PrequeueHandler) SetMetadataService(svc SeriesDetailsProvider) {
 	h.metadataSvc = svc
+}
+
+// SetSubtitleExtractor sets the subtitle extractor for pre-extraction
+func (h *PrequeueHandler) SetSubtitleExtractor(extractor SubtitlePreExtractor) {
+	h.subtitleExtractor = extractor
 }
 
 // Prequeue initiates a prequeue request for a title
@@ -807,6 +818,51 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					log.Printf("[prequeue] Created HLS session: %s", hlsResult.SessionID)
 				}
 			}
+		} else if h.subtitleExtractor != nil && len(subtitleStreams) > 0 {
+			// Non-HLS path (SDR content): Pre-extract all text-based subtitle tracks
+			log.Printf("[prequeue] Starting subtitle pre-extraction for %d tracks (non-HLS path)", len(subtitleStreams))
+
+			// Convert to SubtitleTrackInfo format
+			// NOTE: Index must be relative (0, 1, 2) not absolute ffprobe index (3, 4, 5)
+			// The extraction code maps relative -> absolute using its own probe
+			tracks := make([]SubtitleTrackInfo, len(subtitleStreams))
+			for i, s := range subtitleStreams {
+				tracks[i] = SubtitleTrackInfo{
+					Index:    i, // Use relative index, not s.Index (absolute ffprobe index)
+					Language: s.Language,
+					Title:    s.Title,
+					Codec:    s.Codec,
+					Forced:   s.IsForced,
+				}
+			}
+
+			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks)
+
+			// Convert sessions to SubtitleSessionInfo and store in prequeue entry
+			// Keys are relative indices (0, 1, 2) matching what frontend expects
+			sessionInfos := make(map[int]*models.SubtitleSessionInfo)
+			for relativeIdx, session := range sessions {
+				// relativeIdx is 0-based subtitle index, use directly to access subtitleStreams
+				if relativeIdx < 0 || relativeIdx >= len(subtitleStreams) {
+					continue
+				}
+				stream := &subtitleStreams[relativeIdx]
+				sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
+					SessionID:    session.ID,
+					VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
+					TrackIndex:   relativeIdx,
+					Language:     stream.Language,
+					Title:        stream.Title,
+					Codec:        stream.Codec,
+					IsForced:     stream.IsForced,
+					IsExtracting: !session.IsExtractionComplete(),
+				}
+			}
+
+			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+				e.SubtitleSessions = sessionInfos
+			})
+			log.Printf("[prequeue] Pre-extraction started for %d subtitle sessions", len(sessionInfos))
 		}
 	}
 

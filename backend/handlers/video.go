@@ -2232,6 +2232,14 @@ func (h *VideoHandler) GetHLSManager() *HLSManager {
 	return h.hlsManager
 }
 
+// GetSubtitleExtractManager returns the subtitle extract manager for pre-extraction.
+func (h *VideoHandler) GetSubtitleExtractManager() *SubtitleExtractManager {
+	if h == nil {
+		return nil
+	}
+	return h.subtitleExtractManager
+}
+
 // CreateHLSSession implements the HLSCreator interface for prequeue.
 // This creates an HLS session for HDR content so the frontend can use native player.
 func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int) (*HLSSessionResult, error) {

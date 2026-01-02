@@ -58,6 +58,7 @@ import type {
   SubtitleStreamMetadata,
   SeriesEpisode,
   PrequeueStatusResponse,
+  SubtitleSessionInfo,
 } from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
@@ -104,6 +105,7 @@ interface PlayerParams extends Record<string, any> {
   titleId?: string;
   imdbId?: string;
   tvdbId?: string;
+  preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
 }
 
 const parseBooleanParam = (value?: string | string[]): boolean => {
@@ -471,6 +473,7 @@ export default function PlayerScreen() {
     imdbId: imdbIdParam,
     tvdbId: tvdbIdParam,
     shuffleMode: shuffleModeParam,
+    preExtractedSubtitles: preExtractedSubtitlesParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -549,6 +552,27 @@ export default function PlayerScreen() {
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }, [startOffsetParam]);
+
+  // Parse pre-extracted subtitle sessions from route params
+  const preExtractedSubtitles = useMemo((): SubtitleSessionInfo[] | null => {
+    const raw = Array.isArray(preExtractedSubtitlesParam)
+      ? preExtractedSubtitlesParam[0]
+      : preExtractedSubtitlesParam;
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        console.log('[player] Loaded pre-extracted subtitles:', parsed.length, 'tracks');
+        return parsed as SubtitleSessionInfo[];
+      }
+    } catch (err) {
+      console.warn('[player] Failed to parse preExtractedSubtitles:', err);
+    }
+    return null;
+  }, [preExtractedSubtitlesParam]);
+
   const [sourcePath, setSourcePath] = useState<string | undefined>(initialSourcePath);
   const safeAreaInsets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useTVDimensions();
@@ -3588,10 +3612,96 @@ export default function PlayerScreen() {
 
   // Probe subtitle tracks from backend for non-HLS streams
   // This gives us accurate track indices and metadata for subtitle selection
+  // If pre-extracted subtitles are available, use them instead of probing
   useEffect(() => {
     // Skip for HLS/HDR streams - they handle subtitles through the HLS session
     if (isHlsStream || routeHasAnyHDR) {
       setBackendSubtitleTracks(null);
+      return;
+    }
+
+    // If we have pre-extracted subtitles, use them instead of probing
+    if (preExtractedSubtitles && preExtractedSubtitles.length > 0) {
+      console.log('[player] using pre-extracted subtitle tracks:', preExtractedSubtitles.length);
+      const tracks = preExtractedSubtitles.map((session) => ({
+        index: session.trackIndex,
+        language: session.language,
+        title: session.title,
+        codec: session.codec,
+        forced: session.isForced,
+      }));
+      setBackendSubtitleTracks(tracks);
+
+      // Build track options from pre-extracted sessions
+      const subtitleOptions: TrackOption[] = preExtractedSubtitles.map((session) => {
+        let label = session.title || session.language || `Track ${session.trackIndex + 1}`;
+        if (session.language && session.title && !session.title.toLowerCase().includes(session.language.toLowerCase())) {
+          label = `${session.language.toUpperCase()} - ${session.title}`;
+        }
+        if (session.isForced) {
+          label += ' (Forced)';
+        }
+        return {
+          id: String(session.trackIndex),
+          label,
+        };
+      });
+
+      setSubtitleTrackOptions([SUBTITLE_OFF_OPTION, ...subtitleOptions]);
+
+      // Auto-select based on user preference (same logic as probe path)
+      const preferredLang = (
+        userSettings?.playback?.preferredSubtitleLanguage ||
+        settings?.playback?.preferredSubtitleLanguage ||
+        ''
+      ).toLowerCase();
+      const preferredMode =
+        userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
+
+      console.log('[player][subtitle-debug] Pre-extracted tracks settings check:', {
+        userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
+        globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
+        resolvedMode: preferredMode,
+        userSubtitleLang: userSettings?.playback?.preferredSubtitleLanguage,
+        globalSubtitleLang: settings?.playback?.preferredSubtitleLanguage,
+        resolvedLang: preferredLang,
+        availableTracks: preExtractedSubtitles.map((s) => ({
+          trackIndex: s.trackIndex,
+          language: s.language,
+          title: s.title,
+          isForced: s.isForced,
+        })),
+      });
+
+      // Convert to SubtitleStreamMetadata-like format for selection logic
+      const streamsForSelection: SubtitleStreamMetadata[] = preExtractedSubtitles.map((s) => ({
+        index: s.trackIndex,
+        language: s.language,
+        title: s.title,
+        isForced: s.isForced,
+        codec: s.codec || '',
+      }));
+
+      const validMode =
+        preferredMode === 'on' || preferredMode === 'off' || preferredMode === 'forced-only' ? preferredMode : 'on';
+
+      const selectedIndex = findSubtitleTrackByPreference(
+        streamsForSelection,
+        preferredLang || undefined,
+        validMode,
+      );
+
+      if (selectedIndex !== null) {
+        console.log('[player][subtitle-debug] Pre-extracted tracks: selected index', selectedIndex);
+        setSelectedSubtitleTrackId(String(selectedIndex));
+      } else if (validMode === 'off') {
+        console.log('[player][subtitle-debug] Pre-extracted tracks: mode is off');
+        setSelectedSubtitleTrackId('off');
+      } else {
+        // No match found, default to off
+        console.log('[player][subtitle-debug] Pre-extracted tracks: no match, defaulting to off');
+        setSelectedSubtitleTrackId('off');
+      }
       return;
     }
 
@@ -3707,10 +3817,11 @@ export default function PlayerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isHlsStream, routeHasAnyHDR, sourcePath, userSettings, settings]);
+  }, [isHlsStream, routeHasAnyHDR, sourcePath, userSettings, settings, preExtractedSubtitles]);
 
   // Start subtitle extraction for non-HLS streams when a subtitle track is selected
   // This uses the standalone subtitle extraction endpoint to generate VTT
+  // If pre-extracted subtitles are available, use them instead of on-demand extraction
   useEffect(() => {
     // Only for non-HLS streams with an embedded subtitle track selected
     // Skip for HLS streams (they use sidecar subtitles from the HLS session)
@@ -3749,14 +3860,32 @@ export default function PlayerScreen() {
       return;
     }
 
-    // Need source path to start extraction
+    // Check if we have a pre-extracted session for this track
+    if (preExtractedSubtitles) {
+      const preExtractedSession = preExtractedSubtitles.find(
+        (session) => session.trackIndex === selectedSubtitleTrackIndex,
+      );
+      if (preExtractedSession) {
+        console.log('[player] using pre-extracted subtitle for track', selectedSubtitleTrackIndex, {
+          sessionId: preExtractedSession.sessionId,
+          isExtracting: preExtractedSession.isExtracting,
+        });
+        // Build full URL from relative path
+        const fullUrl = apiService.getFullUrl(preExtractedSession.vttUrl);
+        setExtractedSubtitleUrl(fullUrl);
+        setExtractedSubtitleSessionId(preExtractedSession.sessionId);
+        return;
+      }
+    }
+
+    // Need source path to start extraction (fallback to on-demand)
     if (!sourcePath) {
       console.log('[player] subtitle extraction skipped - no sourcePath');
       return;
     }
 
-    // Start subtitle extraction
-    console.log('[player] starting subtitle extraction', {
+    // Start subtitle extraction (on-demand fallback)
+    console.log('[player] starting on-demand subtitle extraction', {
       sourcePath,
       subtitleTrack: selectedSubtitleTrackIndex,
       backendTracks: backendSubtitleTracks?.length,
@@ -3790,6 +3919,7 @@ export default function PlayerScreen() {
     selectedSubtitleTrackId,
     sourcePath,
     backendSubtitleTracks,
+    preExtractedSubtitles,
   ]);
 
   // Recreate HLS session when audio/subtitle tracks change for HLS streams

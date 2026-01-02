@@ -73,6 +73,9 @@ type PrequeueStatusResponse struct {
 	SelectedAudioTrack    int `json:"selectedAudioTrack,omitempty"`    // -1 = default/all
 	SelectedSubtitleTrack int `json:"selectedSubtitleTrack,omitempty"` // -1 = none
 
+	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
+	SubtitleSessions map[int]*models.SubtitleSessionInfo `json:"subtitleSessions,omitempty"`
+
 	// On failure:
 	Error string `json:"error,omitempty"`
 }
@@ -108,6 +111,9 @@ type PrequeueEntry struct {
 	// Selected tracks (based on user preferences)
 	SelectedAudioTrack    int // -1 = default/all
 	SelectedSubtitleTrack int // -1 = none
+
+	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
+	SubtitleSessions map[int]*models.SubtitleSessionInfo
 
 	Error     string
 	CreatedAt time.Time
@@ -351,6 +357,7 @@ func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 		Duration:              e.Duration,
 		SelectedAudioTrack:    e.SelectedAudioTrack,
 		SelectedSubtitleTrack: e.SelectedSubtitleTrack,
+		SubtitleSessions:      e.SubtitleSessions,
 		Error:                 e.Error,
 	}
 }
