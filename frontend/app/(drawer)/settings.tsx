@@ -1267,6 +1267,9 @@ function SettingsScreen() {
             favoriteChannels: Array.from(favorites),
             selectedCategories: selectedCategories,
           },
+          display: {
+            badgeVisibility: [],
+          },
         };
 
         await updateUserSettings(activeUserId, userSettingsPayload);
