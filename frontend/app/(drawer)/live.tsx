@@ -9,9 +9,9 @@ import {
   Text,
   TextInput,
   UIManager,
-  useWindowDimensions,
   View,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { Image } from '@/components/Image';
 
 import { CategoryFilterModal } from '@/components/CategoryFilterModal';
@@ -23,6 +23,7 @@ import { useMultiscreen } from '@/components/MultiscreenContext';
 import LoadingIndicator from '@/components/LoadingIndicator';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
+import { TvModal } from '@/components/TvModal';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
@@ -202,7 +203,7 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
 
 function LiveScreen() {
   const theme = useTheme();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const router = useRouter();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
@@ -234,8 +235,9 @@ function LiveScreen() {
   const [filterText, setFilterText] = useState('');
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
+  const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
 
-  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId && !isSelectionMode;
+  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId && !isSelectionConfirmVisible;
 
   // Guard against duplicate "select" events on tvOS
   const selectGuardRef = useRef(false);
@@ -697,15 +699,11 @@ function LiveScreen() {
       }
 
       isHandling = true;
-      console.log('[live] Selection mode back interceptor called, exiting selection mode');
-      exitSelectionMode();
-      showToast('Selection cancelled', { tone: 'info' });
+      console.log('[live] Selection mode back interceptor called, showing confirmation modal');
+      // Show confirmation modal instead of immediately canceling
+      setIsSelectionConfirmVisible(true);
 
       setTimeout(() => {
-        if (selectionModeInterceptorRef.current) {
-          selectionModeInterceptorRef.current();
-          selectionModeInterceptorRef.current = null;
-        }
         isHandling = false;
       }, 500);
 
@@ -717,7 +715,31 @@ function LiveScreen() {
     return () => {
       // Cleanup on unmount
     };
-  }, [isSelectionMode, exitSelectionMode, showToast]);
+  }, [isSelectionMode]);
+
+  // Handlers for selection confirmation modal
+  const handleSelectionConfirmCancel = useCallback(() => {
+    setIsSelectionConfirmVisible(false);
+    exitSelectionMode();
+    showToast('Selection cancelled', { tone: 'info' });
+  }, [exitSelectionMode, showToast]);
+
+  const handleSelectionConfirmLaunch = useCallback(() => {
+    setIsSelectionConfirmVisible(false);
+    const channels = launchMultiscreen();
+    if (channels) {
+      showToast(`Launching ${channels.length} channels`, { tone: 'success' });
+      router.push({
+        pathname: '/multiscreen',
+        params: { channels: JSON.stringify(channels) },
+      });
+    }
+  }, [launchMultiscreen, showToast, router]);
+
+  const handleSelectionConfirmClose = useCallback(() => {
+    // Just close modal, keep selection mode active
+    setIsSelectionConfirmVisible(false);
+  }, []);
 
   const handleOpenSettings = useCallback(() => {
     router.push('/settings');
@@ -1316,6 +1338,59 @@ function LiveScreen() {
         onSelectAll={handleSelectAllCategories}
         onClearAll={handleClearAllCategories}
       />
+      {/* Selection Confirmation Modal (TV) */}
+      <TvModal visible={isSelectionConfirmVisible} onRequestClose={handleSelectionConfirmClose}>
+        <View style={styles.tvModalContainer}>
+          <Text style={styles.tvModalTitle}>
+            {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
+          </Text>
+          <Text style={styles.tvModalSubtitle}>
+            {selectedChannels.length >= 2
+              ? `You have ${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected. Launch multiscreen or continue selecting?`
+              : selectedChannels.length === 1
+                ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
+                : 'No channels selected. Cancel selection mode?'}
+          </Text>
+          <SpatialNavigationNode orientation="horizontal">
+            <View style={styles.tvModalActions}>
+              <FocusablePressable
+                focusKey="selection-confirm-cancel"
+                text="Cancel Selection"
+                onSelect={handleSelectionConfirmCancel}
+                style={[styles.tvModalButton, styles.tvModalButtonDanger]}
+                focusedStyle={[styles.tvModalButtonFocused, styles.tvModalButtonDangerFocused]}
+                textStyle={styles.tvModalButtonText}
+                focusedTextStyle={styles.tvModalButtonTextFocused}
+              />
+              {selectedChannels.length >= 2 ? (
+                <DefaultFocus>
+                  <FocusablePressable
+                    focusKey="selection-confirm-launch"
+                    text={`Launch (${selectedChannels.length})`}
+                    onSelect={handleSelectionConfirmLaunch}
+                    style={[styles.tvModalButton, styles.tvModalButtonPrimary]}
+                    focusedStyle={[styles.tvModalButtonFocused, styles.tvModalButtonPrimaryFocused]}
+                    textStyle={[styles.tvModalButtonText, styles.tvModalButtonPrimaryText]}
+                    focusedTextStyle={styles.tvModalButtonTextFocused}
+                  />
+                </DefaultFocus>
+              ) : (
+                <DefaultFocus>
+                  <FocusablePressable
+                    focusKey="selection-confirm-continue"
+                    text="Continue Selecting"
+                    onSelect={handleSelectionConfirmClose}
+                    style={styles.tvModalButton}
+                    focusedStyle={styles.tvModalButtonFocused}
+                    textStyle={styles.tvModalButtonText}
+                    focusedTextStyle={styles.tvModalButtonTextFocused}
+                  />
+                </DefaultFocus>
+              )}
+            </View>
+          </SpatialNavigationNode>
+        </View>
+      </TvModal>
     </>
   );
 }
@@ -1911,8 +1986,80 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
+    // TV Modal styles (for selection confirmation)
+    tvModalContainer: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing['2xl'],
+      minWidth: 400,
+      maxWidth: 700,
+      gap: theme.spacing.xl,
+      alignItems: 'center',
+    },
+    tvModalTitle: {
+      ...theme.typography.title.lg,
+      fontSize: isTV ? Math.round(theme.typography.title.lg.fontSize * 1.5 * scaleFactor) : theme.typography.title.lg.fontSize,
+      lineHeight: isTV ? Math.round(theme.typography.title.lg.lineHeight * 1.5 * scaleFactor) : theme.typography.title.lg.lineHeight,
+      color: theme.colors.text.primary,
+      textAlign: 'center',
+    },
+    tvModalSubtitle: {
+      ...theme.typography.body.md,
+      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
+      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+    },
+    tvModalActions: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: theme.spacing.xl,
+    },
+    tvModalButton: {
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing['2xl'],
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 3,
+      borderColor: 'transparent',
+    },
+    tvModalButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+    },
+    tvModalButtonDanger: {
+      backgroundColor: theme.colors.status.danger + '30',
+      borderColor: theme.colors.status.danger,
+    },
+    tvModalButtonDangerFocused: {
+      borderColor: theme.colors.status.danger,
+      backgroundColor: theme.colors.status.danger + '50',
+    },
+    tvModalButtonPrimary: {
+      backgroundColor: theme.colors.accent.primary,
+    },
+    tvModalButtonPrimaryFocused: {
+      borderColor: theme.colors.text.primary,
+    },
+    tvModalButtonPrimaryText: {
+      color: theme.colors.text.inverse,
+    },
+    tvModalButtonText: {
+      ...theme.typography.body.md,
+      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
+      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
+    tvModalButtonTextFocused: {
+      ...theme.typography.body.md,
+      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
+      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
     // Virtualized grid styles for TV
     virtualizedGrid: {
+      flex: 1,
       height: availableGridHeight,
     },
     gridSectionHeader: {
@@ -1921,6 +2068,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     gridRowContainer: {
       gap: gap,
+      width: '100%',
     },
     dualGridContainer: {
       height: availableGridHeight,
