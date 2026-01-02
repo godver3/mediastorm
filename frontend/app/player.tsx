@@ -37,9 +37,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 // TVMenuControl is available on tvOS but not typed in RN types
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -551,7 +551,7 @@ export default function PlayerScreen() {
   }, [startOffsetParam]);
   const [sourcePath, setSourcePath] = useState<string | undefined>(initialSourcePath);
   const safeAreaInsets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useTVDimensions();
   const isPortrait = windowHeight >= windowWidth;
   const shouldPreferSystemPlayer = useMemo(() => parseBooleanParam(preferSystemPlayerParam), [preferSystemPlayerParam]);
   const isLiveTV = useMemo(() => shouldPreferSystemPlayer, [shouldPreferSystemPlayer]);
@@ -2647,8 +2647,10 @@ export default function PlayerScreen() {
   }, []);
 
   // iOS Now Playing integration - setup remote commands on mount, clear on unmount
+  // Note: Skip on tvOS because setupRemoteCommands enables MPRemoteCommandCenter without handlers,
+  // which intercepts play/pause events and prevents them from reaching TVEventHandler
   useEffect(() => {
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' && !Platform.isTV) {
       setupRemoteCommands().catch((err) => {
         console.warn('[player] Failed to setup remote commands:', err);
       });
