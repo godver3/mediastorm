@@ -19,6 +19,7 @@ import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useLiveCategories, useLiveFavorites, useLiveHiddenChannels } from '@/components/LiveContext';
+import { useMultiscreen } from '@/components/MultiscreenContext';
 import LoadingIndicator from '@/components/LoadingIndicator';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
@@ -213,6 +214,17 @@ function LiveScreen() {
     favorites,
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
+  const {
+    hasSavedSession,
+    isSelectionMode,
+    selectedChannels,
+    enterSelectionMode,
+    exitSelectionMode,
+    toggleChannelSelection,
+    getChannelSelectionOrder,
+    launchMultiscreen,
+    resumeSession,
+  } = useMultiscreen();
   const { showToast } = useToast();
   const { refreshSettings } = useBackendSettings();
   const { pendingPinUserId } = useUserProfiles();
@@ -223,7 +235,7 @@ function LiveScreen() {
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
 
-  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId;
+  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId && !isSelectionMode;
 
   // Guard against duplicate "select" events on tvOS
   const selectGuardRef = useRef(false);
@@ -387,6 +399,26 @@ function LiveScreen() {
 
   const handleChannelSelect = useCallback(
     (channel: LiveChannel) => {
+      // In selection mode, toggle channel selection instead of playing
+      if (isSelectionMode) {
+        const selectionOrder = getChannelSelectionOrder(channel.id);
+        toggleChannelSelection({
+          id: channel.id,
+          name: channel.name ?? 'Unknown Channel',
+          url: channel.url,
+          streamUrl: channel.streamUrl ?? channel.url,
+          logo: channel.logo,
+        });
+        if (selectionOrder) {
+          showToast(`Removed: ${channel.name}`, { tone: 'info' });
+        } else if (selectedChannels.length < 5) {
+          showToast(`Selected: ${channel.name} (#${selectedChannels.length + 1})`, { tone: 'success' });
+        } else {
+          showToast('Maximum 5 channels selected', { tone: 'info' });
+        }
+        return;
+      }
+
       showToast(`Playing: ${channel.name}`, { tone: 'success' });
       const streamTarget = channel.streamUrl ?? channel.url;
       router.push({
@@ -400,8 +432,52 @@ function LiveScreen() {
         },
       });
     },
-    [router, showToast],
+    [router, showToast, isSelectionMode, getChannelSelectionOrder, toggleChannelSelection, selectedChannels.length],
   );
+
+  // Handle multiscreen button press
+  const handleMultiscreenPress = useCallback(() => {
+    withSelectGuard(() => {
+      if (isSelectionMode) {
+        // Already in selection mode
+        if (selectedChannels.length >= 2) {
+          // Launch if we have enough channels
+          const channels = launchMultiscreen();
+          if (channels) {
+            showToast(`Launching ${channels.length} channels`, { tone: 'success' });
+            router.push({
+              pathname: '/multiscreen',
+              params: { channels: JSON.stringify(channels) },
+            });
+          }
+        } else if (selectedChannels.length === 0) {
+          // Exit selection mode if no channels selected
+          exitSelectionMode();
+          showToast('Selection cancelled', { tone: 'info' });
+        } else {
+          showToast('Select at least 2 channels', { tone: 'info' });
+        }
+      } else {
+        // Enter selection mode
+        enterSelectionMode();
+        showToast('Select up to 5 channels for multiscreen', { tone: 'info' });
+      }
+    });
+  }, [withSelectGuard, isSelectionMode, selectedChannels.length, launchMultiscreen, showToast, router, enterSelectionMode, exitSelectionMode]);
+
+  // Handle resume button press
+  const handleResumePress = useCallback(() => {
+    withSelectGuard(() => {
+      const channels = resumeSession();
+      if (channels) {
+        showToast(`Resuming ${channels.length} channels`, { tone: 'success' });
+        router.push({
+          pathname: '/multiscreen',
+          params: { channels: JSON.stringify(channels) },
+        });
+      }
+    });
+  }, [withSelectGuard, resumeSession, showToast, router]);
 
   const handleFocus = useCallback(() => {
     // Lock spatial navigation to prevent d-pad from navigating away while typing
@@ -597,6 +673,52 @@ function LiveScreen() {
     };
   }, [isActionModalVisible]);
 
+  // Register back interceptor for selection mode
+  const selectionModeInterceptorRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (!isSelectionMode) {
+      // Clean up interceptor when selection mode is exited
+      if (selectionModeInterceptorRef.current) {
+        console.log('[live] Removing selection mode back interceptor');
+        selectionModeInterceptorRef.current();
+        selectionModeInterceptorRef.current = null;
+      }
+      return;
+    }
+
+    // Install interceptor when selection mode is active
+    console.log('[live] Installing selection mode back interceptor');
+    let isHandling = false;
+
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      if (isHandling) {
+        return true;
+      }
+
+      isHandling = true;
+      console.log('[live] Selection mode back interceptor called, exiting selection mode');
+      exitSelectionMode();
+      showToast('Selection cancelled', { tone: 'info' });
+
+      setTimeout(() => {
+        if (selectionModeInterceptorRef.current) {
+          selectionModeInterceptorRef.current();
+          selectionModeInterceptorRef.current = null;
+        }
+        isHandling = false;
+      }, 500);
+
+      return true;
+    });
+
+    selectionModeInterceptorRef.current = removeInterceptor;
+
+    return () => {
+      // Cleanup on unmount
+    };
+  }, [isSelectionMode, exitSelectionMode, showToast]);
+
   const handleOpenSettings = useCallback(() => {
     router.push('/settings');
   }, [router]);
@@ -679,6 +801,7 @@ function LiveScreen() {
   const renderChannelGridItem = useCallback(
     ({ item: channel }: { item: LiveChannel }) => {
       const cardKey = `channel-${channel.id}`;
+      const selectionOrder = isSelectionMode ? getChannelSelectionOrder(channel.id) : null;
       return (
         <SpatialNavigationFocusableView
           focusKey={cardKey}
@@ -691,7 +814,7 @@ function LiveScreen() {
             setFocusedChannel(channel);
           }}>
           {({ isFocused }: { isFocused: boolean }) => (
-            <View style={[styles.gridCard, isFocused && styles.gridCardFocused]}>
+            <View style={[styles.gridCard, isFocused && styles.gridCardFocused, selectionOrder !== null && styles.gridCardSelected]}>
               <View style={styles.gridCardImageContainer}>
                 {channel.logo ? (
                   <Image
@@ -708,7 +831,14 @@ function LiveScreen() {
                     <Text style={styles.placeholderImageText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
                   </View>
                 )}
-                {isFavorite(channel.id) && (
+                {/* Selection badge (multiscreen mode) */}
+                {selectionOrder && (
+                  <View style={styles.selectionBadge}>
+                    <Text style={styles.selectionBadgeText}>{selectionOrder}</Text>
+                  </View>
+                )}
+                {/* Favorite badge */}
+                {!selectionOrder && isFavorite(channel.id) && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>★</Text>
                   </View>
@@ -732,7 +862,7 @@ function LiveScreen() {
         </SpatialNavigationFocusableView>
       );
     },
-    [handleChannelSelect, handleChannelLongPress, isFavorite, styles, combinedChannels],
+    [handleChannelSelect, handleChannelLongPress, isFavorite, styles, combinedChannels, isSelectionMode, getChannelSelectionOrder],
   );
 
   // TV: Listen for LongEnter to open action modal for focused channel
@@ -845,20 +975,45 @@ function LiveScreen() {
                     <Text style={styles.title}>Live TV</Text>
                     <View style={styles.actionsRow}>
                       <FocusablePressable
-                        text="Categories"
-                        icon={Platform.isTV ? 'albums-outline' : undefined}
+                        text={Platform.isTV ? 'Categories' : undefined}
+                        icon="albums-outline"
                         onSelect={handleOpenCategoryModal}
                         disabled={availableCategories.length === 0}
                         focusKey="live-categories"
                         style={styles.headerActionButton}
                       />
                       <FocusablePressable
-                        text={isFilterActive ? 'Close Filter' : 'Filter'}
-                        icon={Platform.isTV ? (isFilterActive ? 'close-outline' : 'filter-outline') : undefined}
+                        text={Platform.isTV ? (isFilterActive ? 'Close Filter' : 'Filter') : undefined}
+                        icon={isFilterActive ? 'close-outline' : 'filter-outline'}
                         onSelect={handleToggleFilter}
                         focusKey="live-filter"
                         style={styles.headerActionButton}
                       />
+                      {hasSavedSession && !isSelectionMode && (
+                        <FocusablePressable
+                          text={Platform.isTV ? 'Resume' : undefined}
+                          icon="play-circle-outline"
+                          onSelect={handleResumePress}
+                          focusKey="live-resume"
+                          style={styles.headerActionButton}
+                        />
+                      )}
+                      <FocusablePressable
+                        text={Platform.isTV ? (isSelectionMode ? `Start (${selectedChannels.length})` : 'Multiscreen') : undefined}
+                        icon={isSelectionMode ? 'checkmark-circle-outline' : 'grid-outline'}
+                        onSelect={handleMultiscreenPress}
+                        focusKey="live-multiscreen"
+                        style={[
+                          styles.headerActionButton,
+                          isSelectionMode && styles.headerActionButtonActive,
+                        ]}
+                      />
+                      {/* Show selection count badge on mobile when in selection mode */}
+                      {!Platform.isTV && isSelectionMode && selectedChannels.length > 0 && (
+                        <View style={styles.selectionCountBadge}>
+                          <Text style={styles.selectionCountText}>{selectedChannels.length}</Text>
+                        </View>
+                      )}
                     </View>
                   </View>
                 </SpatialNavigationNode>
@@ -1210,10 +1365,14 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       gap: theme.spacing.sm,
     },
     headerActionButton: {
-      paddingHorizontal: theme.spacing['2xl'],
+      paddingHorizontal: isTV ? theme.spacing['2xl'] : theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    headerActionButtonActive: {
+      backgroundColor: theme.colors.accent.primary + '30',
+      borderColor: theme.colors.accent.primary,
     },
     title: {
       ...theme.typography.title.xl,
@@ -1332,6 +1491,43 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       fontWeight: '700',
       fontSize: 16,
       letterSpacing: 0.5,
+    },
+    selectionBadge: {
+      position: 'absolute',
+      top: theme.spacing.sm,
+      right: theme.spacing.sm,
+      width: isTV ? 48 : 32,
+      height: isTV ? 48 : 32,
+      borderRadius: isTV ? 24 : 16,
+      backgroundColor: theme.colors.accent.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: theme.colors.text.inverse,
+    },
+    selectionBadgeText: {
+      ...theme.typography.title.md,
+      color: theme.colors.text.inverse,
+      fontWeight: '700',
+      fontSize: isTV ? 24 : 18,
+    },
+    gridCardSelected: {
+      borderColor: theme.colors.accent.primary,
+      borderWidth: 4,
+    },
+    selectionCountBadge: {
+      backgroundColor: theme.colors.accent.primary,
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: -theme.spacing.sm,
+    },
+    selectionCountText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.inverse,
+      fontWeight: '700',
     },
     cardTextContainer: {
       position: 'absolute',

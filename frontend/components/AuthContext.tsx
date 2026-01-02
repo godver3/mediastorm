@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { apiService } from '@/services/api';
 import { getClientId, getClientRegistrationPayload } from '@/services/clientId';
+import { useBackendSettings } from './BackendSettingsContext';
 
 const AUTH_TOKEN_KEY = 'strmr.authToken';
 const AUTH_ACCOUNT_KEY = 'strmr.authAccount';
@@ -38,10 +39,17 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mountedRef = useRef(true);
+  const { refreshSettings } = useBackendSettings();
+  const refreshSettingsRef = useRef(refreshSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [account, setAccount] = useState<AuthAccount | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep ref updated with latest refreshSettings
+  useEffect(() => {
+    refreshSettingsRef.current = refreshSettings;
+  }, [refreshSettings]);
 
   useEffect(() => {
     return () => {
@@ -111,6 +119,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 } catch (regErr) {
                   // Non-fatal - client registration is optional
                   console.warn('[Auth] Failed to register client:', regErr);
+                }
+                // Refresh backend settings now that we're authenticated
+                try {
+                  console.log('[Auth] Refreshing backend settings after auth validation');
+                  await refreshSettingsRef.current();
+                } catch (settingsErr) {
+                  console.warn('[Auth] Failed to refresh settings after auth:', settingsErr);
                 }
               }
             } catch (err) {
@@ -194,6 +209,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (regErr) {
         console.warn('[Auth] Failed to register client after login:', regErr);
       }
+
+      // Refresh backend settings now that we're authenticated
+      try {
+        console.log('[Auth] Refreshing backend settings after login');
+        await refreshSettings();
+      } catch (settingsErr) {
+        console.warn('[Auth] Failed to refresh settings after login:', settingsErr);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
       if (mountedRef.current) {
@@ -205,7 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [refreshSettings]);
 
   const logout = useCallback(async () => {
     try {

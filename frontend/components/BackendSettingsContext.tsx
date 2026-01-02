@@ -335,7 +335,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       if (!mountedRef.current) {
         return { success: false, authRequired: false };
       }
-      console.log('[BackendSettings] Successfully connected to backend');
+      console.log('[BackendSettings] Successfully connected to backend, has live playlist:', !!result?.live?.playlistUrl);
       setSettings(result);
       setError(null);
       setLastLoadedAt(Date.now());
@@ -416,14 +416,17 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       }
 
       if (!cancelled && mountedRef.current) {
+        console.log('[BackendSettings] Setting isReady = true');
         setIsReady(true);
       }
 
       try {
+        console.log('[BackendSettings] Calling refreshSettings...');
         await refreshSettings();
+        console.log('[BackendSettings] refreshSettings completed');
       } catch (err) {
         if (!cancelled) {
-          console.warn('Failed to load backend settings:', err);
+          console.warn('[BackendSettings] Failed to load backend settings:', err);
         }
       }
     };

@@ -24,6 +24,8 @@ export interface NowPlayingMetadata {
   imageUri?: string;
 }
 
+export type VideoResizeMode = 'cover' | 'contain';
+
 export interface VideoPlayerProps {
   movie: string;
   headerImage: string;
@@ -55,4 +57,6 @@ export interface VideoPlayerProps {
   nowPlaying?: NowPlayingMetadata;
   /** Subtitle size scale factor (1.0 = default, used for VLC built-in subtitles) */
   subtitleSize?: number;
+  /** Video resize mode: 'cover' fills container (may crop), 'contain' shows full video (may letterbox). Default: 'cover' */
+  resizeMode?: VideoResizeMode;
 }

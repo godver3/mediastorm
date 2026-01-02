@@ -108,10 +108,31 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const mountCountRef = useRef(0);
+
+  // Log on mount
+  useEffect(() => {
+    mountCountRef.current += 1;
+    console.log('[useLiveChannels] Hook mounted, count:', mountCountRef.current);
+    return () => {
+      console.log('[useLiveChannels] Hook unmounting, count:', mountCountRef.current);
+    };
+  }, []);
 
   const playlistUrl = useMemo(() => settings?.live?.playlistUrl ?? '', [settings?.live?.playlistUrl]);
   const normalisedPlaylistUrl = useMemo(() => playlistUrl.trim(), [playlistUrl]);
   const hasPlaylistUrl = useMemo(() => !!normalisedPlaylistUrl, [normalisedPlaylistUrl]);
+
+  // Log state changes
+  useEffect(() => {
+    console.log('[useLiveChannels] State:', {
+      isReady,
+      hasSettings: !!settings,
+      playlistUrl: playlistUrl ? `${playlistUrl.substring(0, 50)}...` : '(empty)',
+      hasPlaylistUrl,
+      channelCount: allChannels.length,
+    });
+  }, [isReady, settings, playlistUrl, hasPlaylistUrl, allChannels.length]);
 
   // Extract unique categories from all channels
   const availableCategories = useMemo(() => {
@@ -141,7 +162,10 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   }, [allChannels, selectedCategories, favoriteChannelIds]);
 
   const fetchChannels = useCallback(async () => {
+    console.log('[useLiveChannels] fetchChannels called:', { isReady, hasPlaylistUrl, normalisedPlaylistUrl: normalisedPlaylistUrl ? `${normalisedPlaylistUrl.substring(0, 50)}...` : '(empty)' });
+
     if (!isReady) {
+      console.log('[useLiveChannels] fetchChannels: Early return - not ready');
       return;
     }
 
@@ -150,6 +174,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     abortControllerRef.current = controller;
 
     if (!hasPlaylistUrl) {
+      console.log('[useLiveChannels] fetchChannels: Early return - no playlist URL');
       setAllChannels([]);
       setError(null);
       setLoading(false);
@@ -157,19 +182,23 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     }
 
     try {
+      console.log('[useLiveChannels] fetchChannels: Starting fetch...');
       setLoading(true);
       setError(null);
       const text = await apiService.getLivePlaylist(normalisedPlaylistUrl, controller.signal);
+      console.log('[useLiveChannels] fetchChannels: Got response, length:', text?.length ?? 0);
       const parsed = parseM3UPlaylist(text).map((channel) => ({
         ...channel,
         streamUrl: apiService.buildLiveStreamUrl(channel.url),
       }));
+      console.log('[useLiveChannels] fetchChannels: Parsed', parsed.length, 'channels');
       setAllChannels(parsed);
       if (!parsed.length) {
         setError('No channels found in the playlist.');
       }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') {
+        console.log('[useLiveChannels] fetchChannels: Aborted');
         return;
       }
       // Handle network errors (status 0) and other failures gracefully
@@ -183,6 +212,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
           message = err.message;
         }
       }
+      console.log('[useLiveChannels] fetchChannels: Error:', message);
       setError(message);
       setAllChannels([]);
     } finally {
@@ -191,17 +221,22 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   }, [hasPlaylistUrl, isReady, normalisedPlaylistUrl]);
 
   useEffect(() => {
+    console.log('[useLiveChannels] Fetch useEffect triggered:', { isReady, hasPlaylistUrl, normalisedPlaylistUrl: normalisedPlaylistUrl ? 'set' : 'empty' });
+
     if (!isReady) {
+      console.log('[useLiveChannels] Fetch useEffect: Early return - not ready');
       return;
     }
 
+    console.log('[useLiveChannels] Fetch useEffect: Calling fetchChannels...');
     void fetchChannels();
 
     return () => {
+      console.log('[useLiveChannels] Fetch useEffect: Cleanup - aborting');
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
     };
-  }, [fetchChannels, isReady]);
+  }, [fetchChannels, isReady, normalisedPlaylistUrl]);
 
   return {
     channels,

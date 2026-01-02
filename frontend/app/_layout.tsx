@@ -21,6 +21,7 @@ import {
 import { AuthProvider, useAuth } from '../components/AuthContext';
 import { BackendSettingsProvider } from '../components/BackendSettingsContext';
 import { LiveProvider } from '../components/LiveContext';
+import { MultiscreenProvider } from '../components/MultiscreenContext';
 import { UpdateChecker } from '../components/UpdateChecker';
 import { LoadingScreenProvider } from '../components/LoadingScreenContext';
 import { MenuProvider } from '../components/MenuContext';
@@ -77,9 +78,10 @@ function AuthGate() {
     <UserProfilesProvider>
       <PinEntryModal />
       <LiveProvider>
-        <WatchlistProvider>
-          <WatchStatusProvider>
-            <ContinueWatchingProvider>
+        <MultiscreenProvider>
+          <WatchlistProvider>
+            <WatchStatusProvider>
+              <ContinueWatchingProvider>
               <MenuProvider>
                 <NovaThemeProvider>
                   <LoadingScreenProvider>
@@ -115,6 +117,10 @@ function AuthGate() {
                               name="player"
                               options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
                             />
+                            <Stack.Screen
+                              name="multiscreen"
+                              options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
+                            />
                           </Stack>
                         </SpatialNavigationDeviceTypeProvider>
                       </ThemeProvider>
@@ -123,8 +129,9 @@ function AuthGate() {
                 </NovaThemeProvider>
               </MenuProvider>
             </ContinueWatchingProvider>
-          </WatchStatusProvider>
-        </WatchlistProvider>
+            </WatchStatusProvider>
+          </WatchlistProvider>
+        </MultiscreenProvider>
       </LiveProvider>
     </UserProfilesProvider>
   );

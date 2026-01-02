@@ -29,6 +29,7 @@ const VlcVideoPlayerInner = (
     mediaType,
     nowPlaying,
     subtitleSize = 1.0,
+    resizeMode = 'cover',
   }: VideoPlayerProps,
   ref: React.ForwardedRef<VideoPlayerHandle>,
 ) => {
@@ -83,8 +84,8 @@ const VlcVideoPlayerInner = (
     return numericVolume;
   }, [volume]);
 
-  // Always use cover mode for fullscreen playback
-  const optimalResizeMode = 'cover';
+  // Use resizeMode prop (defaults to 'cover' for fullscreen, 'contain' for multiscreen)
+  const optimalResizeMode = resizeMode;
 
   // Don't use aspect ratio override - let cover mode scale properly
   const optimalAspectRatio = undefined;
@@ -621,8 +622,6 @@ VlcVideoPlayer.displayName = 'VlcVideoPlayer';
 
 const useVideoPlayerStyles = (screenWidth: number, screenHeight: number, mediaType?: string) => {
   return useMemo(() => {
-    const safeWidth = Number.isFinite(screenWidth) && screenWidth > 0 ? screenWidth : 1;
-    const safeHeight = Number.isFinite(screenHeight) && screenHeight > 0 ? screenHeight : safeWidth;
     const isLiveChannel = mediaType === 'channel';
 
     return StyleSheet.create({
@@ -635,18 +634,19 @@ const useVideoPlayerStyles = (screenWidth: number, screenHeight: number, mediaTy
       },
       videoContainer: {
         flex: 1,
-        width: '100%',
-        height: '100%',
-        alignSelf: 'stretch',
         backgroundColor: '#000',
         position: 'relative',
         overflow: Platform.OS === 'ios' ? 'hidden' : 'visible',
-        justifyContent: 'center',
-        alignItems: 'center',
       },
       video: {
-        width: safeWidth,
-        height: safeHeight,
+        // Use absolute positioning to fill container - works correctly with resizeMode
+        // This allows the video to properly scale within multiscreen containers
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        bottom: 0,
+        right: 0,
+        backgroundColor: '#000',
       },
       poster: {
         ...StyleSheet.absoluteFillObject,
@@ -662,7 +662,7 @@ const useVideoPlayerStyles = (screenWidth: number, screenHeight: number, mediaTy
         backgroundColor: '#000',
       },
     });
-  }, [screenHeight, screenWidth, mediaType]);
+  }, [mediaType]);
 };
 
 export default VlcVideoPlayer;

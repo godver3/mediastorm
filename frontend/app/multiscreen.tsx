@@ -1,0 +1,494 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as KeepAwake from 'expo-keep-awake';
+import { Ionicons } from '@expo/vector-icons';
+
+import { Image } from '@/components/Image';
+import { useMultiscreen } from '@/components/MultiscreenContext';
+import VideoPlayer from '@/components/player/VideoPlayer';
+import type { VideoPlayerHandle } from '@/components/player/types';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+} from '@/services/tv-navigation';
+import type { NovaTheme } from '@/theme';
+import { useTheme } from '@/theme';
+import type { MultiscreenChannel } from '@/services/api';
+
+interface LayoutPosition {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+}
+
+// Calculate layout positions for 2-5 screens
+const getLayoutPositions = (
+  count: number,
+  screenWidth: number,
+  screenHeight: number,
+): LayoutPosition[] => {
+  const positions: LayoutPosition[] = [];
+
+  switch (count) {
+    case 2:
+      // Side-by-side 50/50
+      for (let i = 0; i < 2; i++) {
+        positions.push({
+          width: screenWidth / 2,
+          height: screenHeight,
+          left: i * (screenWidth / 2),
+          top: 0,
+        });
+      }
+      break;
+
+    case 3:
+      // 2 on top (60% height), 1 full-width on bottom (40%)
+      for (let i = 0; i < 2; i++) {
+        positions.push({
+          width: screenWidth / 2,
+          height: screenHeight * 0.6,
+          left: i * (screenWidth / 2),
+          top: 0,
+        });
+      }
+      positions.push({
+        width: screenWidth,
+        height: screenHeight * 0.4,
+        left: 0,
+        top: screenHeight * 0.6,
+      });
+      break;
+
+    case 4:
+      // 2x2 grid
+      for (let i = 0; i < 4; i++) {
+        positions.push({
+          width: screenWidth / 2,
+          height: screenHeight / 2,
+          left: (i % 2) * (screenWidth / 2),
+          top: Math.floor(i / 2) * (screenHeight / 2),
+        });
+      }
+      break;
+
+    case 5:
+      // 3 on top (55% height), 2 on bottom (45%)
+      for (let i = 0; i < 3; i++) {
+        positions.push({
+          width: screenWidth / 3,
+          height: screenHeight * 0.55,
+          left: i * (screenWidth / 3),
+          top: 0,
+        });
+      }
+      for (let i = 0; i < 2; i++) {
+        positions.push({
+          width: screenWidth / 2,
+          height: screenHeight * 0.45,
+          left: i * (screenWidth / 2),
+          top: screenHeight * 0.55,
+        });
+      }
+      break;
+
+    default:
+      // Fallback: single full screen
+      positions.push({
+        width: screenWidth,
+        height: screenHeight,
+        left: 0,
+        top: 0,
+      });
+  }
+
+  return positions;
+};
+
+export default function MultiscreenPage() {
+  const theme = useTheme();
+  const router = useRouter();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { channels: channelsParam } = useLocalSearchParams<{ channels: string }>();
+  const { setActiveAudioIndex } = useMultiscreen();
+
+  // Parse channels from params
+  const channels = useMemo<MultiscreenChannel[]>(() => {
+    if (!channelsParam) return [];
+    try {
+      return JSON.parse(channelsParam);
+    } catch {
+      console.warn('[multiscreen] Failed to parse channels param');
+      return [];
+    }
+  }, [channelsParam]);
+
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const overlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoRefs = useRef<(VideoPlayerHandle | null)[]>([]);
+
+  // Keep screen awake during multiscreen playback
+  useEffect(() => {
+    KeepAwake.activateKeepAwakeAsync();
+    return () => {
+      KeepAwake.deactivateKeepAwake();
+    };
+  }, []);
+
+  // Calculate layout positions
+  const layoutPositions = useMemo(
+    () => getLayoutPositions(channels.length, screenWidth, screenHeight),
+    [channels.length, screenWidth, screenHeight],
+  );
+
+  // Auto-hide overlay after 3 seconds
+  const resetOverlayTimeout = useCallback(() => {
+    if (overlayTimeoutRef.current) {
+      clearTimeout(overlayTimeoutRef.current);
+    }
+    setShowOverlay(true);
+    overlayTimeoutRef.current = setTimeout(() => {
+      setShowOverlay(false);
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    resetOverlayTimeout();
+    return () => {
+      if (overlayTimeoutRef.current) {
+        clearTimeout(overlayTimeoutRef.current);
+      }
+    };
+  }, [resetOverlayTimeout]);
+
+  // Handle active index change (update audio)
+  const handleActiveChange = useCallback(
+    (index: number) => {
+      setActiveIndex(index);
+      setActiveAudioIndex(index);
+      resetOverlayTimeout();
+    },
+    [setActiveAudioIndex, resetOverlayTimeout],
+  );
+
+  // Handle back button to exit multiscreen
+  useEffect(() => {
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      console.log('[multiscreen] Back pressed, exiting multiscreen');
+      router.back();
+      return true;
+    });
+
+    return () => {
+      removeInterceptor();
+    };
+  }, [router]);
+
+  // Handle screen tap (mobile)
+  const handleScreenTap = useCallback(
+    (index: number) => {
+      handleActiveChange(index);
+    },
+    [handleActiveChange],
+  );
+
+  // Handle exit button tap
+  const handleExit = useCallback(() => {
+    router.back();
+  }, [router]);
+
+  // Handle video player events (minimal - just prevent errors)
+  const handleBuffer = useCallback(() => {}, []);
+  const handleProgress = useCallback(() => {}, []);
+  const handleLoad = useCallback(() => {}, []);
+  const handleEnd = useCallback(() => {}, []);
+  const handleError = useCallback((error: unknown) => {
+    console.warn('[multiscreen] Video error:', error);
+  }, []);
+
+  // Log warning for heavy resource usage
+  useEffect(() => {
+    if (channels.length >= 4) {
+      console.warn(
+        `[multiscreen] Running ${channels.length} concurrent video streams. This may cause performance issues on low-end devices.`,
+      );
+    }
+  }, [channels.length]);
+
+  if (channels.length < 2) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <Text style={styles.errorText}>Not enough channels for multiscreen</Text>
+      </View>
+    );
+  }
+
+  return (
+    <SpatialNavigationRoot isActive={Platform.isTV}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={styles.container}>
+        {/* Render video players */}
+        {channels.map((channel, index) => {
+          const position = layoutPositions[index];
+          const isActive = index === activeIndex;
+
+          return (
+            <View
+              key={channel.id}
+              style={[
+                styles.playerContainer,
+                {
+                  width: position.width,
+                  height: position.height,
+                  left: position.left,
+                  top: position.top,
+                },
+                isActive && styles.playerContainerActive,
+              ]}>
+              {Platform.isTV ? (
+                <SpatialNavigationNode orientation="horizontal">
+                  <SpatialNavigationFocusableView
+                    focusKey={`multiscreen-${index}`}
+                    onFocus={() => handleActiveChange(index)}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.playerWrapper, isFocused && styles.playerWrapperFocused]}>
+                        <View style={styles.videoContainer}>
+                          <VideoPlayer
+                            ref={(ref) => {
+                              videoRefs.current[index] = ref;
+                            }}
+                            movie={channel.streamUrl}
+                            headerImage={channel.logo ?? ''}
+                            movieTitle={channel.name}
+                            paused={false}
+                            controls={false}
+                            volume={isActive ? 1 : 0}
+                            onBuffer={handleBuffer}
+                            onProgress={handleProgress}
+                            onLoad={handleLoad}
+                            onEnd={handleEnd}
+                            onError={handleError}
+                            mediaType="channel"
+                            resizeMode="contain"
+                          />
+                        </View>
+                        {/* Channel name overlay */}
+                        {showOverlay && (
+                          <View style={styles.overlayContainer}>
+                            <LinearGradient
+                              colors={['transparent', 'rgba(0,0,0,0.8)']}
+                              style={styles.overlayGradient}
+                            />
+                            <View style={styles.overlayContent}>
+                              {channel.logo && (
+                                <Image
+                                  source={{ uri: channel.logo }}
+                                  style={styles.overlayLogo}
+                                  contentFit="contain"
+                                />
+                              )}
+                              <Text style={styles.overlayTitle} numberOfLines={1}>
+                                {channel.name}
+                              </Text>
+                              {isActive && (
+                                <View style={styles.audioIndicator}>
+                                  <Text style={styles.audioIndicatorText}>AUDIO</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                </SpatialNavigationNode>
+              ) : (
+                <View style={styles.playerWrapper}>
+                  <View style={styles.videoContainer}>
+                    <VideoPlayer
+                      ref={(ref) => {
+                        videoRefs.current[index] = ref;
+                      }}
+                      movie={channel.streamUrl}
+                      headerImage={channel.logo ?? ''}
+                      movieTitle={channel.name}
+                      paused={false}
+                      controls={false}
+                      volume={isActive ? 1 : 0}
+                      onBuffer={handleBuffer}
+                      onProgress={handleProgress}
+                      onLoad={handleLoad}
+                      onEnd={handleEnd}
+                      onError={handleError}
+                      mediaType="channel"
+                      resizeMode="contain"
+                    />
+                  </View>
+                  {/* Touchable overlay for mobile - captures taps to switch audio */}
+                  <Pressable
+                    style={styles.touchOverlay}
+                    onPress={() => handleScreenTap(index)}>
+                    {/* Channel name overlay */}
+                    {showOverlay && (
+                      <View style={styles.overlayContainer}>
+                        <LinearGradient
+                          colors={['transparent', 'rgba(0,0,0,0.8)']}
+                          style={styles.overlayGradient}
+                        />
+                        <View style={styles.overlayContent}>
+                          {channel.logo && (
+                            <Image
+                              source={{ uri: channel.logo }}
+                              style={styles.overlayLogo}
+                              contentFit="contain"
+                            />
+                          )}
+                          <Text style={styles.overlayTitle} numberOfLines={1}>
+                            {channel.name}
+                          </Text>
+                          {isActive && (
+                            <View style={styles.audioIndicator}>
+                              <Text style={styles.audioIndicatorText}>AUDIO</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          );
+        })}
+
+        {/* Exit button for mobile */}
+        {!Platform.isTV && showOverlay && (
+          <Pressable style={styles.exitButton} onPress={handleExit}>
+            <Ionicons name="close" size={28} color="#fff" />
+          </Pressable>
+        )}
+
+        {/* Default focus wrapper for TV */}
+        {Platform.isTV && (
+          <DefaultFocus>
+            <View style={styles.hiddenFocusAnchor} />
+          </DefaultFocus>
+        )}
+      </View>
+    </SpatialNavigationRoot>
+  );
+}
+
+const createStyles = (theme: NovaTheme) => {
+  const isTV = Platform.isTV;
+
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: '#000',
+    },
+    playerContainer: {
+      position: 'absolute',
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    playerContainerActive: {
+      borderColor: theme.colors.accent.primary,
+      borderWidth: isTV ? 4 : 2,
+    },
+    playerWrapper: {
+      flex: 1,
+      backgroundColor: '#000',
+    },
+    playerWrapperFocused: {
+      // Additional focus styling handled by container
+    },
+    videoContainer: {
+      // Use absolute positioning to ensure video has concrete bounds for objectFit: contain
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: '#000',
+    },
+    touchOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 10,
+    },
+    overlayContainer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: isTV ? 80 : 50,
+      zIndex: 20,
+    },
+    overlayGradient: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    overlayContent: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: isTV ? theme.spacing.lg : theme.spacing.sm,
+      gap: isTV ? theme.spacing.md : theme.spacing.sm,
+    },
+    overlayLogo: {
+      width: isTV ? 40 : 24,
+      height: isTV ? 40 : 24,
+      borderRadius: theme.radius.sm,
+    },
+    overlayTitle: {
+      ...(isTV ? theme.typography.body.lg : theme.typography.caption.sm),
+      color: theme.colors.text.primary,
+      flex: 1,
+    },
+    audioIndicator: {
+      backgroundColor: theme.colors.accent.primary,
+      paddingHorizontal: isTV ? theme.spacing.md : theme.spacing.sm,
+      paddingVertical: isTV ? theme.spacing.xs : 2,
+      borderRadius: theme.radius.sm,
+    },
+    audioIndicatorText: {
+      ...(isTV ? theme.typography.label.md : theme.typography.caption.sm),
+      color: theme.colors.text.inverse,
+      fontWeight: '700',
+      fontSize: isTV ? 14 : 10,
+    },
+    exitButton: {
+      position: 'absolute',
+      top: 50,
+      right: 16,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 100,
+    },
+    errorText: {
+      ...theme.typography.body.lg,
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+      marginTop: 100,
+    },
+    hiddenFocusAnchor: {
+      position: 'absolute',
+      width: 0,
+      height: 0,
+      opacity: 0,
+    },
+  });
+};

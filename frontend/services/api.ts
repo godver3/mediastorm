@@ -542,10 +542,24 @@ export interface UserFilterSettings {
   filterOutTerms?: string[];
 }
 
+export interface MultiscreenChannel {
+  id: string;
+  name: string;
+  url: string;
+  streamUrl: string;
+  logo?: string;
+}
+
+export interface MultiscreenSession {
+  channels: MultiscreenChannel[];
+  activeAudioIndex: number;
+}
+
 export interface UserLiveTVSettings {
   hiddenChannels: string[];
   favoriteChannels: string[];
   selectedCategories: string[];
+  multiscreenSession?: MultiscreenSession;
 }
 
 export interface UserDisplaySettings {

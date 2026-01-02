@@ -56,12 +56,16 @@ const isAutoplayError = (error: unknown): boolean => {
   return false;
 };
 
-const useVideoStyles = (theme: NovaTheme): { container: ViewStyle; video: CSSProperties } => {
+const useVideoStyles = (theme: NovaTheme, resizeMode: 'cover' | 'contain' = 'cover'): { container: ViewStyle; video: CSSProperties } => {
   return useMemo(() => {
     const backgroundColor = theme.colors?.background?.base ?? 'black';
     return {
       container: {
+        // Use both flex: 1 and explicit 100% dimensions for compatibility
+        // with both flex and absolutely positioned parents
         flex: 1,
+        width: '100%',
+        height: '100%',
         alignItems: 'stretch',
         justifyContent: 'center',
         backgroundColor,
@@ -69,12 +73,12 @@ const useVideoStyles = (theme: NovaTheme): { container: ViewStyle; video: CSSPro
       video: {
         width: '100%',
         height: '100%',
-        objectFit: 'cover',
+        objectFit: resizeMode,
         objectPosition: 'center center',
         backgroundColor: 'black',
       },
     };
-  }, [theme]);
+  }, [theme, resizeMode]);
 };
 
 const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props, ref) => {
@@ -94,10 +98,11 @@ const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props
     volume = 1,
     onAutoplayBlocked,
     onToggleFullscreen,
+    resizeMode = 'cover',
   } = props;
 
   const theme = useTheme();
-  const styles = useVideoStyles(theme);
+  const styles = useVideoStyles(theme, resizeMode);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastDurationRef = useRef(0);
   const isBufferingRef = useRef(false);
