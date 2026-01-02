@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { useMenuContext } from '@/components/MenuContext';
@@ -109,7 +110,8 @@ const GridCard: React.FC<GridCardProps> = React.memo(({ item, onSelect, onFocus,
 
 function DebugScreen() {
   const theme = useTheme();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const windowDims = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const isFocused = useIsFocused();
@@ -173,11 +175,13 @@ function DebugScreen() {
           <View style={styles.headerRow}>
             <Text style={styles.title}>Debug Grid</Text>
             <View style={styles.statsContainer}>
-              <Text style={styles.statsText}>Items: {ITEM_COUNT}</Text>
+              <Text style={styles.statsText}>useTVDimensions: {screenWidth}x{screenHeight}</Text>
+              <Text style={styles.statsText}>useWindowDimensions: {windowDims.width}x{windowDims.height}</Text>
+              <Text style={styles.statsText}>Dimensions.screen: {Dimensions.get('screen').width}x{Dimensions.get('screen').height}</Text>
+              <Text style={styles.statsText}>Card: {cardWidth}x{cardHeight}</Text>
               <Text style={styles.statsText}>
                 Focused: {focusedIndex !== null ? `Item ${focusedIndex + 1}` : 'None'}
               </Text>
-              <Text style={styles.statsText}>Last Pressed: {lastPressed ?? 'None'}</Text>
             </View>
           </View>
 
