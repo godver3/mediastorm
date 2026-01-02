@@ -83,7 +83,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     { name: '/settings', label: 'Settings' },
   ];
 
-  const menuItems = Platform.isTV ? baseMenuItems : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
+  const menuItems = Platform.isTV
+    ? baseMenuItems
+    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
 
   // Calculate which menu item corresponds to the current route
   const currentRouteIndex = React.useMemo(() => {
