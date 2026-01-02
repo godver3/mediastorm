@@ -852,6 +852,9 @@ export default function PlayerScreen() {
   }>({ prequeueId: null, targetEpisode: null, statusResponse: null, isShuffleEpisode: false });
   const hasTriggeredNextEpisodePrequeue = useRef(false);
   const nextEpisodePrequeuePollingRef = useRef<boolean>(false);
+  // Refs to allow access to values/functions before they're declared in component order
+  const hasNextEpisodeRef = useRef(false);
+  const triggerNextEpisodePrequeueRef = useRef<(() => Promise<void>) | null>(null);
   const effectiveMovie = useMemo(() => currentMovieUrl ?? resolvedMovie ?? null, [currentMovieUrl, resolvedMovie]);
   const isHlsStream = useMemo(() => {
     if (!effectiveMovie) {
@@ -2402,12 +2405,12 @@ export default function PlayerScreen() {
         mediaType === 'episode' &&
         currentDuration > 0 &&
         !hasTriggeredNextEpisodePrequeue.current &&
-        (hasNextEpisode || shuffleMode)
+        (hasNextEpisodeRef.current || shuffleMode)
       ) {
         const percentWatched = (absoluteTime / currentDuration) * 100;
         if (percentWatched >= 90) {
           hasTriggeredNextEpisodePrequeue.current = true;
-          triggerNextEpisodePrequeue();
+          triggerNextEpisodePrequeueRef.current?.();
         }
       }
     },
@@ -2422,9 +2425,7 @@ export default function PlayerScreen() {
       hideLoadingScreen,
       paused,
       mediaType,
-      hasNextEpisode,
       shuffleMode,
-      triggerNextEpisodePrequeue,
     ],
   );
 
@@ -2542,7 +2543,7 @@ export default function PlayerScreen() {
         titleId: seriesId,
         titleName: cleanSeriesTitle || title || '',
         mediaType: 'series',
-        userId: activeUserId,
+        userId: activeUserId || 'default',
         seasonNumber: nextEpisode.seasonNumber,
         episodeNumber: nextEpisode.episodeNumber,
       });
@@ -2575,6 +2576,9 @@ export default function PlayerScreen() {
     activeUserId,
     pollNextEpisodePrequeue,
   ]);
+
+  // Keep ref updated for use in callbacks defined earlier in the component
+  triggerNextEpisodePrequeueRef.current = triggerNextEpisodePrequeue;
 
   const hideControls = useCallback(
     (options: { immediate?: boolean } = {}) => {
@@ -4533,6 +4537,9 @@ export default function PlayerScreen() {
   const hasPreviousEpisode = currentEpisodeIndex > 0;
   const hasNextEpisode = currentEpisodeIndex >= 0 && currentEpisodeIndex < allEpisodes.length - 1;
 
+  // Keep ref updated for use in callbacks defined earlier in the component
+  hasNextEpisodeRef.current = hasNextEpisode;
+
   // Reset prequeue state when episode changes
   useEffect(() => {
     hasTriggeredNextEpisodePrequeue.current = false;
@@ -4609,9 +4616,11 @@ export default function PlayerScreen() {
     if (prequeueData?.prequeueId && prequeueData.targetEpisode) {
       // Use the prequeued episode (works for both shuffle and sequential)
       const prequeuedEpisode: SeriesEpisode = {
+        id: '',
         seasonNumber: prequeueData.targetEpisode.seasonNumber,
         episodeNumber: prequeueData.targetEpisode.episodeNumber,
         name: '',
+        overview: '',
       };
       navigateToEpisode(prequeuedEpisode, true);
       return;

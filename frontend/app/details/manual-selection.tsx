@@ -657,7 +657,6 @@ const createManualSelectionStyles = (theme: NovaTheme) => {
     },
     manualResultDescription: {
       marginTop: theme.spacing.xs,
-      whiteSpace: 'pre-wrap',
     },
     manualResultBadge: {
       ...theme.typography.caption.sm,
