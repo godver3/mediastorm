@@ -962,8 +962,31 @@ func isIncompatibleAudioCodec(codec string) bool {
 		c == "dts_hd" || c == "dtshd" || c == "mlp"
 }
 
+// isCommentaryTrack checks if an audio track is a commentary track based on its title
+func isCommentaryTrack(title string) bool {
+	lowerTitle := strings.ToLower(strings.TrimSpace(title))
+	commentaryIndicators := []string{
+		"commentary",
+		"director's commentary",
+		"directors commentary",
+		"audio commentary",
+		"cast commentary",
+		"crew commentary",
+		"isolated score",
+		"music only",
+		"score only",
+	}
+	for _, indicator := range commentaryIndicators {
+		if strings.Contains(lowerTitle, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
 // findAudioTrackByLanguage finds an audio track matching the preferred language
 // Prefers compatible audio codecs (AAC, AC3, etc.) over TrueHD/DTS when multiple tracks exist
+// Skips commentary tracks unless they are the only option
 func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, preferredLanguage string) int {
 	if preferredLanguage == "" || len(streams) == 0 {
 		return -1
@@ -989,20 +1012,40 @@ func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, pr
 		return false
 	}
 
-	// First pass: find compatible codec (AAC, AC3, etc.) matching language
+	// First pass: find compatible codec (AAC, AC3, etc.) matching language, skipping commentary tracks
 	for _, stream := range streams {
-		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] {
+		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] && !isCommentaryTrack(stream.Title) {
 			log.Printf("[prequeue] Preferred compatible audio track %d (%s) for language %q",
 				stream.Index, stream.Codec, preferredLanguage)
 			return stream.Index
 		}
 	}
 
-	// Second pass: find any track matching language (even TrueHD/DTS)
+	// Second pass: find any track matching language (even TrueHD/DTS), skipping commentary
+	for _, stream := range streams {
+		if matchesLanguage(stream) && !isCommentaryTrack(stream.Title) {
+			if isIncompatibleAudioCodec(stream.Codec) {
+				log.Printf("[prequeue] Selected incompatible audio track %d (%s) for language %q - will need HLS transcoding",
+					stream.Index, stream.Codec, preferredLanguage)
+			}
+			return stream.Index
+		}
+	}
+
+	// Third pass: fallback to compatible codec including commentary if nothing else matches
+	for _, stream := range streams {
+		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] {
+			log.Printf("[prequeue] Fallback to compatible audio track %d (%s, commentary) for language %q",
+				stream.Index, stream.Codec, preferredLanguage)
+			return stream.Index
+		}
+	}
+
+	// Fourth pass: any matching track including commentary
 	for _, stream := range streams {
 		if matchesLanguage(stream) {
 			if isIncompatibleAudioCodec(stream.Codec) {
-				log.Printf("[prequeue] Selected incompatible audio track %d (%s) for language %q - will need HLS transcoding",
+				log.Printf("[prequeue] Fallback to incompatible audio track %d (%s, commentary) for language %q - will need HLS transcoding",
 					stream.Index, stream.Codec, preferredLanguage)
 			}
 			return stream.Index
