@@ -1987,9 +1987,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// - fMP4 (Dolby Vision/HDR): Extract ALL text-based tracks upfront as additional ffmpeg outputs
 	// - MPEG-TS: On-demand extraction via extractSubtitleTrack when a track is requested
 	type sidecarSubtitle struct {
-		streamIndex   int    // Absolute stream index (for ffprobe reference)
-		relativeIndex int    // Relative subtitle index (for -map 0:s:N)
-		codec         string // Codec name
+		streamIndex int    // Absolute stream index (for -map 0:N)
+		codec       string // Codec name
 	}
 	var sidecarSubtitles []sidecarSubtitle
 
@@ -2009,16 +2008,15 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	if needsFmp4 {
 		// For fMP4 (DV/HDR), extract ALL text-based subtitle tracks to sidecar VTT files
 		// This allows track switching without re-downloading the source file
-		for pos, stream := range subtitleStreams {
+		for _, stream := range subtitleStreams {
 			if !textSubtitleCodecs[stream.Codec] {
 				log.Printf("[hls] session %s: skipping non-text subtitle stream %d (codec=%q) for sidecar extraction",
 					session.ID, stream.Index, stream.Codec)
 				continue
 			}
 			sidecarSubtitles = append(sidecarSubtitles, sidecarSubtitle{
-				streamIndex:   stream.Index,
-				relativeIndex: pos,
-				codec:         stream.Codec,
+				streamIndex: stream.Index,
+				codec:       stream.Codec,
 			})
 		}
 		if len(sidecarSubtitles) > 0 {
@@ -2079,9 +2077,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// Additional outputs: Sidecar VTT files for ALL text-based subtitle tracks
 		// This allows track switching without re-downloading the source file
 		// Each subtitle track is extracted to subtitles_<streamIndex>.vtt
+		// Use absolute stream index (0:N) instead of relative subtitle index (0:s:N)
+		// because 0:s:N includes bitmap subtitles which are filtered out from our list
 		for _, sub := range sidecarSubtitles {
 			vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", sub.streamIndex))
-			subtitleMap := fmt.Sprintf("0:s:%d", sub.relativeIndex)
+			subtitleMap := fmt.Sprintf("0:%d", sub.streamIndex)
 			args = append(args,
 				"-map", subtitleMap,
 				"-c", "webvtt",
@@ -2089,8 +2089,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				"-flush_packets", "1",
 				vttPath,
 			)
-			log.Printf("[hls] session %s: adding sidecar VTT output at %s (streamIndex=%d relativeIndex=%d codec=%s)",
-				session.ID, vttPath, sub.streamIndex, sub.relativeIndex, sub.codec)
+			log.Printf("[hls] session %s: adding sidecar VTT output at %s (streamIndex=%d codec=%s)",
+				session.ID, vttPath, sub.streamIndex, sub.codec)
 		}
 	} else {
 		// Use MPEG-TS segments for non-HDR content
