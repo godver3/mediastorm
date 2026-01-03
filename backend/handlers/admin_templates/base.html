@@ -294,6 +294,42 @@
             color: #f87171;
         }
 
+        /* Inherited field styling - inputs appear muted when inheriting */
+        .field-inherited .form-input,
+        .field-inherited .form-select {
+            opacity: 0.6;
+            background: rgba(100, 116, 139, 0.08);
+            border-color: rgba(100, 116, 139, 0.25);
+        }
+
+        .field-inherited .toggle-slider {
+            opacity: 0.6;
+            background: rgba(100, 116, 139, 0.2);
+        }
+
+        .field-inherited .toggle input:checked + .toggle-slider {
+            opacity: 0.6;
+            background: rgba(99, 102, 241, 0.5);
+        }
+
+        .field-inherited .tags-input {
+            opacity: 0.6;
+            background: rgba(100, 116, 139, 0.08);
+            border-color: rgba(100, 116, 139, 0.25);
+        }
+
+        .field-inherited .checkboxes-group .checkbox-option {
+            opacity: 0.6;
+        }
+
+        /* Restore normal appearance on focus/interaction */
+        .field-inherited .form-input:focus,
+        .field-inherited .form-select:focus {
+            opacity: 1;
+            background: var(--bg-tertiary);
+            border-color: var(--accent);
+        }
+
         .form-hint {
             font-size: 0.75rem;
             color: var(--text-muted);
