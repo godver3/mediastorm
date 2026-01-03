@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"net/http/pprof"
+	"runtime"
+	"strconv"
 
 	"novastream/handlers"
 	"novastream/services/accounts"
@@ -10,6 +13,31 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+func itoa(i int) string      { return strconv.Itoa(i) }
+func itoa64(i uint64) string { return strconv.FormatUint(i, 10) }
+
+// localhostOnlyMiddleware restricts access to localhost requests only
+func localhostOnlyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		// Strip port if present
+		if idx := len(host) - 1; idx >= 0 {
+			for i := len(host) - 1; i >= 0; i-- {
+				if host[i] == ':' {
+					host = host[:i]
+					break
+				}
+			}
+		}
+		// Allow localhost, 127.0.0.1, ::1
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			http.Error(w, "Debug endpoints only accessible from localhost", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // corsMiddleware handles CORS for API routes
 func corsMiddleware(next http.Handler) http.Handler {
@@ -208,6 +236,63 @@ func Register(
 	adminRouter := protected.PathPrefix("/admin").Subrouter()
 	adminRouter.Use(MasterOnlyMiddleware())
 	adminRouter.HandleFunc("/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)
+
+	// Pprof debug endpoints for profiling (localhost only, no auth required for debugging)
+	// These are essential for diagnosing production issues and are safe since they're read-only
+	pprofRouter := api.PathPrefix("/debug/pprof").Subrouter()
+	pprofRouter.Use(localhostOnlyMiddleware)
+	pprofRouter.HandleFunc("/", pprof.Index)
+	pprofRouter.HandleFunc("/cmdline", pprof.Cmdline)
+	pprofRouter.HandleFunc("/profile", pprof.Profile)
+	pprofRouter.HandleFunc("/symbol", pprof.Symbol)
+	pprofRouter.HandleFunc("/trace", pprof.Trace)
+	pprofRouter.HandleFunc("/allocs", pprof.Handler("allocs").ServeHTTP)
+	pprofRouter.HandleFunc("/block", pprof.Handler("block").ServeHTTP)
+	pprofRouter.HandleFunc("/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	pprofRouter.HandleFunc("/heap", pprof.Handler("heap").ServeHTTP)
+	pprofRouter.HandleFunc("/mutex", pprof.Handler("mutex").ServeHTTP)
+	pprofRouter.HandleFunc("/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+
+	// Runtime stats endpoint (localhost only, no auth required for debugging)
+	runtimeRouter := api.PathPrefix("/debug/runtime").Subrouter()
+	runtimeRouter.Use(localhostOnlyMiddleware)
+	runtimeRouter.HandleFunc("", func(w http.ResponseWriter, r *http.Request) {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{` +
+			`"goroutines":` + itoa(runtime.NumGoroutine()) + `,` +
+			`"heapAlloc":` + itoa64(m.HeapAlloc) + `,` +
+			`"heapSys":` + itoa64(m.HeapSys) + `,` +
+			`"heapInuse":` + itoa64(m.HeapInuse) + `,` +
+			`"heapObjects":` + itoa64(m.HeapObjects) + `,` +
+			`"stackInuse":` + itoa64(m.StackInuse) + `,` +
+			`"stackSys":` + itoa64(m.StackSys) + `,` +
+			`"mSpanInuse":` + itoa64(m.MSpanInuse) + `,` +
+			`"mCacheInuse":` + itoa64(m.MCacheInuse) + `,` +
+			`"numGC":` + itoa(int(m.NumGC)) + `,` +
+			`"lastGC":` + itoa64(m.LastGC) + `,` +
+			`"pauseTotalNs":` + itoa64(m.PauseTotalNs) + `,` +
+			`"numCgoCall":` + itoa64(uint64(runtime.NumCgoCall())) + `,` +
+			`"numCPU":` + itoa(runtime.NumCPU()) +
+			`}`))
+	}).Methods(http.MethodGet)
+
+	// Runtime stats endpoint (master only, authenticated)
+	adminRouter.HandleFunc("/runtime", func(w http.ResponseWriter, r *http.Request) {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{` +
+			`"goroutines":` + itoa(runtime.NumGoroutine()) + `,` +
+			`"heapAlloc":` + itoa64(m.HeapAlloc) + `,` +
+			`"heapSys":` + itoa64(m.HeapSys) + `,` +
+			`"heapObjects":` + itoa64(m.HeapObjects) + `,` +
+			`"stackInuse":` + itoa64(m.StackInuse) + `,` +
+			`"numGC":` + itoa(int(m.NumGC)) + `,` +
+			`"lastGC":` + itoa64(m.LastGC) +
+			`}`))
+	}).Methods(http.MethodGet, http.MethodOptions)
 
 	// MP4Box debug endpoints for DV/HDR testing (master only)
 	debugRouter := protected.PathPrefix("/video/debug").Subrouter()
