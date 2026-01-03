@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -295,8 +296,9 @@ type HLSSession struct {
 	DVDisabled          bool // Set to true if DV metadata parsing fails and we fallback to non-DV
 	HasHDR              bool // HDR10 content (needs fMP4 segments for iOS compatibility)
 	HDRMetadataDisabled bool // Set to true if hevc_metadata filter fails (malformed SEI data)
-	Duration     float64 // Total duration in seconds from ffprobe
-	StartOffset  float64 // Requested start offset in seconds for session warm starts
+	Duration          float64 // Total duration in seconds from ffprobe
+	StartOffset       float64 // Requested start offset in seconds for session warm starts
+	ActualStartOffset float64 // Actual start time from fMP4 tfdt box (keyframe-aligned, for subtitle sync)
 
 	// Profile tracking
 	ProfileID   string
@@ -931,6 +933,24 @@ func (m *HLSManager) waitForFirstSegment(ctx context.Context, session *HLSSessio
 					if err := m.fixDVCodecTag(session); err != nil {
 						log.Printf("[hls] session %s: warning - failed to fix DV codec tag: %v", session.ID, err)
 					}
+				}
+
+				// Parse actual start offset from tfdt box for subtitle sync
+				// FFmpeg seeks to nearest keyframe, so actual start may differ from requested StartOffset
+				if session.StartOffset > 0 {
+					actualStart, err := parseActualStartOffset(initPath, segment0Path)
+					if err != nil {
+						log.Printf("[hls] session %s: warning - could not parse actual start offset: %v (using requested: %.3fs)",
+							session.ID, err, session.StartOffset)
+						session.ActualStartOffset = session.StartOffset
+					} else {
+						delta := actualStart - session.StartOffset
+						log.Printf("[hls] session %s: actual start offset: %.3fs (requested: %.3fs, delta: %.3fs)",
+							session.ID, actualStart, session.StartOffset, delta)
+						session.ActualStartOffset = actualStart
+					}
+				} else {
+					session.ActualStartOffset = 0
 				}
 
 				return nil
@@ -3206,6 +3226,7 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 
 	// Capture timing info while we have the lock
 	startOffset := session.StartOffset
+	actualStartOffset := session.ActualStartOffset
 	duration := session.Duration
 	session.mu.Unlock()
 
@@ -3214,16 +3235,19 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 	// Return segment timing info for accurate subtitle sync
 	// The frontend can use this to calculate precise media time:
 	// mediaTime = startOffset + (segmentIndex * segmentDuration) + positionInSegment
+	// actualStartOffset is the keyframe-aligned start time for subtitle sync
 	response := struct {
-		Status        string  `json:"status"`
-		StartOffset   float64 `json:"startOffset"`
-		SegmentDuration float64 `json:"segmentDuration"`
-		Duration      float64 `json:"duration,omitempty"`
+		Status            string  `json:"status"`
+		StartOffset       float64 `json:"startOffset"`
+		ActualStartOffset float64 `json:"actualStartOffset"`
+		SegmentDuration   float64 `json:"segmentDuration"`
+		Duration          float64 `json:"duration,omitempty"`
 	}{
-		Status:          "ok",
-		StartOffset:     startOffset,
-		SegmentDuration: hlsSegmentDuration,
-		Duration:        duration,
+		Status:            "ok",
+		StartOffset:       startOffset,
+		ActualStartOffset: actualStartOffset,
+		SegmentDuration:   hlsSegmentDuration,
+		Duration:          duration,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -3234,10 +3258,11 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 
 // SeekResponse contains the response data for a seek request
 type SeekResponse struct {
-	SessionID   string  `json:"sessionId"`
-	StartOffset float64 `json:"startOffset"`
-	Duration    float64 `json:"duration,omitempty"`
-	PlaylistURL string  `json:"playlistUrl"`
+	SessionID         string  `json:"sessionId"`
+	StartOffset       float64 `json:"startOffset"`
+	ActualStartOffset float64 `json:"actualStartOffset"`
+	Duration          float64 `json:"duration,omitempty"`
+	PlaylistURL       string  `json:"playlistUrl"`
 }
 
 // Seek seeks within an existing HLS session by restarting transcoding from a new offset
@@ -3359,13 +3384,47 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	// Build playlist URL (without /api/ prefix - frontend adds it)
 	playlistURL := fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID)
 
+	// For fMP4 sessions, parse actual start offset from tfdt box for subtitle sync
+	session.mu.RLock()
+	hasDV := session.HasDV
+	hasHDR := session.HasHDR
+	session.mu.RUnlock()
+
+	actualStartOffset := targetTime // Default to requested time
+	if (hasDV || hasHDR) && targetTime > 0 {
+		initPath := filepath.Join(outputDir, "init.mp4")
+		segment0Path := filepath.Join(outputDir, "segment0.m4s")
+
+		// Wait a bit for segment0 to be ready (it should already exist if playlist is ready)
+		for i := 0; i < 20; i++ { // 2 seconds max
+			if info, err := os.Stat(segment0Path); err == nil && info.Size() > 0 {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		if actualStart, err := parseActualStartOffset(initPath, segment0Path); err != nil {
+			log.Printf("[hls] session %s: warning - could not parse actual start offset after seek: %v", sessionID, err)
+		} else {
+			delta := actualStart - targetTime
+			log.Printf("[hls] session %s: seek actual start offset: %.3fs (requested: %.3fs, delta: %.3fs)",
+				sessionID, actualStart, targetTime, delta)
+			actualStartOffset = actualStart
+		}
+	}
+
+	session.mu.Lock()
+	session.ActualStartOffset = actualStartOffset
+	session.mu.Unlock()
+
 	log.Printf("[hls] session %s: seek completed, new start offset: %.2fs", sessionID, targetTime)
 
 	response := SeekResponse{
-		SessionID:   sessionID,
-		StartOffset: targetTime,
-		Duration:    duration,
-		PlaylistURL: playlistURL,
+		SessionID:         sessionID,
+		StartOffset:       targetTime,
+		ActualStartOffset: actualStartOffset,
+		Duration:          duration,
+		PlaylistURL:       playlistURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4250,4 +4309,182 @@ func (m *HLSManager) cleanupOrphanedDirectories() {
 	if cleaned > 0 {
 		log.Printf("[hls] cleaned up %d orphaned session directories from previous runs", cleaned)
 	}
+}
+
+// ============================================================================
+// fMP4 Box Parsing for Actual Start Offset Detection
+// ============================================================================
+//
+// When HLS seeks using FFmpeg's input seeking (-ss before -i), FFmpeg seeks to
+// the nearest keyframe, not the exact requested time. This causes VTT subtitles
+// (which have absolute timestamps) to desync because the frontend uses the
+// *requested* time for subtitle offset, not the *actual* keyframe time.
+//
+// The solution is to parse the tfdt (Track Fragment Decode Time) box from the
+// first fMP4 segment to get the actual start time, then use that for subtitles.
+//
+// fMP4 box structure:
+//   init.mp4: ftyp -> moov -> trak -> mdia -> mdhd (contains timescale)
+//   segment.m4s: moof -> traf -> tfdt (contains baseMediaDecodeTime)
+//
+// actualStartSeconds = baseMediaDecodeTime / timescale
+
+// parseTimescaleFromInit extracts the video timescale from init.mp4's mdhd box.
+// The timescale is the number of time units per second (commonly 90000 for video).
+func parseTimescaleFromInit(initPath string) (uint32, error) {
+	data, err := os.ReadFile(initPath)
+	if err != nil {
+		return 0, fmt.Errorf("read init.mp4: %w", err)
+	}
+
+	// Search for mdhd box (media header) - it contains the timescale
+	// mdhd can be version 0 (32-bit times) or version 1 (64-bit times)
+	// Structure: [size:4][type:4][version:1][flags:3][times...][timescale:4][duration...]
+	mdhdMarker := []byte{'m', 'd', 'h', 'd'}
+	idx := bytes.Index(data, mdhdMarker)
+	if idx == -1 {
+		return 0, fmt.Errorf("mdhd box not found in init.mp4")
+	}
+
+	// Move past the box type to the box content
+	pos := idx + 4
+	if pos+20 > len(data) {
+		return 0, fmt.Errorf("mdhd box too short")
+	}
+
+	version := data[pos]
+	var timescaleOffset int
+	if version == 0 {
+		// Version 0: version(1) + flags(3) + creation_time(4) + modification_time(4) + timescale(4)
+		timescaleOffset = pos + 1 + 3 + 4 + 4
+	} else {
+		// Version 1: version(1) + flags(3) + creation_time(8) + modification_time(8) + timescale(4)
+		timescaleOffset = pos + 1 + 3 + 8 + 8
+	}
+
+	if timescaleOffset+4 > len(data) {
+		return 0, fmt.Errorf("mdhd box truncated at timescale")
+	}
+
+	timescale := binary.BigEndian.Uint32(data[timescaleOffset : timescaleOffset+4])
+	return timescale, nil
+}
+
+// parseTfdtFromSegment extracts the baseMediaDecodeTime from a segment's tfdt box.
+// This is the actual start time (in timescale units) that FFmpeg seeked to.
+func parseTfdtFromSegment(segmentPath string, timescale uint32) (float64, error) {
+	data, err := os.ReadFile(segmentPath)
+	if err != nil {
+		return 0, fmt.Errorf("read segment: %w", err)
+	}
+
+	// Search for tfdt box (track fragment decode time)
+	// Structure: [size:4][type:4][version:1][flags:3][baseMediaDecodeTime:4 or 8]
+	tfdtMarker := []byte{'t', 'f', 'd', 't'}
+	idx := bytes.Index(data, tfdtMarker)
+	if idx == -1 {
+		return 0, fmt.Errorf("tfdt box not found in segment")
+	}
+
+	// Move past the box type to the box content
+	pos := idx + 4
+	if pos+8 > len(data) {
+		return 0, fmt.Errorf("tfdt box too short")
+	}
+
+	version := data[pos]
+	var baseMediaDecodeTime uint64
+
+	if version == 0 {
+		// Version 0: 32-bit baseMediaDecodeTime
+		if pos+8 > len(data) {
+			return 0, fmt.Errorf("tfdt v0 truncated")
+		}
+		baseMediaDecodeTime = uint64(binary.BigEndian.Uint32(data[pos+4 : pos+8]))
+	} else {
+		// Version 1: 64-bit baseMediaDecodeTime
+		if pos+12 > len(data) {
+			return 0, fmt.Errorf("tfdt v1 truncated")
+		}
+		baseMediaDecodeTime = binary.BigEndian.Uint64(data[pos+4 : pos+12])
+	}
+
+	// Convert to seconds
+	if timescale == 0 {
+		return 0, fmt.Errorf("timescale is zero")
+	}
+	actualStartSeconds := float64(baseMediaDecodeTime) / float64(timescale)
+	return actualStartSeconds, nil
+}
+
+// parseActualStartOffset reads the init.mp4 and first segment to determine
+// the actual start time (keyframe-aligned) for subtitle synchronization.
+func parseActualStartOffset(initPath, segmentPath string) (float64, error) {
+	timescale, err := parseTimescaleFromInit(initPath)
+	if err != nil {
+		return 0, fmt.Errorf("parse timescale: %w", err)
+	}
+
+	actualStart, err := parseTfdtFromSegment(segmentPath, timescale)
+	if err != nil {
+		return 0, fmt.Errorf("parse tfdt: %w", err)
+	}
+
+	return actualStart, nil
+}
+
+// WaitForActualStartOffset waits for the first fMP4 segment to be generated
+// and parses the tfdt box to get the actual keyframe-aligned start time.
+// This should be called after CreateSession for warm start fMP4 sessions.
+// Returns the actual start offset, or the requested offset if parsing fails.
+func (m *HLSManager) WaitForActualStartOffset(session *HLSSession, timeout time.Duration) float64 {
+	session.mu.RLock()
+	hasDV := session.HasDV
+	hasHDR := session.HasHDR
+	startOffset := session.StartOffset
+	outputDir := session.OutputDir
+	session.mu.RUnlock()
+
+	// Only needed for fMP4 warm starts
+	if (!hasDV && !hasHDR) || startOffset <= 0 {
+		return startOffset
+	}
+
+	initPath := filepath.Join(outputDir, "init.mp4")
+	segment0Path := filepath.Join(outputDir, "segment0.m4s")
+
+	deadline := time.Now().Add(timeout)
+	pollInterval := 100 * time.Millisecond
+
+	// Wait for both init.mp4 and segment0.m4s to exist with non-zero size
+	for time.Now().Before(deadline) {
+		initInfo, initErr := os.Stat(initPath)
+		segInfo, segErr := os.Stat(segment0Path)
+
+		if initErr == nil && initInfo.Size() > 0 && segErr == nil && segInfo.Size() > 0 {
+			// Files exist, try to parse
+			actualStart, err := parseActualStartOffset(initPath, segment0Path)
+			if err != nil {
+				log.Printf("[hls] session %s: warning - could not parse actual start offset: %v (using requested: %.3fs)",
+					session.ID, err, startOffset)
+				return startOffset
+			}
+
+			delta := actualStart - startOffset
+			log.Printf("[hls] session %s: actual start offset: %.3fs (requested: %.3fs, delta: %.3fs)",
+				session.ID, actualStart, startOffset, delta)
+
+			session.mu.Lock()
+			session.ActualStartOffset = actualStart
+			session.mu.Unlock()
+
+			return actualStart
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	log.Printf("[hls] session %s: timeout waiting for first segment to parse actual start offset (using requested: %.3fs)",
+		session.ID, startOffset)
+	return startOffset
 }

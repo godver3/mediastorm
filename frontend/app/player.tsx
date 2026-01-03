@@ -1026,12 +1026,18 @@ export default function PlayerScreen() {
           console.log('[player] pause teardown: restored HLS session', {
             playlistUrl: playlistWithKey,
             startOffset: response.startOffset,
+            actualStartOffset: response.actualStartOffset,
           });
 
           // Update playback offset if the session has a start offset
           if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
             playbackOffsetRef.current = response.startOffset;
             sessionBufferEndRef.current = response.startOffset;
+            // Use actualStartOffset for subtitle sync (keyframe-aligned)
+            actualPlaybackOffsetRef.current =
+              typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
+                ? response.actualStartOffset
+                : response.startOffset;
           }
 
           // Restore the video URL - this will trigger the video to load
@@ -1082,6 +1088,7 @@ export default function PlayerScreen() {
   const durationRef = useRef<number>(0);
   const nowPlayingLastUpdateRef = useRef<number>(0); // Throttle iOS Now Playing updates
   const playbackOffsetRef = useRef<number>(initialStartOffset);
+  const actualPlaybackOffsetRef = useRef<number>(initialStartOffset); // Keyframe-aligned start for subtitle sync
   const sessionBufferEndRef = useRef<number>(initialStartOffset);
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2261,13 +2268,21 @@ export default function PlayerScreen() {
 
         const sessionStart =
           typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
+        // Use actualStartOffset for subtitle sync (keyframe-aligned), fallback to sessionStart
+        const actualSessionStart =
+          typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
+            ? response.actualStartOffset
+            : sessionStart;
         console.log('[player] warmStartHLS setting offsets', {
           responseStartOffset: response.startOffset,
+          responseActualStartOffset: response.actualStartOffset,
           sessionStart,
+          actualSessionStart,
           safeTarget,
           playlistUrl: playlistWithKey,
         });
         playbackOffsetRef.current = sessionStart;
+        actualPlaybackOffsetRef.current = actualSessionStart; // For subtitle sync
         sessionBufferEndRef.current = sessionStart;
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
@@ -2278,11 +2293,13 @@ export default function PlayerScreen() {
         console.log(
           '[player] warmStartHLS set playbackOffsetRef.current =',
           playbackOffsetRef.current,
+          'actualPlaybackOffsetRef.current =',
+          actualPlaybackOffsetRef.current,
           'pendingSeek=',
           pendingSessionSeekRef.current,
         );
         console.log('[player] warmStartHLS subtitle transition', {
-          newSubtitleTimeOffset: -playbackOffsetRef.current,
+          newSubtitleTimeOffset: -actualPlaybackOffsetRef.current,
           newPlaylistUrl: playlistWithKey.substring(0, 80),
           newSubtitleUrl: playlistWithKey.replace(/stream\.m3u8/, 'subtitles.vtt').substring(0, 80),
         });
@@ -3510,6 +3527,7 @@ export default function PlayerScreen() {
           console.log('[player] created new HLS session for retry', {
             playlistUrl: playlistWithKey,
             startOffset: response.startOffset,
+            actualStartOffset: response.actualStartOffset,
           });
 
           // Update the video source to the new session
@@ -3519,6 +3537,11 @@ export default function PlayerScreen() {
           if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
             playbackOffsetRef.current = response.startOffset;
             sessionBufferEndRef.current = response.startOffset;
+            // Use actualStartOffset for subtitle sync (keyframe-aligned)
+            actualPlaybackOffsetRef.current =
+              typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
+                ? response.actualStartOffset
+                : response.startOffset;
           }
           return; // Successfully created retry session
         } catch (retryError) {
@@ -4254,8 +4277,14 @@ export default function PlayerScreen() {
 
         const sessionStart =
           typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
+        // Use actualStartOffset for subtitle sync (keyframe-aligned), fallback to sessionStart
+        const actualSessionStart =
+          typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
+            ? response.actualStartOffset
+            : sessionStart;
 
         playbackOffsetRef.current = sessionStart;
+        actualPlaybackOffsetRef.current = actualSessionStart; // For subtitle sync
         sessionBufferEndRef.current = sessionStart;
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
@@ -4277,6 +4306,7 @@ export default function PlayerScreen() {
           previousPlaybackTime: currentPlaybackTime,
           safeTarget,
           sessionStart,
+          actualSessionStart,
           responseStartOffset: response.startOffset,
           newPlaylistUrl: playlistWithKey.substring(0, 100),
           subtitleTrackIndex: selectedSubtitleTrackIndex,
@@ -4938,13 +4968,14 @@ export default function PlayerScreen() {
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
           {/* VTT cues are relative to session start, so we need to offset by -playbackOffset */}
           {/* to convert absolute currentTime to session-relative time for cue matching */}
+          {/* Use actualPlaybackOffsetRef (keyframe-aligned) for accurate subtitle sync after seeks */}
           {/* User offset is also applied (negated: positive = later subtitles = decrease adjustedTime) */}
           {isHlsStream && sidecarSubtitleUrl && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-playbackOffsetRef.current - subtitleOffset}
+              timeOffset={-actualPlaybackOffsetRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
