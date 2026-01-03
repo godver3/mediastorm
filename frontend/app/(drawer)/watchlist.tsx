@@ -101,6 +101,19 @@ export default function WatchlistScreen() {
 
   const filterLabel = filter === 'movie' ? 'Movies' : filter === 'series' ? 'TV Shows' : 'All Titles';
 
+  const emptyMessage = useMemo(() => {
+    if (watchlistTitles.length === 0) {
+      return 'Your watchlist is empty';
+    }
+    if (filter === 'movie') {
+      return 'No movies in your watchlist';
+    }
+    if (filter === 'series') {
+      return 'No TV shows in your watchlist';
+    }
+    return 'Your watchlist is empty';
+  }, [filter, watchlistTitles.length]);
+
   return (
     <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -152,6 +165,7 @@ export default function WatchlistScreen() {
               numColumns={screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4}
               defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
               badgeVisibility={userSettings?.display?.badgeVisibility}
+              emptyMessage={emptyMessage}
             />
           </SpatialNavigationNode>
 

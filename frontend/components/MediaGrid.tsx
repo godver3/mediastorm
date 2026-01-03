@@ -35,6 +35,7 @@ interface MediaGridProps {
   defaultFocusFirstItem?: boolean; // when entering from above, focus first item (TV)
   disableFocusScroll?: boolean; // disable programmatic scroll on focus (TV)
   badgeVisibility?: string[]; // Which badges to show on MediaItem cards
+  emptyMessage?: string; // Custom message when no items
 }
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
@@ -243,6 +244,7 @@ const MediaGrid = React.memo(
     defaultFocusFirstItem = false,
     disableFocusScroll = false,
     badgeVisibility,
+    emptyMessage,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth } = useTVDimensions();
@@ -318,7 +320,7 @@ const MediaGrid = React.memo(
       if (!items || items.length === 0) {
         return (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No {title.toLowerCase()} found</Text>
+            <Text style={styles.emptyText}>{emptyMessage ?? `No ${title.toLowerCase()} found`}</Text>
           </View>
         );
       }
