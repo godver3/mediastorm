@@ -2036,14 +2036,22 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For warm start fMP4 sessions, wait for first segment and parse actual start offset
+	// This is needed because FFmpeg seeks to the nearest keyframe, not the exact requested time
+	actualStartOffset := session.StartOffset
+	if (hasDV || hasHDR) && startSeconds > 0 {
+		actualStartOffset = h.hlsManager.WaitForActualStartOffset(session, 15*time.Second)
+	}
+
 	// Return session ID, playlist URL, and duration (if available)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	response := map[string]interface{}{
-		"sessionId":   session.ID,
-		"playlistUrl": fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID),
-		"startOffset": session.StartOffset,
+		"sessionId":         session.ID,
+		"playlistUrl":       fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID),
+		"startOffset":       session.StartOffset,
+		"actualStartOffset": actualStartOffset,
 	}
 
 	// Include duration if it was successfully probed
