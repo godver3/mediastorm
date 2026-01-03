@@ -125,13 +125,6 @@ const VlcVideoPlayerInner = (
     // Note: VLC cannot override ASS/SSA embedded font sizes - only SRT and plain text formats
     // are affected by sub-text-scale and freetype-rel-fontsize options
 
-    console.log('[VLC] Subtitle init options:', {
-      subtitleSize,
-      baseScale,
-      scaledValue,
-      initOptions: initOptions.filter((o) => o.includes('sub') || o.includes('freetype') || o.includes('track')),
-    });
-
     return {
       uri: resolvedMovie ?? '',
       // Use initType 2 to ensure initOptions are applied (initType 1 ignores initOptions in native code)
@@ -142,30 +135,6 @@ const VlcVideoPlayerInner = (
 
   // Update mutable source ref synchronously so the latest URI is used during render
   videoSourceRef.current = nextVideoSource;
-
-  useEffect(() => {
-    // Only log once per movie change to avoid console spam
-    console.log('🎬 VLCVideoPlayer - getVideoSource called', { resolvedMovie });
-    console.log('🎬 Movie title:', movieTitle);
-
-    try {
-      const u = resolvedMovie ? new URL(String(resolvedMovie)) : null;
-      if (u) {
-        console.log('🎬 Streaming URL', {
-          href: u.href,
-          origin: u.origin,
-          path: u.pathname + u.search,
-        });
-      } else {
-        console.log('🎬 Streaming URL (no src)');
-      }
-    } catch {
-      console.log('🎬 Streaming URL (raw)', resolvedMovie);
-    }
-
-    console.log('🎬 Final video source:', resolvedMovie);
-    console.log('🎬 Header image:', headerImage);
-  }, [resolvedMovie, movieTitle, headerImage]);
 
   useEffect(() => {
     lastDurationRef.current = 0;
@@ -190,7 +159,6 @@ const VlcVideoPlayerInner = (
 
     // Use duration hint if provided (from API metadata, more reliable for HLS streams)
     if (durationHint && Number.isFinite(durationHint) && durationHint > 0) {
-      console.log('⏱️ VLC using duration hint from metadata', { durationHint });
       mediaDurationRef.current = durationHint;
       lastDurationRef.current = durationHint;
       onLoad(durationHint);
@@ -214,59 +182,37 @@ const VlcVideoPlayerInner = (
     ref,
     () => ({
       seek: (seconds: number) => {
-        console.log('[VLCVideoPlayer] seek called', {
-          seconds,
-          hasVideoRef: !!videoRef.current,
-          mediaDuration: mediaDurationRef.current,
-        });
-        if (!videoRef.current) {
-          console.warn('[VLCVideoPlayer] seek called but videoRef is null');
+        if (!videoRef.current || !Number.isFinite(mediaDurationRef.current) || mediaDurationRef.current <= 0) {
           return;
         }
-
-        if (!Number.isFinite(mediaDurationRef.current) || mediaDurationRef.current <= 0) {
-          console.warn('[VLCVideoPlayer] seek called but mediaDuration is invalid', {
-            mediaDuration: mediaDurationRef.current,
-          });
-          return;
-        }
-
         const clampedSeconds = Math.max(0, Math.min(seconds, mediaDurationRef.current));
         const progress = clampedSeconds / mediaDurationRef.current;
-
-        console.log('[VLCVideoPlayer] seeking using VLC native seek', { clampedSeconds, progress });
         videoRef.current.seek(progress);
       },
       play: () => {
-        console.log('[VLCVideoPlayer] play called');
         if (!videoRef.current) {
-          console.warn('[VLCVideoPlayer] play called but videoRef is null');
           return;
         }
         try {
-          // Call VLC's native resume/play method
           if (typeof videoRef.current.resume === 'function') {
             videoRef.current.resume();
           } else if (typeof videoRef.current.play === 'function') {
             videoRef.current.play();
           }
-        } catch (error) {
-          console.warn('[VLCVideoPlayer] failed to call play on VLC player', error);
+        } catch {
+          // Silently ignore play failures
         }
       },
       pause: () => {
-        console.log('[VLCVideoPlayer] pause called');
         if (!videoRef.current) {
-          console.warn('[VLCVideoPlayer] pause called but videoRef is null');
           return;
         }
         try {
-          // Call VLC's native pause method
           if (typeof videoRef.current.pause === 'function') {
             videoRef.current.pause();
           }
-        } catch (error) {
-          console.warn('[VLCVideoPlayer] failed to call pause on VLC player', error);
+        } catch {
+          // Silently ignore pause failures
         }
       },
     }),
@@ -341,10 +287,8 @@ const VlcVideoPlayerInner = (
       };
 
       if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-        console.log('⏱️ VLC onLoad received non-finite duration, raw payload:', info.duration);
         // Even if VLC reports invalid duration, we can still use durationHint if available
         if (durationHint && Number.isFinite(durationHint) && durationHint > 0) {
-          console.log('⏱️ VLC using durationHint despite invalid VLC duration', { durationHint });
           mediaDurationRef.current = durationHint;
           if (durationHint !== lastDurationRef.current) {
             lastDurationRef.current = durationHint;
@@ -361,11 +305,6 @@ const VlcVideoPlayerInner = (
         const ratio = Math.max(durationSeconds / durationHint, durationHint / durationSeconds);
         // If VLC's duration is more than 10% different from the hint, prefer the hint
         if (ratio > 1.1) {
-          console.log('⏱️ VLC duration differs from hint, preferring hint', {
-            vlcDuration: durationSeconds,
-            durationHint,
-            ratio: ratio.toFixed(2),
-          });
           effectiveDuration = durationHint;
         }
       }
@@ -373,19 +312,10 @@ const VlcVideoPlayerInner = (
       mediaDurationRef.current = effectiveDuration;
 
       if (effectiveDuration !== lastDurationRef.current) {
-        if (durationSeconds !== rawDuration && !normalizationLogRef.current.load) {
-          console.log('⏱️ Normalized VLC onLoad duration from ms to seconds', {
-            raw: rawDuration,
-            normalizedSeconds: durationSeconds,
-          });
+        if (durationSeconds !== rawDuration) {
           normalizationLogRef.current.load = true;
         }
         lastDurationRef.current = effectiveDuration;
-        console.log('⏱️ VLC onLoad duration parsed', {
-          raw: info.duration,
-          parsedSeconds: effectiveDuration,
-          durationHint,
-        });
         onLoad(effectiveDuration);
       }
 
@@ -442,27 +372,10 @@ const VlcVideoPlayerInner = (
           rawCurrentTime,
         };
 
-        if (
-          durationSeconds !== rawDuration &&
-          rawDuration !== previousProgressLog.rawDuration &&
-          !normalizationLogRef.current.progressDuration
-        ) {
-          console.log('⏱️ Normalized VLC onProgress duration from ms to seconds', {
-            rawDuration,
-            normalizedSeconds: durationSeconds,
-          });
+        if (durationSeconds !== rawDuration && !normalizationLogRef.current.progressDuration) {
           normalizationLogRef.current.progressDuration = true;
         }
-
-        if (
-          currentTimeSeconds !== rawCurrentTime &&
-          rawCurrentTime !== previousProgressLog.rawCurrentTime &&
-          !normalizationLogRef.current.progressCurrentTime
-        ) {
-          console.log('⏱️ Normalized VLC onProgress currentTime from ms to seconds', {
-            rawCurrentTime,
-            normalizedSeconds: currentTimeSeconds,
-          });
+        if (currentTimeSeconds !== rawCurrentTime && !normalizationLogRef.current.progressCurrentTime) {
           normalizationLogRef.current.progressCurrentTime = true;
         }
       }
@@ -490,26 +403,11 @@ const VlcVideoPlayerInner = (
 
       onBuffer(false);
 
-      // Debug: Log first 5 progress events to diagnose start position issues
+      // Track first progress event for diagnostics
       const eventCount = progressEventCountRef.current;
       progressEventCountRef.current = eventCount + 1;
-      if (eventCount < 5) {
-        if (eventCount === 0) {
-          firstProgressTimeRef.current = currentTimeSeconds;
-          if (currentTimeSeconds > 1) {
-            console.warn('[VLCVideoPlayer] ⚠️ FIRST PROGRESS EVENT IS NON-ZERO!', {
-              currentTime: currentTimeSeconds,
-              rawCurrentTime,
-              duration: durationSeconds,
-            });
-          }
-        }
-        console.log('[VLCVideoPlayer] progress event #' + eventCount, {
-          currentTime: currentTimeSeconds,
-          rawCurrentTime,
-          duration: durationSeconds,
-          firstProgressTime: firstProgressTimeRef.current,
-        });
+      if (eventCount === 0) {
+        firstProgressTimeRef.current = currentTimeSeconds;
       }
 
       onProgress(currentTimeSeconds);

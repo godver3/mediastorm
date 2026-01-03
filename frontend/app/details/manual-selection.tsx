@@ -254,20 +254,17 @@ export const ManualSelection = ({
     <Modal transparent visible={visible} onRequestClose={onClose} animationType="fade">
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.overlay}>
-          {/* Keep backdrop Pressable on TV as native focus anchor for spatial navigation */}
-          <Pressable style={styles.overlayPressable} onPress={onClose} />
+          {/* Backdrop for closing on mobile (TV uses back button via onRequestClose) */}
+          <Pressable
+            style={styles.overlayPressable}
+            onPress={Platform.isTV ? undefined : onClose}
+            focusable={false}
+          />
           <View style={manualOverlayStyle} pointerEvents="box-none">
             <View style={styles.manualContainer}>
               <View style={styles.manualHeader}>
                 <Text style={styles.manualTitle}>Select a source</Text>
-                {Platform.isTV ? (
-                  <FocusablePressable
-                    text="Close"
-                    onSelect={onClose}
-                    style={styles.manualCloseButton}
-                    textStyle={styles.manualCloseButtonText}
-                  />
-                ) : showMobileIOSCloseButton ? (
+                {showMobileIOSCloseButton ? (
                   <Pressable
                     onPress={onClose}
                     hitSlop={8}

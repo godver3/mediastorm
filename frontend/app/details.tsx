@@ -666,11 +666,13 @@ export default function DetailsScreen() {
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
 
-  // Clear black overlay and loading screen when returning to details page
+  // Clear black overlay, loading screen, and refresh progress when returning to details page
   useFocusEffect(
     useCallback(() => {
       setShowBlackOverlay(false);
       hideLoadingScreen();
+      // Trigger progress refresh when returning from playback
+      setProgressRefreshKey((k) => k + 1);
     }, [hideLoadingScreen]),
   );
   const [manualVisible, setManualVisible] = useState(false);
@@ -702,6 +704,7 @@ export default function DetailsScreen() {
     percentWatched: number;
   } | null>(null);
   const [displayProgress, setDisplayProgress] = useState<number | null>(null);
+  const [progressRefreshKey, setProgressRefreshKey] = useState(0);
 
   const _overlayOpen =
     manualVisible ||
@@ -1100,7 +1103,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, seriesIdentifier, titleId, watchStatusItems]);
+  }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, seriesIdentifier, titleId, watchStatusItems, progressRefreshKey]);
 
   useEffect(() => {
     if (!selectionError) {

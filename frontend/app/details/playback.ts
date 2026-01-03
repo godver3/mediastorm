@@ -683,6 +683,8 @@ export const initiatePlayback = async (
       }
     },
     signal: options.signal,
+    // Pass startOffset for subtitle extraction to start from resume position
+    startOffset: options.startOffset,
   });
 
   // Check if using external player - they handle HDR natively and don't need HLS

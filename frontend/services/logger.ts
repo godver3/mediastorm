@@ -25,6 +25,20 @@ class Logger {
   } | null = null;
 
   /**
+   * Get a formatted timestamp for console output (matches backend format).
+   */
+  private getTimestamp(): string {
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = (now.getMonth() + 1).toString().padStart(2, '0');
+    const d = now.getDate().toString().padStart(2, '0');
+    const h = now.getHours().toString().padStart(2, '0');
+    const m = now.getMinutes().toString().padStart(2, '0');
+    const s = now.getSeconds().toString().padStart(2, '0');
+    return `${y}/${mo}/${d} ${h}:${m}:${s}`;
+  }
+
+  /**
    * Initialize the logger by intercepting console methods.
    * Should be called once at app startup.
    */
@@ -45,27 +59,27 @@ class Logger {
     // Intercept each console method
     console.log = (...args: unknown[]) => {
       this.capture('log', args);
-      this.originalConsole?.log(...args);
+      this.originalConsole?.log(this.getTimestamp(), ...args);
     };
 
     console.warn = (...args: unknown[]) => {
       this.capture('warn', args);
-      this.originalConsole?.warn(...args);
+      this.originalConsole?.warn(this.getTimestamp(), ...args);
     };
 
     console.error = (...args: unknown[]) => {
       this.capture('error', args);
-      this.originalConsole?.error(...args);
+      this.originalConsole?.error(this.getTimestamp(), ...args);
     };
 
     console.debug = (...args: unknown[]) => {
       this.capture('debug', args);
-      this.originalConsole?.debug(...args);
+      this.originalConsole?.debug(this.getTimestamp(), ...args);
     };
 
     console.info = (...args: unknown[]) => {
       this.capture('info', args);
-      this.originalConsole?.info(...args);
+      this.originalConsole?.info(this.getTimestamp(), ...args);
     };
 
     this.initialized = true;

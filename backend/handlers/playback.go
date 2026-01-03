@@ -44,7 +44,8 @@ func (h *PlaybackHandler) SetVideoProber(prober VideoFullProber) {
 // Resolve accepts an NZB indexer result and responds with a validated playback source.
 func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Result models.NZBResult `json:"result"`
+		Result      models.NZBResult `json:"result"`
+		StartOffset float64          `json:"startOffset,omitempty"` // Seek position in seconds for subtitle extraction
 	}
 
 	dec := json.NewDecoder(r.Body)
@@ -54,9 +55,9 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[playback-handler] Received resolve request: Title=%q, GUID=%q, ServiceType=%q, titleId=%q, titleName=%q",
+	log.Printf("[playback-handler] Received resolve request: Title=%q, GUID=%q, ServiceType=%q, titleId=%q, titleName=%q, startOffset=%.2f",
 		request.Result.Title, request.Result.GUID, request.Result.ServiceType,
-		request.Result.Attributes["titleId"], request.Result.Attributes["titleName"])
+		request.Result.Attributes["titleId"], request.Result.Attributes["titleName"], request.StartOffset)
 
 	resolution, err := h.Service.Resolve(r.Context(), request.Result)
 	if err != nil {
@@ -71,26 +72,32 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		if probeErr != nil {
 			log.Printf("[playback-handler] Probe failed (non-fatal): %v", probeErr)
 		} else if probeResult != nil && len(probeResult.SubtitleStreams) > 0 {
-			// Check if this is HDR/DV content (which uses HLS instead of direct streaming)
-			needsHLS := probeResult.HasDolbyVision || probeResult.HasHDR10 || probeResult.HasTrueHD
+			// Check if this is DV/HDR10 content (which requires HLS for video transcoding)
+			// Note: TrueHD audio alone doesn't require HLS - VLC can play TrueHD natively
+			// So we still pre-extract subtitles for TrueHD content
+			needsHLS := probeResult.HasDolbyVision || probeResult.HasHDR10
 			if !needsHLS {
 				log.Printf("[playback-handler] Starting subtitle pre-extraction for %d tracks", len(probeResult.SubtitleStreams))
 
 				// Convert to SubtitleTrackInfo format
-				// NOTE: Index must be relative (0, 1, 2) not absolute ffprobe index (3, 4, 5)
-				// The extraction code maps relative -> absolute using its own probe
+				// Index = relative (0, 1, 2) for frontend selection
+				// AbsoluteIndex = ffprobe stream index for ffmpeg -map
 				tracks := make([]SubtitleTrackInfo, len(probeResult.SubtitleStreams))
 				for i, s := range probeResult.SubtitleStreams {
 					tracks[i] = SubtitleTrackInfo{
-						Index:    i, // Use relative index, not s.Index (absolute ffprobe index)
-						Language: s.Language,
-						Title:    s.Title,
-						Codec:    s.Codec,
-						Forced:   s.IsForced,
+						Index:         i,       // Relative index for frontend track selection
+						AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
+						Language:      s.Language,
+						Title:         s.Title,
+						Codec:         s.Codec,
+						Forced:        s.IsForced,
 					}
 				}
 
-				sessions := h.SubtitleExtractor.StartPreExtraction(r.Context(), resolution.WebDAVPath, tracks)
+				// Use background context so extraction continues after HTTP response is sent
+				// The request context would cancel extraction when the response completes
+				// Pass startOffset so subtitles are extracted from the resume position
+				sessions := h.SubtitleExtractor.StartPreExtraction(context.Background(), resolution.WebDAVPath, tracks, request.StartOffset)
 
 				// Convert sessions to SubtitleSessionInfo and store in resolution
 				// Keys are relative indices (0, 1, 2) matching what frontend expects
@@ -115,7 +122,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 				resolution.SubtitleSessions = sessionInfos
 				log.Printf("[playback-handler] Pre-extraction started for %d subtitle sessions", len(sessionInfos))
 			} else {
-				log.Printf("[playback-handler] HDR/DV content detected, skipping subtitle pre-extraction (will use HLS)")
+				log.Printf("[playback-handler] DV/HDR10 content detected, skipping subtitle pre-extraction (will use HLS sidecar)")
 			}
 		}
 	}

@@ -297,6 +297,8 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const fetchVTT = useCallback(async () => {
     if (!vttUrl || !enabled) return;
 
+    console.log('[SubtitleOverlay] fetching VTT:', vttUrl);
+
     try {
       const response = await fetch(vttUrl, {
         cache: 'no-store', // Don't cache since file is growing

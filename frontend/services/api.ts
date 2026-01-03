@@ -1081,12 +1081,12 @@ class ApiService {
 
   async resolvePlayback(
     result: NZBResult,
-    options?: { onStatus?: (update: PlaybackResolutionResponse) => void; signal?: AbortSignal },
+    options?: { onStatus?: (update: PlaybackResolutionResponse) => void; signal?: AbortSignal; startOffset?: number },
   ): Promise<PlaybackResolution> {
     try {
       const initial = await this.request<PlaybackResolutionResponse>('/playback/resolve', {
         method: 'POST',
-        body: JSON.stringify({ result }),
+        body: JSON.stringify({ result, startOffset: options?.startOffset }),
         signal: options?.signal,
       });
 
@@ -1327,6 +1327,11 @@ class ApiService {
 
     if (typeof resolution.sourceNzbPath === 'string' && resolution.sourceNzbPath.trim()) {
       ready.sourceNzbPath = resolution.sourceNzbPath.trim();
+    }
+
+    // Copy pre-extracted subtitle sessions for manual selection path
+    if (resolution.subtitleSessions && Object.keys(resolution.subtitleSessions).length > 0) {
+      ready.subtitleSessions = resolution.subtitleSessions;
     }
 
     return ready;

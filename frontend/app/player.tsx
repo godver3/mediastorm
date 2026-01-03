@@ -343,14 +343,7 @@ const findSubtitleTrackByPreference = (
   preferredLanguage: string | undefined,
   mode: 'off' | 'on' | 'forced-only' | undefined,
 ): number | null => {
-  console.log('[player][subtitle-debug] findSubtitleTrackByPreference called:', {
-    mode,
-    preferredLanguage,
-    streamCount: streams?.length ?? 0,
-  });
-
   if (!streams?.length || mode === 'off') {
-    console.log('[player][subtitle-debug] Early return: no streams or mode is off');
     return null;
   }
 
@@ -373,21 +366,9 @@ const findSubtitleTrackByPreference = (
   // For forced-only mode: only consider forced tracks
   if (mode === 'forced-only') {
     const forcedStreams = streams.filter((s) => isStreamForced(s) && matchesLanguage(s));
-    console.log(
-      '[player][subtitle-debug] forced-only mode: found',
-      forcedStreams.length,
-      'forced streams matching language',
-    );
     if (forcedStreams.length > 0) {
-      console.log('[player][subtitle-debug] Selected forced track:', {
-        index: forcedStreams[0].index,
-        language: forcedStreams[0].language,
-        title: forcedStreams[0].title,
-      });
       return forcedStreams[0].index;
     }
-    // No forced subtitles available for this language
-    console.log('[player][subtitle-debug] No forced subtitles available, returning null');
     return null;
   }
 
@@ -395,65 +376,34 @@ const findSubtitleTrackByPreference = (
   if (mode === 'on') {
     // Get all non-forced streams matching the language
     const nonForcedMatches = streams.filter((s) => !isStreamForced(s) && matchesLanguage(s));
-    console.log(
-      '[player][subtitle-debug] on mode: found',
-      nonForcedMatches.length,
-      'non-forced streams matching language',
-    );
 
     if (nonForcedMatches.length > 0) {
       // Priority 1: SDH subtitles
       const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s));
       if (sdhMatch) {
-        console.log('[player][subtitle-debug] Selected SDH track:', {
-          index: sdhMatch.index,
-          language: sdhMatch.language,
-          title: sdhMatch.title,
-        });
         return sdhMatch.index;
       }
 
       // Priority 2: No title (plain/full subtitles)
       const plainMatch = nonForcedMatches.find((s) => !s.title || s.title.trim() === '');
       if (plainMatch) {
-        console.log('[player][subtitle-debug] Selected plain track (no title):', {
-          index: plainMatch.index,
-          language: plainMatch.language,
-          title: plainMatch.title,
-        });
         return plainMatch.index;
       }
 
       // Priority 3: Any non-forced match
-      console.log('[player][subtitle-debug] Selected first non-forced track:', {
-        index: nonForcedMatches[0].index,
-        language: nonForcedMatches[0].language,
-        title: nonForcedMatches[0].title,
-      });
       return nonForcedMatches[0].index;
     }
 
     // Fallback: if no non-forced matches, try any stream matching language (including forced)
     const anyMatch = streams.filter((s) => matchesLanguage(s));
     if (anyMatch.length > 0) {
-      console.log('[player][subtitle-debug] Fallback to any matching track:', {
-        index: anyMatch[0].index,
-        language: anyMatch[0].language,
-        title: anyMatch[0].title,
-      });
       return anyMatch[0].index;
     }
 
     // Last resort: first available stream
-    console.log('[player][subtitle-debug] Last resort, first available:', {
-      index: streams[0].index,
-      language: streams[0].language,
-      title: streams[0].title,
-    });
     return streams[0].index;
   }
 
-  console.log('[player][subtitle-debug] No match found, returning null');
   return null;
 };
 
@@ -1983,10 +1933,6 @@ export default function PlayerScreen() {
     }
 
     const handleKeyDown = (key: SupportedKeys) => {
-      console.log('[player] key pressed:', key, { controlsVisible: controlsVisibleRef.current });
-
-      console.log('[player] handling key:', key);
-
       switch (key) {
         case SupportedKeys.Left:
           if (!controlsVisibleRef.current) {
@@ -2436,66 +2382,24 @@ export default function PlayerScreen() {
         setCurrentTime(absoluteTime);
       }
 
-      // Debug: Log first 5 progress events to diagnose start position issues
+      // Track first progress event for diagnostics
       const eventCount = progressEventCountRef.current;
       progressEventCountRef.current = eventCount + 1;
-      if (eventCount < 5) {
-        if (eventCount === 0) {
-          firstProgressValueRef.current = { time, absoluteTime };
-          if (time > 1) {
-            console.warn('[player] ⚠️ FIRST PROGRESS UPDATE HAS NON-ZERO TIME!', {
-              playerTime: time,
-              playbackOffset: playbackOffsetRef.current,
-              absoluteTime,
-              initialStartOffset,
-              isHlsStream,
-              isExistingHlsSession,
-              pendingSeek: pendingSessionSeekRef.current,
-            });
-          }
-        }
-        console.log('[player] progress update #' + eventCount, {
-          playerTime: time.toFixed(3),
-          playbackOffset: playbackOffsetRef.current.toFixed(3),
-          absoluteTime: absoluteTime.toFixed(3),
-          firstProgressTime: firstProgressValueRef.current?.time.toFixed(3) ?? 'N/A',
-          hasStartedPlaying,
-          pendingSeek: pendingSessionSeekRef.current,
-        });
+      if (eventCount === 0) {
+        firstProgressValueRef.current = { time, absoluteTime };
       }
 
-      // Debug logging for subtitle timing - log every 5 seconds or on significant time jumps
-      const now = Date.now();
+      // Track time jumps (seeks) for subtitle timing state
       const timeDiff = Math.abs(absoluteTime - lastSubtitleDebugLogRef.current.time);
       const isJump = timeDiff > 10;
-      const shouldLog = now - lastSubtitleDebugLogRef.current.logged > 5000 || isJump;
-      if (shouldLog && isHlsStream) {
-        console.log('[player] progress update (subtitle debug)', {
-          playerTime: time.toFixed(2),
-          playbackOffset: playbackOffsetRef.current.toFixed(2),
-          absoluteTime: absoluteTime.toFixed(2),
-          timeDiff: isJump ? `JUMP ${timeDiff.toFixed(2)}s` : 'normal',
-          subtitleTimeOffset: (-playbackOffsetRef.current).toFixed(2),
-          expectedAdjustedTime: time.toFixed(2),
-        });
-        lastSubtitleDebugLogRef.current = { time: absoluteTime, logged: now };
-      }
-      // Extra logging for first 3 progress updates after a time jump (seek)
       if (isJump) {
-        console.log('[player] SEEK DETECTED - next 3 progress updates will be logged for subtitle debugging');
-        lastSubtitleDebugLogRef.current = { ...lastSubtitleDebugLogRef.current, postSeekLogCount: 3 };
-      }
-      const postSeekLogCount = lastSubtitleDebugLogRef.current.postSeekLogCount || 0;
-      if (postSeekLogCount > 0 && isHlsStream) {
-        console.log('[player] post-seek progress', {
-          playerTime: time.toFixed(2),
-          playbackOffset: playbackOffsetRef.current.toFixed(2),
-          absoluteTime: absoluteTime.toFixed(2),
-          subtitleTimeOffset: (-playbackOffsetRef.current).toFixed(2),
-          expectedAdjustedTime: time.toFixed(2),
-          remainingPostSeekLogs: postSeekLogCount - 1,
-        });
-        lastSubtitleDebugLogRef.current.postSeekLogCount = postSeekLogCount - 1;
+        lastSubtitleDebugLogRef.current = { time: absoluteTime, logged: Date.now(), postSeekLogCount: 3 };
+      } else {
+        const postSeekLogCount = lastSubtitleDebugLogRef.current.postSeekLogCount || 0;
+        if (postSeekLogCount > 0) {
+          lastSubtitleDebugLogRef.current.postSeekLogCount = postSeekLogCount - 1;
+        }
+        lastSubtitleDebugLogRef.current.time = absoluteTime;
       }
 
       // Don't apply pending seek here for initial load with DV/HLS - let the track effect handle it
@@ -2987,10 +2891,8 @@ export default function PlayerScreen() {
       // to hide controls/modal instead of exiting. enableTVMenuKey() adds the gesture recognizer
       // so the app receives menu events. disableTVMenuKey() removes it so system handles (exits).
       if (controlsVisible || isModalOpen) {
-        console.log('[player] TVMenuControl: enabling menu key (controls visible or modal open)');
         TVMenuControl.enableTVMenuKey();
       } else {
-        console.log('[player] TVMenuControl: disabling menu key (controls hidden)');
         if (typeof TVMenuControl.disableTVMenuKey === 'function') {
           TVMenuControl.disableTVMenuKey();
         }
@@ -3118,25 +3020,15 @@ export default function PlayerScreen() {
   }, [usesSystemManagedControls, showControls]);
 
   const handleVideoInteract = useCallback(() => {
-    console.log('[player] handleVideoInteract called', {
-      controlsVisible,
-      isTouchOverlayToggleSupported,
-      usesSystemManagedControls,
-      isTvPlatform,
-    });
-
     if (usesSystemManagedControls) {
-      console.log('[player] handleVideoInteract: skipping (system managed controls)');
       return;
     }
 
     if (isTouchOverlayToggleSupported && controlsVisible) {
-      console.log('[player] handleVideoInteract: hiding controls');
       hideControls();
       return;
     }
 
-    console.log('[player] handleVideoInteract: showing controls');
     showControls();
   }, [
     controlsVisible,
@@ -3860,21 +3752,6 @@ export default function PlayerScreen() {
       const preferredMode =
         userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
 
-      console.log('[player][subtitle-debug] Pre-extracted tracks settings check:', {
-        userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
-        globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
-        resolvedMode: preferredMode,
-        userSubtitleLang: userSettings?.playback?.preferredSubtitleLanguage,
-        globalSubtitleLang: settings?.playback?.preferredSubtitleLanguage,
-        resolvedLang: preferredLang,
-        availableTracks: preExtractedSubtitles.map((s) => ({
-          trackIndex: s.trackIndex,
-          language: s.language,
-          title: s.title,
-          isForced: s.isForced,
-        })),
-      });
-
       // Convert to SubtitleStreamMetadata-like format for selection logic
       const streamsForSelection: SubtitleStreamMetadata[] = preExtractedSubtitles.map((s) => ({
         index: s.trackIndex,
@@ -3894,14 +3771,8 @@ export default function PlayerScreen() {
       );
 
       if (selectedIndex !== null) {
-        console.log('[player][subtitle-debug] Pre-extracted tracks: selected index', selectedIndex);
         setSelectedSubtitleTrackId(String(selectedIndex));
-      } else if (validMode === 'off') {
-        console.log('[player][subtitle-debug] Pre-extracted tracks: mode is off');
-        setSelectedSubtitleTrackId('off');
       } else {
-        // No match found, default to off
-        console.log('[player][subtitle-debug] Pre-extracted tracks: no match, defaulting to off');
         setSelectedSubtitleTrackId('off');
       }
       return;
@@ -3955,21 +3826,6 @@ export default function PlayerScreen() {
           const preferredMode =
             userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
 
-          console.log('[player][subtitle-debug] Backend tracks settings check:', {
-            userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
-            globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
-            resolvedMode: preferredMode,
-            userSubtitleLang: userSettings?.playback?.preferredSubtitleLanguage,
-            globalSubtitleLang: settings?.playback?.preferredSubtitleLanguage,
-            resolvedLang: preferredLang,
-            availableTracks: response.tracks.map((t) => ({
-              index: t.index,
-              language: t.language,
-              title: t.title,
-              forced: t.forced,
-            })),
-          });
-
           // Convert backend tracks to SubtitleStreamMetadata-like format for reuse of selection logic
           const streamsForSelection: SubtitleStreamMetadata[] = response.tracks.map((t) => ({
             index: t.index,
@@ -3990,10 +3846,8 @@ export default function PlayerScreen() {
           );
 
           if (selectedIndex !== null) {
-            console.log('[player][subtitle-debug] Backend tracks: selected index', selectedIndex);
             setSelectedSubtitleTrackId(String(selectedIndex));
           } else if (validMode === 'off') {
-            console.log('[player][subtitle-debug] Backend tracks: mode is off');
             setSelectedSubtitleTrackId('off');
           } else {
             // No preferred language set - check if current selection is valid
@@ -4004,7 +3858,6 @@ export default function PlayerScreen() {
               }
               // Current selection is invalid (from VLC), default to first track or off
               const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
-              console.log('[player] current selection invalid, resetting to:', firstTrackId);
               return firstTrackId;
             });
           }
@@ -4609,38 +4462,14 @@ export default function PlayerScreen() {
               ? preferredSubtitleModeRaw
               : undefined;
 
-          console.log('[player][subtitle-debug] Metadata path settings:', {
-            userSubtitleMode: userSettings?.playback?.preferredSubtitleMode,
-            globalSubtitleMode: settings?.playback?.preferredSubtitleMode,
-            preferredSubtitleModeRaw,
-            preferredSubtitleMode,
-            preferredSubtitleLanguage,
-            availableStreams: (metadata.subtitleStreams ?? []).map((s) => ({
-              index: s.index,
-              language: s.language,
-              title: s.title,
-              isForced: s.isForced,
-              disposition: s.disposition,
-            })),
-          });
-
           if (preferredSubtitleMode !== undefined) {
             const preferredSubtitleIndex = findSubtitleTrackByPreference(
               metadata.subtitleStreams ?? [],
               preferredSubtitleLanguage,
               preferredSubtitleMode,
             );
-            console.log('[player][subtitle-debug] findSubtitleTrackByPreference result:', {
-              preferredSubtitleIndex,
-              willUsePreference: preferredSubtitleIndex !== null || preferredSubtitleMode === 'off',
-            });
             if (preferredSubtitleIndex !== null || preferredSubtitleMode === 'off') {
               selectedSubtitleIndex = preferredSubtitleIndex ?? undefined;
-              console.log('[player] using preferred subtitle settings', {
-                preferredLanguage: preferredSubtitleLanguage,
-                preferredMode: preferredSubtitleMode,
-                selectedSubtitleIndex,
-              });
             }
           }
 
@@ -4868,22 +4697,8 @@ export default function PlayerScreen() {
         style={styles.safeArea}
         edges={Platform.OS === 'android' && !Platform.isTV ? [] : isPortrait ? ['top'] : []}
       >
-        <View
-          style={styles.container}
-          nativeID="player-fullscreen-root"
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            console.debug('[player] container layout', { width, height });
-          }}
-        >
-          <View
-            ref={videoWrapperRef}
-            style={styles.videoWrapper}
-            onLayout={(event) => {
-              const { width, height } = event.nativeEvent.layout;
-              console.debug('[player] video wrapper layout', { width, height });
-            }}
-          >
+        <View style={styles.container} nativeID="player-fullscreen-root">
+          <View ref={videoWrapperRef} style={styles.videoWrapper}>
             <VideoPlayer
               key={effectiveMovie ?? 'novastream-player'}
               ref={videoRef}
