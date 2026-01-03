@@ -26,14 +26,11 @@ interface LayoutPosition {
   height: number;
   left: number;
   top: number;
+  zIndex?: number;
 }
 
-// Calculate layout positions for 2-5 screens
-const getLayoutPositions = (
-  count: number,
-  screenWidth: number,
-  screenHeight: number,
-): LayoutPosition[] => {
+// Calculate layout positions for 2-5 screens (normal grid layout)
+const getNormalLayoutPositions = (count: number, screenWidth: number, screenHeight: number): LayoutPosition[] => {
   const positions: LayoutPosition[] = [];
 
   switch (count) {
@@ -112,6 +109,68 @@ const getLayoutPositions = (
   return positions;
 };
 
+// Calculate layout positions with one screen expanded to 80%
+const getExpandedLayoutPositions = (
+  count: number,
+  expandedIndex: number,
+  screenWidth: number,
+  screenHeight: number,
+): LayoutPosition[] => {
+  const positions: LayoutPosition[] = [];
+
+  // Expanded screen takes 80% of width and height, centered
+  const expandedWidth = screenWidth * 0.8;
+  const expandedHeight = screenHeight * 0.8;
+  const expandedLeft = (screenWidth - expandedWidth) / 2;
+  const expandedTop = (screenHeight - expandedHeight) / 2;
+
+  // Thumbnail dimensions for non-expanded screens
+  const thumbWidth = screenWidth * 0.15;
+  const thumbHeight = screenHeight * 0.15;
+  const thumbPadding = 8;
+
+  // Calculate positions for all screens
+  let thumbIndex = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === expandedIndex) {
+      // Expanded screen - centered and large
+      positions.push({
+        width: expandedWidth,
+        height: expandedHeight,
+        left: expandedLeft,
+        top: expandedTop,
+        zIndex: 10,
+      });
+    } else {
+      // Thumbnail - arranged at the bottom
+      const thumbLeft = thumbPadding + thumbIndex * (thumbWidth + thumbPadding);
+      positions.push({
+        width: thumbWidth,
+        height: thumbHeight,
+        left: thumbLeft,
+        top: screenHeight - thumbHeight - thumbPadding,
+        zIndex: 20, // Above the expanded screen so they're clickable
+      });
+      thumbIndex++;
+    }
+  }
+
+  return positions;
+};
+
+// Get layout positions based on whether a screen is expanded
+const getLayoutPositions = (
+  count: number,
+  screenWidth: number,
+  screenHeight: number,
+  expandedIndex: number | null = null,
+): LayoutPosition[] => {
+  if (expandedIndex !== null && expandedIndex >= 0 && expandedIndex < count) {
+    return getExpandedLayoutPositions(count, expandedIndex, screenWidth, screenHeight);
+  }
+  return getNormalLayoutPositions(count, screenWidth, screenHeight);
+};
+
 export default function MultiscreenPage() {
   const theme = useTheme();
   const router = useRouter();
@@ -132,6 +191,8 @@ export default function MultiscreenPage() {
   }, [channelsParam]);
 
   const [activeIndex, setActiveIndex] = useState(0);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
   const overlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRefs = useRef<(VideoPlayerHandle | null)[]>([]);
@@ -146,11 +207,12 @@ export default function MultiscreenPage() {
 
   // Calculate layout positions
   const layoutPositions = useMemo(
-    () => getLayoutPositions(channels.length, screenWidth, screenHeight),
-    [channels.length, screenWidth, screenHeight],
+    () => getLayoutPositions(channels.length, screenWidth, screenHeight, expandedIndex),
+    [channels.length, screenWidth, screenHeight, expandedIndex],
   );
 
-  // Group channels into rows based on their top position for proper grid navigation
+  // Group channels into rows based on CURRENT layout positions for navigation
+  // But we use a stable key based on channel index to prevent remounting
   const channelRows = useMemo(() => {
     const rowMap = new Map<number, { channel: MultiscreenChannel; index: number; position: LayoutPosition }[]>();
 
@@ -190,7 +252,23 @@ export default function MultiscreenPage() {
     };
   }, [resetOverlayTimeout]);
 
-  // Handle active index change (update audio)
+  // Handle focus change - always update focus visuals
+  const handleFocusChange = useCallback(
+    (index: number) => {
+      setFocusedIndex(index);
+      resetOverlayTimeout();
+      // When expanded, only change audio if focusing the expanded screen
+      if (expandedIndex !== null && index !== expandedIndex) {
+        // Just show overlay, don't change audio
+        return;
+      }
+      setActiveIndex(index);
+      setActiveAudioIndex(index);
+    },
+    [setActiveAudioIndex, resetOverlayTimeout, expandedIndex],
+  );
+
+  // Handle active index change (update audio) - used by select handlers
   const handleActiveChange = useCallback(
     (index: number) => {
       setActiveIndex(index);
@@ -213,12 +291,39 @@ export default function MultiscreenPage() {
     };
   }, [router]);
 
-  // Handle screen tap (mobile)
+  // Handle screen tap (mobile) - toggle expand on tap
   const handleScreenTap = useCallback(
     (index: number) => {
-      handleActiveChange(index);
+      // Toggle expand state
+      if (expandedIndex === index) {
+        // Collapsing - keep audio on current
+        setExpandedIndex(null);
+      } else {
+        // Expanding or switching - switch audio to this screen
+        handleActiveChange(index);
+        setExpandedIndex(index);
+      }
     },
-    [handleActiveChange],
+    [handleActiveChange, expandedIndex],
+  );
+
+  // Handle screen select (TV) - toggle expand on select press
+  const handleScreenSelect = useCallback(
+    (index: number) => {
+      resetOverlayTimeout();
+      // Toggle expand state
+      setExpandedIndex((prev) => {
+        if (prev === index) {
+          // Collapsing - keep audio on current
+          return null;
+        } else {
+          // Expanding - switch audio to this screen
+          handleActiveChange(index);
+          return index;
+        }
+      });
+    },
+    [resetOverlayTimeout, handleActiveChange],
   );
 
   // Handle exit button tap
@@ -257,92 +362,126 @@ export default function MultiscreenPage() {
     <SpatialNavigationRoot isActive={Platform.isTV}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
-        {/* TV: Use nested navigation nodes for proper grid navigation */}
+        {/* TV: Separate video layer from navigation layer to prevent remounting */}
         {Platform.isTV ? (
-          <SpatialNavigationNode orientation="vertical" alignInGrid style={StyleSheet.absoluteFill}>
-            {channelRows.map((row, rowIndex) => (
-              <SpatialNavigationNode key={`row-${rowIndex}`} orientation="horizontal">
-                {row.map(({ channel, index, position }) => {
-                  const isActive = index === activeIndex;
-                  return (
-                    <View
-                      key={channel.id}
-                      style={[
-                        styles.playerContainer,
-                        {
-                          width: position.width,
-                          height: position.height,
-                          left: position.left,
-                          top: position.top,
-                        },
-                        isActive && styles.playerContainerActive,
-                      ]}>
-                      <SpatialNavigationFocusableView
-                        focusKey={`multiscreen-${index}`}
-                        onFocus={() => handleActiveChange(index)}
-                        style={{ flex: 1 }}>
-                        {({ isFocused }: { isFocused: boolean }) => (
-                          <View style={[styles.playerWrapper, isFocused && styles.playerWrapperFocused]}>
-                            <View style={styles.videoContainer}>
-                              <VideoPlayer
-                                ref={(ref) => {
-                                  videoRefs.current[index] = ref;
-                                }}
-                                movie={channel.streamUrl}
-                                headerImage={channel.logo ?? ''}
-                                movieTitle={channel.name}
-                                paused={false}
-                                controls={false}
-                                volume={isActive ? 1 : 0}
-                                onBuffer={handleBuffer}
-                                onProgress={handleProgress}
-                                onLoad={handleLoad}
-                                onEnd={handleEnd}
-                                onError={handleError}
-                                mediaType="channel"
-                                resizeMode="contain"
-                              />
-                            </View>
-                            {/* Channel name overlay */}
-                            {showOverlay && (
-                              <View style={styles.overlayContainer}>
-                                <LinearGradient
-                                  colors={['transparent', 'rgba(0,0,0,0.8)']}
-                                  style={styles.overlayGradient}
-                                />
-                                <View style={styles.overlayContent}>
-                                  {channel.logo && (
-                                    <Image
-                                      source={{ uri: channel.logo }}
-                                      style={styles.overlayLogo}
-                                      contentFit="contain"
-                                    />
-                                  )}
-                                  <Text style={styles.overlayTitle} numberOfLines={1}>
-                                    {channel.name}
-                                  </Text>
-                                  {isActive && (
-                                    <View style={styles.audioIndicator}>
-                                      <Text style={styles.audioIndicatorText}>AUDIO</Text>
-                                    </View>
-                                  )}
-                                </View>
-                              </View>
-                            )}
-                          </View>
-                        )}
-                      </SpatialNavigationFocusableView>
+          <>
+            {/* Video layer - stable, never remounts */}
+            {channels.map((channel, index) => {
+              const position = layoutPositions[index];
+              const isActive = index === activeIndex;
+              const isFocused = index === focusedIndex;
+              const isExpanded = index === expandedIndex;
+              return (
+                <View
+                  key={`video-${channel.id}`}
+                  style={[
+                    styles.playerContainer,
+                    {
+                      width: position.width,
+                      height: position.height,
+                      left: position.left,
+                      top: position.top,
+                      zIndex: position.zIndex ?? 1,
+                    },
+                    isFocused && styles.playerContainerFocused,
+                    isActive && styles.playerContainerActive,
+                    isExpanded && styles.playerContainerExpanded,
+                  ]}
+                >
+                  <View style={styles.playerWrapper}>
+                    <View style={styles.videoContainer}>
+                      <VideoPlayer
+                        ref={(ref) => {
+                          videoRefs.current[index] = ref;
+                        }}
+                        movie={channel.streamUrl}
+                        headerImage={channel.logo ?? ''}
+                        movieTitle={channel.name}
+                        paused={false}
+                        controls={false}
+                        volume={isActive ? 1 : 0}
+                        onBuffer={handleBuffer}
+                        onProgress={handleProgress}
+                        onLoad={handleLoad}
+                        onEnd={handleEnd}
+                        onError={handleError}
+                        mediaType="channel"
+                        resizeMode="contain"
+                      />
                     </View>
-                  );
-                })}
-              </SpatialNavigationNode>
-            ))}
-          </SpatialNavigationNode>
+                    {/* Channel name overlay */}
+                    {showOverlay && (
+                      <View style={styles.overlayContainer}>
+                        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.overlayGradient} />
+                        <View style={styles.overlayContent}>
+                          {channel.logo && (
+                            <Image source={{ uri: channel.logo }} style={styles.overlayLogo} contentFit="contain" />
+                          )}
+                          <Text style={styles.overlayTitle} numberOfLines={1}>
+                            {channel.name}
+                          </Text>
+                          {isActive && (
+                            <View style={styles.audioIndicator}>
+                              <Text style={styles.audioIndicatorText}>AUDIO</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+            {/* Navigation layer - handles focus, positioned over videos */}
+            {/* Key forces re-layout when expanded state changes */}
+            <SpatialNavigationNode
+              key={`nav-layout-${expandedIndex ?? 'normal'}`}
+              orientation="vertical"
+              alignInGrid
+              style={StyleSheet.absoluteFill}
+            >
+              {channelRows.map((row, rowIndex) => (
+                <SpatialNavigationNode key={`nav-row-${rowIndex}`} orientation="horizontal">
+                  {row.map(({ channel, index, position }) => {
+                    // Default focus: expanded item when expanded, first item when not
+                    const shouldDefaultFocus = expandedIndex !== null ? index === expandedIndex : index === 0;
+                    const navElement = (
+                      <SpatialNavigationFocusableView
+                        key={`nav-${channel.id}`}
+                        focusKey={`multiscreen-${index}`}
+                        onFocus={() => handleFocusChange(index)}
+                        onSelect={() => handleScreenSelect(index)}
+                        style={[
+                          styles.navOverlay,
+                          {
+                            width: position.width,
+                            height: position.height,
+                            left: position.left,
+                            top: position.top,
+                            zIndex: (position.zIndex ?? 1) + 100,
+                          },
+                        ]}
+                      >
+                        {() => <View style={styles.navOverlayInner} />}
+                      </SpatialNavigationFocusableView>
+                    );
+                    // Wrap with DefaultFocus to set/restore focus after layout change
+                    return shouldDefaultFocus ? (
+                      <DefaultFocus key={`nav-${channel.id}`}>{navElement}</DefaultFocus>
+                    ) : (
+                      navElement
+                    );
+                  })}
+                </SpatialNavigationNode>
+              ))}
+            </SpatialNavigationNode>
+          </>
         ) : (
           /* Mobile: Simple map without navigation nodes */
           channels.map((channel, index) => {
             const position = layoutPositions[index];
             const isActive = index === activeIndex;
+            const isExpanded = index === expandedIndex;
             return (
               <View
                 key={channel.id}
@@ -353,9 +492,12 @@ export default function MultiscreenPage() {
                     height: position.height,
                     left: position.left,
                     top: position.top,
+                    zIndex: position.zIndex ?? 1,
                   },
                   isActive && styles.playerContainerActive,
-                ]}>
+                  isExpanded && styles.playerContainerExpanded,
+                ]}
+              >
                 <View style={styles.playerWrapper}>
                   <View style={styles.videoContainer}>
                     <VideoPlayer
@@ -378,23 +520,14 @@ export default function MultiscreenPage() {
                     />
                   </View>
                   {/* Touchable overlay for mobile - captures taps to switch audio */}
-                  <Pressable
-                    style={styles.touchOverlay}
-                    onPress={() => handleScreenTap(index)}>
+                  <Pressable style={styles.touchOverlay} onPress={() => handleScreenTap(index)}>
                     {/* Channel name overlay */}
                     {showOverlay && (
                       <View style={styles.overlayContainer}>
-                        <LinearGradient
-                          colors={['transparent', 'rgba(0,0,0,0.8)']}
-                          style={styles.overlayGradient}
-                        />
+                        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.overlayGradient} />
                         <View style={styles.overlayContent}>
                           {channel.logo && (
-                            <Image
-                              source={{ uri: channel.logo }}
-                              style={styles.overlayLogo}
-                              contentFit="contain"
-                            />
+                            <Image source={{ uri: channel.logo }} style={styles.overlayLogo} contentFit="contain" />
                           )}
                           <Text style={styles.overlayTitle} numberOfLines={1}>
                             {channel.name}
@@ -420,13 +553,6 @@ export default function MultiscreenPage() {
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
         )}
-
-        {/* Default focus wrapper for TV */}
-        {Platform.isTV && (
-          <DefaultFocus>
-            <View style={styles.hiddenFocusAnchor} />
-          </DefaultFocus>
-        )}
       </View>
     </SpatialNavigationRoot>
   );
@@ -447,8 +573,15 @@ const createStyles = (theme: NovaTheme) => {
       borderWidth: isTV ? 4 : 2,
       borderColor: 'transparent',
     },
+    playerContainerFocused: {
+      borderColor: theme.colors.text.primary,
+    },
     playerContainerActive: {
       borderColor: theme.colors.accent.primary,
+    },
+    playerContainerExpanded: {
+      borderColor: theme.colors.accent.primary,
+      borderWidth: isTV ? 6 : 3,
     },
     playerWrapper: {
       flex: 1,
@@ -456,6 +589,12 @@ const createStyles = (theme: NovaTheme) => {
     },
     playerWrapperFocused: {
       // Additional focus styling handled by container
+    },
+    navOverlay: {
+      position: 'absolute',
+    },
+    navOverlayInner: {
+      flex: 1,
     },
     videoContainer: {
       // Use absolute positioning to ensure video has concrete bounds for objectFit: contain
@@ -527,12 +666,6 @@ const createStyles = (theme: NovaTheme) => {
       color: theme.colors.text.secondary,
       textAlign: 'center',
       marginTop: 100,
-    },
-    hiddenFocusAnchor: {
-      position: 'absolute',
-      width: 0,
-      height: 0,
-      opacity: 0,
     },
   });
 };
