@@ -562,11 +562,12 @@ func (h *VideoHandler) ProbeSubtitleTracks(w http.ResponseWriter, r *http.Reques
 
 // SubtitleTrackInfo represents a subtitle track with metadata for the frontend
 type SubtitleTrackInfo struct {
-	Index    int    `json:"index"`    // Track index (0-based, for selection)
-	Language string `json:"language"` // Language code (e.g., "eng", "spa")
-	Title    string `json:"title"`    // Track title/name
-	Codec    string `json:"codec"`    // Codec name
-	Forced   bool   `json:"forced"`   // Whether this is a forced subtitle track
+	Index         int    `json:"index"`         // Track index (0-based, for selection in UI)
+	AbsoluteIndex int    `json:"absoluteIndex"` // Absolute ffprobe stream index (for ffmpeg -map)
+	Language      string `json:"language"`      // Language code (e.g., "eng", "spa")
+	Title         string `json:"title"`         // Track title/name
+	Codec         string `json:"codec"`         // Codec name
+	Forced        bool   `json:"forced"`        // Whether this is a forced subtitle track
 }
 
 // probeSubtitleStreamsWithMetadata probes subtitle streams and returns detailed metadata
@@ -611,19 +612,38 @@ func (m *SubtitleExtractManager) probeSubtitleStreamsWithMetadata(ctx context.Co
 		return nil, err
 	}
 
-	tracks := make([]SubtitleTrackInfo, 0, len(result.Streams))
-	for i, stream := range result.Streams {
-		forced := strings.ToLower(stream.Tags.Forced) == "1" || strings.ToLower(stream.Tags.Forced) == "true"
-		tracks = append(tracks, SubtitleTrackInfo{
-			Index:    i, // Use 0-based index for track selection
-			Language: stream.Tags.Language,
-			Title:    stream.Tags.Title,
-			Codec:    strings.ToLower(strings.TrimSpace(stream.CodecName)),
-			Forced:   forced,
-		})
+	// Text-based subtitle codecs that can be converted to WebVTT
+	// Bitmap subtitles (PGS, DVD, etc.) cannot be displayed in the web player
+	textSubtitleCodecs := map[string]bool{
+		"subrip": true, "srt": true, "ass": true, "ssa": true,
+		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
+		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
+		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
+		"subviewer": true, "subviewer1": true, "vplayer": true,
 	}
 
-	log.Printf("[subtitle-extract] probe found %d subtitle tracks", len(tracks))
+	tracks := make([]SubtitleTrackInfo, 0, len(result.Streams))
+	trackIndex := 0 // Use separate counter for 0-based track indices
+	for _, stream := range result.Streams {
+		codecName := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		// Skip bitmap/unsupported subtitle formats
+		if !textSubtitleCodecs[codecName] {
+			log.Printf("[subtitle-extract] skipping non-text subtitle stream %d (codec=%s)", stream.Index, codecName)
+			continue
+		}
+		forced := strings.ToLower(stream.Tags.Forced) == "1" || strings.ToLower(stream.Tags.Forced) == "true"
+		tracks = append(tracks, SubtitleTrackInfo{
+			Index:         trackIndex,    // Use 0-based index for track selection in UI
+			AbsoluteIndex: stream.Index,  // Absolute ffprobe stream index for ffmpeg -map
+			Language:      stream.Tags.Language,
+			Title:         stream.Tags.Title,
+			Codec:         codecName,
+			Forced:        forced,
+		})
+		trackIndex++
+	}
+
+	log.Printf("[subtitle-extract] probe found %d text-based subtitle tracks (skipped bitmap tracks)", len(tracks))
 	return tracks, nil
 }
 
@@ -781,8 +801,9 @@ func isTextBasedSubtitle(codec string) bool {
 
 // StartPreExtraction starts extraction for all text-based subtitle tracks using ONE ffmpeg process
 // This is much more efficient than spawning one ffmpeg per track (which overwhelms debrid providers)
+// startOffset is the seek position in seconds (0 to start from beginning)
 // Returns a map of track index -> session
-func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo) map[int]*SubtitleExtractSession {
+func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo, startOffset float64) map[int]*SubtitleExtractSession {
 	sessions := make(map[int]*SubtitleExtractSession)
 
 	// Filter to text-based subtitles only
@@ -832,14 +853,17 @@ func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path st
 	}
 
 	// Start ONE ffmpeg process to extract all tracks
-	go m.startBatchExtraction(path, outputDir, textTracks, sessions)
+	go m.startBatchExtraction(path, outputDir, textTracks, sessions, startOffset)
 
 	log.Printf("[subtitle-extract] batch pre-extraction started for %d tracks with one ffmpeg process", len(textTracks))
 	return sessions
 }
 
-// startBatchExtraction extracts all subtitle tracks in one ffmpeg invocation
-func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tracks []SubtitleTrackInfo, sessions map[int]*SubtitleExtractSession) {
+// startBatchExtraction extracts all subtitle tracks in ONE ffmpeg invocation
+// This uses a single ffmpeg process with multiple outputs to avoid overwhelming
+// debrid providers with parallel connections (which causes rate limiting)
+// startOffset is the seek position in seconds (0 to start from beginning)
+func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tracks []SubtitleTrackInfo, sessions map[int]*SubtitleExtractSession, startOffset float64) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -856,6 +880,15 @@ func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tr
 			session.extractionDone = true
 			session.extractionErr = err
 			session.mu.Unlock()
+		}
+	}
+
+	// Pre-create all VTT files with headers so frontend doesn't get 404s
+	// and can start polling immediately
+	for _, track := range tracks {
+		vttPath := filepath.Join(outputDir, fmt.Sprintf("subtitles_%d.vtt", track.Index))
+		if err := os.WriteFile(vttPath, []byte("WEBVTT\n\n"), 0644); err != nil {
+			log.Printf("[subtitle-extract] failed to create initial VTT file for track %d: %v", track.Index, err)
 		}
 	}
 
@@ -887,27 +920,40 @@ func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tr
 		}
 	}
 
-	// Build ffmpeg args with multiple -map outputs (like HLS does)
+	// Build a SINGLE ffmpeg command with multiple outputs
+	// This opens only ONE connection to the source, avoiding rate limiting
+	// Pattern: ffmpeg -y -ss OFFSET -i URL -map 0:3 -c webvtt out1.vtt -map 0:4 -c webvtt out2.vtt ...
 	args := []string{
+		"-y", // Overwrite output files without asking (we pre-create empty VTT files)
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-i", streamURL,
 	}
 
-	// Add each subtitle track as a separate output
+	// Add seek offset if specified (must be before -i for input seeking)
+	// Use -copyts to preserve original timestamps so VTT cues match video position
+	if startOffset > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", startOffset), "-copyts")
+		log.Printf("[subtitle-extract] batch: seeking to %.3f seconds with -copyts to preserve timestamps", startOffset)
+	}
+
+	args = append(args, "-i", streamURL)
+
+	// Add output for each subtitle track
 	for _, track := range tracks {
 		vttPath := filepath.Join(outputDir, fmt.Sprintf("subtitles_%d.vtt", track.Index))
-		subtitleMap := fmt.Sprintf("0:s:%d", track.Index) // relative subtitle index
+		// Use AbsoluteIndex (ffprobe stream index) for -map
 		args = append(args,
-			"-map", subtitleMap,
+			"-map", fmt.Sprintf("0:%d", track.AbsoluteIndex),
 			"-c", "webvtt",
 			"-f", "webvtt",
 			"-flush_packets", "1",
 			vttPath,
 		)
+		log.Printf("[subtitle-extract] batch: adding output for track %d (stream %d, codec=%s, lang=%s) -> %s",
+			track.Index, track.AbsoluteIndex, track.Codec, track.Language, vttPath)
 	}
 
-	log.Printf("[subtitle-extract] batch extraction starting: %d tracks from %s", len(tracks), streamURL)
+	log.Printf("[subtitle-extract] batch extraction starting: %d tracks from %s (single ffmpeg process)", len(tracks), streamURL)
 
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 
@@ -915,33 +961,39 @@ func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tr
 	stderr, _ := cmd.StderrPipe()
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("[subtitle-extract] batch extraction failed to start: %v", err)
-		markAllDone(err)
+		log.Printf("[subtitle-extract] batch: failed to start ffmpeg: %v", err)
+		markAllDone(fmt.Errorf("ffmpeg start failed: %w", err))
 		return
 	}
 
-	// Log stderr output
+	// Log stderr in background
 	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stderr.Read(buf)
-			if n > 0 {
-				log.Printf("[subtitle-extract] batch ffmpeg: %s", strings.TrimSpace(string(buf[:n])))
-			}
-			if err != nil {
-				break
+		if stderr != nil {
+			buf := make([]byte, 4096)
+			for {
+				n, readErr := stderr.Read(buf)
+				if n > 0 {
+					log.Printf("[subtitle-extract] batch ffmpeg: %s", strings.TrimSpace(string(buf[:n])))
+				}
+				if readErr != nil {
+					break
+				}
 			}
 		}
 	}()
 
-	err := cmd.Wait()
-	if err != nil {
-		log.Printf("[subtitle-extract] batch extraction ffmpeg error: %v", err)
-		markAllDone(err)
-		return
+	// Wait for completion
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			log.Printf("[subtitle-extract] batch: extraction cancelled")
+		} else {
+			log.Printf("[subtitle-extract] batch: ffmpeg error: %v", err)
+			markAllDone(fmt.Errorf("ffmpeg failed: %w", err))
+			return
+		}
 	}
 
-	log.Printf("[subtitle-extract] batch extraction completed successfully for %d tracks", len(tracks))
+	log.Printf("[subtitle-extract] batch extraction completed for %d tracks", len(tracks))
 	markAllDone(nil)
 }
 

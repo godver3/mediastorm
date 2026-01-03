@@ -124,7 +124,7 @@ type HLSSessionResult struct {
 
 // SubtitlePreExtractor interface for pre-extracting subtitles
 type SubtitlePreExtractor interface {
-	StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo) map[int]*SubtitleExtractSession
+	StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo, startOffset float64) map[int]*SubtitleExtractSession
 }
 
 // NewPrequeueHandler creates a new prequeue handler
@@ -823,20 +823,22 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			log.Printf("[prequeue] Starting subtitle pre-extraction for %d tracks (non-HLS path)", len(subtitleStreams))
 
 			// Convert to SubtitleTrackInfo format
-			// NOTE: Index must be relative (0, 1, 2) not absolute ffprobe index (3, 4, 5)
-			// The extraction code maps relative -> absolute using its own probe
+			// Index = relative (0, 1, 2) for frontend track selection
+			// AbsoluteIndex = ffprobe stream index (13, 14, 15) for ffmpeg -map
 			tracks := make([]SubtitleTrackInfo, len(subtitleStreams))
 			for i, s := range subtitleStreams {
 				tracks[i] = SubtitleTrackInfo{
-					Index:    i, // Use relative index, not s.Index (absolute ffprobe index)
-					Language: s.Language,
-					Title:    s.Title,
-					Codec:    s.Codec,
-					Forced:   s.IsForced,
+					Index:         i,       // Relative index for frontend
+					AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
+					Language:      s.Language,
+					Title:         s.Title,
+					Codec:         s.Codec,
+					Forced:        s.IsForced,
 				}
 			}
 
-			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks)
+			// Prequeue always starts from beginning (startOffset=0)
+			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks, 0)
 
 			// Convert sessions to SubtitleSessionInfo and store in prequeue entry
 			// Keys are relative indices (0, 1, 2) matching what frontend expects
