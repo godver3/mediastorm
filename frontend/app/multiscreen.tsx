@@ -150,6 +150,26 @@ export default function MultiscreenPage() {
     [channels.length, screenWidth, screenHeight],
   );
 
+  // Group channels into rows based on their top position for proper grid navigation
+  const channelRows = useMemo(() => {
+    const rowMap = new Map<number, { channel: MultiscreenChannel; index: number; position: LayoutPosition }[]>();
+
+    channels.forEach((channel, index) => {
+      const position = layoutPositions[index];
+      const rowKey = Math.round(position.top); // Round to handle floating point
+
+      if (!rowMap.has(rowKey)) {
+        rowMap.set(rowKey, []);
+      }
+      rowMap.get(rowKey)!.push({ channel, index, position });
+    });
+
+    // Sort rows by top position and return as array
+    return Array.from(rowMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, items]) => items.sort((a, b) => a.position.left - b.position.left));
+  }, [channels, layoutPositions]);
+
   // Auto-hide overlay after 3 seconds
   const resetOverlayTimeout = useCallback(() => {
     if (overlayTimeoutRef.current) {
@@ -237,82 +257,105 @@ export default function MultiscreenPage() {
     <SpatialNavigationRoot isActive={Platform.isTV}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
-        {/* Render video players */}
-        {channels.map((channel, index) => {
-          const position = layoutPositions[index];
-          const isActive = index === activeIndex;
-
-          return (
-            <View
-              key={channel.id}
-              style={[
-                styles.playerContainer,
-                {
-                  width: position.width,
-                  height: position.height,
-                  left: position.left,
-                  top: position.top,
-                },
-                isActive && styles.playerContainerActive,
-              ]}>
-              {Platform.isTV ? (
-                <SpatialNavigationNode orientation="horizontal">
-                  <SpatialNavigationFocusableView
-                    focusKey={`multiscreen-${index}`}
-                    onFocus={() => handleActiveChange(index)}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.playerWrapper, isFocused && styles.playerWrapperFocused]}>
-                        <View style={styles.videoContainer}>
-                          <VideoPlayer
-                            ref={(ref) => {
-                              videoRefs.current[index] = ref;
-                            }}
-                            movie={channel.streamUrl}
-                            headerImage={channel.logo ?? ''}
-                            movieTitle={channel.name}
-                            paused={false}
-                            controls={false}
-                            volume={isActive ? 1 : 0}
-                            onBuffer={handleBuffer}
-                            onProgress={handleProgress}
-                            onLoad={handleLoad}
-                            onEnd={handleEnd}
-                            onError={handleError}
-                            mediaType="channel"
-                            resizeMode="contain"
-                          />
-                        </View>
-                        {/* Channel name overlay */}
-                        {showOverlay && (
-                          <View style={styles.overlayContainer}>
-                            <LinearGradient
-                              colors={['transparent', 'rgba(0,0,0,0.8)']}
-                              style={styles.overlayGradient}
-                            />
-                            <View style={styles.overlayContent}>
-                              {channel.logo && (
-                                <Image
-                                  source={{ uri: channel.logo }}
-                                  style={styles.overlayLogo}
-                                  contentFit="contain"
-                                />
-                              )}
-                              <Text style={styles.overlayTitle} numberOfLines={1}>
-                                {channel.name}
-                              </Text>
-                              {isActive && (
-                                <View style={styles.audioIndicator}>
-                                  <Text style={styles.audioIndicatorText}>AUDIO</Text>
-                                </View>
-                              )}
+        {/* TV: Use nested navigation nodes for proper grid navigation */}
+        {Platform.isTV ? (
+          <SpatialNavigationNode orientation="vertical" alignInGrid style={StyleSheet.absoluteFill}>
+            {channelRows.map((row, rowIndex) => (
+              <SpatialNavigationNode key={`row-${rowIndex}`} orientation="horizontal">
+                {row.map(({ channel, index, position }) => {
+                  const isActive = index === activeIndex;
+                  return (
+                    <View
+                      key={channel.id}
+                      style={[
+                        styles.playerContainer,
+                        {
+                          width: position.width,
+                          height: position.height,
+                          left: position.left,
+                          top: position.top,
+                        },
+                        isActive && styles.playerContainerActive,
+                      ]}>
+                      <SpatialNavigationFocusableView
+                        focusKey={`multiscreen-${index}`}
+                        onFocus={() => handleActiveChange(index)}
+                        style={{ flex: 1 }}>
+                        {({ isFocused }: { isFocused: boolean }) => (
+                          <View style={[styles.playerWrapper, isFocused && styles.playerWrapperFocused]}>
+                            <View style={styles.videoContainer}>
+                              <VideoPlayer
+                                ref={(ref) => {
+                                  videoRefs.current[index] = ref;
+                                }}
+                                movie={channel.streamUrl}
+                                headerImage={channel.logo ?? ''}
+                                movieTitle={channel.name}
+                                paused={false}
+                                controls={false}
+                                volume={isActive ? 1 : 0}
+                                onBuffer={handleBuffer}
+                                onProgress={handleProgress}
+                                onLoad={handleLoad}
+                                onEnd={handleEnd}
+                                onError={handleError}
+                                mediaType="channel"
+                                resizeMode="contain"
+                              />
                             </View>
+                            {/* Channel name overlay */}
+                            {showOverlay && (
+                              <View style={styles.overlayContainer}>
+                                <LinearGradient
+                                  colors={['transparent', 'rgba(0,0,0,0.8)']}
+                                  style={styles.overlayGradient}
+                                />
+                                <View style={styles.overlayContent}>
+                                  {channel.logo && (
+                                    <Image
+                                      source={{ uri: channel.logo }}
+                                      style={styles.overlayLogo}
+                                      contentFit="contain"
+                                    />
+                                  )}
+                                  <Text style={styles.overlayTitle} numberOfLines={1}>
+                                    {channel.name}
+                                  </Text>
+                                  {isActive && (
+                                    <View style={styles.audioIndicator}>
+                                      <Text style={styles.audioIndicatorText}>AUDIO</Text>
+                                    </View>
+                                  )}
+                                </View>
+                              </View>
+                            )}
                           </View>
                         )}
-                      </View>
-                    )}
-                  </SpatialNavigationFocusableView>
-                </SpatialNavigationNode>
-              ) : (
+                      </SpatialNavigationFocusableView>
+                    </View>
+                  );
+                })}
+              </SpatialNavigationNode>
+            ))}
+          </SpatialNavigationNode>
+        ) : (
+          /* Mobile: Simple map without navigation nodes */
+          channels.map((channel, index) => {
+            const position = layoutPositions[index];
+            const isActive = index === activeIndex;
+            return (
+              <View
+                key={channel.id}
+                style={[
+                  styles.playerContainer,
+                  {
+                    width: position.width,
+                    height: position.height,
+                    left: position.left,
+                    top: position.top,
+                  },
+                  isActive && styles.playerContainerActive,
+                ]}>
                 <View style={styles.playerWrapper}>
                   <View style={styles.videoContainer}>
                     <VideoPlayer
@@ -366,10 +409,10 @@ export default function MultiscreenPage() {
                     )}
                   </Pressable>
                 </View>
-              )}
-            </View>
-          );
-        })}
+              </View>
+            );
+          })
+        )}
 
         {/* Exit button for mobile */}
         {!Platform.isTV && showOverlay && (
@@ -400,12 +443,12 @@ const createStyles = (theme: NovaTheme) => {
     playerContainer: {
       position: 'absolute',
       overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: 'rgba(255, 255, 255, 0.1)',
+      // Use consistent border width to prevent resizing on focus
+      borderWidth: isTV ? 4 : 2,
+      borderColor: 'transparent',
     },
     playerContainerActive: {
       borderColor: theme.colors.accent.primary,
-      borderWidth: isTV ? 4 : 2,
     },
     playerWrapper: {
       flex: 1,
