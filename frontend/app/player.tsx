@@ -668,6 +668,7 @@ export default function PlayerScreen() {
   const [seekIndicatorAmount, setSeekIndicatorAmount] = useState<number>(0);
   const seekIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekIndicatorStartTimeRef = useRef<number>(0);
+  const lastPlayPauseToggleRef = useRef<number>(0); // For debouncing tvOS duplicate events
   // Refs for callbacks used in key handler (declared before callback definitions)
   const seekRef = useRef<((time: number, showControlsAfter?: boolean) => void) | null>(null);
   const showControlsRef = useRef<(() => void) | null>(null);
@@ -1847,7 +1848,10 @@ export default function PlayerScreen() {
       switch (key) {
         case SupportedKeys.Left:
           if (!controlsVisibleRef.current) {
-            const backwardAmount = settings?.playback?.seekBackwardSeconds ?? 10;
+            // TODO: tvOS sends duplicate events per button press (likely MPRemoteCommandCenter interference).
+            // Halve the skip amount as a workaround until root cause is properly fixed.
+            const baseBackward = settings?.playback?.seekBackwardSeconds ?? 10;
+            const backwardAmount = Platform.OS === 'ios' && Platform.isTV ? baseBackward / 2 : baseBackward;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -1884,7 +1888,10 @@ export default function PlayerScreen() {
           break;
         case SupportedKeys.Right:
           if (!controlsVisibleRef.current) {
-            const forwardAmount = settings?.playback?.seekForwardSeconds ?? 30;
+            // TODO: tvOS sends duplicate events per button press (likely MPRemoteCommandCenter interference).
+            // Halve the skip amount as a workaround until root cause is properly fixed.
+            const baseForward = settings?.playback?.seekForwardSeconds ?? 30;
+            const forwardAmount = Platform.OS === 'ios' && Platform.isTV ? baseForward / 2 : baseForward;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -1919,14 +1926,22 @@ export default function PlayerScreen() {
             showControlsRef.current?.();
           }
           break;
-        case SupportedKeys.FastForward:
-          void seekRef.current?.(currentTimeRef.current + (settings?.playback?.seekForwardSeconds ?? 30));
+        case SupportedKeys.FastForward: {
+          // TODO: tvOS sends duplicate events - halve as workaround
+          const ffAmount = settings?.playback?.seekForwardSeconds ?? 30;
+          const ffAdjusted = Platform.OS === 'ios' && Platform.isTV ? ffAmount / 2 : ffAmount;
+          void seekRef.current?.(currentTimeRef.current + ffAdjusted);
           showControlsRef.current?.();
           break;
-        case SupportedKeys.Rewind:
-          void seekRef.current?.(currentTimeRef.current - (settings?.playback?.seekBackwardSeconds ?? 10));
+        }
+        case SupportedKeys.Rewind: {
+          // TODO: tvOS sends duplicate events - halve as workaround
+          const rwAmount = settings?.playback?.seekBackwardSeconds ?? 10;
+          const rwAdjusted = Platform.OS === 'ios' && Platform.isTV ? rwAmount / 2 : rwAmount;
+          void seekRef.current?.(currentTimeRef.current - rwAdjusted);
           showControlsRef.current?.();
           break;
+        }
         case SupportedKeys.Back:
           if (controlsVisibleRef.current) {
             hideControlsRef.current?.();
@@ -1934,9 +1949,16 @@ export default function PlayerScreen() {
             router.back();
           }
           break;
-        case SupportedKeys.PlayPause:
-          togglePausePlayRef.current?.();
+        case SupportedKeys.PlayPause: {
+          // TODO: tvOS sends duplicate events - debounce to ignore rapid duplicates
+          const now = Date.now();
+          const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 300 : 0;
+          if (now - lastPlayPauseToggleRef.current > debounceMs) {
+            lastPlayPauseToggleRef.current = now;
+            togglePausePlayRef.current?.();
+          }
           break;
+        }
         default:
           showControlsRef.current?.();
           break;
@@ -2390,7 +2412,8 @@ export default function PlayerScreen() {
       }
 
       // Update iOS Now Playing position (throttled to every 10 seconds)
-      if (Platform.OS === 'ios' && hasStartedPlaying && currentDuration > 0) {
+      // Skip on tvOS - setting nowPlayingInfo causes MPRemoteCommandCenter to intercept Siri Remote buttons
+      if (Platform.OS === 'ios' && !Platform.isTV && hasStartedPlaying && currentDuration > 0) {
         const now = Date.now();
         if (now - nowPlayingLastUpdateRef.current >= 10000) {
           nowPlayingLastUpdateRef.current = now;
@@ -2675,8 +2698,8 @@ export default function PlayerScreen() {
   }, []);
 
   // iOS Now Playing integration - setup remote commands on mount, clear on unmount
-  // Note: Skip on tvOS because setupRemoteCommands enables MPRemoteCommandCenter without handlers,
-  // which intercepts play/pause events and prevents them from reaching TVEventHandler
+  // Note: Skip entirely on tvOS because setting nowPlayingInfo and enabling MPRemoteCommandCenter
+  // causes Siri Remote button presses to be intercepted/duplicated, breaking play/pause and skip
   useEffect(() => {
     if (Platform.OS === 'ios' && !Platform.isTV) {
       setupRemoteCommands().catch((err) => {
@@ -2684,7 +2707,7 @@ export default function PlayerScreen() {
       });
     }
     return () => {
-      if (Platform.OS === 'ios') {
+      if (Platform.OS === 'ios' && !Platform.isTV) {
         clearNowPlaying().catch((err) => {
           console.warn('[player] Failed to clear Now Playing:', err);
         });
@@ -2693,8 +2716,9 @@ export default function PlayerScreen() {
   }, []);
 
   // iOS Now Playing - update info when playback starts
+  // Skip on tvOS - setting nowPlayingInfo causes MPRemoteCommandCenter to intercept Siri Remote buttons
   useEffect(() => {
-    if (Platform.OS !== 'ios' || !hasStartedPlaying) {
+    if (Platform.OS !== 'ios' || Platform.isTV || !hasStartedPlaying) {
       return;
     }
 
