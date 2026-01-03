@@ -992,7 +992,7 @@ function LiveScreen() {
             {/* Fixed header with title and action buttons */}
             <SpatialNavigationNode orientation="vertical">
               <DefaultFocus>
-                <SpatialNavigationNode orientation="horizontal">
+                <SpatialNavigationNode orientation="horizontal" key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
                   <View style={styles.headerRow}>
                     <Text style={styles.title}>Live TV</Text>
                     <View style={styles.actionsRow}>
