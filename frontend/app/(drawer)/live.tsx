@@ -237,6 +237,11 @@ function LiveScreen() {
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
   const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
 
+  // Mobile infinite scroll state
+  const INITIAL_VISIBLE_COUNT = 50;
+  const LOAD_MORE_INCREMENT = 30;
+  const [visibleChannelCount, setVisibleChannelCount] = useState(INITIAL_VISIBLE_COUNT);
+
   const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId && !isSelectionConfirmVisible;
 
   // Guard against duplicate "select" events on tvOS
@@ -389,6 +394,43 @@ function LiveScreen() {
 
     return { favoriteChannels: favorites, regularChannels: regular };
   }, [channels, isFavorite, isHidden, filterText]);
+
+  // Reset visible count when filters change (mobile infinite scroll)
+  useEffect(() => {
+    if (!Platform.isTV) {
+      setVisibleChannelCount(INITIAL_VISIBLE_COUNT);
+    }
+  }, [filterText, selectedCategories]);
+
+  // Sliced channels for mobile infinite scroll
+  const displayedRegularChannels = useMemo(() => {
+    if (Platform.isTV) {
+      return regularChannels;
+    }
+    return regularChannels.slice(0, visibleChannelCount);
+  }, [regularChannels, visibleChannelCount]);
+
+  const hasMoreChannels = !Platform.isTV && visibleChannelCount < regularChannels.length;
+
+  // Handle scroll for mobile infinite scroll
+  const handleInfiniteScroll = useCallback(
+    (event: { nativeEvent: { contentOffset: { y: number }; contentSize: { height: number }; layoutMeasurement: { height: number } } }) => {
+      scrollMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
+
+      if (Platform.isTV || !hasMoreChannels) {
+        return;
+      }
+
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+
+      // Load more when within 200px of bottom
+      if (distanceFromBottom < 200) {
+        setVisibleChannelCount((prev) => Math.min(prev + LOAD_MORE_INCREMENT, regularChannels.length));
+      }
+    },
+    [hasMoreChannels, regularChannels.length],
+  );
 
   const onDirectionHandledWithoutMovement = useCallback(
     (movement: Direction) => {
@@ -1125,9 +1167,7 @@ function LiveScreen() {
                           showsVerticalScrollIndicator={false}
                           bounces={false}
                           removeClippedSubviews={Platform.isTV}
-                          onScroll={(event: { nativeEvent: { contentOffset: { y: number } } }) => {
-                            scrollMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
-                          }}
+                          onScroll={handleInfiniteScroll}
                           scrollEventThrottle={16}
                           onLayout={(event: { nativeEvent: { layout: { height: number } } }) => {
                             scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
@@ -1151,10 +1191,12 @@ function LiveScreen() {
                             </>
                           )}
 
-                          {regularChannels.length > 0 && (
+                          {displayedRegularChannels.length > 0 && (
                             <>
-                              <Text style={styles.sectionTitle}>All Channels</Text>
-                              {regularChannels.map((channel, index) => (
+                              <Text style={styles.sectionTitle}>
+                                All Channels{hasMoreChannels ? ` (${displayedRegularChannels.length}/${regularChannels.length})` : ''}
+                              </Text>
+                              {displayedRegularChannels.map((channel, index) => (
                                 <ChannelCard
                                   key={channel.id}
                                   channel={channel}
@@ -1167,10 +1209,18 @@ function LiveScreen() {
                                   registerCardRef={registerChannelRef}
                                 />
                               ))}
+                              {hasMoreChannels && (
+                                <View style={styles.loadingMoreContainer}>
+                                  <LoadingIndicator />
+                                  <Text style={styles.loadingMoreText}>
+                                    Loading more channels...
+                                  </Text>
+                                </View>
+                              )}
                             </>
                           )}
 
-                          {favoriteChannels.length === 0 && regularChannels.length === 0 ? (
+                          {favoriteChannels.length === 0 && displayedRegularChannels.length === 0 ? (
                             <View style={styles.emptyPlaylist}>
                               <Text style={styles.emptyMessage}>
                                 {filterText
@@ -1719,6 +1769,16 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     emptyPlaylist: {
       alignItems: 'center',
       paddingVertical: theme.spacing.xl * scaleFactor,
+    },
+    loadingMoreContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: theme.spacing.xl,
+      gap: theme.spacing.sm,
+    },
+    loadingMoreText: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.muted,
     },
     channelActions: {
       marginLeft: 'auto',

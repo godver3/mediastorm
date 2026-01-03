@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultPlaylistTimeout   = 15 * time.Second
-	defaultMaxPlaylistSize   = 5 * 1024 * 1024 // 5 MiB
+	defaultMaxPlaylistSize   = 50 * 1024 * 1024 // 50 MiB
 	playlistContentTypePlain = "text/plain; charset=utf-8"
 	liveStreamTimeout        = 30 * time.Minute
 	defaultCacheTTL          = 24 * time.Hour
