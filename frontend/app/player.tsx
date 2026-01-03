@@ -48,6 +48,17 @@ import { useTVDimensions } from '@/hooks/useTVDimensions';
 const TVMenuControl: { enableTVMenuKey?: () => void; disableTVMenuKey?: () => void } | undefined = Platform.isTV
   ? require('react-native').TVMenuControl
   : undefined;
+
+// Safe import for react-native-view-shot (may not be available in older builds)
+// Used to capture the last video frame before pause teardown
+let captureRef: ((view: View, options?: object) => Promise<string>) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  captureRef = require('react-native-view-shot').captureRef;
+} catch {
+  // Module not available - will fall back to poster image for pause teardown
+}
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
@@ -665,9 +676,11 @@ export default function PlayerScreen() {
   // Pause teardown state: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause and showing a poster overlay instead
   const [pauseTeardownActive, setPauseTeardownActive] = useState<boolean>(false);
+  const [pauseTeardownFrame, setPauseTeardownFrame] = useState<string | null>(null); // Captured frame URI
   const pauseTeardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pauseTeardownTimeRef = useRef<number>(0); // Playback time when we tore down
   const pauseTeardownUrlRef = useRef<string | null>(null); // URL to restore
+  const videoWrapperRef = useRef<View>(null); // For capturing last frame before teardown
   const PAUSE_TEARDOWN_DELAY = 20000; // 20 seconds before teardown
   const [controlsVisible, setControlsVisible] = useState<boolean>(
     isTvPlatform || (Platform.OS === 'web' && !prefersSystemControls),
@@ -936,11 +949,31 @@ export default function PlayerScreen() {
     if (paused && shouldUsePauseTeardown && currentMovieUrl && !pauseTeardownActive) {
       // Start the teardown timer when paused
       console.log('[player] pause teardown: starting 20s timer');
-      pauseTeardownTimerRef.current = setTimeout(() => {
+      pauseTeardownTimerRef.current = setTimeout(async () => {
         console.log('[player] pause teardown: timer fired, tearing down player');
         // Save current state for restoration
         pauseTeardownTimeRef.current = currentTimeRef.current;
         pauseTeardownUrlRef.current = currentMovieUrl;
+
+        // Try to capture the current video frame before teardown
+        if (captureRef && videoWrapperRef.current) {
+          try {
+            console.log('[player] pause teardown: capturing video frame');
+            const uri = await captureRef(videoWrapperRef.current, {
+              format: 'jpg',
+              quality: 0.8,
+            });
+            console.log('[player] pause teardown: frame captured', { uri });
+            setPauseTeardownFrame(uri);
+          } catch (error) {
+            console.log('[player] pause teardown: frame capture failed, using fallback', error);
+            setPauseTeardownFrame(null);
+          }
+        } else {
+          console.log('[player] pause teardown: captureRef not available, using fallback');
+          setPauseTeardownFrame(null);
+        }
+
         // Tear down the player by clearing the URL
         setCurrentMovieUrl(null);
         setPauseTeardownActive(true);
@@ -1004,9 +1037,11 @@ export default function PlayerScreen() {
           // Restore the video URL - this will trigger the video to load
           setCurrentMovieUrl(playlistWithKey);
           setPauseTeardownActive(false);
+          setPauseTeardownFrame(null);
         } catch (error) {
           console.error('[player] pause teardown: failed to restore session', error);
           setPauseTeardownActive(false);
+          setPauseTeardownFrame(null);
           showToast('Failed to resume playback', { tone: 'danger' });
         }
       };
@@ -4812,6 +4847,7 @@ export default function PlayerScreen() {
           }}
         >
           <View
+            ref={videoWrapperRef}
             style={styles.videoWrapper}
             onLayout={(event) => {
               const { width, height } = event.nativeEvent.layout;
@@ -4865,7 +4901,7 @@ export default function PlayerScreen() {
             <View style={styles.blackOverlay} pointerEvents="none" renderToHardwareTextureAndroid={true} />
           )}
 
-          {/* Pause teardown overlay - shows poster image when player is torn down after extended pause */}
+          {/* Pause teardown overlay - shows last frame (or poster) when player is torn down after extended pause */}
           {/* This prevents AVPlayer HLS timeout by proactively stopping the player */}
           {/* Tapping the overlay shows controls so user can press play to resume */}
           {pauseTeardownActive && (
@@ -4873,7 +4909,13 @@ export default function PlayerScreen() {
               style={styles.pauseTeardownOverlay}
               onPress={handleVideoInteract}
             >
-              {headerImage ? (
+              {pauseTeardownFrame ? (
+                <Image
+                  source={{ uri: pauseTeardownFrame }}
+                  style={styles.pauseTeardownImage}
+                  resizeMode="cover"
+                />
+              ) : headerImage ? (
                 <Image
                   source={{ uri: headerImage }}
                   style={styles.pauseTeardownImage}
