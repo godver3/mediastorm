@@ -859,7 +859,6 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     tvSkipLabel: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
-      fontSize: isAndroidTV ? 10 : 12,
       marginLeft: isAndroidTV ? -theme.spacing.xs : -theme.spacing.sm,
       marginRight: theme.spacing.md,
     },
