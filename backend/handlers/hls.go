@@ -361,6 +361,28 @@ type subtitleStreamInfo struct {
 	IsDefault bool
 }
 
+// isHLSCommentaryTrack checks if an audio track is a commentary track based on its title
+func isHLSCommentaryTrack(title string) bool {
+	lowerTitle := strings.ToLower(strings.TrimSpace(title))
+	commentaryIndicators := []string{
+		"commentary",
+		"director's commentary",
+		"directors commentary",
+		"audio commentary",
+		"cast commentary",
+		"crew commentary",
+		"isolated score",
+		"music only",
+		"score only",
+	}
+	for _, indicator := range commentaryIndicators {
+		if strings.Contains(lowerTitle, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
 // UnifiedProbeResult holds all data extracted from a single ffprobe call
 type UnifiedProbeResult struct {
 	Duration           float64
@@ -1862,7 +1884,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// This ensures consistent behavior with the frontend's expectations and avoids
 		// the Expo Video player defaulting to the first track in a multi-track manifest
 		if hasTrueHD && hasCompatibleAudio {
-			// Find the first compatible audio stream (excluding TrueHD)
+			// Find the first compatible audio stream (excluding TrueHD and commentary tracks)
 			log.Printf("[hls] session %s: no specific audio track selected, defaulting to first compatible stream", session.ID)
 			compatibleCodecs := map[string]bool{
 				"aac":  true,
@@ -1870,13 +1892,28 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				"eac3": true,
 				"mp3":  true,
 			}
+			mappedAudio := false
+			// First pass: find compatible non-commentary track
 			for _, stream := range audioStreams {
-				if compatibleCodecs[stream.Codec] {
+				if compatibleCodecs[stream.Codec] && !isHLSCommentaryTrack(stream.Title) {
 					audioMap := fmt.Sprintf("0:%d", stream.Index)
 					args = append(args, "-map", audioMap)
 					log.Printf("[hls] session %s: mapped first compatible audio stream %d (codec=%s)",
 						session.ID, stream.Index, stream.Codec)
-					break // Only map the first compatible stream
+					mappedAudio = true
+					break
+				}
+			}
+			// Second pass: fallback to any compatible track (including commentary)
+			if !mappedAudio {
+				for _, stream := range audioStreams {
+					if compatibleCodecs[stream.Codec] {
+						audioMap := fmt.Sprintf("0:%d", stream.Index)
+						args = append(args, "-map", audioMap)
+						log.Printf("[hls] session %s: mapped compatible audio stream %d (codec=%s, fallback including commentary)",
+							session.ID, stream.Index, stream.Codec)
+						break
+					}
 				}
 			}
 		} else {
