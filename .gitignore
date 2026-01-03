@@ -112,3 +112,4 @@ GEMINI.md
 CLAUDE.md
 NEXT_BUILD_TODO.md
 .monitoring/
+monitor.sh
