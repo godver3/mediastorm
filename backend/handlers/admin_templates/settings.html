@@ -1360,6 +1360,44 @@
         return true;
     }
 
+    // Strip values from userSettings that match global settings (treat as inherited)
+    // This ensures we only store actual overrides, not duplicate values
+    function stripInheritedValues(userSettings, globalSettings) {
+        if (!userSettings || !globalSettings) return userSettings;
+
+        const stripped = {};
+        // Only process per-user sections (top-level only, skip nested like 'homeShelves.shelves')
+        const topLevelPerUserSections = ['playback', 'homeShelves', 'filtering', 'liveTV', 'display'];
+
+        for (const section of topLevelPerUserSections) {
+            if (!userSettings[section]) continue;
+
+            const globalSection = globalSettings[section];
+            if (!globalSection) {
+                // No global equivalent, keep user settings
+                stripped[section] = userSettings[section];
+                continue;
+            }
+
+            // For each field in the user's section, only keep if different from global
+            const sectionStripped = {};
+            for (const [key, value] of Object.entries(userSettings[section])) {
+                const globalValue = globalSection[key];
+                // Keep if different from global
+                if (!deepEqual(value, globalValue)) {
+                    sectionStripped[key] = value;
+                }
+            }
+
+            // Only include section if it has actual overrides
+            if (Object.keys(sectionStripped).length > 0) {
+                stripped[section] = sectionStripped;
+            }
+        }
+
+        return stripped;
+    }
+
     // Check if a specific section has unsaved changes
     function sectionHasChanges(sectionKey) {
         const sectionDef = schema[sectionKey];
@@ -1421,18 +1459,22 @@
 
         try {
             if (selectedUserId && userSettings) {
-                // Save user-specific settings
+                // Save user-specific settings (strip values matching global to keep as inherited)
+                const strippedSettings = stripInheritedValues(userSettings, currentSettings);
                 const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(userSettings)
+                    body: JSON.stringify(strippedSettings)
                 });
                 if (response.ok) {
-                    originalUserSettings = JSON.parse(JSON.stringify(userSettings));
+                    // Update local state with stripped values
+                    userSettings = strippedSettings;
+                    originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
                     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
                     showToast('Settings saved successfully');
-                    // Update override indicators
-                    if (userOverrides) userOverrides[selectedUserId] = true;
+                    // Update override indicators based on whether there are actual overrides
+                    const hasOverrides = Object.keys(strippedSettings).length > 0;
+                    if (userOverrides) userOverrides[selectedUserId] = hasOverrides;
                     updateUserDropdownIndicators();
                     updateClientDropdownIndicators();
                     updateRevertButtonVisibility();
@@ -1654,7 +1696,12 @@
                 const fieldValue = getValue(sectionKey + '.' + fieldKey);
                 const fieldPath = sectionKey + '.' + fieldKey;
                 const inheritanceBadge = renderInheritanceBadge(fieldPath, fieldDef);
-                return '<div class="form-group'+invalidClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
+                // Add inheritance class for visual styling when editing profile/client
+                const inheritanceInfo = getInheritanceInfo(fieldPath);
+                const inheritanceClass = (selectedUserId || selectedClientId)
+                    ? (inheritanceInfo.isOverridden ? ' field-overridden' : ' field-inherited')
+                    : '';
+                return '<div class="form-group'+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
             }).join('');
 
         // Add provider priority UI for streaming section
@@ -2523,20 +2570,25 @@
                     showToast(result.error || 'Failed to save client settings', 'error');
                 }
             } else if (selectedUserId && userSettings) {
-                // Save user-specific settings
+                // Save user-specific settings (strip values matching global to keep as inherited)
+                const strippedSettings = stripInheritedValues(userSettings, currentSettings);
                 const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(selectedUserId), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(userSettings)
+                    body: JSON.stringify(strippedSettings)
                 });
                 if (response.ok) {
-                    originalUserSettings = JSON.parse(JSON.stringify(userSettings));
+                    // Update local state with stripped values
+                    userSettings = strippedSettings;
+                    originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
                     showToast('User settings saved successfully');
-                    // Update user override indicator (settings were saved, so they have overrides now)
-                    if (userOverrides) userOverrides[selectedUserId] = true;
+                    // Update user override indicator based on whether there are actual overrides
+                    const hasOverrides = Object.keys(strippedSettings).length > 0;
+                    if (userOverrides) userOverrides[selectedUserId] = hasOverrides;
                     updateUserDropdownIndicators();
                     updateClientDropdownIndicators(); // Update "Profile Defaults" indicator
                     updateRevertButtonVisibility();
+                    renderSettings(); // Re-render to update inherited field styling
                 } else {
                     const result = await response.text();
                     showToast(result || 'Failed to save user settings', 'error');
