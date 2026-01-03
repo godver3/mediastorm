@@ -33,7 +33,9 @@ import {
   Animated,
   AppState,
   BackHandler,
+  Image,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -660,6 +662,13 @@ export default function PlayerScreen() {
   }, [shouldPreferSystemPlayer]);
   const isTvPlatform = Platform.isTV;
   const [paused, setPaused] = useState<boolean>(false);
+  // Pause teardown state: Prevents AVPlayer HLS timeout (-11866) by tearing down
+  // the player after extended pause and showing a poster overlay instead
+  const [pauseTeardownActive, setPauseTeardownActive] = useState<boolean>(false);
+  const pauseTeardownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pauseTeardownTimeRef = useRef<number>(0); // Playback time when we tore down
+  const pauseTeardownUrlRef = useRef<string | null>(null); // URL to restore
+  const PAUSE_TEARDOWN_DELAY = 20000; // 20 seconds before teardown
   const [controlsVisible, setControlsVisible] = useState<boolean>(
     isTvPlatform || (Platform.OS === 'web' && !prefersSystemControls),
   );
@@ -914,6 +923,97 @@ export default function PlayerScreen() {
       subscription.remove();
     };
   }, [paused]);
+
+  // Pause teardown effect: Prevents AVPlayer HLS timeout (-11866) by tearing down
+  // the player after extended pause. When paused for 20+ seconds on an HLS stream,
+  // we save the current time, clear the video source, and show a poster overlay.
+  // This prevents AVPlayer from throwing "stream ended unexpectedly" errors.
+  // On resume, we create a new HLS session starting from the saved time.
+  useEffect(() => {
+    // Only apply to HLS streams on native platforms (where AVPlayer is used)
+    const shouldUsePauseTeardown = isHlsStream && Platform.OS !== 'web';
+
+    if (paused && shouldUsePauseTeardown && currentMovieUrl && !pauseTeardownActive) {
+      // Start the teardown timer when paused
+      console.log('[player] pause teardown: starting 20s timer');
+      pauseTeardownTimerRef.current = setTimeout(() => {
+        console.log('[player] pause teardown: timer fired, tearing down player');
+        // Save current state for restoration
+        pauseTeardownTimeRef.current = currentTimeRef.current;
+        pauseTeardownUrlRef.current = currentMovieUrl;
+        // Tear down the player by clearing the URL
+        setCurrentMovieUrl(null);
+        setPauseTeardownActive(true);
+      }, PAUSE_TEARDOWN_DELAY);
+    } else if (!paused && pauseTeardownTimerRef.current) {
+      // Clear timer if we unpause before teardown
+      console.log('[player] pause teardown: clearing timer (unpaused)');
+      clearTimeout(pauseTeardownTimerRef.current);
+      pauseTeardownTimerRef.current = null;
+    }
+
+    return () => {
+      if (pauseTeardownTimerRef.current) {
+        clearTimeout(pauseTeardownTimerRef.current);
+        pauseTeardownTimerRef.current = null;
+      }
+    };
+  }, [paused, isHlsStream, currentMovieUrl, pauseTeardownActive]);
+
+  // Pause teardown restoration: When user resumes after teardown, create a new HLS session
+  useEffect(() => {
+    if (!paused && pauseTeardownActive && initialSourcePath) {
+      console.log('[player] pause teardown: resuming from teardown, creating new HLS session', {
+        savedTime: pauseTeardownTimeRef.current,
+      });
+
+      // Create new HLS session starting from saved time
+      const restoreSession = async () => {
+        try {
+          const response = await apiService.createHlsSession({
+            path: initialSourcePath,
+            dv: routeHasDolbyVision,
+            dvProfile: routeDvProfile || undefined,
+            hdr: routeHasHDR10,
+            forceAAC: forceAacFromRoute,
+            start: pauseTeardownTimeRef.current,
+            audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
+            subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
+          });
+
+          hlsSessionIdRef.current = response.sessionId;
+
+          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+          const playlistBase = `${baseUrl}${response.playlistUrl}`;
+          const authToken = apiService.getAuthToken();
+          const playlistWithKey = authToken
+            ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
+            : playlistBase;
+
+          console.log('[player] pause teardown: restored HLS session', {
+            playlistUrl: playlistWithKey,
+            startOffset: response.startOffset,
+          });
+
+          // Update playback offset if the session has a start offset
+          if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
+            playbackOffsetRef.current = response.startOffset;
+            sessionBufferEndRef.current = response.startOffset;
+          }
+
+          // Restore the video URL - this will trigger the video to load
+          setCurrentMovieUrl(playlistWithKey);
+          setPauseTeardownActive(false);
+        } catch (error) {
+          console.error('[player] pause teardown: failed to restore session', error);
+          setPauseTeardownActive(false);
+          showToast('Failed to resume playback', { tone: 'danger' });
+        }
+      };
+
+      restoreSession();
+    }
+  }, [paused, pauseTeardownActive, initialSourcePath, routeHasDolbyVision, routeDvProfile, routeHasHDR10, forceAacFromRoute, showToast]);
 
   // Check if the current URL is already an HLS session playlist (not just the /hls/start endpoint)
   // Session playlist URLs look like: /video/hls/{sessionId}/stream.m3u8
@@ -2634,7 +2734,7 @@ export default function PlayerScreen() {
         finalizeHide();
       });
     },
-    [canUseNativeDriver, controlsOpacity, shouldAutoHideControls, usesSystemManagedControls],
+    [canUseNativeDriver, controlsOpacity, shouldAutoHideControls, usesSystemManagedControls, pauseTeardownActive],
   );
 
   // Keep hideControlsRef updated
@@ -3019,7 +3119,23 @@ export default function PlayerScreen() {
           sessionBufferEnd: sessionBufferEndRef.current,
           currentSubtitleTimeOffset: -playbackOffsetRef.current,
           newSubtitleTimeOffset: -time,
+          pauseTeardownActive,
         });
+
+        // If player was torn down due to extended pause, update the saved time
+        // and trigger restoration - the restoration effect will create a new
+        // HLS session starting from this seek position
+        if (pauseTeardownActive) {
+          console.log('[player] seek during pause teardown, updating saved time and resuming', { time });
+          pauseTeardownTimeRef.current = time;
+          currentTimeRef.current = time;
+          setCurrentTime(time);
+          setPaused(false); // Triggers restoration effect
+          if (shouldShowControls) {
+            showControls();
+          }
+          return;
+        }
 
         let performed = false;
 
@@ -3106,7 +3222,7 @@ export default function PlayerScreen() {
         }
       })();
     },
-    [isHlsStream, showControls, sourcePath, warmStartHlsSession],
+    [isHlsStream, pauseTeardownActive, showControls, sourcePath, warmStartHlsSession],
   );
 
   // Keep seekRef updated
@@ -4749,6 +4865,26 @@ export default function PlayerScreen() {
             <View style={styles.blackOverlay} pointerEvents="none" renderToHardwareTextureAndroid={true} />
           )}
 
+          {/* Pause teardown overlay - shows poster image when player is torn down after extended pause */}
+          {/* This prevents AVPlayer HLS timeout by proactively stopping the player */}
+          {/* Tapping the overlay shows controls so user can press play to resume */}
+          {pauseTeardownActive && (
+            <Pressable
+              style={styles.pauseTeardownOverlay}
+              onPress={handleVideoInteract}
+            >
+              {headerImage ? (
+                <Image
+                  source={{ uri: headerImage }}
+                  style={styles.pauseTeardownImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.pauseTeardownPlaceholder} />
+              )}
+            </Pressable>
+          )}
+
           {/* Loading indicator that stays visible even when controls are hidden */}
           {isVideoBuffering && !usesSystemManagedControls && (
             <View style={styles.loadingOverlay} pointerEvents="none" renderToHardwareTextureAndroid={true}>
@@ -5175,6 +5311,21 @@ const createPlayerStyles = (theme: NovaTheme) =>
       ...StyleSheet.absoluteFillObject,
       backgroundColor: '#000000',
       zIndex: 10,
+    },
+    pauseTeardownOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: '#000000',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 0, // Below controls (zIndex: 1) so controls are visible and interactive
+    },
+    pauseTeardownImage: {
+      width: '100%',
+      height: '100%',
+    },
+    pauseTeardownPlaceholder: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: '#000000',
     },
     loadingOverlay: {
       ...StyleSheet.absoluteFillObject,
