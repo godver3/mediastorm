@@ -482,6 +482,7 @@ export default function PlayerScreen() {
   const routeHasDolbyVision = useMemo(() => parseBooleanParam(dvFlagParam), [dvFlagParam]);
   const routeHasHDR10 = useMemo(() => parseBooleanParam(hdr10FlagParam), [hdr10FlagParam]);
   const routeHasAnyHDR = routeHasDolbyVision || routeHasHDR10;
+  // Note: hasAnyHDR (below) also includes detected HDR from video metadata for player routing
   const forceAacFromRoute = useMemo(() => parseBooleanParam(forceAACParam), [forceAACParam]);
   const initialSourcePath = useMemo(() => {
     const raw = Array.isArray(sourcePathParam) ? sourcePathParam[0] : sourcePathParam;
@@ -845,6 +846,13 @@ export default function PlayerScreen() {
       return String(effectiveMovie).includes('/video/hls/');
     }
   }, [effectiveMovie]);
+
+  // Combined HDR detection: route params OR detected from video metadata
+  // Used for player routing - ensures RNV is used when HDR is detected even if route params are missing
+  const hasAnyHDR = useMemo(
+    () => routeHasAnyHDR || videoColorInfo?.isHDR10 || false,
+    [routeHasAnyHDR, videoColorInfo?.isHDR10],
+  );
 
   // Refresh settings on playback start to ensure latest values (e.g., subtitle size)
   useEffect(() => {
@@ -4819,8 +4827,9 @@ export default function PlayerScreen() {
               selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
               // Use react-native-video for HDR content (VLC tone-maps to SDR)
-              forceRnvPlayer={routeHasAnyHDR}
-              forceNativeFullscreen={Platform.OS !== 'web' && routeHasAnyHDR}
+              // hasAnyHDR includes both route params AND detected HDR from video metadata
+              forceRnvPlayer={hasAnyHDR}
+              forceNativeFullscreen={Platform.OS !== 'web' && hasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{
                 title: episodeName || title || undefined,
