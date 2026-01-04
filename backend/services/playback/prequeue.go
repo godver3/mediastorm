@@ -45,6 +45,16 @@ type PrequeueResponse struct {
 	Status        PrequeueStatus           `json:"status"`
 }
 
+// SubtitleTrackInfo represents a subtitle track with metadata
+type SubtitleTrackInfo struct {
+	Index         int    `json:"index"`         // Track index (0-based, for selection in UI)
+	AbsoluteIndex int    `json:"absoluteIndex"` // Absolute ffprobe stream index (for ffmpeg -map)
+	Language      string `json:"language"`      // Language code (e.g., "eng", "spa")
+	Title         string `json:"title"`         // Track title/name
+	Codec         string `json:"codec"`         // Codec name
+	Forced        bool   `json:"forced"`        // Whether this is a forced subtitle track
+}
+
 // PrequeueStatusResponse is the full status of a prequeue entry
 type PrequeueStatusResponse struct {
 	PrequeueID    string                   `json:"prequeueId"`
@@ -115,6 +125,10 @@ type PrequeueEntry struct {
 
 	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
 	SubtitleSessions map[int]*models.SubtitleSessionInfo
+
+	// Subtitle track info for lazy extraction (SDR content)
+	// Stored during prequeue, extraction triggered later with correct offset
+	SubtitleTracks []SubtitleTrackInfo
 
 	Error     string
 	CreatedAt time.Time

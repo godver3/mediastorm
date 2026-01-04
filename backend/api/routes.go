@@ -177,6 +177,9 @@ func Register(
 		protected.HandleFunc("/playback/prequeue", prequeueHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.GetStatus).Methods(http.MethodGet)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.Options).Methods(http.MethodOptions)
+		// Lazy subtitle extraction - called when user plays with known offset
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/start-subtitles", prequeueHandler.StartSubtitles).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/start-subtitles", prequeueHandler.Options).Methods(http.MethodOptions)
 	}
 
 	protected.HandleFunc("/usenet/health", usenetHandler.CheckHealth).Methods(http.MethodPost)
