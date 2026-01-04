@@ -7,7 +7,7 @@ import TVControlsModal from '@/components/player/TVControlsModal';
 import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
-import SubtitleOverlay from '@/components/player/SubtitleOverlay';
+import SubtitleOverlay, { SubtitleCuesRange } from '@/components/player/SubtitleOverlay';
 import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
 import type { SubtitleSearchResult } from '@/services/api';
 import VideoPlayer, {
@@ -670,6 +670,8 @@ export default function PlayerScreen() {
   // Extracted subtitle VTT URL for non-HLS streams (using standalone subtitle extraction endpoint)
   const [extractedSubtitleUrl, setExtractedSubtitleUrl] = useState<string | null>(null);
   const [extractedSubtitleSessionId, setExtractedSubtitleSessionId] = useState<string | null>(null);
+  // Track available subtitle cue range for seek detection (re-extract if seeking outside range)
+  const subtitleCuesRangeRef = useRef<SubtitleCuesRange | null>(null);
   // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
   const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<Array<{
     index: number;
@@ -3160,6 +3162,8 @@ export default function PlayerScreen() {
         if (performed) {
           currentTimeRef.current = time;
           setCurrentTime(time);
+          // Check if we need to re-extract subtitles for the new position
+          triggerSubtitleReExtractionRef.current?.(time);
         }
         if (shouldShowControls) {
           showControls();
@@ -3978,6 +3982,72 @@ export default function PlayerScreen() {
     preExtractedSubtitles,
     initialStartOffset,
   ]);
+
+  // Callback to handle subtitle cues range changes from SubtitleOverlay
+  const handleSubtitleCuesRangeChange = useCallback((range: SubtitleCuesRange | null) => {
+    subtitleCuesRangeRef.current = range;
+  }, []);
+
+  // Re-extract subtitles when seeking outside the available cue range
+  const triggerSubtitleReExtraction = useCallback(
+    (seekPosition: number) => {
+      // Only for non-HLS streams with active subtitle extraction
+      if (isHlsStream || !sourcePath || selectedSubtitleTrackIndex === null || selectedSubtitleTrackIndex < 0) {
+        return;
+      }
+
+      const range = subtitleCuesRangeRef.current;
+      // If no range yet (extraction just started) or position is within range, no need to re-extract
+      if (!range) {
+        console.log('[player] subtitle re-extraction skipped - no cue range yet');
+        return;
+      }
+
+      // Check if seek position is outside available cue range
+      // Add a small buffer (10s) to avoid unnecessary re-extractions for small seeks
+      const buffer = 10;
+      const isOutsideRange = seekPosition < range.minTime - buffer || seekPosition > range.maxTime + buffer;
+
+      if (!isOutsideRange) {
+        console.log('[player] seek within subtitle cue range, no re-extraction needed', {
+          seekPosition,
+          range,
+        });
+        return;
+      }
+
+      console.log('[player] seek outside subtitle cue range, triggering re-extraction', {
+        seekPosition,
+        range,
+        selectedSubtitleTrackIndex,
+      });
+
+      // Clear current extraction state
+      setExtractedSubtitleUrl(null);
+      setExtractedSubtitleSessionId(null);
+      subtitleCuesRangeRef.current = null;
+
+      // Start new extraction from seek position
+      apiService
+        .startSubtitleExtract(sourcePath, selectedSubtitleTrackIndex, seekPosition)
+        .then((response) => {
+          console.log('[player] subtitle re-extraction started', response);
+          const fullUrl = apiService.getFullUrl(response.subtitleUrl);
+          setExtractedSubtitleUrl(fullUrl);
+          setExtractedSubtitleSessionId(response.sessionId);
+        })
+        .catch((error) => {
+          console.error('[player] subtitle re-extraction failed', error);
+        });
+    },
+    [isHlsStream, sourcePath, selectedSubtitleTrackIndex],
+  );
+
+  // Keep ref updated for use in seek handler
+  const triggerSubtitleReExtractionRef = useRef(triggerSubtitleReExtraction);
+  useEffect(() => {
+    triggerSubtitleReExtractionRef.current = triggerSubtitleReExtraction;
+  }, [triggerSubtitleReExtraction]);
 
   // Recreate HLS session when audio/subtitle tracks change for HLS streams
   const lastHlsTrackSelectionRef = useRef<{ audio: number | null; subtitle: number | null }>({
@@ -4815,6 +4885,7 @@ export default function PlayerScreen() {
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
+              onCuesRangeChange={handleSubtitleCuesRangeChange}
             />
           )}
 
