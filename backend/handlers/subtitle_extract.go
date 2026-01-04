@@ -178,12 +178,30 @@ func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path st
 	m.mu.Lock()
 
 	// Check for existing session
-	for _, session := range m.sessions {
+	for id, session := range m.sessions {
 		if session.Path == path && session.SubtitleTrack == subtitleTrack {
+			// Calculate offset difference
+			offsetDiff := startOffset - session.StartOffset
+
+			// If requested startOffset is significantly different from existing session's startOffset,
+			// we need a new session:
+			// - Backward seek: existing VTT doesn't have earlier cues
+			// - Forward seek: extraction may not have reached that point yet
+			// Use 60s threshold to allow normal playback progress but catch seeks
+			if offsetDiff < -10 || offsetDiff > 60 {
+				log.Printf("[subtitle-extract] existing session %s has startOffset=%.1f but requested %.1f (diff=%.1f), creating new session",
+					id, session.StartOffset, startOffset, offsetDiff)
+				// Clean up old session
+				m.cleanupSessionLocked(session)
+				delete(m.sessions, id)
+				break // Create new session below
+			}
 			session.mu.Lock()
 			session.LastAccess = time.Now()
 			session.mu.Unlock()
 			m.mu.Unlock()
+			log.Printf("[subtitle-extract] reusing session %s (startOffset=%.1f covers requested %.1f, diff=%.1f)",
+				id, session.StartOffset, startOffset, offsetDiff)
 			return session, nil
 		}
 	}

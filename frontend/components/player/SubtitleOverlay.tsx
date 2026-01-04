@@ -12,6 +12,12 @@ export interface VTTCue {
   text: string;
 }
 
+/** Time range of available subtitle cues */
+export interface SubtitleCuesRange {
+  minTime: number;
+  maxTime: number;
+}
+
 interface SubtitleOverlayProps {
   /** URL to fetch the VTT file from */
   vttUrl: string | null;
@@ -34,6 +40,8 @@ interface SubtitleOverlayProps {
   videoWidth?: number;
   /** Video natural height (used for portrait mode positioning) */
   videoHeight?: number;
+  /** Callback when the available cue time range changes (for seek detection) */
+  onCuesRangeChange?: (range: SubtitleCuesRange | null) => void;
 }
 
 /**
@@ -148,6 +156,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   currentTimeRef: externalTimeRef,
   videoWidth,
   videoHeight,
+  onCuesRangeChange,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -330,8 +339,22 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       lastFetchedLengthRef.current = 0;
       setCues([]);
       setError(null);
+      // Report null range when URL changes (new extraction starting)
+      onCuesRangeChange?.(null);
     }
-  }, [vttUrl]);
+  }, [vttUrl, onCuesRangeChange]);
+
+  // Report available cue range when cues change
+  useEffect(() => {
+    if (cues.length === 0) {
+      onCuesRangeChange?.(null);
+      return;
+    }
+    // Cues are sorted by startTime, so first cue has min, last cue has max
+    const minTime = cues[0].startTime;
+    const maxTime = cues[cues.length - 1].endTime;
+    onCuesRangeChange?.({ minTime, maxTime });
+  }, [cues, onCuesRangeChange]);
 
   // Set up polling to fetch VTT updates
   useEffect(() => {
