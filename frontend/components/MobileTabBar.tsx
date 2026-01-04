@@ -135,7 +135,9 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
                 color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
               />
             )}
-            <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{item.label}</Text>
+            <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]} numberOfLines={1}>
+              {item.label}
+            </Text>
           </Pressable>
         );
       })}

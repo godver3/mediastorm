@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import {
   DefaultFocus,
@@ -42,7 +42,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   onSearchSubtitles,
 }) => {
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: screenWidth } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
   const hasOptions = options.length > 0;
 
   const selectedLabel = useMemo(() => options.find((option) => option.id === selectedId)?.label, [options, selectedId]);
@@ -268,8 +269,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     isSelected && !isFocused && styles.optionLabelSelected,
                     isSelected && isFocused && styles.optionLabelSelectedFocused,
                   ]}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
                 >
                   {option.label}
                 </Text>
@@ -281,8 +280,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                       isSelected && !isFocused && styles.optionDescriptionSelected,
                       isSelected && isFocused && styles.optionDescriptionSelectedFocused,
                     ]}
-                    numberOfLines={2}
-                    ellipsizeMode="tail"
                   >
                     {option.description}
                   </Text>
@@ -382,8 +379,22 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   );
 };
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme, screenWidth: number) => {
+  // Responsive breakpoints
+  const isNarrow = screenWidth < 400;
+  const isMedium = screenWidth >= 400 && screenWidth < 600;
+
+  // Responsive width: fill more on narrow screens
+  const modalWidth = isNarrow ? '95%' : isMedium ? '90%' : '80%';
+  const modalMaxWidth = isNarrow ? 400 : 720;
+
+  // Responsive padding
+  const horizontalPadding = isNarrow ? theme.spacing.md : theme.spacing.xl;
+  const itemPadding = isNarrow ? theme.spacing.md : theme.spacing.lg;
+  const itemMarginHorizontal = isNarrow ? theme.spacing.sm : theme.spacing.xl;
+  const listPadding = isNarrow ? theme.spacing.md : theme.spacing['3xl'];
+
+  return StyleSheet.create({
     overlay: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'center',
@@ -395,18 +406,18 @@ const createStyles = (theme: NovaTheme) =>
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: '80%',
-      maxWidth: 720,
-      maxHeight: '80%',
+      width: modalWidth,
+      maxWidth: modalMaxWidth,
+      maxHeight: '85%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.xl,
+      borderRadius: isNarrow ? theme.radius.lg : theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
     },
     modalHeader: {
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: horizontalPadding,
+      paddingVertical: isNarrow ? theme.spacing.lg : theme.spacing.xl,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       gap: theme.spacing.xs,
@@ -414,6 +425,7 @@ const createStyles = (theme: NovaTheme) =>
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
+      fontSize: isNarrow ? 18 : theme.typography.title.xl.fontSize,
     },
     modalSubtitle: {
       ...theme.typography.body.sm,
@@ -424,21 +436,21 @@ const createStyles = (theme: NovaTheme) =>
       flexShrink: 1,
     },
     optionsList: {
-      paddingHorizontal: theme.spacing['3xl'],
-      paddingVertical: theme.spacing['2xl'],
+      paddingHorizontal: listPadding,
+      paddingVertical: isNarrow ? theme.spacing.lg : theme.spacing['2xl'],
     },
     optionItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: theme.spacing.lg,
-      paddingHorizontal: theme.spacing.xl,
+      paddingVertical: itemPadding,
+      paddingHorizontal: isNarrow ? theme.spacing.md : theme.spacing.xl,
       borderRadius: theme.radius.md,
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
-      gap: theme.spacing.lg,
-      marginHorizontal: theme.spacing.xl,
+      gap: isNarrow ? theme.spacing.md : theme.spacing.lg,
+      marginHorizontal: itemMarginHorizontal,
       marginBottom: theme.spacing.md,
     },
     optionItemFocused: {
@@ -516,8 +528,9 @@ const createStyles = (theme: NovaTheme) =>
     },
     modalFooter: {
       flexDirection: 'row',
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.lg,
+      flexWrap: 'wrap',
+      paddingHorizontal: horizontalPadding,
+      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
@@ -525,8 +538,8 @@ const createStyles = (theme: NovaTheme) =>
       gap: theme.spacing.md,
     },
     closeButton: {
-      minWidth: 150,
-      paddingHorizontal: theme.spacing.xl,
+      minWidth: isNarrow ? 100 : 150,
+      paddingHorizontal: isNarrow ? theme.spacing.lg : theme.spacing.xl,
       paddingVertical: theme.spacing.md,
       borderRadius: theme.radius.md,
       borderWidth: 2,
