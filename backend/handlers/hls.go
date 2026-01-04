@@ -297,8 +297,9 @@ type HLSSession struct {
 	HasHDR              bool // HDR10 content (needs fMP4 segments for iOS compatibility)
 	HDRMetadataDisabled bool // Set to true if hevc_metadata filter fails (malformed SEI data)
 	Duration          float64 // Total duration in seconds from ffprobe
-	StartOffset       float64 // Requested start offset in seconds for session warm starts
-	ActualStartOffset float64 // Actual start time from fMP4 tfdt box (keyframe-aligned, for subtitle sync)
+	StartOffset        float64 // Requested start offset in seconds for session warm starts (never changes, for frontend)
+	TranscodingOffset  float64 // Current transcoding position (updated on recovery restarts)
+	ActualStartOffset  float64 // Actual start time from fMP4 tfdt box (keyframe-aligned, for subtitle sync)
 
 	// Profile tracking
 	ProfileID   string
@@ -844,6 +845,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		HasHDR:              hasHDR,
 		Duration:            duration,
 		StartOffset:         startOffset,
+		TranscodingOffset:   startOffset, // Initially same as StartOffset, updated on recovery
 		ProfileID:           profileID,
 		ProfileName:         profileName,
 		AudioTrackIndex:     audioTrackIndex,
@@ -1623,8 +1625,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	log.Printf("[hls] session %s: memory - alloc=%d MB, sys=%d MB, numGC=%d",
 		session.ID, memStats.Alloc/1024/1024, memStats.Sys/1024/1024, memStats.NumGC)
 
-	if session.StartOffset > 0 {
-		log.Printf("[hls] session %s: applying start offset %.3fs", session.ID, session.StartOffset)
+	if session.TranscodingOffset > 0 {
+		log.Printf("[hls] session %s: applying transcoding offset %.3fs", session.ID, session.TranscodingOffset)
 	}
 
 	// Use cached probe data from CreateSession if available, otherwise probe now (recovery case)
@@ -1679,7 +1681,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	// For seeking to work with -c:v copy, we need a seekable input
 	// Check if we can get a direct HTTP URL instead of using a pipe
-	log.Printf("[hls] session %s: checking for direct URL support (startOffset=%.3f)", session.ID, session.StartOffset)
+	log.Printf("[hls] session %s: checking for direct URL support (transcodingOffset=%.3f)", session.ID, session.TranscodingOffset)
 	directURL, hasDirectURL := m.getDirectURL(ctx, session)
 	if hasDirectURL {
 		log.Printf("[hls] session %s: got direct URL: %s", session.ID, directURL)
@@ -1716,7 +1718,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 		// Calculate byte offset from time offset for seeking support
 		var rangeHeader string
-		if session.StartOffset > 0 && session.Duration > 0 {
+		if session.TranscodingOffset > 0 && session.Duration > 0 {
 			// Get file size for byte offset calculation
 			headResp, err := m.streamer.Stream(ctx, streaming.Request{
 				Path:   session.Path,
@@ -1727,8 +1729,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				headResp.Close()
 
 				if fileSize > 0 {
-					// Calculate approximate byte offset: (fileSize / duration) * startOffset
-					byteOffset := int64(float64(fileSize) / session.Duration * session.StartOffset)
+					// Calculate approximate byte offset: (fileSize / duration) * transcodingOffset
+					byteOffset := int64(float64(fileSize) / session.Duration * session.TranscodingOffset)
 
 					if byteOffset > 0 && supportsPipeRange(session.Path) {
 						if isMatroskaPath(session.Path) {
@@ -1760,8 +1762,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 									if byteOffset > matroskaSeekBackoffBytes {
 										byteOffset -= matroskaSeekBackoffBytes
-										log.Printf("[hls] session %s: backing off %d bytes to help align matroska cluster (startOffset=%.3fs)",
-											session.ID, matroskaSeekBackoffBytes, session.StartOffset)
+										log.Printf("[hls] session %s: backing off %d bytes to help align matroska cluster (transcodingOffset=%.3fs)",
+											session.ID, matroskaSeekBackoffBytes, session.TranscodingOffset)
 									} else {
 										log.Printf("[hls] session %s: matroska offset %d smaller than backoff; streaming from start", session.ID, byteOffset)
 										byteOffset = 0
@@ -1775,7 +1777,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 						if byteOffset > 0 {
 							rangeHeader = fmt.Sprintf("bytes=%d-", byteOffset)
 							log.Printf("[hls] session %s: seeking pipe input from byte %d (time %.3fs, fileSize %d, duration %.3fs)",
-								session.ID, byteOffset, session.StartOffset, fileSize, session.Duration)
+								session.ID, byteOffset, session.TranscodingOffset, fileSize, session.Duration)
 						}
 					} else if byteOffset > 0 {
 						log.Printf("[hls] session %s: container %q does not support ranged pipe seeks; streaming from start", session.ID, filepath.Ext(session.Path))
@@ -1820,12 +1822,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// - Large seeks (>= 30s): INPUT seeking (-ss before -i) - uses HTTP Range to skip data
 	const outputSeekThreshold = 30.0 // seconds
 
-	useOutputSeeking := session.StartOffset > 0 && session.StartOffset < outputSeekThreshold
+	useOutputSeeking := session.TranscodingOffset > 0 && session.TranscodingOffset < outputSeekThreshold
 
 	// For INPUT seeking, add -ss before -i
-	if session.StartOffset >= outputSeekThreshold {
-		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-		log.Printf("[hls] session %s: using INPUT seeking to %.3fs (HTTP Range, skips data)", session.ID, session.StartOffset)
+	if session.TranscodingOffset >= outputSeekThreshold {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
+		log.Printf("[hls] session %s: using INPUT seeking to %.3fs (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
 	}
 
 	// Add input source - use proxy URL if available, otherwise use pipe
@@ -1839,18 +1841,18 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	// For OUTPUT seeking, add -ss after -i
 	if useOutputSeeking {
-		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-		log.Printf("[hls] session %s: using OUTPUT seeking to %.3fs (faster startup, reads from start)", session.ID, session.StartOffset)
+		args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
+		log.Printf("[hls] session %s: using OUTPUT seeking to %.3fs (faster startup, reads from start)", session.ID, session.TranscodingOffset)
 	}
 
 	// If we're seeking and know the total duration, tell FFmpeg how much content to expect
 	// This ensures the HLS playlist reports the correct remaining duration
-	if session.StartOffset > 0 && session.Duration > 0 {
-		remainingDuration := session.Duration - session.StartOffset
+	if session.TranscodingOffset > 0 && session.Duration > 0 {
+		remainingDuration := session.Duration - session.TranscodingOffset
 		if remainingDuration > 0 {
 			args = append(args, "-t", fmt.Sprintf("%.3f", remainingDuration))
 			log.Printf("[hls] session %s: limiting duration to remaining %.3fs (total=%.3fs, offset=%.3fs)",
-				session.ID, remainingDuration, session.Duration, session.StartOffset)
+				session.ID, remainingDuration, session.Duration, session.TranscodingOffset)
 		}
 	}
 
@@ -2760,22 +2762,23 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			highestSegment = 0
 		}
 
-		// Calculate new start offset based on segments already created
+		// Calculate new transcoding offset based on segments already created
 		// Each segment is hlsSegmentDuration seconds
-		newStartOffset := session.StartOffset + float64(highestSegment+1)*hlsSegmentDuration
+		// Use TranscodingOffset as base (not StartOffset) - StartOffset is the original user position
+		newTranscodingOffset := session.TranscodingOffset + float64(highestSegment+1)*hlsSegmentDuration
 
 		// Don't exceed the total duration
-		if session.Duration > 0 && newStartOffset >= session.Duration {
+		if session.Duration > 0 && newTranscodingOffset >= session.Duration {
 			log.Printf("[hls] session %s: input error recovery would exceed duration (offset %.2f >= duration %.2f), marking complete",
-				session.ID, newStartOffset, session.Duration)
+				session.ID, newTranscodingOffset, session.Duration)
 			session.mu.Lock()
 			session.Completed = true
 			session.mu.Unlock()
 			return nil
 		}
 
-		log.Printf("[hls] session %s: input error recovery - highest segment=%d, new offset=%.2fs (was %.2fs), attempt %d/%d",
-			session.ID, highestSegment, newStartOffset, session.StartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+		log.Printf("[hls] session %s: input error recovery - highest segment=%d, new transcoding offset=%.2fs (was %.2fs), attempt %d/%d",
+			session.ID, highestSegment, newTranscodingOffset, session.TranscodingOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
 
 		// DON'T clean up existing segments - we want to keep them for seamless playback
 		// Only remove the potentially incomplete last segment and playlist (will be regenerated)
@@ -2783,13 +2786,14 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// The existing segments are still valid and can be served
 
 		// Reset session state for restart, but keep track of progress
+		// NOTE: We update TranscodingOffset, NOT StartOffset - StartOffset is the original user position
 		session.mu.Lock()
 		session.FFmpegCmd = nil
 		session.FFmpegPID = 0
 		session.Completed = false
 		session.InputErrorDetected = false // Reset so we can detect new errors
 		session.RecoveryAttempts++
-		session.StartOffset = newStartOffset // Update start offset to resume position
+		session.TranscodingOffset = newTranscodingOffset // Update transcoding offset to resume position
 		session.CreatedAt = time.Now()       // Reset so startup timeout doesn't immediately fire
 		session.LastSegmentRequest = time.Now()
 		// Keep SegmentsCreated, BytesStreamed, SegmentRequestCount as-is for tracking
@@ -2806,14 +2810,16 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		time.Sleep(2 * time.Second)
 
 		// Restart transcoding from the new offset
+		// Subtitles will be re-extracted from TranscodingOffset (same as seek behavior)
 		log.Printf("[hls] session %s: restarting transcoding from %.2fs after input error (recovery attempt %d/%d)",
-			session.ID, newStartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+			session.ID, newTranscodingOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
 		return m.startTranscoding(newCtx, session, cachedForceAAC)
 	}
 
 	// Calculate expected vs actual segments for debugging
+	// Use TranscodingOffset since that's where FFmpeg started from
 	highestSegment := m.findHighestSegmentNumber(session)
-	expectedDuration := session.Duration - session.StartOffset
+	expectedDuration := session.Duration - session.TranscodingOffset
 	expectedSegments := 0
 	if expectedDuration > 0 {
 		expectedSegments = int(expectedDuration / hlsSegmentDuration)
@@ -2835,8 +2841,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	}
 
 	// Detailed completion logging
-	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - duration=%.2fs startOffset=%.2fs expectedDuration=%.2fs",
-		session.ID, session.Duration, session.StartOffset, expectedDuration)
+	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - duration=%.2fs transcodingOffset=%.2fs expectedDuration=%.2fs",
+		session.ID, session.Duration, session.TranscodingOffset, expectedDuration)
 	log.Printf("[hls] session %s: TRANSCODING_COMPLETE - expectedSegments=%d actualSegments=%d (highest=%d) completion=%.1f%%",
 		session.ID, expectedSegments, actualSegments, highestSegment, completionPercent)
 
@@ -2860,26 +2866,29 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 		// Attempt recovery if we haven't exhausted retries
 		if recoveryAttempts < hlsMaxRecoveryAttempts {
-			// Calculate new start offset based on segments already created
-			newStartOffset := session.StartOffset + float64(highestSegment+1)*hlsSegmentDuration
+			// Calculate new transcoding offset based on segments already created
+			// Use TranscodingOffset (not StartOffset) as base - StartOffset is the original user position
+			newTranscodingOffset := session.TranscodingOffset + float64(highestSegment+1)*hlsSegmentDuration
 
 			// Don't exceed the total duration
-			if session.Duration > 0 && newStartOffset >= session.Duration {
+			if session.Duration > 0 && newTranscodingOffset >= session.Duration {
 				log.Printf("[hls] session %s: premature completion recovery would exceed duration (offset %.2f >= duration %.2f), marking complete",
-					session.ID, newStartOffset, session.Duration)
+					session.ID, newTranscodingOffset, session.Duration)
 				return nil
 			}
 
-			log.Printf("[hls] session %s: premature completion recovery - highest segment=%d, new offset=%.2fs (was %.2fs), attempt %d/%d",
-				session.ID, highestSegment, newStartOffset, session.StartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+			log.Printf("[hls] session %s: premature completion recovery - highest segment=%d, new transcoding offset=%.2fs (was %.2fs), attempt %d/%d",
+				session.ID, highestSegment, newTranscodingOffset, session.TranscodingOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
 
 			// Reset session state for restart
+			// NOTE: We update TranscodingOffset, NOT StartOffset - StartOffset is the original user position
+			// and must remain unchanged so the frontend displays correct times
 			session.mu.Lock()
 			session.FFmpegCmd = nil
 			session.FFmpegPID = 0
 			session.Completed = false
 			session.RecoveryAttempts++
-			session.StartOffset = newStartOffset
+			session.TranscodingOffset = newTranscodingOffset
 			session.CreatedAt = time.Now()
 			session.LastSegmentRequest = time.Now()
 			session.mu.Unlock()
@@ -2895,8 +2904,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			time.Sleep(2 * time.Second)
 
 			// Restart transcoding from the new offset
+			// Subtitles will be re-extracted from TranscodingOffset (same as seek behavior)
 			log.Printf("[hls] session %s: restarting transcoding from %.2fs after premature completion (recovery attempt %d/%d)",
-				session.ID, newStartOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
+				session.ID, newTranscodingOffset, recoveryAttempts+1, hlsMaxRecoveryAttempts)
 			return m.startTranscoding(newCtx, session, cachedForceAAC)
 		}
 		log.Printf("[hls] session %s: premature completion recovery exhausted (%d/%d attempts)",
@@ -3333,7 +3343,8 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	session.FFmpegCmd = nil
 	session.FFmpegPID = 0
 	session.Completed = false
-	session.StartOffset = targetTime
+	session.StartOffset = targetTime       // User's new position (for frontend display)
+	session.TranscodingOffset = targetTime // FFmpeg starts from same position
 	session.CreatedAt = time.Now()
 	session.LastSegmentRequest = time.Now()
 	session.SegmentsCreated = 0
