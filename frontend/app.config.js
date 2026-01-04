@@ -25,6 +25,7 @@ module.exports = ({ config }) => {
     'expo-router',
     './plugins/with-now-playing-manager',
     './plugins/with-android-pip',
+    './plugins/with-large-heap', // Increase Android heap limit for video playback
     [
       'expo-build-properties',
       {

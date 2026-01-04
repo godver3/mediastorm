@@ -10,6 +10,7 @@ import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
+import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import { apiService, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
@@ -162,6 +163,10 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 function IndexScreen() {
+  // Memory monitoring disabled - was causing lag due to native bridge calls
+  // Uncomment to debug memory issues:
+  // useMemoryMonitor('HomePage', 60000, isAndroidTV);
+
   const { height: screenHeight, width: screenWidth } = useTVDimensions();
   const theme = useTheme();
   const router = useRouter();
@@ -1993,7 +1998,7 @@ function VirtualizedShelf({
                   style={styles.cardImage}
                   contentFit="cover"
                   transition={0}
-                  cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                  cachePolicy={Platform.isTV ? 'disk' : 'memory'}
                   recyclingKey={cardKey}
                 />
                 {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (

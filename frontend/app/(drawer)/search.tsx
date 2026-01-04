@@ -431,7 +431,7 @@ export default function SearchScreen() {
               >
                 <View style={styles.cardImageContainer}>
                   {item.poster?.url ? (
-                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} contentFit="cover" transition={0} cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'} />
+                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} contentFit="cover" transition={0} cachePolicy={Platform.isTV ? 'disk' : 'memory'} />
                   ) : (
                     <View style={styles.placeholder}>
                       <Text style={styles.placeholderImageText}>No Image</Text>
@@ -531,7 +531,7 @@ export default function SearchScreen() {
                                       style={styles.cardImage}
                                       contentFit="cover"
                                       transition={0}
-                                      cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                                      cachePolicy={Platform.isTV ? 'disk' : 'memory'}
                                       recyclingKey={cardKey}
                                     />
                                   ) : (
