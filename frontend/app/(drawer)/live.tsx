@@ -140,7 +140,7 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
         ]}>
         <View style={styles.channelAvatar}>
           {channel.logo ? (
-            <Image source={{ uri: channel.logo }} style={styles.channelLogo} contentFit="contain" transition={0} cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'} />
+            <Image source={{ uri: channel.logo }} style={styles.channelLogo} contentFit="contain" transition={0} cachePolicy="disk" />
           ) : (
             <View style={styles.channelPlaceholder}>
               <Text style={styles.channelPlaceholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
@@ -887,7 +887,7 @@ function LiveScreen() {
                     style={styles.gridCardImage}
                     contentFit="contain"
                     transition={0}
-                    cachePolicy={Platform.isTV ? 'memory-disk' : 'memory'}
+                    cachePolicy="disk"
                     recyclingKey={cardKey}
                   />
                 ) : (
