@@ -421,17 +421,13 @@ const Controls: React.FC<ControlsProps> = ({
                     {hasAudioSelection && audioSummary && (
                       <Pressable onPress={handleOpenAudioMenu} style={styles.mobileTrackButton}>
                         <Ionicons name="musical-notes" size={18} color={theme.colors.text.primary} />
-                        <Text style={styles.mobileTrackLabel} numberOfLines={1}>
-                          {audioSummary}
-                        </Text>
+                        <Text style={styles.mobileTrackLabel}>{audioSummary}</Text>
                       </Pressable>
                     )}
                     {hasSubtitleSelection && subtitleSummary && (
                       <Pressable onPress={handleOpenSubtitlesMenu} style={styles.mobileTrackButton}>
                         <Ionicons name="chatbubble-ellipses" size={18} color={theme.colors.text.primary} />
-                        <Text style={styles.mobileTrackLabel} numberOfLines={1}>
-                          {subtitleSummary}
-                        </Text>
+                        <Text style={styles.mobileTrackLabel}>{subtitleSummary}</Text>
                       </Pressable>
                     )}
                   </View>
@@ -503,9 +499,7 @@ const Controls: React.FC<ControlsProps> = ({
                         disabled={isSeeking || activeMenu !== null}
                       />
                     )}
-                    <Text style={styles.trackLabel} numberOfLines={1}>
-                      {audioSummary}
-                    </Text>
+                    <Text style={styles.trackLabel}>{audioSummary}</Text>
                   </View>
                 )}
                 {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
@@ -531,9 +525,7 @@ const Controls: React.FC<ControlsProps> = ({
                         disabled={isSeeking || activeMenu !== null}
                       />
                     )}
-                    <Text style={styles.trackLabel} numberOfLines={1}>
-                      {subtitleSummary}
-                    </Text>
+                    <Text style={styles.trackLabel}>{subtitleSummary}</Text>
                   </View>
                 )}
                 {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
@@ -546,9 +538,7 @@ const Controls: React.FC<ControlsProps> = ({
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
-                    <Text style={styles.trackLabel} numberOfLines={1}>
-                      {subtitleSummary}
-                    </Text>
+                    <Text style={styles.trackLabel}>{subtitleSummary}</Text>
                   </View>
                 )}
                 {/* Episode navigation buttons for TV platforms */}
@@ -562,9 +552,7 @@ const Controls: React.FC<ControlsProps> = ({
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode || shuffleMode}
                     />
-                    <Text style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]} numberOfLines={1}>
-                      Prev Ep
-                    </Text>
+                    <Text style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]}>Prev Ep</Text>
                   </View>
                 )}
                 {isTvPlatform && onNextEpisode && (
@@ -582,7 +570,7 @@ const Controls: React.FC<ControlsProps> = ({
                         <View style={styles.prequeueReadyIndicatorTv} />
                       )}
                     </View>
-                    <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]} numberOfLines={1}>
+                    <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]}>
                       {shuffleMode ? 'Shuffle' : 'Next Ep'}
                     </Text>
                   </View>
@@ -813,7 +801,7 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.sm,
       color: theme.colors.text.primary,
       marginLeft: theme.spacing.sm,
-      maxWidth: 200,
+      flexShrink: 1,
     },
     trackLabelDisabled: {
       color: theme.colors.text.disabled,
@@ -845,7 +833,7 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.sm,
       color: theme.colors.text.primary,
       fontSize: 12,
-      maxWidth: 80,
+      flexShrink: 1,
     },
     buttonGroup: {
       flexDirection: 'row',

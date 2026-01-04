@@ -388,11 +388,11 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
   const modalWidth = isNarrow ? '95%' : isMedium ? '90%' : '80%';
   const modalMaxWidth = isNarrow ? 400 : 720;
 
-  // Responsive padding
-  const horizontalPadding = isNarrow ? theme.spacing.md : theme.spacing.xl;
+  // Responsive padding - minimize on narrow screens so cards fill width
+  const horizontalPadding = isNarrow ? theme.spacing.sm : theme.spacing.xl;
   const itemPadding = isNarrow ? theme.spacing.md : theme.spacing.lg;
-  const itemMarginHorizontal = isNarrow ? theme.spacing.sm : theme.spacing.xl;
-  const listPadding = isNarrow ? theme.spacing.md : theme.spacing['3xl'];
+  const itemMarginHorizontal = isNarrow ? 0 : isMedium ? theme.spacing.sm : theme.spacing.xl;
+  const listPadding = isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.md : theme.spacing['3xl'];
 
   return StyleSheet.create({
     overlay: {
@@ -563,3 +563,4 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.inverse,
     },
   });
+};

@@ -1596,8 +1596,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       position: 'relative',
     },
     gridCardImage: {
-      width: '100%',
-      height: '100%',
+      width: cardWidth,
+      height: cardHeight,
     },
     badge: {
       position: 'absolute',
@@ -1727,8 +1727,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       justifyContent: 'center',
     },
     channelLogo: {
-      width: '100%',
-      height: '100%',
+      width: 72 * scaleFactor,
+      height: 72 * scaleFactor,
       resizeMode: 'contain',
     },
     channelPlaceholder: {

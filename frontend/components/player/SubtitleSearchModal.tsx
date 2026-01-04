@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import {
   DefaultFocus,
@@ -113,7 +113,8 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   mediaReleaseName,
 }) => {
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: screenWidth } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
   const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage || 'en');
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -312,11 +313,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
                 </View>
               )}
             </View>
-            <Text
-              style={[styles.resultRelease, isFocused && styles.resultTextFocused]}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
+            <Text style={[styles.resultRelease, isFocused && styles.resultTextFocused]}>
               {result.release || 'Unknown release'}
             </Text>
             <View style={styles.resultFooter}>
@@ -478,8 +475,20 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   );
 };
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme, screenWidth: number) => {
+  // Responsive breakpoints
+  const isNarrow = screenWidth < 400;
+  const isMedium = screenWidth >= 400 && screenWidth < 600;
+
+  // Responsive width: fill more on narrow screens
+  const modalWidth = isNarrow ? '95%' : isMedium ? '92%' : '85%';
+  const modalMaxWidth = isNarrow ? 420 : 800;
+
+  // Responsive padding - minimize on narrow screens so cards fill width
+  const horizontalPadding = isNarrow ? theme.spacing.sm : theme.spacing.xl;
+  const resultMargin = isNarrow ? 0 : isMedium ? theme.spacing.xs : theme.spacing.sm;
+
+  return StyleSheet.create({
     overlay: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'center',
@@ -491,18 +500,18 @@ const createStyles = (theme: NovaTheme) =>
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: '85%',
-      maxWidth: 800,
-      maxHeight: '85%',
+      width: modalWidth,
+      maxWidth: modalMaxWidth,
+      maxHeight: '90%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.xl,
+      borderRadius: isNarrow ? theme.radius.lg : theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
     },
     modalHeader: {
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.lg,
+      paddingHorizontal: horizontalPadding,
+      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       gap: theme.spacing.xs,
@@ -510,19 +519,20 @@ const createStyles = (theme: NovaTheme) =>
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
+      fontSize: isNarrow ? 18 : theme.typography.title.xl.fontSize,
     },
     modalSubtitle: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
     },
     languageSelector: {
-      paddingHorizontal: theme.spacing.xl,
+      paddingHorizontal: horizontalPadding,
       paddingVertical: theme.spacing.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.md,
+      gap: isNarrow ? theme.spacing.sm : theme.spacing.md,
     },
     languageLabel: {
       ...theme.typography.body.sm,
@@ -571,12 +581,13 @@ const createStyles = (theme: NovaTheme) =>
       flexShrink: 1,
     },
     resultsList: {
-      padding: theme.spacing.lg,
+      padding: isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.sm : theme.spacing.lg,
       gap: theme.spacing.sm,
     },
     resultItem: {
-      padding: theme.spacing.md,
-      margin: theme.spacing.sm,
+      padding: isNarrow ? theme.spacing.sm : theme.spacing.md,
+      marginHorizontal: resultMargin,
+      marginBottom: theme.spacing.sm,
       borderRadius: theme.radius.md,
       backgroundColor: 'rgba(255, 255, 255, 0.06)',
       borderWidth: 1,
@@ -674,15 +685,15 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.muted,
     },
     modalFooter: {
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.lg,
+      paddingHorizontal: horizontalPadding,
+      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
     },
     closeButton: {
-      minWidth: 200,
-      paddingHorizontal: theme.spacing['2xl'],
+      minWidth: isNarrow ? 140 : 200,
+      paddingHorizontal: isNarrow ? theme.spacing.xl : theme.spacing['2xl'],
       paddingVertical: theme.spacing.md,
       borderRadius: theme.radius.md,
       borderWidth: 2,
@@ -703,3 +714,4 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.inverse,
     },
   });
+};
