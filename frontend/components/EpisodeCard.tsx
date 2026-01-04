@@ -122,15 +122,17 @@ const createStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.accent.primary,
       transform: [{ rotate: '45deg' }],
     },
-    progressBadgeText: {
+    progressBadgeTextWrapper: {
       position: 'absolute',
       top: 15,
       right: 5,
+      transform: [{ rotate: '45deg' }],
+    },
+    progressBadgeText: {
       fontSize: 12,
       lineHeight: 14,
       color: '#FFFFFF',
       fontWeight: '700',
-      transform: [{ rotate: '45deg' }],
     },
     contentContainer: {
       flex: 1,
@@ -255,12 +257,13 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
 
   return (
     <View style={styles.container}>
-      {percentWatched != null && percentWatched > 0 && (
-        <View style={styles.progressCorner}>
-          <View style={styles.progressTriangle} />
-          <Text style={styles.progressBadgeText}>{`${percentWatched}%`}</Text>
+      <View
+        style={[styles.progressCorner, { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 }]}>
+        <View style={styles.progressTriangle} />
+        <View style={styles.progressBadgeTextWrapper}>
+          <Text style={styles.progressBadgeText}>{`${percentWatched ?? 0}%`}</Text>
         </View>
-      )}
+      </View>
       <View style={styles.topRow}>
         <View style={styles.imageContainer}>
           {episode.image?.url ? (

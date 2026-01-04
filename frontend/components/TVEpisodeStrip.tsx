@@ -235,15 +235,17 @@ const createStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.accent.primary,
       transform: [{ rotate: '45deg' }],
     },
-    progressBadgeText: {
+    progressBadgeTextWrapper: {
       position: 'absolute',
       top: Math.round(15 * TV_SCALE),
       right: Math.round(5 * TV_SCALE),
+      transform: [{ rotate: '45deg' }],
+    },
+    progressBadgeText: {
       fontSize: Math.round(12 * TV_SCALE),
       lineHeight: Math.round(14 * TV_SCALE),
       color: '#FFFFFF',
       fontWeight: '700',
-      transform: [{ rotate: '45deg' }],
     },
   });
 };
@@ -408,12 +410,16 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                     <Text style={styles.selectedMetadataText}>{activeEpisode.runtimeMinutes} min</Text>
                   )}
                 </View>
-                {percentWatched != null && percentWatched > 0 && (
-                  <View style={styles.progressCorner}>
-                    <View style={styles.progressTriangle} />
-                    <Text style={styles.progressBadgeText}>{`${percentWatched}%`}</Text>
+                <View
+                  style={[
+                    styles.progressCorner,
+                    { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 },
+                  ]}>
+                  <View style={styles.progressTriangle} />
+                  <View style={styles.progressBadgeTextWrapper}>
+                    <Text style={styles.progressBadgeText}>{`${percentWatched ?? 0}%`}</Text>
                   </View>
-                )}
+                </View>
               </Pressable>
             )}
           </SpatialNavigationFocusableView>
