@@ -569,6 +569,9 @@ export default function LoginScreen() {
 
   const content = showServerConfig ? serverConfigContent : loginContent;
 
+  // On web, don't wrap in Pressable as it intercepts clicks on inputs
+  const isWeb = Platform.OS === 'web';
+
   return (
     <FixedSafeAreaView style={styles.safeArea}>
       {/* Static gradient background */}
@@ -578,9 +581,15 @@ export default function LoginScreen() {
         end={{ x: 1, y: 0.85 }}
         style={StyleSheet.absoluteFill}
       />
-      <Pressable style={styles.dismissArea} onPress={Keyboard.dismiss}>
-        <Animated.View style={[styles.animatedContainer, animatedContainerStyle]}>{content}</Animated.View>
-      </Pressable>
+      {isWeb ? (
+        <View style={styles.dismissArea}>
+          <Animated.View style={[styles.animatedContainer, animatedContainerStyle]}>{content}</Animated.View>
+        </View>
+      ) : (
+        <Pressable style={styles.dismissArea} onPress={Keyboard.dismiss}>
+          <Animated.View style={[styles.animatedContainer, animatedContainerStyle]}>{content}</Animated.View>
+        </Pressable>
+      )}
     </FixedSafeAreaView>
   );
 }
@@ -660,6 +669,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
   // Scale factor: tvOS gets larger UI, Android TV gets smaller UI
   const isTvOS = isTV && Platform.OS === 'ios';
   const isAndroidTV = isTV && Platform.OS === 'android';
+  const isWeb = Platform.OS === 'web';
   const s = (value: number) =>
     isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.55) : value;
   // Extra 50% scaling for specific text elements on TV platforms
@@ -779,14 +789,16 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       borderColor: 'transparent',
       borderRadius: s(8),
       paddingVertical: s(14),
-      paddingLeft: isAndroidTV ? s(12) : 0,
-      paddingRight: 0,
+      paddingLeft: isAndroidTV ? s(12) : isWeb ? s(14) : s(12),
+      paddingRight: isWeb ? s(14) : 0,
       fontSize: s(16),
       color: theme.colors.text.primary,
       textAlign: 'left',
       minWidth: s(340),
       height: s(56),
-    },
+      // Web-specific: ensure outline is visible on focus
+      ...(isWeb ? { outlineStyle: 'none' } : {}),
+    } as any,
     inputFocused: {
       borderColor: theme.colors.accent.primary,
     },
