@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,8 +147,9 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 	// Initialize subtitle extraction manager
 	var subtitleMgr *SubtitleExtractManager
 	if resolvedFFmpeg != "" && resolvedFFprobe != "" && provider != nil {
-		subtitleMgr = NewSubtitleExtractManager(resolvedFFmpeg, resolvedFFprobe, provider)
-		log.Printf("[video] initialized subtitle extraction manager")
+		subtitleBaseDir := filepath.Join(os.TempDir(), "strmr-subtitles")
+		subtitleMgr = NewSubtitleExtractManager(subtitleBaseDir, resolvedFFmpeg, resolvedFFprobe, provider)
+		log.Printf("[video] initialized subtitle extraction manager (base dir: %s)", subtitleBaseDir)
 	}
 
 	return &VideoHandler{

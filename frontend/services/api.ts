@@ -599,6 +599,7 @@ export interface PrequeueRequest {
   year?: number;
   seasonNumber?: number;
   episodeNumber?: number;
+  startOffset?: number; // Resume position in seconds for subtitle extraction
 }
 
 export interface PrequeueResponse {
@@ -1836,12 +1837,20 @@ class ApiService {
    * Start a subtitle extraction session for non-HLS streams
    * @param path - The source path of the video file
    * @param subtitleTrack - The subtitle track index to extract
+   * @param startOffset - Optional resume position in seconds for seeking
    * @returns Session info with the VTT URL
    */
-  async startSubtitleExtract(path: string, subtitleTrack: number): Promise<{ sessionId: string; subtitleUrl: string }> {
+  async startSubtitleExtract(
+    path: string,
+    subtitleTrack: number,
+    startOffset?: number,
+  ): Promise<{ sessionId: string; subtitleUrl: string }> {
     const search = new URLSearchParams();
     search.set('path', path);
     search.set('subtitleTrack', subtitleTrack.toString());
+    if (startOffset !== undefined && startOffset > 0) {
+      search.set('startOffset', startOffset.toString());
+    }
     return this.request<{ sessionId: string; subtitleUrl: string }>(`/video/subtitles/start?${search.toString()}`);
   }
 
