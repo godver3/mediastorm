@@ -55,6 +55,8 @@ const VlcVideoPlayerInner = (
   // Debug: track progress event count for diagnosing start position issues
   const progressEventCountRef = useRef(0);
   const firstProgressTimeRef = useRef<number | null>(null);
+  // Track last valid time to detect VLC's bogus time reports during HLS buffering
+  const lastValidTimeRef = useRef<{ time: number; realTime: number } | null>(null);
   const hasFinishedRef = useRef<boolean>(false);
   const normalizationLogRef = useRef({
     load: false,
@@ -148,6 +150,7 @@ const VlcVideoPlayerInner = (
     // Reset progress event tracking for start position debugging
     progressEventCountRef.current = 0;
     firstProgressTimeRef.current = null;
+    lastValidTimeRef.current = null;
     setHasRenderedFirstFrame(false);
     setTracksLoaded(false);
     setAppliedAudioTrack(undefined);
@@ -298,16 +301,10 @@ const VlcVideoPlayerInner = (
         return;
       }
 
-      // Prefer durationHint from API metadata if it differs significantly from VLC's reported duration
-      // This is important for HLS streams where VLC may report incorrect duration
-      let effectiveDuration = durationSeconds;
-      if (durationHint && Number.isFinite(durationHint) && durationHint > 0) {
-        const ratio = Math.max(durationSeconds / durationHint, durationHint / durationSeconds);
-        // If VLC's duration is more than 10% different from the hint, prefer the hint
-        if (ratio > 1.1) {
-          effectiveDuration = durationHint;
-        }
-      }
+      // Always prefer durationHint from API metadata - it's authoritative.
+      // VLC's reported duration for HLS streams can fluctuate as content buffers.
+      const effectiveDuration =
+        durationHint && Number.isFinite(durationHint) && durationHint > 0 ? durationHint : durationSeconds;
 
       mediaDurationRef.current = effectiveDuration;
 
@@ -357,6 +354,24 @@ const VlcVideoPlayerInner = (
         currentTimeSeconds = rawCurrentTime / 1000;
       }
 
+      // VLC can report bogus time values during HLS initial buffering (jumping hundreds of seconds).
+      // Detect and ignore impossible time jumps: if playback time increases faster than 5x real time,
+      // it's clearly wrong. Use last valid time instead.
+      const now = Date.now();
+      const lastValid = lastValidTimeRef.current;
+      if (lastValid !== null && currentTimeSeconds > 0) {
+        const realElapsed = (now - lastValid.realTime) / 1000; // seconds of real time
+        const playbackElapsed = currentTimeSeconds - lastValid.time; // seconds of playback time
+        // Allow up to 5x playback speed (very generous) or small absolute jumps (< 2s)
+        const maxReasonableJump = Math.max(realElapsed * 5, 2);
+        if (playbackElapsed > maxReasonableJump) {
+          // Bogus value - ignore this update entirely
+          return;
+        }
+      }
+      // Update last valid time
+      lastValidTimeRef.current = { time: currentTimeSeconds, realTime: now };
+
       const progressBucket = Math.floor(currentTimeSeconds / 10);
       const previousProgressLog = lastProgressLogRef.current;
       if (
@@ -381,14 +396,12 @@ const VlcVideoPlayerInner = (
       }
 
       if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
-        // Prefer durationHint from API metadata if it differs significantly from VLC's reported duration
-        let effectiveDuration = durationSeconds;
-        if (durationHint && Number.isFinite(durationHint) && durationHint > 0) {
-          const ratio = Math.max(durationSeconds / durationHint, durationHint / durationSeconds);
-          if (ratio > 1.1) {
-            effectiveDuration = durationHint;
-          }
-        }
+        // Always prefer durationHint from API metadata - it's authoritative.
+        // VLC's reported duration for HLS streams can fluctuate as content buffers,
+        // causing the seek bar to "rapidly grow". Only fall back to VLC's value
+        // if we don't have a hint.
+        const effectiveDuration =
+          durationHint && Number.isFinite(durationHint) && durationHint > 0 ? durationHint : durationSeconds;
 
         mediaDurationRef.current = effectiveDuration;
 
