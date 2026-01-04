@@ -2436,7 +2436,9 @@ export default function PlayerScreen() {
         }
       }
 
-      if (time > 0 && !hasStartedPlaying) {
+      // For live streams (isLiveTV), trigger hasStartedPlaying immediately since time may stay at 0
+      // For regular content, wait for time > 0 to avoid flashing before actual playback
+      if (!hasStartedPlaying && (time > 0 || isLiveTV)) {
         setHasStartedPlaying(true);
 
         // Resume playback if we paused for seeking or track switching
@@ -2505,6 +2507,7 @@ export default function PlayerScreen() {
       initialStartOffset,
       hasDolbyVision,
       isHlsStream,
+      isLiveTV,
       applyPendingSessionSeek,
       hideLoadingScreen,
       paused,
@@ -4825,6 +4828,7 @@ export default function PlayerScreen() {
                 imageUri: headerImage || undefined,
               }}
               subtitleSize={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+              mediaType={mediaType}
             />
           </View>
 
