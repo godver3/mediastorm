@@ -3196,7 +3196,17 @@ function SettingsScreen() {
                     </Text>
                     <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
                       Server settings can be configured via the web UI at{' '}
-                      {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}.
+                      <Text
+                        style={styles.linkText}
+                        onPress={() => {
+                          const adminUrl = backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : null;
+                          if (adminUrl) {
+                            Linking.openURL(adminUrl);
+                          }
+                        }}>
+                        {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}
+                      </Text>
+                      .
                     </Text>
                   </View>
                 )}
@@ -4317,6 +4327,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     sectionDescription: {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
+    },
+    linkText: {
+      ...theme.typography.body.md,
+      color: theme.colors.accent,
+      textDecorationLine: 'underline' as const,
     },
     debugButton: {
       marginVertical: theme.spacing.sm,
