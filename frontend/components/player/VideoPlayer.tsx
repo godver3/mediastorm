@@ -63,14 +63,8 @@ export type {
 } from './types';
 
 const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props, ref) => {
-  const { onImplementationResolved, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen, movie, ...rest } = props;
+  const { onImplementationResolved, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen, ...rest } = props;
   const shouldUseVlc = useShouldUseVlc();
-
-  // Detect HLS streams - VLC has issues with time reporting during HLS buffering/seeking
-  const isHlsStream = useMemo(() => {
-    if (!movie) return false;
-    return movie.includes('/video/hls/') && movie.includes('.m3u8');
-  }, [movie]);
 
   const implementation = useMemo((): { key: VideoImplementation; Component: PlayerComponent } => {
     if (Platform.OS === 'web' && isMobileWeb()) {
@@ -95,18 +89,12 @@ const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props
       return { key: 'rnv', Component: RnvVideoPlayer };
     }
 
-    // Use RNV for HLS streams - VLC has issues with time reporting during HLS buffering/seeking
-    // that cause loading indicators to get stuck and subtitles to break
-    if (isHlsStream && Platform.OS !== 'web' && RnvVideoPlayer) {
-      return { key: 'rnv', Component: RnvVideoPlayer };
-    }
-
     if (shouldUseVlc && VlcVideoPlayer) {
       return { key: 'vlc', Component: VlcVideoPlayer };
     }
 
     return { key: 'expo', Component: ExpoVideoPlayer };
-  }, [shouldUseVlc, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen, isHlsStream]);
+  }, [shouldUseVlc, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen]);
 
   const lastImplementationRef = useRef<VideoImplementation | null>(null);
   useEffect(() => {
@@ -123,7 +111,7 @@ const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props
   }, [implementation.key, onImplementationResolved]);
 
   const ImplementationComponent = implementation.Component;
-  return <ImplementationComponent {...rest} movie={movie} forceNativeFullscreen={forceNativeFullscreen} ref={ref} />;
+  return <ImplementationComponent {...rest} forceNativeFullscreen={forceNativeFullscreen} ref={ref} />;
 });
 
 VideoPlayer.displayName = 'VideoPlayer';

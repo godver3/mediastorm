@@ -190,6 +190,9 @@ const VlcVideoPlayerInner = (
         }
         const clampedSeconds = Math.max(0, Math.min(seconds, mediaDurationRef.current));
         const progress = clampedSeconds / mediaDurationRef.current;
+        // Reset bogus time detection - the next progress event will be at the new seek position
+        // which would otherwise be rejected as an impossible time jump
+        lastValidTimeRef.current = null;
         videoRef.current.seek(progress);
       },
       play: () => {
