@@ -4832,11 +4832,6 @@ export default function PlayerScreen() {
             />
           </View>
 
-          {/* Black overlay that stays visible until playback starts */}
-          {!hasStartedPlaying && (
-            <View style={styles.blackOverlay} pointerEvents="none" renderToHardwareTextureAndroid={true} />
-          )}
-
           {/* Pause teardown overlay - shows last frame (or poster) when player is torn down after extended pause */}
           {/* This prevents AVPlayer HLS timeout by proactively stopping the player */}
           {/* Tapping the overlay shows controls so user can press play to resume */}
@@ -5287,11 +5282,6 @@ const createPlayerStyles = (theme: NovaTheme) =>
       right: 0,
       height: '20%',
       zIndex: 0,
-    },
-    blackOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: '#000000',
-      zIndex: 10,
     },
     pauseTeardownOverlay: {
       ...StyleSheet.absoluteFillObject,
