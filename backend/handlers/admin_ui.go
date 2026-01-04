@@ -342,8 +342,8 @@ var SettingsSchema = map[string]interface{}{
 		"order": 0,
 		"fields": map[string]interface{}{
 			"preferredPlayer":           map[string]interface{}{"type": "select", "label": "Preferred Player", "options": []string{"native", "infuse"}, "description": "Default video player"},
-			"preferredAudioLanguage":    map[string]interface{}{"type": "text", "label": "Audio Language", "description": "Preferred audio language code"},
-			"preferredSubtitleLanguage": map[string]interface{}{"type": "text", "label": "Subtitle Language", "description": "Preferred subtitle language code"},
+			"preferredAudioLanguage":    map[string]interface{}{"type": "text", "label": "Audio Language", "description": "Three-letter ISO 639-2 code (e.g., eng, spa, fra, deu, jpn)"},
+			"preferredSubtitleLanguage": map[string]interface{}{"type": "text", "label": "Subtitle Language", "description": "Three-letter ISO 639-2 code (e.g., eng, spa, fra, deu, jpn)"},
 			"preferredSubtitleMode":     map[string]interface{}{"type": "select", "label": "Subtitle Mode", "options": []string{"off", "on", "auto"}, "description": "Default subtitle behavior"},
 			"subtitleSize":              map[string]interface{}{"type": "number", "label": "Subtitle Size", "description": "Subtitle size scaling factor (1.0 = default, 0.5 = half, 2.0 = double)", "step": 0.05, "min": 0.25, "max": 3.0},
 			"seekForwardSeconds":        map[string]interface{}{"type": "number", "label": "Skip Forward", "description": "Seconds to skip forward (default 30)", "step": 5, "min": 5, "max": 120},
