@@ -212,6 +212,7 @@ export const buildStreamUrl = (
     hasDolbyVision?: boolean;
     dolbyVisionProfile?: string;
     hasHDR10?: boolean;
+    needsAudioTranscode?: boolean; // TrueHD, DTS, etc.
     startOffset?: number;
     audioTrack?: number;
     subtitleTrack?: number;
@@ -222,11 +223,12 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // On native platforms (iOS/Android), use HLS streaming only for HDR content
+  // On native platforms (iOS/Android), use HLS streaming for HDR or incompatible audio
   // - HDR (Dolby Vision/HDR10) requires HLS for proper passthrough to react-native-video
-  // - SDR content uses direct streaming to VLC player (which handles MKV natively)
-  const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10);
-  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`);
+  // - TrueHD/DTS audio requires HLS to transcode audio to AAC (VLC can't play these codecs)
+  // - SDR content with compatible audio uses direct streaming to VLC player
+  const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10 || options.needsAudioTranscode);
+  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, needsAudioTranscode=${options.needsAudioTranscode}, webdavPath=${webdavPath.substring(0, 100)}...`);
 
   if (useHlsOnNative) {
     const hdrType = options.hasDolbyVision ? 'Dolby Vision' : options.hasHDR10 ? 'HDR10' : 'SDR';
@@ -254,6 +256,11 @@ export const buildStreamUrl = (
       queryParams.dvProfile = options.dolbyVisionProfile || '';
     } else if (options.hasHDR10) {
       queryParams.hdr = 'true';
+    }
+
+    // Force AAC audio transcoding for TrueHD/DTS
+    if (options.needsAudioTranscode) {
+      queryParams.forceAAC = '1';
     }
 
     // Add startOffset if provided (for resume functionality)
@@ -812,11 +819,12 @@ export const initiatePlayback = async (
     }
   }
 
-  // Fetch metadata for HDR detection and track selection
+  // Fetch metadata for HDR detection, audio codec detection, and track selection
   // All native playback uses HLS with react-native-video for consistent experience
   let hasDolbyVision = false;
   let hasHDR10 = false;
   let dolbyVisionProfile = '';
+  let needsAudioTranscode = false; // TrueHD, DTS, etc.
   let selectedAudioTrack: number | undefined;
   let selectedSubtitleTrack: number | undefined;
 
@@ -837,13 +845,21 @@ export const initiatePlayback = async (
       hasDolbyVision = detectDolbyVision(metadata);
       hasHDR10 = detectHDR10(metadata);
 
+      // Detect incompatible audio (TrueHD, DTS, etc.)
+      needsAudioTranscode = metadata.needsAudioTranscode ?? false;
+      if (needsAudioTranscode) {
+        console.log('🎬 TrueHD/DTS audio detected - will use HLS with audio transcoding');
+      }
+
       if (hasDolbyVision && metadata.videoStreams && metadata.videoStreams[0]) {
         dolbyVisionProfile = metadata.videoStreams[0].dolbyVisionProfile || 'dv-hevc';
         setSelectionInfo('Dolby Vision detected - preparing HLS stream…');
       } else if (hasHDR10) {
         setSelectionInfo('HDR10 detected - preparing HLS stream…');
+      } else if (needsAudioTranscode) {
+        setSelectionInfo('TrueHD/DTS audio detected - preparing HLS stream…');
       } else {
-        setSelectionInfo('Preparing HLS stream…');
+        setSelectionInfo('Preparing stream…');
       }
 
       // Select audio/subtitle tracks based on user preferences
@@ -884,28 +900,37 @@ export const initiatePlayback = async (
   }
 
   const hasAnyHDR = hasDolbyVision || hasHDR10;
+  const needsHLS = hasAnyHDR || needsAudioTranscode;
 
   // Build stream URL
-  // On native platforms: HDR uses HLS for react-native-video, SDR uses direct streaming for VLC
+  // On native platforms: HDR or incompatible audio uses HLS for react-native-video
+  // SDR content with compatible audio uses direct streaming for VLC
   // On web: Use direct streaming with transmux as needed
   let streamUrl = buildStreamUrl(playback.webdavPath, settings, {
     hasDolbyVision,
     dolbyVisionProfile,
     hasHDR10,
+    needsAudioTranscode,
     startOffset: options.startOffset,
     audioTrack: selectedAudioTrack,
     subtitleTrack: selectedSubtitleTrack,
     profileId: options.profileId,
     profileName: options.profileName,
-    // Disable transmux for native SDR - VLC handles MKV natively
-    disableTransmux: isNativePlatform && !hasAnyHDR,
+    // Disable transmux for native SDR with compatible audio - VLC handles MKV natively
+    disableTransmux: isNativePlatform && !needsHLS,
   });
 
   // If HLS session URL (native platforms), fetch the actual playlist URL
   let hlsDuration: number | undefined;
   if (isNativePlatform && streamUrl.includes('/video/hls/start')) {
     try {
-      const contentType = hasDolbyVision ? 'Dolby Vision' : hasHDR10 ? 'HDR10' : 'SDR';
+      const contentType = hasDolbyVision
+        ? 'Dolby Vision'
+        : hasHDR10
+          ? 'HDR10'
+          : needsAudioTranscode
+            ? 'TrueHD/DTS audio'
+            : 'SDR';
       const startOffsetInfo = options.startOffset
         ? ` (will seek to ${Math.floor(options.startOffset)}s after loading)`
         : '';
