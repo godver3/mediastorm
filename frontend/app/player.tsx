@@ -4993,6 +4993,7 @@ export default function PlayerScreen() {
                             playerImplementation={playerImplementationLabel}
                             onFilenameDisplayChange={setIsFilenameDisplayed}
                             hdrInfo={hdrInfo}
+                            resolution={streamInfo?.resolution}
                             safeAreaInsets={safeAreaInsets}
                           />
                         </View>
@@ -5111,6 +5112,7 @@ export default function PlayerScreen() {
                         onFilenameDisplayChange={setIsFilenameDisplayed}
                         onShowStreamInfo={() => setMobileStreamInfoVisible(true)}
                         hdrInfo={hdrInfo}
+                        resolution={streamInfo?.resolution}
                         safeAreaInsets={safeAreaInsets}
                       />
                     </View>

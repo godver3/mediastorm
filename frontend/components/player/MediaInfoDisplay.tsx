@@ -35,6 +35,7 @@ interface MediaInfoDisplayProps {
   onFilenameDisplayChange?: (isDisplaying: boolean) => void;
   onShowStreamInfo?: () => void; // Called when user taps on mobile to show stream info modal
   hdrInfo?: HdrInfo;
+  resolution?: string; // Raw resolution (e.g., "3840x2160") - will be formatted to category
   safeAreaInsets?: SafeAreaInsets;
 }
 
@@ -71,6 +72,20 @@ const formatColorInfo = (value?: string): string => {
   return value.replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
+const formatResolution = (resolution?: string): string | null => {
+  if (!resolution) return null;
+  // Parse resolution string like "3840x2160" or "1920x1080"
+  const match = resolution.match(/^(\d+)x(\d+)$/);
+  if (!match) return null;
+  const height = parseInt(match[2], 10);
+  if (isNaN(height)) return null;
+  // Categorize by height
+  if (height >= 2160) return '2160p';
+  if (height >= 1080) return '1080p';
+  if (height >= 720) return '720p';
+  return '480p';
+};
+
 export default function MediaInfoDisplay({
   mediaType = 'movie',
   title,
@@ -85,6 +100,7 @@ export default function MediaInfoDisplay({
   onFilenameDisplayChange,
   onShowStreamInfo,
   hdrInfo,
+  resolution,
   safeAreaInsets,
 }: MediaInfoDisplayProps) {
   const theme = useTheme();
@@ -229,9 +245,13 @@ export default function MediaInfoDisplay({
   };
 
   const hdrDisplay = buildHdrDisplay();
+  const resolutionBadge = formatResolution(resolution);
 
   // Allow more lines for filename display since they tend to be longer
   const maxLines = showFilename ? 3 : 2;
+
+  // Check if we have any badges to display
+  const hasBadges = resolutionBadge || hdrDisplay.badge;
 
   if (Platform.isTV) {
     return (
@@ -240,9 +260,18 @@ export default function MediaInfoDisplay({
           {displayText}
         </Text>
         {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
-        {hdrDisplay.badge && (
-          <View style={styles.hdrBadgeContainer}>
-            <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+        {hasBadges && (
+          <View style={styles.badgesRow}>
+            {resolutionBadge && (
+              <View style={styles.resolutionBadgeContainer}>
+                <Text style={styles.resolutionBadgeText}>{resolutionBadge}</Text>
+              </View>
+            )}
+            {hdrDisplay.badge && (
+              <View style={styles.hdrBadgeContainer}>
+                <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+              </View>
+            )}
           </View>
         )}
         {hdrDisplay.details && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
@@ -256,9 +285,18 @@ export default function MediaInfoDisplay({
         {displayText}
       </Text>
       {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
-      {hdrDisplay.badge && (
-        <View style={styles.hdrBadgeContainer}>
-          <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+      {hasBadges && (
+        <View style={styles.badgesRow}>
+          {resolutionBadge && (
+            <View style={styles.resolutionBadgeContainer}>
+              <Text style={styles.resolutionBadgeText}>{resolutionBadge}</Text>
+            </View>
+          )}
+          {hdrDisplay.badge && (
+            <View style={styles.hdrBadgeContainer}>
+              <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+            </View>
+          )}
         </View>
       )}
       {hdrDisplay.details && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
@@ -328,9 +366,27 @@ const createStyles = (
       marginTop: getScaledValue(4),
       letterSpacing: getScaledValue(0.3),
     },
-    hdrBadgeContainer: {
-      alignSelf: 'flex-end',
+    badgesRow: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
       marginTop: getScaledValue(6),
+      gap: getScaledValue(6),
+    },
+    resolutionBadgeContainer: {
+      backgroundColor: 'rgba(100, 149, 237, 0.85)',
+      paddingHorizontal: getScaledValue(8),
+      paddingVertical: getScaledValue(3),
+      borderRadius: getScaledValue(4),
+    },
+    resolutionBadgeText: {
+      fontSize: getScaledValue(isWeb ? 10 : 11),
+      fontWeight: '700',
+      color: '#fff',
+      textAlign: 'center',
+      letterSpacing: getScaledValue(0.5),
+    },
+    hdrBadgeContainer: {
       backgroundColor: 'rgba(255, 215, 0, 0.85)',
       paddingHorizontal: getScaledValue(8),
       paddingVertical: getScaledValue(3),
