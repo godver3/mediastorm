@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,19 @@ import (
 
 	"github.com/mozillazg/go-unidecode"
 )
+
+// newznabQuerySanitizer removes special characters that interfere with newznab/torznab search APIs.
+// Characters like !, ?, :, &, etc. are often interpreted as search operators or cause empty results.
+var newznabQuerySanitizer = regexp.MustCompile(`[!?:&'"()[\]{}]+`)
+
+// sanitizeNewznabQuery cleans up a search query for newznab/torznab APIs.
+func sanitizeNewznabQuery(query string) string {
+	// Remove problematic special characters
+	cleaned := newznabQuerySanitizer.ReplaceAllString(query, " ")
+	// Collapse multiple spaces into one and trim
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return cleaned
+}
 
 // userSettingsProvider retrieves per-user settings.
 type userSettingsProvider interface {
@@ -871,7 +885,12 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 	params.Set("apikey", idx.APIKey)
 	params.Set("t", "search")
 	if opts.Query != "" {
-		params.Set("q", opts.Query)
+		// Sanitize query to remove special characters that break newznab/torznab searches
+		sanitizedQuery := sanitizeNewznabQuery(opts.Query)
+		params.Set("q", sanitizedQuery)
+		if sanitizedQuery != opts.Query {
+			log.Printf("[indexer/newznab] sanitized query for %s: %q -> %q", idx.Name, opts.Query, sanitizedQuery)
+		}
 	}
 	// Use indexer-specific categories if configured, otherwise fall back to search options
 	if cats := strings.TrimSpace(idx.Categories); cats != "" {
