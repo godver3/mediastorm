@@ -291,20 +291,25 @@ export default function MultiscreenPage() {
     };
   }, [router]);
 
-  // Handle screen tap (mobile) - toggle expand on tap
+  // Handle screen tap (mobile) - first tap focuses audio, second tap expands
   const handleScreenTap = useCallback(
     (index: number) => {
-      // Toggle expand state
+      resetOverlayTimeout();
+      // If tapping a different screen than active, just switch audio (don't expand)
+      if (activeIndex !== index) {
+        handleActiveChange(index);
+        return;
+      }
+      // Audio already on this screen - toggle expand state
       if (expandedIndex === index) {
-        // Collapsing - keep audio on current
+        // Collapsing
         setExpandedIndex(null);
       } else {
-        // Expanding or switching - switch audio to this screen
-        handleActiveChange(index);
+        // Expanding
         setExpandedIndex(index);
       }
     },
-    [handleActiveChange, expandedIndex],
+    [activeIndex, handleActiveChange, expandedIndex, resetOverlayTimeout],
   );
 
   // Handle screen select (TV) - toggle expand on select press
