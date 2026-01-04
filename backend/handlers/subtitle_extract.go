@@ -27,6 +27,7 @@ type SubtitleExtractSession struct {
 	ID             string
 	Path           string
 	SubtitleTrack  int
+	StartOffset    float64 // Resume position in seconds for seeking
 	OutputDir      string
 	VTTPath        string
 	CreatedAt      time.Time
@@ -42,6 +43,7 @@ type SubtitleExtractSession struct {
 type SubtitleExtractManager struct {
 	sessions    map[string]*SubtitleExtractSession
 	mu          sync.RWMutex
+	baseDir     string // Persistent output directory for VTT files
 	ffmpegPath  string
 	ffprobePath string
 	streamer    streaming.Provider
@@ -54,9 +56,16 @@ type SubtitleExtractManager struct {
 }
 
 // NewSubtitleExtractManager creates a new subtitle extraction manager
-func NewSubtitleExtractManager(ffmpegPath, ffprobePath string, streamer streaming.Provider) *SubtitleExtractManager {
+func NewSubtitleExtractManager(baseDir, ffmpegPath, ffprobePath string, streamer streaming.Provider) *SubtitleExtractManager {
+	if baseDir == "" {
+		baseDir = filepath.Join(os.TempDir(), "strmr-subtitles")
+	}
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		log.Printf("[subtitle-extract] failed to create base directory %q: %v", baseDir, err)
+	}
 	m := &SubtitleExtractManager{
 		sessions:    make(map[string]*SubtitleExtractSession),
+		baseDir:     baseDir,
 		ffmpegPath:  ffmpegPath,
 		ffprobePath: ffprobePath,
 		streamer:    streamer,
@@ -162,7 +171,7 @@ func (m *SubtitleExtractManager) cleanupSessionLocked(session *SubtitleExtractSe
 }
 
 // getOrCreateSession gets an existing session or creates a new one
-func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path string, subtitleTrack int) (*SubtitleExtractSession, error) {
+func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path string, subtitleTrack int, startOffset float64) (*SubtitleExtractSession, error) {
 	// Create a session key based on path and track
 	sessionKey := fmt.Sprintf("%s:%d", path, subtitleTrack)
 
@@ -179,12 +188,12 @@ func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path st
 		}
 	}
 
-	// Create new session
+	// Create new session using baseDir for persistent output
 	sessionID := uuid.New().String()
-	outputDir, err := os.MkdirTemp("", "subtitle-extract-"+sessionID)
-	if err != nil {
+	outputDir := filepath.Join(m.baseDir, sessionID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, fmt.Errorf("failed to create output dir: %w", err)
 	}
 
 	vttPath := filepath.Join(outputDir, "subtitles.vtt")
@@ -193,6 +202,7 @@ func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path st
 		ID:            sessionID,
 		Path:          path,
 		SubtitleTrack: subtitleTrack,
+		StartOffset:   startOffset,
 		OutputDir:     outputDir,
 		VTTPath:       vttPath,
 		CreatedAt:     time.Now(),
@@ -205,7 +215,7 @@ func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path st
 	// Start extraction in background
 	go m.startExtraction(session)
 
-	log.Printf("[subtitle-extract] created session %s for path=%s track=%d key=%s", sessionID, path, subtitleTrack, sessionKey)
+	log.Printf("[subtitle-extract] created session %s for path=%s track=%d startOffset=%.1f key=%s", sessionID, path, subtitleTrack, startOffset, sessionKey)
 	return session, nil
 }
 
@@ -426,20 +436,30 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 	log.Printf("[subtitle-extract] session %s: track %d maps to stream index %d (codec: %s)",
 		session.ID, session.SubtitleTrack, actualStreamIndex, subtitleStreams[session.SubtitleTrack].Codec)
 
-	log.Printf("[subtitle-extract] session %s: starting extraction from %s", session.ID, streamURL)
+	log.Printf("[subtitle-extract] session %s: starting extraction from %s (startOffset=%.1f)", session.ID, streamURL, session.StartOffset)
 
 	// Build ffmpeg command to extract subtitle track to VTT
 	// Use the absolute stream index, not the relative subtitle index
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+	}
+
+	// Add seek offset if specified (must be before -i for input seeking)
+	// Use -copyts to preserve original timestamps so VTT cues match video position
+	if session.StartOffset > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset), "-copyts")
+		log.Printf("[subtitle-extract] session %s: seeking to %.3f seconds with -copyts", session.ID, session.StartOffset)
+	}
+
+	args = append(args,
 		"-i", streamURL,
 		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
 		"-c", "webvtt",
 		"-f", "webvtt",
 		"-flush_packets", "1",
 		session.VTTPath,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 
@@ -723,12 +743,18 @@ func (h *VideoHandler) StartSubtitleExtract(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Parse optional startOffset for resume position
+	var startOffset float64
+	if startOffsetStr := r.URL.Query().Get("startOffset"); startOffsetStr != "" {
+		startOffset, _ = strconv.ParseFloat(startOffsetStr, 64)
+	}
+
 	if h.subtitleExtractManager == nil {
 		http.Error(w, "subtitle extraction not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	session, err := h.subtitleExtractManager.getOrCreateSession(r.Context(), cleanPath, subtitleTrack)
+	session, err := h.subtitleExtractManager.getOrCreateSession(r.Context(), cleanPath, subtitleTrack, startOffset)
 	if err != nil {
 		log.Printf("[subtitle-extract] failed to create session: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -821,10 +847,10 @@ func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path st
 		return sessions
 	}
 
-	// Create a shared output directory for all tracks
+	// Create a shared output directory for all tracks using baseDir
 	batchID := uuid.New().String()
-	outputDir, err := os.MkdirTemp("", "subtitle-batch-"+batchID)
-	if err != nil {
+	outputDir := filepath.Join(m.baseDir, "batch-"+batchID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		log.Printf("[subtitle-extract] failed to create batch output dir: %v", err)
 		return sessions
 	}
@@ -838,6 +864,7 @@ func (m *SubtitleExtractManager) StartPreExtraction(ctx context.Context, path st
 			ID:            sessionID,
 			Path:          path,
 			SubtitleTrack: track.Index,
+			StartOffset:   startOffset,
 			OutputDir:     outputDir,
 			VTTPath:       vttPath,
 			CreatedAt:     time.Now(),

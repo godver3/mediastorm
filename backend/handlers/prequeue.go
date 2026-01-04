@@ -285,7 +285,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode)
 
 	// Start background worker with all the info needed for search
-	go h.runPrequeueWorker(entry.ID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode)
+	go h.runPrequeueWorker(entry.ID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset)
 
 	// Return response
 	resp := playback.PrequeueResponse{
@@ -354,7 +354,7 @@ func (h *PrequeueHandler) Options(w http.ResponseWriter, r *http.Request) {
 }
 
 // runPrequeueWorker runs the prequeue background task
-func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference) {
+func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64) {
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -837,8 +837,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 				}
 			}
 
-			// Prequeue always starts from beginning (startOffset=0)
-			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks, 0)
+			// Pass startOffset for subtitle extraction to start from resume position
+			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks, startOffset)
 
 			// Convert sessions to SubtitleSessionInfo and store in prequeue entry
 			// Keys are relative indices (0, 1, 2) matching what frontend expects

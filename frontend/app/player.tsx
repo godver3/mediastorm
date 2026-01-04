@@ -3944,11 +3944,12 @@ export default function PlayerScreen() {
       sourcePath,
       subtitleTrack: selectedSubtitleTrackIndex,
       backendTracks: backendSubtitleTracks?.length,
+      startOffset: initialStartOffset,
     });
 
     let cancelled = false;
     apiService
-      .startSubtitleExtract(sourcePath, selectedSubtitleTrackIndex)
+      .startSubtitleExtract(sourcePath, selectedSubtitleTrackIndex, initialStartOffset)
       .then((response) => {
         if (cancelled) return;
         console.log('[player] subtitle extraction started', response);
@@ -3975,6 +3976,7 @@ export default function PlayerScreen() {
     sourcePath,
     backendSubtitleTracks,
     preExtractedSubtitles,
+    initialStartOffset,
   ]);
 
   // Recreate HLS session when audio/subtitle tracks change for HLS streams

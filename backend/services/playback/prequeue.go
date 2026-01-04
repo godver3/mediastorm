@@ -33,8 +33,9 @@ type PrequeueRequest struct {
 	ImdbID    string `json:"imdbId,omitempty"`
 	Year      int    `json:"year,omitempty"`
 	// For series: episode info (determined by backend based on watch history)
-	SeasonNumber  int `json:"seasonNumber,omitempty"`
-	EpisodeNumber int `json:"episodeNumber,omitempty"`
+	SeasonNumber  int     `json:"seasonNumber,omitempty"`
+	EpisodeNumber int     `json:"episodeNumber,omitempty"`
+	StartOffset   float64 `json:"startOffset,omitempty"` // Resume position in seconds for subtitle extraction
 }
 
 // PrequeueResponse is returned when a prequeue request is initiated
