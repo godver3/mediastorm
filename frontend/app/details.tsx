@@ -36,6 +36,7 @@ import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
 import { Ionicons } from '@expo/vector-icons';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -675,6 +676,22 @@ export default function DetailsScreen() {
       setProgressRefreshKey((k) => k + 1);
     }, [hideLoadingScreen]),
   );
+
+  // Prevent screen timeout during playback resolution (auto-play and manual selection)
+  useEffect(() => {
+    if (isResolving) {
+      activateKeepAwakeAsync().catch(() => {
+        // Ignore errors - keep-awake may not be available on all platforms
+      });
+    } else {
+      deactivateKeepAwake();
+    }
+
+    return () => {
+      deactivateKeepAwake();
+    };
+  }, [isResolving]);
+
   const [manualVisible, setManualVisible] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
