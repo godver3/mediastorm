@@ -670,6 +670,9 @@ export default function PlayerScreen() {
   // Extracted subtitle VTT URL for non-HLS streams (using standalone subtitle extraction endpoint)
   const [extractedSubtitleUrl, setExtractedSubtitleUrl] = useState<string | null>(null);
   const [extractedSubtitleSessionId, setExtractedSubtitleSessionId] = useState<string | null>(null);
+  // First cue time for SDR subtitle sync (mirrors actualPlaybackOffsetRef for HLS)
+  // This is the time of the first extracted cue, used to offset subtitle timing
+  const sdrFirstCueTimeRef = useRef<number>(0);
   // Track available subtitle cue range for seek detection (re-extract if seeking outside range)
   const subtitleCuesRangeRef = useRef<SubtitleCuesRange | null>(null);
   // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
@@ -3817,7 +3820,6 @@ export default function PlayerScreen() {
           // Merge with existing options (keep Off option, add backend tracks)
           const newTrackOptions = [SUBTITLE_OFF_OPTION, ...backendSubtitleOptions];
           setSubtitleTrackOptions(newTrackOptions);
-
           // Get valid track ids from backend response
           const validTrackIds = new Set(['off', ...response.tracks.map((t) => String(t.index))]);
 
@@ -3865,6 +3867,12 @@ export default function PlayerScreen() {
               return firstTrackId;
             });
           }
+        } else {
+          // No text-based subtitle tracks found (e.g., only PGS bitmap subs)
+          // Clear any VLC-reported tracks and show only "Off" option
+          console.log('[player] no text-based subtitle tracks found, clearing VLC-reported tracks');
+          setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
+          setSelectedSubtitleTrackId('off');
         }
       })
       .catch((error) => {
@@ -3928,11 +3936,14 @@ export default function PlayerScreen() {
         console.log('[player] using pre-extracted subtitle for track', selectedSubtitleTrackIndex, {
           sessionId: preExtractedSession.sessionId,
           isExtracting: preExtractedSession.isExtracting,
+          firstCueTime: preExtractedSession.firstCueTime,
         });
         // Build full URL from relative path
         const fullUrl = apiService.getFullUrl(preExtractedSession.vttUrl);
         setExtractedSubtitleUrl(fullUrl);
         setExtractedSubtitleSessionId(preExtractedSession.sessionId);
+        // Set first cue time for subtitle sync (mirrors actualPlaybackOffsetRef for HLS)
+        sdrFirstCueTimeRef.current = preExtractedSession.firstCueTime ?? 0;
         return;
       }
     }
@@ -3961,6 +3972,8 @@ export default function PlayerScreen() {
         const fullUrl = apiService.getFullUrl(response.subtitleUrl);
         setExtractedSubtitleUrl(fullUrl);
         setExtractedSubtitleSessionId(response.sessionId);
+        // Set first cue time for subtitle sync (mirrors actualPlaybackOffsetRef for HLS)
+        sdrFirstCueTimeRef.current = response.firstCueTime ?? 0;
       })
       .catch((error) => {
         if (cancelled) return;
@@ -4035,6 +4048,8 @@ export default function PlayerScreen() {
           const fullUrl = apiService.getFullUrl(response.subtitleUrl);
           setExtractedSubtitleUrl(fullUrl);
           setExtractedSubtitleSessionId(response.sessionId);
+          // Update first cue time for subtitle sync after seek
+          sdrFirstCueTimeRef.current = response.firstCueTime ?? 0;
         })
         .catch((error) => {
           console.error('[player] subtitle re-extraction failed', error);
@@ -4873,13 +4888,14 @@ export default function PlayerScreen() {
 
           {/* Extracted subtitle overlay for non-HLS streams (VLC direct playback) */}
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
-          {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
+          {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
+          {/* timeOffset: -firstCueTime to align VTT cues with VLC position, -subtitleOffset for user adjustment */}
           {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && (
             <SubtitleOverlay
               vttUrl={extractedSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-subtitleOffset}
+              timeOffset={-sdrFirstCueTimeRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}

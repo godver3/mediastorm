@@ -208,6 +208,7 @@ export interface SubtitleSessionInfo {
   codec: string;
   isForced: boolean;
   isExtracting: boolean; // true if extraction is still in progress
+  firstCueTime?: number; // Time of first extracted cue (for subtitle sync)
 }
 
 export interface PlaybackResolutionResponse {
@@ -1838,13 +1839,13 @@ class ApiService {
    * @param path - The source path of the video file
    * @param subtitleTrack - The subtitle track index to extract
    * @param startOffset - Optional resume position in seconds for seeking
-   * @returns Session info with the VTT URL
+   * @returns Session info with the VTT URL and firstCueTime for sync
    */
   async startSubtitleExtract(
     path: string,
     subtitleTrack: number,
     startOffset?: number,
-  ): Promise<{ sessionId: string; subtitleUrl: string }> {
+  ): Promise<{ sessionId: string; subtitleUrl: string; firstCueTime?: number }> {
     const search = new URLSearchParams();
     search.set('path', path);
     search.set('subtitleTrack', subtitleTrack.toString());
