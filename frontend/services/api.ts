@@ -1192,6 +1192,22 @@ class ApiService {
     return status === 'ready';
   }
 
+  // Start subtitle extraction for a prequeue with the given offset
+  // Called when user plays, after they've chosen resume/start position
+  async startPrequeueSubtitles(
+    prequeueId: string,
+    startOffset: number,
+  ): Promise<{ subtitleSessions: Record<number, SubtitleSessionInfo> }> {
+    if (!prequeueId?.trim()) {
+      throw new Error('A valid prequeueId is required.');
+    }
+    const endpoint = `/playback/prequeue/${encodeURIComponent(prequeueId.trim())}/start-subtitles`;
+    return this.request<{ subtitleSessions: Record<number, SubtitleSessionInfo> }>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ startOffset }),
+    });
+  }
+
   private async waitForPlaybackReady(
     initial: PlaybackResolutionResponse,
     onStatus?: (update: PlaybackResolutionResponse) => void,

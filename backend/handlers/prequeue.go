@@ -818,16 +818,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					log.Printf("[prequeue] Created HLS session: %s", hlsResult.SessionID)
 				}
 			}
-		} else if h.subtitleExtractor != nil && len(subtitleStreams) > 0 {
-			// Non-HLS path (SDR content): Pre-extract all text-based subtitle tracks
-			log.Printf("[prequeue] Starting subtitle pre-extraction for %d tracks (non-HLS path)", len(subtitleStreams))
+		} else if len(subtitleStreams) > 0 {
+			// Non-HLS path (SDR content): Store subtitle track info for lazy extraction
+			// Extraction will be triggered by frontend with correct startOffset when user plays
+			log.Printf("[prequeue] Storing %d subtitle tracks for lazy extraction (SDR path)", len(subtitleStreams))
 
 			// Convert to SubtitleTrackInfo format
 			// Index = relative (0, 1, 2) for frontend track selection
 			// AbsoluteIndex = ffprobe stream index (13, 14, 15) for ffmpeg -map
-			tracks := make([]SubtitleTrackInfo, len(subtitleStreams))
+			tracks := make([]playback.SubtitleTrackInfo, len(subtitleStreams))
 			for i, s := range subtitleStreams {
-				tracks[i] = SubtitleTrackInfo{
+				tracks[i] = playback.SubtitleTrackInfo{
 					Index:         i,       // Relative index for frontend
 					AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
 					Language:      s.Language,
@@ -837,39 +838,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 				}
 			}
 
-			// Pass startOffset for subtitle extraction to start from resume position
-			sessions := h.subtitleExtractor.StartPreExtraction(ctx, resolution.WebDAVPath, tracks, startOffset)
-
-			// Convert sessions to SubtitleSessionInfo and store in prequeue entry
-			// Keys are relative indices (0, 1, 2) matching what frontend expects
-			sessionInfos := make(map[int]*models.SubtitleSessionInfo)
-			for relativeIdx, session := range sessions {
-				// relativeIdx is 0-based subtitle index, use directly to access subtitleStreams
-				if relativeIdx < 0 || relativeIdx >= len(subtitleStreams) {
-					continue
-				}
-				stream := &subtitleStreams[relativeIdx]
-				// Get first cue time for subtitle sync (may be 0 if extraction not complete)
-				session.mu.Lock()
-				firstCueTime := session.FirstCueTime
-				session.mu.Unlock()
-				sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
-					SessionID:    session.ID,
-					VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
-					TrackIndex:   relativeIdx,
-					Language:     stream.Language,
-					Title:        stream.Title,
-					Codec:        stream.Codec,
-					IsForced:     stream.IsForced,
-					IsExtracting: !session.IsExtractionComplete(),
-					FirstCueTime: firstCueTime,
-				}
-			}
-
 			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
-				e.SubtitleSessions = sessionInfos
+				e.SubtitleTracks = tracks
 			})
-			log.Printf("[prequeue] Pre-extraction started for %d subtitle sessions", len(sessionInfos))
+			log.Printf("[prequeue] Stored %d subtitle tracks for lazy extraction", len(tracks))
 		}
 	}
 
@@ -887,6 +859,143 @@ func (h *PrequeueHandler) failPrequeue(prequeueID, errMsg string) {
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 		e.Status = playback.PrequeueStatusFailed
 		e.Error = errMsg
+	})
+}
+
+// StartSubtitlesRequest is the request body for starting subtitle extraction
+type StartSubtitlesRequest struct {
+	StartOffset float64 `json:"startOffset"` // Resume position in seconds
+}
+
+// StartSubtitlesResponse is the response with subtitle session info
+type StartSubtitlesResponse struct {
+	SubtitleSessions map[int]*models.SubtitleSessionInfo `json:"subtitleSessions"`
+}
+
+// StartSubtitles starts subtitle extraction for a prequeue with the given offset
+// This is called when the user clicks play, after they've chosen resume/start position
+func (h *PrequeueHandler) StartSubtitles(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Extract prequeue ID from URL path using gorilla mux
+	vars := mux.Vars(r)
+	prequeueID := strings.TrimSpace(vars["prequeueID"])
+	if prequeueID == "" {
+		http.Error(w, "missing prequeue ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body
+	var req StartSubtitlesRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Also check query param for startOffset
+	if offsetStr := r.URL.Query().Get("startOffset"); offsetStr != "" {
+		if offset, err := strconv.ParseFloat(offsetStr, 64); err == nil {
+			req.StartOffset = offset
+		}
+	}
+
+	log.Printf("[prequeue] StartSubtitles called for %s with startOffset=%.3f", prequeueID, req.StartOffset)
+
+	// Get the prequeue entry
+	entry, exists := h.store.Get(prequeueID)
+	if !exists {
+		http.Error(w, "prequeue not found", http.StatusNotFound)
+		return
+	}
+
+	// Check if prequeue is ready
+	if entry.Status != playback.PrequeueStatusReady {
+		http.Error(w, "prequeue not ready", http.StatusConflict)
+		return
+	}
+
+	// Check if we have subtitle tracks to extract
+	if len(entry.SubtitleTracks) == 0 {
+		// No subtitle tracks - return empty response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(StartSubtitlesResponse{
+			SubtitleSessions: make(map[int]*models.SubtitleSessionInfo),
+		})
+		return
+	}
+
+	// Check if subtitles already extracted (sessions exist)
+	if len(entry.SubtitleSessions) > 0 {
+		log.Printf("[prequeue] Subtitles already extracted for %s, returning existing sessions", prequeueID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(StartSubtitlesResponse{
+			SubtitleSessions: entry.SubtitleSessions,
+		})
+		return
+	}
+
+	// Check if we have the subtitle extractor
+	if h.subtitleExtractor == nil {
+		http.Error(w, "subtitle extraction not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Convert playback.SubtitleTrackInfo to handlers.SubtitleTrackInfo
+	tracks := make([]SubtitleTrackInfo, len(entry.SubtitleTracks))
+	for i, t := range entry.SubtitleTracks {
+		tracks[i] = SubtitleTrackInfo{
+			Index:         t.Index,
+			AbsoluteIndex: t.AbsoluteIndex,
+			Language:      t.Language,
+			Title:         t.Title,
+			Codec:         t.Codec,
+			Forced:        t.Forced,
+		}
+	}
+
+	// Start extraction with the provided offset
+	log.Printf("[prequeue] Starting subtitle extraction for %s with %d tracks at offset %.3f",
+		prequeueID, len(tracks), req.StartOffset)
+	sessions := h.subtitleExtractor.StartPreExtraction(r.Context(), entry.StreamPath, tracks, req.StartOffset)
+
+	// Convert sessions to SubtitleSessionInfo
+	sessionInfos := make(map[int]*models.SubtitleSessionInfo)
+	for relativeIdx, session := range sessions {
+		if relativeIdx < 0 || relativeIdx >= len(entry.SubtitleTracks) {
+			continue
+		}
+		track := entry.SubtitleTracks[relativeIdx]
+		session.mu.Lock()
+		firstCueTime := session.FirstCueTime
+		session.mu.Unlock()
+		sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
+			SessionID:    session.ID,
+			VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
+			TrackIndex:   relativeIdx,
+			Language:     track.Language,
+			Title:        track.Title,
+			Codec:        track.Codec,
+			IsForced:     track.Forced,
+			IsExtracting: !session.IsExtractionComplete(),
+			FirstCueTime: firstCueTime,
+		}
+	}
+
+	// Store the sessions in the prequeue entry
+	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+		e.SubtitleSessions = sessionInfos
+	})
+
+	log.Printf("[prequeue] Started subtitle extraction for %d sessions", len(sessionInfos))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(StartSubtitlesResponse{
+		SubtitleSessions: sessionInfos,
 	})
 }
 

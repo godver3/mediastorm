@@ -1955,6 +1955,30 @@ export default function DetailsScreen() {
           console.log('[prequeue] Using duration from prequeue:', hlsDuration);
         }
         console.log('[prequeue] Using direct stream URL:', streamUrl);
+
+        // SDR path: Start subtitle extraction with correct offset (lazy extraction)
+        // This is called now that we know the user's resume position
+        if (prequeueStatus.prequeueId) {
+          try {
+            const subtitleResult = await apiService.startPrequeueSubtitles(
+              prequeueStatus.prequeueId,
+              startOffset ?? 0,
+            );
+            if (subtitleResult.subtitleSessions && Object.keys(subtitleResult.subtitleSessions).length > 0) {
+              // Update prequeueStatus with the new subtitle sessions
+              prequeueStatus.subtitleSessions = subtitleResult.subtitleSessions;
+              console.log(
+                '[prequeue] Started subtitle extraction for',
+                Object.keys(subtitleResult.subtitleSessions).length,
+                'tracks at offset',
+                startOffset ?? 0,
+              );
+            }
+          } catch (subtitleError) {
+            // Non-fatal - subtitles will just not be available
+            console.warn('[prequeue] Failed to start subtitle extraction:', subtitleError);
+          }
+        }
       }
 
       // Build display title
