@@ -37,6 +37,7 @@ import (
 	"novastream/services/users"
 	"novastream/services/clients"
 	client_settings "novastream/services/client_settings"
+	"novastream/services/scheduler"
 	"novastream/services/watchlist"
 	"novastream/utils"
 
@@ -397,6 +398,10 @@ func main() {
 	plexClient := plex.NewClient(plex.GenerateClientID())
 	plexAccountsHandler := handlers.NewPlexAccountsHandler(cfgManager, plexClient, userService, accountsService)
 
+	// Create scheduler service for background tasks
+	schedulerService := scheduler.NewService(cfgManager, plexClient, watchlistService)
+	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
+
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
 	adminUIHandler.SetMetadataService(metadataService)
@@ -549,6 +554,14 @@ func main() {
 	r.HandleFunc("/admin/api/clients/{clientID}/ping", adminUIHandler.RequireAuth(clientsHandler.Ping)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/clients/{clientID}/reassign", adminUIHandler.RequireAuth(clientsHandler.Reassign)).Methods(http.MethodPost)
 
+	// Scheduled tasks routes (master account only)
+	r.HandleFunc("/admin/api/scheduled-tasks", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.ListTasks)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/scheduled-tasks", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.CreateTask)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.UpdateTask)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.DeleteTask)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}/run", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.RunTaskNow)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}/toggle", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.ToggleTask)).Methods(http.MethodPost)
+
 	fmt.Println("📊 Admin dashboard available at /admin")
 
 	// Register account UI routes (for regular/non-master accounts)
@@ -657,6 +670,11 @@ func main() {
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
 
+	// Start scheduler service for background tasks
+	if err := schedulerService.Start(context.Background()); err != nil {
+		log.Printf("Warning: failed to start scheduler service: %v", err)
+	}
+
 	// Start server in goroutine
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -671,6 +689,12 @@ func main() {
 	// Create shutdown context with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// Stop scheduler service
+	log.Println("🧹 Stopping scheduler service...")
+	if err := schedulerService.Stop(shutdownCtx); err != nil {
+		log.Printf("Scheduler shutdown error: %v", err)
+	}
 
 	// Stop NZB system workers first to cancel background processing
 	log.Println("🧹 Stopping NZB system workers...")

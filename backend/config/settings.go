@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Settings represents the application configuration persisted to disk.
@@ -35,6 +36,7 @@ type Settings struct {
 	Trakt           TraktSettings          `json:"trakt,omitempty"`
 	Plex            PlexSettings           `json:"plex,omitempty"`
 	Log             LogConfig              `json:"log"`
+	ScheduledTasks  ScheduledTasksSettings `json:"scheduledTasks,omitempty"`
 }
 
 type ServerSettings struct {
@@ -387,6 +389,58 @@ func (p *PlexSettings) RemoveAccount(id string) bool {
 	return false
 }
 
+// ScheduledTaskType defines the type of scheduled task
+type ScheduledTaskType string
+
+const (
+	ScheduledTaskTypePlexWatchlistSync ScheduledTaskType = "plex_watchlist_sync"
+)
+
+// ScheduledTaskFrequency defines how often a task runs
+type ScheduledTaskFrequency string
+
+const (
+	ScheduledTaskFrequency1Min    ScheduledTaskFrequency = "1min"
+	ScheduledTaskFrequency5Min    ScheduledTaskFrequency = "5min"
+	ScheduledTaskFrequency15Min   ScheduledTaskFrequency = "15min"
+	ScheduledTaskFrequency30Min   ScheduledTaskFrequency = "30min"
+	ScheduledTaskFrequencyHourly  ScheduledTaskFrequency = "hourly"
+	ScheduledTaskFrequency6Hours  ScheduledTaskFrequency = "6hours"
+	ScheduledTaskFrequency12Hours ScheduledTaskFrequency = "12hours"
+	ScheduledTaskFrequencyDaily   ScheduledTaskFrequency = "daily"
+)
+
+// ScheduledTaskStatus represents the last run status
+type ScheduledTaskStatus string
+
+const (
+	ScheduledTaskStatusPending ScheduledTaskStatus = "pending"
+	ScheduledTaskStatusRunning ScheduledTaskStatus = "running"
+	ScheduledTaskStatusSuccess ScheduledTaskStatus = "success"
+	ScheduledTaskStatusError   ScheduledTaskStatus = "error"
+)
+
+// ScheduledTask represents a single scheduled task configuration
+type ScheduledTask struct {
+	ID            string                 `json:"id"`
+	Type          ScheduledTaskType      `json:"type"`
+	Name          string                 `json:"name"`
+	Enabled       bool                   `json:"enabled"`
+	Frequency     ScheduledTaskFrequency `json:"frequency"`
+	Config        map[string]string      `json:"config"`                    // Task-specific config (e.g., plexAccountId, profileId)
+	LastRunAt     *time.Time             `json:"lastRunAt,omitempty"`
+	LastStatus    ScheduledTaskStatus    `json:"lastStatus"`
+	LastError     string                 `json:"lastError,omitempty"`
+	ItemsImported int                    `json:"itemsImported,omitempty"`
+	CreatedAt     time.Time              `json:"createdAt"`
+}
+
+// ScheduledTasksSettings contains all scheduled task configurations
+type ScheduledTasksSettings struct {
+	Tasks                []ScheduledTask `json:"tasks"`
+	CheckIntervalSeconds int             `json:"checkIntervalSeconds"` // How often scheduler checks for due tasks (default: 60)
+}
+
 // DefaultSettings returns sane defaults for a fresh install.
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
@@ -447,6 +501,10 @@ func DefaultSettings() Settings {
 			MaxBackups: 3,    // keep 3 old files
 			MaxAge:     7,    // 7 days
 			Compress:   true, // compress old files
+		},
+		ScheduledTasks: ScheduledTasksSettings{
+			Tasks:                []ScheduledTask{},
+			CheckIntervalSeconds: 60, // Check every 60 seconds
 		},
 	}
 }
@@ -761,6 +819,14 @@ func (m *Manager) Load() (Settings, error) {
 	}
 	if s.Log.MaxAge == 0 {
 		s.Log.MaxAge = 7
+	}
+
+	// Backfill ScheduledTasks settings
+	if s.ScheduledTasks.CheckIntervalSeconds == 0 {
+		s.ScheduledTasks.CheckIntervalSeconds = 60
+	}
+	if s.ScheduledTasks.Tasks == nil {
+		s.ScheduledTasks.Tasks = []ScheduledTask{}
 	}
 
 	// Legacy AltMount configuration is ignored going forward.
