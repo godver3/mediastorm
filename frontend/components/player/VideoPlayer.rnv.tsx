@@ -5,6 +5,8 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { BufferConfig } from 'react-native-video';
+import { isAndroidTV } from '@/theme/tokens/tvScale';
+import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import Video, {
   type OnLoadData,
   type OnProgressData,
@@ -41,6 +43,10 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     },
     ref,
   ) => {
+    // Memory monitoring disabled - was causing lag due to native bridge calls
+    // Uncomment to debug memory issues:
+    // useMemoryMonitor('RNVideoPlayer', 60000, isAndroidTV);
+
     const videoRef = useRef<VideoRef>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const lastDurationRef = useRef<number>(0);
@@ -182,8 +188,10 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           });
         }
 
-        // Log every 10th event to track if currentTime ever advances (debugging black screen)
-        if (eventCount > 0 && eventCount % 10 === 0) {
+        // Log periodic events to track if currentTime ever advances (debugging black screen)
+        // Less frequent on Android TV to reduce bridge/GC overhead
+        const logInterval = isAndroidTV ? 60 : 10; // Every 30s on TV, every 2.5s on mobile
+        if (eventCount > 0 && eventCount % logInterval === 0) {
           console.log('[RNVideoPlayer] progress event #' + eventCount + ' (periodic)', {
             currentTime: data.currentTime,
             playableDuration: data.playableDuration,
@@ -405,7 +413,8 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             volume={resolvedVolume}
             controls={controls}
             resizeMode="contain"
-            progressUpdateInterval={250}
+            // Reduce bridge traffic on Android TV (500ms vs 250ms)
+            progressUpdateInterval={isAndroidTV ? 500 : 250}
             // Use SurfaceView instead of TextureView for HDR/Dolby Vision support on Android
             // TextureView doesn't support HDR content and can cause crashes with DV/remux content
             useTextureView={false}
@@ -430,16 +439,18 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             automaticallyWaitsToMinimizeStalling={true}
             preferredForwardBufferDuration={600} // Buffer up to 10 minutes ahead (iOS only)
             // Android ExoPlayer buffer configuration
-            // Fire TV Stick has only 192MB heap limit, so we use minimal buffers
-            // to avoid OOM and GC pauses that freeze the UI
+            // Android TV devices have limited RAM (1.7GB total, often <200MB available)
+            // Use minimal buffers to reduce memory pressure and swap thrashing
             bufferConfig={
               Platform.OS === 'android'
                 ? ({
-                    minBufferMs: 10000, // 10 seconds minimum buffer
-                    maxBufferMs: 20000, // 20 seconds maximum buffer
-                    bufferForPlaybackMs: 2500, // 2.5 seconds before playback starts
-                    bufferForPlaybackAfterRebufferMs: 5000, // 5 seconds after rebuffering
-                    backBufferDurationMs: 10000, // 10 seconds back buffer
+                    minBufferMs: isAndroidTV ? 3000 : 10000, // 3s TV, 10s mobile
+                    maxBufferMs: isAndroidTV ? 8000 : 20000, // 8s TV, 20s mobile
+                    bufferForPlaybackMs: isAndroidTV ? 1500 : 2500, // 1.5s TV, 2.5s mobile
+                    bufferForPlaybackAfterRebufferMs: isAndroidTV ? 3000 : 5000, // 3s TV, 5s mobile (must be <= minBufferMs)
+                    // CRITICAL: Disable back buffer on Android TV to prevent OOM
+                    // With 2s HLS segments at 4K, back buffer can consume 50MB+
+                    backBufferDurationMs: isAndroidTV ? 0 : 10000,
                   } as BufferConfig)
                 : undefined
             }

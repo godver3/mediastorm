@@ -1,5 +1,8 @@
-import { Image as RNImage, ImageProps as RNImageProps, ImageStyle, StyleProp } from 'react-native';
+import { Image as RNImage, ImageProps as RNImageProps, ImageStyle, Platform, StyleProp } from 'react-native';
 import { ComponentProps } from 'react';
+
+// Use disk-only caching on TV to reduce memory pressure (112MB+ GL memory savings)
+const DEFAULT_CACHE_POLICY = Platform.isTV ? 'disk' : 'memory-disk';
 
 // Check if expo-image native module is available
 let ExpoImageModule: typeof import('expo-image') | null = null;
@@ -30,7 +33,7 @@ interface ImageWrapperProps {
   onError?: () => void;
 }
 
-export function Image({ source, style, contentFit = 'cover', transition, blurRadius, cachePolicy, recyclingKey, priority, onError }: ImageWrapperProps) {
+export function Image({ source, style, contentFit = 'cover', transition, blurRadius, cachePolicy = DEFAULT_CACHE_POLICY, recyclingKey, priority, onError }: ImageWrapperProps) {
   if (hasExpoImage && ExpoImageModule) {
     const ExpoImage = ExpoImageModule.Image;
     return (
