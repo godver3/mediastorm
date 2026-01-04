@@ -4931,7 +4931,7 @@ export default function PlayerScreen() {
 
           {(() => {
             const hasDuration = Number.isFinite(duration) && duration > 0;
-            const hasPlaybackContext = hasDuration || currentTime > 0 || isVideoBuffering || paused;
+            const hasPlaybackContext = hasDuration || currentTime > 0 || isVideoBuffering || paused || isLiveTV;
             const isTVSeeking = isTvPlatform && seekIndicatorAmount !== 0;
             const shouldRenderControls =
               !usesSystemManagedControls &&
