@@ -57,6 +57,10 @@ const VlcVideoPlayerInner = (
   const firstProgressTimeRef = useRef<number | null>(null);
   // Track last valid time to detect VLC's bogus time reports during HLS buffering
   const lastValidTimeRef = useRef<{ time: number; realTime: number } | null>(null);
+  // Debounce buffering state to avoid flickering from VLC's frequent onBuffering events
+  // VLC fires onBuffering even during normal playback (prefetching), so we only show
+  // the loading indicator after a sustained stall (no progress for 400ms)
+  const bufferingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasFinishedRef = useRef<boolean>(false);
   const normalizationLogRef = useRef({
     load: false,
@@ -151,6 +155,11 @@ const VlcVideoPlayerInner = (
     progressEventCountRef.current = 0;
     firstProgressTimeRef.current = null;
     lastValidTimeRef.current = null;
+    // Clear any pending buffering timer
+    if (bufferingTimerRef.current) {
+      clearTimeout(bufferingTimerRef.current);
+      bufferingTimerRef.current = null;
+    }
     setHasRenderedFirstFrame(false);
     setTracksLoaded(false);
     setAppliedAudioTrack(undefined);
@@ -166,6 +175,14 @@ const VlcVideoPlayerInner = (
       lastDurationRef.current = durationHint;
       onLoad(durationHint);
     }
+
+    // Cleanup buffering timer on unmount
+    return () => {
+      if (bufferingTimerRef.current) {
+        clearTimeout(bufferingTimerRef.current);
+        bufferingTimerRef.current = null;
+      }
+    };
   }, [movie, durationHint, onLoad]);
 
   // Build Now Playing info object to pass to VLCPlayer
@@ -368,7 +385,13 @@ const VlcVideoPlayerInner = (
         // Allow up to 5x playback speed (very generous) or small absolute jumps (< 2s)
         const maxReasonableJump = Math.max(realElapsed * 5, 2);
         if (playbackElapsed > maxReasonableJump) {
-          // Bogus value - ignore this update entirely
+          // Bogus time value - still clear buffering since we're receiving events,
+          // but don't update progress with the bad value
+          if (bufferingTimerRef.current) {
+            clearTimeout(bufferingTimerRef.current);
+            bufferingTimerRef.current = null;
+          }
+          onBuffer(false);
           return;
         }
       }
@@ -417,6 +440,11 @@ const VlcVideoPlayerInner = (
         }
       }
 
+      // Clear any pending buffering timer and set not buffering
+      if (bufferingTimerRef.current) {
+        clearTimeout(bufferingTimerRef.current);
+        bufferingTimerRef.current = null;
+      }
       onBuffer(false);
 
       // Track first progress event for diagnostics
@@ -432,12 +460,26 @@ const VlcVideoPlayerInner = (
   );
 
   const handleBuffering = useCallback(() => {
-    onBuffer(true);
+    // Debounce buffering state - VLC fires onBuffering frequently even during normal playback
+    // (e.g., prefetching HLS segments). Only show the loading indicator after a sustained stall.
+    // If progress or playing events arrive within 400ms, the timer is cancelled.
+    if (bufferingTimerRef.current) {
+      return; // Timer already pending, don't restart it
+    }
+    bufferingTimerRef.current = setTimeout(() => {
+      bufferingTimerRef.current = null;
+      onBuffer(true);
+    }, 400);
   }, [onBuffer]);
 
   const handlePlaying = useCallback(() => {
     hasFinishedRef.current = false;
     setIsPlaying(true);
+    // Clear any pending buffering timer and set not buffering
+    if (bufferingTimerRef.current) {
+      clearTimeout(bufferingTimerRef.current);
+      bufferingTimerRef.current = null;
+    }
     onBuffer(false);
   }, [onBuffer]);
 
