@@ -849,6 +849,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					continue
 				}
 				stream := &subtitleStreams[relativeIdx]
+				// Get first cue time for subtitle sync (may be 0 if extraction not complete)
+				session.mu.Lock()
+				firstCueTime := session.FirstCueTime
+				session.mu.Unlock()
 				sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
 					SessionID:    session.ID,
 					VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
@@ -858,6 +862,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					Codec:        stream.Codec,
 					IsForced:     stream.IsForced,
 					IsExtracting: !session.IsExtractionComplete(),
+					FirstCueTime: firstCueTime,
 				}
 			}
 

@@ -108,6 +108,10 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					stream := &probeResult.SubtitleStreams[relativeIdx]
+					// Get first cue time for subtitle sync (may be 0 if extraction not complete)
+					session.mu.Lock()
+					firstCueTime := session.FirstCueTime
+					session.mu.Unlock()
 					sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
 						SessionID:    session.ID,
 						VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
@@ -117,6 +121,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 						Codec:        stream.Codec,
 						IsForced:     stream.IsForced,
 						IsExtracting: !session.IsExtractionComplete(),
+						FirstCueTime: firstCueTime,
 					}
 				}
 				resolution.SubtitleSessions = sessionInfos

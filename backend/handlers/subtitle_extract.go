@@ -37,6 +37,8 @@ type SubtitleExtractSession struct {
 	mu             sync.Mutex
 	extractionDone bool
 	extractionErr  error
+	FirstCueTime   float64 // Time of first extracted cue (for subtitle sync)
+	firstCueParsed bool    // Internal: tracks if we've parsed the first cue
 }
 
 // SubtitleExtractManager manages subtitle extraction sessions
@@ -525,7 +527,14 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 		return
 	}
 
-	log.Printf("[subtitle-extract] session %s: extraction complete", session.ID)
+	// Parse first cue time for subtitle sync
+	firstCueTime := parseFirstVTTCueTime(session.VTTPath)
+	session.mu.Lock()
+	session.FirstCueTime = firstCueTime
+	session.firstCueParsed = true
+	session.mu.Unlock()
+
+	log.Printf("[subtitle-extract] session %s: extraction complete, firstCueTime=%.3f", session.ID, firstCueTime)
 }
 
 // ProbeSubtitleTracks probes a file and returns available subtitle tracks
@@ -779,11 +788,17 @@ func (h *VideoHandler) StartSubtitleExtract(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Get first cue time if available
+	session.mu.Lock()
+	firstCueTime := session.FirstCueTime
+	session.mu.Unlock()
+
 	// Return session info
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"sessionId":   session.ID,
-		"subtitleUrl": fmt.Sprintf("/api/video/subtitles/%s/subtitles.vtt", session.ID),
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessionId":    session.ID,
+		"subtitleUrl":  fmt.Sprintf("/api/video/subtitles/%s/subtitles.vtt", session.ID),
+		"firstCueTime": firstCueTime,
 	})
 }
 
@@ -841,6 +856,50 @@ func isTextBasedSubtitle(codec string) bool {
 	default:
 		return false
 	}
+}
+
+// parseFirstVTTCueTime parses the first cue from a VTT file and returns its start time in seconds.
+// This is used for subtitle sync - the first cue time indicates where FFmpeg actually started extracting.
+// Returns -1 if no cue is found or if parsing fails.
+func parseFirstVTTCueTime(vttPath string) float64 {
+	content, err := os.ReadFile(vttPath)
+	if err != nil {
+		return -1
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Look for timestamp line (contains "-->")
+		if strings.Contains(line, "-->") {
+			// Parse start time from "HH:MM:SS.mmm --> HH:MM:SS.mmm" or "MM:SS.mmm --> MM:SS.mmm"
+			parts := strings.Split(line, "-->")
+			if len(parts) < 2 {
+				continue
+			}
+			startStr := strings.TrimSpace(parts[0])
+			// Remove any positioning info after timestamp
+			if idx := strings.Index(startStr, " "); idx > 0 {
+				startStr = startStr[:idx]
+			}
+
+			// Parse the timestamp
+			timeParts := strings.Split(startStr, ":")
+			if len(timeParts) == 3 {
+				// HH:MM:SS.mmm
+				hours, _ := strconv.ParseFloat(timeParts[0], 64)
+				minutes, _ := strconv.ParseFloat(timeParts[1], 64)
+				seconds, _ := strconv.ParseFloat(timeParts[2], 64)
+				return hours*3600 + minutes*60 + seconds
+			} else if len(timeParts) == 2 {
+				// MM:SS.mmm
+				minutes, _ := strconv.ParseFloat(timeParts[0], 64)
+				seconds, _ := strconv.ParseFloat(timeParts[1], 64)
+				return minutes*60 + seconds
+			}
+		}
+	}
+	return -1
 }
 
 // StartPreExtraction starts extraction for all text-based subtitle tracks using ONE ffmpeg process
@@ -1036,6 +1095,16 @@ func (m *SubtitleExtractManager) startBatchExtraction(path, outputDir string, tr
 			markAllDone(fmt.Errorf("ffmpeg failed: %w", err))
 			return
 		}
+	}
+
+	// Parse first cue time for each session for subtitle sync
+	for _, session := range sessions {
+		firstCueTime := parseFirstVTTCueTime(session.VTTPath)
+		session.mu.Lock()
+		session.FirstCueTime = firstCueTime
+		session.firstCueParsed = true
+		session.mu.Unlock()
+		log.Printf("[subtitle-extract] batch: session %s firstCueTime=%.3f", session.ID, firstCueTime)
 	}
 
 	log.Printf("[subtitle-extract] batch extraction completed for %d tracks", len(tracks))
