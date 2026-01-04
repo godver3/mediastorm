@@ -84,7 +84,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   ];
 
   const menuItems = Platform.isTV
-    ? baseMenuItems
+    ? [...baseMenuItems, { name: '/tv-perf-debug', label: 'Perf Debug' }]
     : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
 
   // Calculate which menu item corresponds to the current route

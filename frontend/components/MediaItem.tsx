@@ -22,6 +22,8 @@ interface MediaItemProps {
   onFocus?: () => void;
   style?: StyleProp<ViewStyle>;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus, watchState, unwatchedCount
+  useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigationFocusableView (faster on Android TV)
+  autoFocus?: boolean; // Give this item initial focus (only works with useNativeFocus)
 }
 
 // Default badges to show when visibility array is not provided
@@ -341,6 +343,8 @@ const MediaItem = memo(function MediaItem({
   onFocus,
   style,
   badgeVisibility,
+  useNativeFocus = false,
+  autoFocus = false,
 }: MediaItemProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -443,7 +447,98 @@ const MediaItem = memo(function MediaItem({
     );
   }
 
-  // TV/Desktop: Replicate Search page card styling (overlay gradient + title/year + media type badge)
+  // Shared content renderer for TV - used by both native and spatial nav modes
+  const renderTVContent = (isFocused: boolean) => (
+    <View style={styles.imageContainer}>
+      {title.mediaType === 'more' ? (
+        <LinearGradient
+          colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.moreCard}
+        >
+          <Text style={styles.moreCardText}>{title.name}</Text>
+          <Text style={styles.moreCardSubtext}>View all</Text>
+        </LinearGradient>
+      ) : title.poster?.url ? (
+        <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />
+      ) : (
+        <View style={styles.placeholder}>
+          <Text style={styles.placeholderText}>No artwork available</Text>
+        </View>
+      )}
+      {/* Release status badge (top-left) */}
+      {title.mediaType !== 'more' && shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && (
+        <View style={styles.releaseStatusBadge}>
+          <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
+        </View>
+      )}
+      {/* Media type badge */}
+      {title.mediaType && title.mediaType !== 'more' && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
+        </View>
+      )}
+      {/* Progress badge - hide if less than 5% */}
+      {title.mediaType !== 'more' &&
+        shouldShowBadge('watchProgress', badgeVisibility) &&
+        title.percentWatched !== undefined &&
+        title.percentWatched >= 5 && (
+          <View style={styles.progressBadge}>
+            <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
+          </View>
+        )}
+      {/* Watch state badge (bottom-right) */}
+      {title.mediaType !== 'more' &&
+        (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+        (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
+          <View style={styles.watchStateBadge}>
+            {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
+              <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
+            )}
+            {shouldShowBadge('unwatchedCount', badgeVisibility) &&
+              title.mediaType === 'series' &&
+              title.unwatchedCount !== undefined &&
+              title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
+          </View>
+        )}
+      {/* Overlay info to match Search page */}
+      {title.mediaType !== 'more' && (
+        <View style={[styles.infoCompact]}>
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+            locations={[0, 0.6, 1]}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={styles.textGradient}
+          />
+          <Text style={styles.titleTV} numberOfLines={2}>
+            {title.name}
+          </Text>
+          {title.year ? <Text style={styles.yearTV}>{title.year}</Text> : <View style={styles.yearPlaceholder} />}
+        </View>
+      )}
+    </View>
+  );
+
+  // TV/Desktop with native Pressable focus (faster on Android TV - no JS re-renders)
+  if (useNativeFocus) {
+    return (
+      <Pressable
+        onPress={handlePress}
+        onFocus={handleFocus}
+        hasTVPreferredFocus={autoFocus}
+        style={({ focused }) => [styles.container, style, focused && styles.containerFocused]}
+        accessibilityRole="button"
+      >
+        {/* Note: We pass false for isFocused since native handles visual focus via style prop */}
+        {renderTVContent(false)}
+      </Pressable>
+    );
+  }
+
+  // TV/Desktop with SpatialNavigationFocusableView (standard mode)
   return (
     <SpatialNavigationFocusableView onSelect={handlePress} onFocus={handleFocus}>
       {({ isFocused }: { isFocused: boolean }) => (
@@ -451,77 +546,7 @@ const MediaItem = memo(function MediaItem({
           style={[styles.container, style, isFocused && styles.containerFocused]}
           renderToHardwareTextureAndroid={isAndroidTV}
         >
-          <View style={styles.imageContainer}>
-            {title.mediaType === 'more' ? (
-              <LinearGradient
-                colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.moreCard}
-              >
-                <Text style={styles.moreCardText}>{title.name}</Text>
-                <Text style={styles.moreCardSubtext}>View all</Text>
-              </LinearGradient>
-            ) : title.poster?.url ? (
-              <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />
-            ) : (
-              <View style={styles.placeholder}>
-                <Text style={styles.placeholderText}>No artwork available</Text>
-              </View>
-            )}
-            {/* Release status badge (top-left) */}
-            {title.mediaType !== 'more' && shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && (
-              <View style={styles.releaseStatusBadge}>
-                <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
-              </View>
-            )}
-            {/* Media type badge */}
-            {title.mediaType && title.mediaType !== 'more' && (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
-              </View>
-            )}
-            {/* Progress badge - hide if less than 5% */}
-            {title.mediaType !== 'more' &&
-              shouldShowBadge('watchProgress', badgeVisibility) &&
-              title.percentWatched !== undefined &&
-              title.percentWatched >= 5 && (
-                <View style={styles.progressBadge}>
-                  <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
-                </View>
-              )}
-            {/* Watch state badge (bottom-right) */}
-            {title.mediaType !== 'more' &&
-              (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
-              (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
-                <View style={styles.watchStateBadge}>
-                  {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
-                    <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
-                  )}
-                  {shouldShowBadge('unwatchedCount', badgeVisibility) &&
-                    title.mediaType === 'series' &&
-                    title.unwatchedCount !== undefined &&
-                    title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
-                </View>
-              )}
-            {/* Overlay info to match Search page */}
-            {title.mediaType !== 'more' && (
-              <View style={[styles.infoCompact]}>
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                  locations={[0, 0.6, 1]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.textGradient}
-                />
-                <Text style={styles.titleTV} numberOfLines={2}>
-                  {title.name}
-                </Text>
-                {title.year ? <Text style={styles.yearTV}>{title.year}</Text> : <View style={styles.yearPlaceholder} />}
-              </View>
-            )}
-          </View>
+          {renderTVContent(isFocused)}
         </View>
       )}
     </SpatialNavigationFocusableView>

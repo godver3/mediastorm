@@ -21,10 +21,53 @@ import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { isAndroidTV } from '@/theme/tokens/tvScale';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
+
+// Native filter button for Android TV - uses Pressable with style function (no re-renders)
+const NativeFilterButton = ({
+  label,
+  icon,
+  isActive,
+  onPress,
+  autoFocus,
+  theme,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  isActive: boolean;
+  onPress: () => void;
+  autoFocus?: boolean;
+  theme: NovaTheme;
+}) => (
+  <Pressable
+    onPress={onPress}
+    hasTVPreferredFocus={autoFocus}
+    style={({ focused }) => [
+      {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.spacing.sm,
+        paddingHorizontal: theme.spacing['2xl'],
+        paddingVertical: theme.spacing.md,
+        borderRadius: theme.radius.md,
+        backgroundColor: theme.colors.background.surface,
+        borderWidth: focused ? 2 : StyleSheet.hairlineWidth,
+        borderColor: focused
+          ? theme.colors.text.primary
+          : isActive
+            ? theme.colors.accent.primary
+            : theme.colors.border.subtle,
+      },
+    ]}
+  >
+    <Ionicons name={icon} size={20} color={theme.colors.text.primary} />
+    <Text style={{ color: theme.colors.text.primary, fontSize: 16, fontWeight: '500' }}>{label}</Text>
+  </Pressable>
+);
 
 export default function WatchlistScreen() {
   const theme = useTheme();
@@ -114,6 +157,59 @@ export default function WatchlistScreen() {
     return 'Your watchlist is empty';
   }, [filter, watchlistTitles.length]);
 
+  // Android TV: Use fully native focus (no SpatialNavigationRoot)
+  if (isAndroidTV) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
+          <View style={styles.container}>
+            <View style={styles.controlsRow}>
+              <View style={styles.filtersRow}>
+                {filterOptions.map((option, index) => (
+                  <NativeFilterButton
+                    key={option.key}
+                    label={option.label}
+                    icon={option.icon}
+                    isActive={filter === option.key}
+                    onPress={() => setFilter(option.key)}
+                    autoFocus={index === 0}
+                    theme={theme}
+                  />
+                ))}
+              </View>
+            </View>
+
+            <MediaGrid
+              title={`Your Watchlist · ${filterLabel}`}
+              items={filteredWatchlistTitles}
+              loading={loading}
+              error={error}
+              onItemPress={handleTitlePress}
+              layout="grid"
+              numColumns={6}
+              defaultFocusFirstItem={false}
+              badgeVisibility={userSettings?.display?.badgeVisibility}
+              emptyMessage={emptyMessage}
+              useNativeFocus={true}
+              useMinimalCards={true}
+            />
+
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.8)']}
+              locations={[0, 1]}
+              start={{ x: 0.5, y: 0.6 }}
+              end={{ x: 0.5, y: 1 }}
+              style={styles.bottomGradient}
+            />
+          </View>
+        </FixedSafeAreaView>
+      </>
+    );
+  }
+
+  // tvOS and other platforms: Use SpatialNavigation
   return (
     <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -126,7 +222,7 @@ export default function WatchlistScreen() {
               <SpatialNavigationNode orientation="horizontal">
                 <View style={styles.filtersRow}>
                   {filterOptions.map((option, index) => {
-                    const isActive = filter === option.key;
+                    const isActiveFilter = filter === option.key;
                     const isFirst = index === 0;
                     return isFirst ? (
                       <DefaultFocus key={option.key}>
@@ -136,7 +232,7 @@ export default function WatchlistScreen() {
                           icon={option.icon}
                           onFocus={() => setFocusedFilterIndex(index)}
                           onSelect={() => setFilter(option.key)}
-                          style={[styles.filterButton, isActive && styles.filterButtonActive]}
+                          style={[styles.filterButton, isActiveFilter && styles.filterButtonActive]}
                         />
                       </DefaultFocus>
                     ) : (
@@ -147,7 +243,7 @@ export default function WatchlistScreen() {
                         icon={option.icon}
                         onFocus={() => setFocusedFilterIndex(index)}
                         onSelect={() => setFilter(option.key)}
-                        style={[styles.filterButton, isActive && styles.filterButtonActive]}
+                        style={[styles.filterButton, isActiveFilter && styles.filterButtonActive]}
                       />
                     );
                   })}
@@ -162,7 +258,7 @@ export default function WatchlistScreen() {
               error={error}
               onItemPress={handleTitlePress}
               layout="grid"
-              numColumns={screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4}
+              numColumns={6}
               defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
               badgeVisibility={userSettings?.display?.badgeVisibility}
               emptyMessage={emptyMessage}

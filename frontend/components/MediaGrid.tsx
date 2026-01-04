@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef } from 'react';
 
 import {
   ActivityIndicator,
-  Image,
+  Image as RNImage,
   Platform,
   Pressable,
   ScrollView,
@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Image as CachedImage } from './Image';
 import Animated, { Easing, FadeOut, Layout } from 'react-native-reanimated';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import { Title } from '../services/api';
@@ -36,7 +37,63 @@ interface MediaGridProps {
   disableFocusScroll?: boolean; // disable programmatic scroll on focus (TV)
   badgeVisibility?: string[]; // Which badges to show on MediaItem cards
   emptyMessage?: string; // Custom message when no items
+  useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigation (faster on Android TV)
+  useMinimalCards?: boolean; // Use ultra-simple cards for performance testing
+  minimalCardLevel?: number; // 0=minimal, 1=+image, 2=+gradient, 3=+text overlay
 }
+
+// Optimized card for native focus mode - uses cached images
+const MinimalCard = React.memo(function MinimalCard({
+  item,
+  onPress,
+  onFocus,
+  autoFocus,
+}: {
+  item: DisplayTitle;
+  onPress?: () => void;
+  onFocus?: () => void;
+  autoFocus?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      onFocus={onFocus}
+      hasTVPreferredFocus={autoFocus}
+      style={({ focused }) => ({
+        flex: 1,
+        aspectRatio: 2 / 3,
+        backgroundColor: '#2a1245',
+        borderRadius: 8,
+        overflow: 'hidden',
+        borderWidth: focused ? 3 : 0,
+        borderColor: '#fff',
+      })}
+    >
+      {item.poster?.url ? (
+        <CachedImage
+          source={item.poster.url}
+          style={{ width: '100%', height: '100%', position: 'absolute' }}
+          contentFit="cover"
+          transition={0}
+          priority="low"
+          recyclingKey={item.id}
+        />
+      ) : null}
+
+      {/* Title and year */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 8, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', textAlign: 'center' }} numberOfLines={2}>
+          {item.name}
+        </Text>
+        {item.year ? (
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
+            {item.year}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
   const isCompact = theme.breakpoint === 'compact';
@@ -245,6 +302,9 @@ const MediaGrid = React.memo(
     disableFocusScroll = false,
     badgeVisibility,
     emptyMessage,
+    useNativeFocus = false,
+    useMinimalCards = false,
+    minimalCardLevel = 0,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth } = useTVDimensions();
@@ -344,7 +404,7 @@ const MediaGrid = React.memo(
                   >
                     <View style={styles.cardImageContainer}>
                       {item.poster?.url ? (
-                        <Image source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
+                        <RNImage source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
                       ) : (
                         <View style={styles.placeholder}>
                           <Text style={styles.placeholderImageText}>No Image</Text>
@@ -418,9 +478,56 @@ const MediaGrid = React.memo(
         rows.push(items.slice(i, i + columns));
       }
 
+      // Native focus mode: Use Pressable focus with a proper grid layout
+      // This is faster on Android TV as it avoids JS-based focus management re-renders
+      // Keep ScrollView simple - no removeClippedSubviews or scrollEventThrottle for smooth scrolling
+      if (useNativeFocus) {
+        return (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+          >
+            {rows.map((row, rowIndex) => (
+              <View key={`row-${rowIndex}`} style={styles.rowContainer}>
+                <View style={[styles.gridRow, { marginHorizontal: -halfGap }]}>
+                  {row.map((item, colIndex) => {
+                    const index = rowIndex * columns + colIndex;
+                    const isFirstItem = index === 0;
+                    return (
+                      <View
+                        key={keyExtractor(item, index)}
+                        style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}
+                      >
+                        {useMinimalCards ? (
+                          <MinimalCard
+                            item={item}
+                            onPress={() => onItemPress?.(item)}
+                            autoFocus={defaultFocusFirstItem && isFirstItem}
+                          />
+                        ) : (
+                          <MediaItem
+                            title={item}
+                            onPress={() => onItemPress?.(item)}
+                            badgeVisibility={badgeVisibility}
+                            useNativeFocus={true}
+                            autoFocus={defaultFocusFirstItem && isFirstItem}
+                          />
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        );
+      }
+
       // Key changes when row count changes, forcing spatial navigation to recalculate layout
       const gridKey = `grid-${rows.length}`;
 
+      // Standard mode: Use SpatialNavigationNode for focus management
       return (
         <ScrollView
           ref={mainScrollViewRef}
@@ -502,7 +609,9 @@ const MediaGrid = React.memo(
       prevProps.numColumns === nextProps.numColumns &&
       prevProps.layout === nextProps.layout &&
       prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
-      prevProps.badgeVisibility === nextProps.badgeVisibility
+      prevProps.badgeVisibility === nextProps.badgeVisibility &&
+      prevProps.useNativeFocus === nextProps.useNativeFocus &&
+      prevProps.useMinimalCards === nextProps.useMinimalCards
       // onItemPress is omitted - function reference changes are expected
     );
   },
