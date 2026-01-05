@@ -1,5 +1,24 @@
 package models
 
+// Helper functions for creating pointers (exported for use by other packages)
+func FloatPtr(v float64) *float64 { return &v }
+func BoolPtr(v bool) *bool        { return &v }
+
+// Helper functions for safely dereferencing pointers with defaults
+func FloatVal(p *float64, def float64) float64 {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func BoolVal(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
 // UserSettings contains per-user customizable settings.
 // These override global defaults when set.
 type UserSettings struct {
@@ -79,15 +98,16 @@ const (
 )
 
 // FilterSettings controls content filtering preferences.
+// Pointer types with omitempty allow distinguishing between "not set" (nil) and "set to zero/false".
 type FilterSettings struct {
-	MaxSizeMovieGB                   float64     `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB                 float64     `json:"maxSizeEpisodeGb"`
-	MaxResolution                    string      `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	HDRDVPolicy                      HDRDVPolicy `json:"hdrDvPolicy"`                      // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
-	PrioritizeHdr                    bool        `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
-	FilterOutTerms                   []string    `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms                   []string    `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
-	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
+	MaxSizeMovieGB                   *float64    `json:"maxSizeMovieGb,omitempty"`
+	MaxSizeEpisodeGB                 *float64    `json:"maxSizeEpisodeGb,omitempty"`
+	MaxResolution                    string      `json:"maxResolution,omitempty"`          // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy                      HDRDVPolicy `json:"hdrDvPolicy,omitempty"`            // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	PrioritizeHdr                    *bool       `json:"prioritizeHdr,omitempty"`          // Prioritize HDR/DV content in search results
+	FilterOutTerms                   []string    `json:"filterOutTerms,omitempty"`         // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`         // Terms to prioritize in results (case-insensitive match in title)
+	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
 }
 
 // DefaultUserSettings returns the default settings for a new user.
@@ -108,10 +128,10 @@ func DefaultUserSettings() UserSettings {
 			TrendingMovieSource: TrendingMovieSourceReleased,
 		},
 		Filtering: FilterSettings{
-			MaxSizeMovieGB:   0,
-			MaxSizeEpisodeGB: 0,
+			MaxSizeMovieGB:   FloatPtr(0),
+			MaxSizeEpisodeGB: FloatPtr(0),
 			HDRDVPolicy:      HDRDVPolicyNoExclusion,
-			PrioritizeHdr:    true,
+			PrioritizeHdr:    BoolPtr(true),
 		},
 		LiveTV: LiveTVSettings{
 			HiddenChannels:     []string{},

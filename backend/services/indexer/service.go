@@ -99,25 +99,49 @@ func (s *Service) SetClientSettingsProvider(provider clientSettingsProvider) {
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
 // Settings cascade: Global -> Profile -> Client (client settings win)
 func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) models.FilterSettings {
-	// Start with global settings
+	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
-		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB: models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
+		PrioritizeHdr:    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
-	// Layer 2: Profile settings override global
+	// Layer 2: Profile settings override global (field-by-field, only if set)
 	if userID != "" && s.userSettings != nil {
 		userSettings, err := s.userSettings.Get(userID)
 		if err != nil {
 			log.Printf("[indexer] failed to get user settings for %s: %v", userID, err)
 		} else if userSettings != nil {
 			log.Printf("[indexer] using per-user filtering settings for user %s", userID)
-			filterSettings = userSettings.Filtering
+			profileFiltering := userSettings.Filtering
+			if profileFiltering.MaxSizeMovieGB != nil {
+				filterSettings.MaxSizeMovieGB = profileFiltering.MaxSizeMovieGB
+			}
+			if profileFiltering.MaxSizeEpisodeGB != nil {
+				filterSettings.MaxSizeEpisodeGB = profileFiltering.MaxSizeEpisodeGB
+			}
+			if profileFiltering.MaxResolution != "" {
+				filterSettings.MaxResolution = profileFiltering.MaxResolution
+			}
+			if profileFiltering.HDRDVPolicy != "" {
+				filterSettings.HDRDVPolicy = profileFiltering.HDRDVPolicy
+			}
+			if profileFiltering.PrioritizeHdr != nil {
+				filterSettings.PrioritizeHdr = profileFiltering.PrioritizeHdr
+			}
+			if profileFiltering.FilterOutTerms != nil {
+				filterSettings.FilterOutTerms = profileFiltering.FilterOutTerms
+			}
+			if profileFiltering.PreferredTerms != nil {
+				filterSettings.PreferredTerms = profileFiltering.PreferredTerms
+			}
+			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
+				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
+			}
 		}
 	}
 
@@ -129,10 +153,10 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		} else if clientSettings != nil && !clientSettings.IsEmpty() {
 			log.Printf("[indexer] applying per-client filtering overrides for client %s", clientID)
 			if clientSettings.MaxSizeMovieGB != nil {
-				filterSettings.MaxSizeMovieGB = *clientSettings.MaxSizeMovieGB
+				filterSettings.MaxSizeMovieGB = clientSettings.MaxSizeMovieGB
 			}
 			if clientSettings.MaxSizeEpisodeGB != nil {
-				filterSettings.MaxSizeEpisodeGB = *clientSettings.MaxSizeEpisodeGB
+				filterSettings.MaxSizeEpisodeGB = clientSettings.MaxSizeEpisodeGB
 			}
 			if clientSettings.MaxResolution != nil {
 				filterSettings.MaxResolution = *clientSettings.MaxResolution
@@ -141,7 +165,7 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
 			}
 			if clientSettings.PrioritizeHdr != nil {
-				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
+				filterSettings.PrioritizeHdr = clientSettings.PrioritizeHdr
 			}
 			if clientSettings.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
@@ -326,7 +350,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			}
 
 			// 4. Within same resolution, prioritize HDR/DV content if enabled
-			if filterSettings.PrioritizeHdr {
+			if models.BoolVal(filterSettings.PrioritizeHdr, false) {
 				iHasHDR := aggregated[i].Attributes["hdr"] != ""
 				jHasHDR := aggregated[j].Attributes["hdr"] != ""
 				iHasDV := aggregated[i].Attributes["hasDV"] == "true"
@@ -672,11 +696,11 @@ func (s *Service) searchUsenetWithFilter(ctx context.Context, settings config.Se
 func (s *Service) searchUsenet(ctx context.Context, settings config.Settings, opts SearchOptions, baseParsed debrid.ParsedQuery, alternateTitles []string, searchQueries []string) ([]models.NZBResult, error) {
 	// Use global settings for backwards compatibility
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
-		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:   models.FloatPtr(settings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB: models.FloatPtr(settings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    settings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
+		PrioritizeHdr:    models.BoolPtr(settings.Filtering.PrioritizeHdr),
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}
 	return s.searchUsenetWithFilter(ctx, settings, opts, baseParsed, alternateTitles, searchQueries, filterSettings)
@@ -787,11 +811,11 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 		ExpectedTitle:    expectedTitle,
 		ExpectedYear:     expectedYear,
 		IsMovie:          isMovie,
-		MaxSizeMovieGB:   filterSettings.MaxSizeMovieGB,
-		MaxSizeEpisodeGB: filterSettings.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:   models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
+		MaxSizeEpisodeGB: models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
 		MaxResolution:    filterSettings.MaxResolution,
 		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-		PrioritizeHdr:    filterSettings.PrioritizeHdr,
+		PrioritizeHdr:    models.BoolVal(filterSettings.PrioritizeHdr, false),
 		AlternateTitles:  alternateTitles,
 		FilterOutTerms:   filterSettings.FilterOutTerms,
 	}
@@ -805,11 +829,11 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 func (s *Service) applyUsenetFiltering(results []models.NZBResult, settings config.Settings, opts SearchOptions, baseParsed, queryParsed debrid.ParsedQuery, alternateTitles []string) []models.NZBResult {
 	// Delegate to the new function with settings converted to FilterSettings
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   settings.Filtering.MaxSizeMovieGB,
-		MaxSizeEpisodeGB: settings.Filtering.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:   models.FloatPtr(settings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB: models.FloatPtr(settings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    settings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:    settings.Filtering.PrioritizeHdr,
+		PrioritizeHdr:    models.BoolPtr(settings.Filtering.PrioritizeHdr),
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}
 	return s.applyUsenetFilteringWithSettings(results, opts, baseParsed, queryParsed, alternateTitles, filterSettings)
