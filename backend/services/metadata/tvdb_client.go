@@ -38,7 +38,7 @@ func newTVDBClient(apiKey, language string, httpc *http.Client) *tvdbClient {
 	}
 	// TVDB uses 3-letter ISO 639-2 codes, normalize from 2-letter to 3-letter
 	language = normalizeTVDBLanguage(language)
-	return &tvdbClient{apiKey: apiKey, language: language, httpc: httpc, minInterval: 200 * time.Millisecond}
+	return &tvdbClient{apiKey: apiKey, language: language, httpc: httpc, minInterval: 20 * time.Millisecond}
 }
 
 // normalizeTVDBLanguage converts 2-letter ISO 639-1 codes to 3-letter ISO 639-2 codes for TVDB
@@ -612,4 +612,41 @@ func (c *tvdbClient) fetchMDBListTVShows() ([]mdblistTVShow, error) {
 	}
 
 	return tvShows, nil
+}
+
+// mdblistItem is a generic MDBList item that works for both movies and TV shows
+type mdblistItem struct {
+	ID          int    `json:"id"`
+	Rank        int    `json:"rank"`
+	Adult       int    `json:"adult"`
+	Title       string `json:"title"`
+	TVDBID      *int64 `json:"tvdbid"`
+	IMDBID      string `json:"imdb_id"`
+	MediaType   string `json:"mediatype"` // "movie" or "show"
+	ReleaseYear int    `json:"release_year"`
+}
+
+// FetchMDBListCustom fetches items from a custom MDBList URL
+func (c *tvdbClient) FetchMDBListCustom(listURL string) ([]mdblistItem, error) {
+	req, err := http.NewRequest(http.MethodGet, listURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mdblist request failed: %s", resp.Status)
+	}
+
+	var items []mdblistItem
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }
