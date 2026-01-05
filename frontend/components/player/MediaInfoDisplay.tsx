@@ -253,6 +253,10 @@ export default function MediaInfoDisplay({
   // Check if we have any badges to display
   const hasBadges = resolutionBadge || hdrDisplay.badge;
 
+  // Hide color info for native players (VLC/RNV) - only show for Expo/Web/System players
+  const showColorInfo =
+    playerImplementation !== 'React Native VLC' && playerImplementation !== 'React Native Video';
+
   if (Platform.isTV) {
     return (
       <View style={styles.container} pointerEvents="none">
@@ -274,7 +278,7 @@ export default function MediaInfoDisplay({
             )}
           </View>
         )}
-        {hdrDisplay.details && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
+        {hdrDisplay.details && showColorInfo && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
       </View>
     );
   }
@@ -299,7 +303,7 @@ export default function MediaInfoDisplay({
           )}
         </View>
       )}
-      {hdrDisplay.details && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
+      {hdrDisplay.details && showColorInfo && <Text style={styles.colorInfoText}>{hdrDisplay.details}</Text>}
     </Pressable>
   );
 }
