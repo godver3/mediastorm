@@ -2773,3 +2773,179 @@ func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType str
 	log.Printf("[metadata] ResolveIMDBID no IMDB ID found in %d TVDB results for %q", len(results), title)
 	return ""
 }
+
+// GetCustomList fetches items from a custom MDBList URL and returns them as TrendingItems.
+// If limit > 0, only that many items will be enriched with TVDB metadata.
+// Returns the items, total count, and any error.
+func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error) {
+	// Check cache first - cache stores all enriched items
+	cacheID := cacheKey("mdblist", "custom", listURL)
+	var cached []models.TrendingItem
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		log.Printf("[metadata] custom list cache hit for %s (%d items)", listURL, len(cached))
+		// Apply limit to cached results
+		if limit > 0 && limit < len(cached) {
+			return cached[:limit], len(cached), nil
+		}
+		return cached, len(cached), nil
+	}
+
+	// Fetch items from the custom MDBList
+	mdblistItems, err := s.client.FetchMDBListCustom(listURL)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to fetch custom MDBList: %w", err)
+	}
+
+	totalCount := len(mdblistItems)
+	log.Printf("[metadata] fetched %d items from custom MDBList: %s", totalCount, listURL)
+
+	// Determine how many items to enrich
+	enrichCount := totalCount
+	if limit > 0 && limit < totalCount {
+		enrichCount = limit
+		log.Printf("[metadata] limiting enrichment to %d items (total: %d)", enrichCount, totalCount)
+	}
+
+	// Convert to TrendingItem and enrich with TVDB data where possible
+	items := make([]models.TrendingItem, 0, enrichCount)
+	for i, item := range mdblistItems {
+		// Only enrich up to enrichCount items
+		if i >= enrichCount {
+			break
+		}
+
+		// Determine media type from MDBList item
+		mediaType := "movie"
+		if item.MediaType == "show" || item.MediaType == "series" || item.MediaType == "tv" {
+			mediaType = "series"
+		}
+
+		// Create base title from MDBList data
+		title := models.Title{
+			ID:         fmt.Sprintf("mdblist:%s:%d", mediaType, item.ID),
+			Name:       item.Title,
+			Year:       item.ReleaseYear,
+			Language:   s.client.language,
+			MediaType:  mediaType,
+			Popularity: float64(100 - item.Rank),
+		}
+
+		// Set IMDB ID from MDBList
+		if item.IMDBID != "" {
+			title.IMDBID = item.IMDBID
+		}
+
+		// Try to enrich with TVDB data
+		var found bool
+
+		// First, try to use TVDB ID from MDBList if available
+		if item.TVDBID != nil && *item.TVDBID > 0 {
+			if mediaType == "movie" {
+				if tvdbDetails, err := s.getTVDBMovieDetails(*item.TVDBID); err == nil {
+					title.TVDBID = *item.TVDBID
+					title.ID = fmt.Sprintf("tvdb:movie:%d", *item.TVDBID)
+					title.Name = tvdbDetails.Name
+					title.Overview = tvdbDetails.Overview
+					found = true
+
+					// Get artwork
+					if ext, err := s.client.movieExtended(*item.TVDBID, []string{"artwork"}); err == nil {
+						applyTVDBArtworks(&title, ext.Artworks)
+					}
+				}
+			} else {
+				if tvdbDetails, err := s.getTVDBSeriesDetails(*item.TVDBID); err == nil {
+					title.TVDBID = *item.TVDBID
+					title.ID = fmt.Sprintf("tvdb:series:%d", *item.TVDBID)
+					title.Overview = tvdbDetails.Overview
+					if tvdbDetails.Score > 0 {
+						title.Popularity = tvdbDetails.Score
+					}
+					found = true
+
+					// Get artwork
+					if ext, err := s.client.seriesExtended(*item.TVDBID, []string{"artworks"}); err == nil {
+						applyTVDBArtworks(&title, ext.Artworks)
+					}
+				}
+			}
+		}
+
+		// Fallback: search TVDB by title/year if no TVDB ID or direct lookup failed
+		if !found {
+			if mediaType == "movie" {
+				// Try to search TVDB by title/year
+				remoteID := fmt.Sprintf("%d", item.ID)
+				if searchResults, err := s.searchTVDBMovie(item.Title, item.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
+					result := searchResults[0]
+					if result.TVDBID != "" {
+						if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err == nil {
+							title.TVDBID = tvdbID
+							title.ID = fmt.Sprintf("tvdb:movie:%d", tvdbID)
+
+							// Use image from search result
+							if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
+								title.Poster = img
+							}
+
+							// Get additional artwork
+							if ext, err := s.client.movieExtended(tvdbID, []string{"artwork"}); err == nil {
+								applyTVDBArtworks(&title, ext.Artworks)
+							}
+
+							if result.Overview != "" {
+								title.Overview = result.Overview
+							}
+							found = true
+						}
+					}
+				}
+			} else {
+				// Try to search TVDB by title/year for series
+				remoteID := fmt.Sprintf("%d", item.ID)
+				if searchResults, err := s.searchTVDBSeries(item.Title, item.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
+					result := searchResults[0]
+					if result.TVDBID != "" {
+						if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err == nil {
+							title.TVDBID = tvdbID
+							title.ID = fmt.Sprintf("tvdb:series:%d", tvdbID)
+
+							// Use image from search result
+							if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
+								title.Poster = img
+							}
+
+							// Get additional artwork
+							if ext, err := s.client.seriesExtended(tvdbID, []string{"artworks"}); err == nil {
+								applyTVDBArtworks(&title, ext.Artworks)
+							}
+
+							if result.Overview != "" {
+								title.Overview = result.Overview
+							}
+							found = true
+						}
+					}
+				}
+			}
+		}
+
+		if !found {
+			log.Printf("[metadata] no tvdb match for custom list item title=%q year=%d type=%s", item.Title, item.ReleaseYear, mediaType)
+		}
+
+		items = append(items, models.TrendingItem{
+			Rank:  item.Rank,
+			Title: title,
+		})
+	}
+
+	// Only cache if we enriched all items (no limit applied)
+	// This ensures the cache always has the full list
+	if len(items) > 0 && (limit == 0 || limit >= totalCount) {
+		_ = s.cache.set(cacheID, items)
+		log.Printf("[metadata] cached %d enriched items for custom list: %s", len(items), listURL)
+	}
+
+	return items, totalCount, nil
+}

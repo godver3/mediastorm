@@ -19,7 +19,7 @@ type metadataService interface {
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
-	GetCustomList(listURL string) ([]models.TrendingItem, error)
+	GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error)
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -266,6 +266,12 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// CustomListResponse wraps custom list items with total count for pagination
+type CustomListResponse struct {
+	Items []models.TrendingItem `json:"items"`
+	Total int                   `json:"total"`
+}
+
 // CustomList fetches items from a custom MDBList URL
 func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	listURL := strings.TrimSpace(r.URL.Query().Get("url"))
@@ -274,6 +280,14 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
 		return
+	}
+
+	// Parse optional limit parameter (0 = no limit)
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
 	}
 
 	// Validate URL contains mdblist.com/lists/
@@ -290,7 +304,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		listURL = listURL + "/json"
 	}
 
-	items, err := h.Service.GetCustomList(listURL)
+	items, total, err := h.Service.GetCustomList(listURL, limit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -299,5 +313,5 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(CustomListResponse{Items: items, Total: total})
 }
