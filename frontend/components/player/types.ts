@@ -5,6 +5,7 @@ export type VideoPlayerHandle = {
   toggleFullscreen?: () => void;
   play?: () => void;
   pause?: () => void;
+  enterPip?: () => void;
 };
 
 export interface VideoProgressMeta {
@@ -59,4 +60,6 @@ export interface VideoPlayerProps {
   subtitleSize?: number;
   /** Video resize mode: 'cover' fills container (may crop), 'contain' shows full video (may letterbox). Default: 'cover' */
   resizeMode?: VideoResizeMode;
+  /** Called when PiP status changes (iOS only) */
+  onPictureInPictureStatusChanged?: (isActive: boolean) => void;
 }

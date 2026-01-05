@@ -624,6 +624,7 @@ export default function PlayerScreen() {
   }, [shouldPreferSystemPlayer]);
   const isTvPlatform = Platform.isTV;
   const [paused, setPaused] = useState<boolean>(false);
+  const [isPipActive, setIsPipActive] = useState<boolean>(false);
   // Pause teardown state: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause and showing a poster overlay instead
   const [pauseTeardownActive, setPauseTeardownActive] = useState<boolean>(false);
@@ -879,10 +880,19 @@ export default function PlayerScreen() {
   }, [paused]);
 
   // Auto-pause when app is backgrounded (mobile and TV)
+  // Skip auto-pause when in PiP mode - video should keep playing
   const wasPlayingBeforeBackgroundRef = useRef(false);
+  const isPipActiveRef = useRef(isPipActive);
+  isPipActiveRef.current = isPipActive;
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // Don't pause if in PiP mode - the video should keep playing
+        if (isPipActiveRef.current) {
+          console.log('[player] Skipping auto-pause: PiP mode active');
+          return;
+        }
         // App is being minimized - pause if currently playing
         if (!paused) {
           wasPlayingBeforeBackgroundRef.current = true;
@@ -3287,6 +3297,15 @@ export default function PlayerScreen() {
     showControls();
   };
 
+  const handleEnterPip = useCallback(() => {
+    videoRef.current?.enterPip?.();
+  }, []);
+
+  const handlePictureInPictureStatusChanged = useCallback((isActive: boolean) => {
+    setIsPipActive(isActive);
+    console.log('[player] PiP status changed:', isActive);
+  }, []);
+
   const seekBackwardSeconds = settings?.playback?.seekBackwardSeconds ?? 10;
   const seekForwardSeconds = settings?.playback?.seekForwardSeconds ?? 30;
 
@@ -4848,6 +4867,7 @@ export default function PlayerScreen() {
               }}
               subtitleSize={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               mediaType={mediaType}
+              onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
             />
           </View>
 
@@ -5060,6 +5080,7 @@ export default function PlayerScreen() {
                               seekBackwardSeconds={seekBackwardSeconds}
                               seekForwardSeconds={seekForwardSeconds}
                               shuffleMode={shuffleMode}
+                              onEnterPip={handleEnterPip}
                             />
                           </SpatialNavigationNode>
                         </View>
@@ -5176,6 +5197,7 @@ export default function PlayerScreen() {
                           seekBackwardSeconds={seekBackwardSeconds}
                           seekForwardSeconds={seekForwardSeconds}
                           shuffleMode={shuffleMode}
+                          onEnterPip={handleEnterPip}
                         />
                       </SpatialNavigationNode>
                     </View>

@@ -3627,6 +3627,59 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		playlistContent = strings.Replace(playlistContent, "#EXTM3U\n", injection, 1)
 	}
 
+	// Convert EVENT playlist to VOD when we know the duration
+	// This makes iOS show a progress bar in PiP mode instead of "LIVE"
+	// We pre-generate entries for all expected segments so the player knows the full duration
+	// Segment requests for not-yet-transcoded segments will block until ready
+	if session.Duration > 0 && !strings.Contains(playlistContent, "#EXT-X-ENDLIST") {
+		playlistContent = strings.Replace(playlistContent, "#EXT-X-PLAYLIST-TYPE:EVENT", "#EXT-X-PLAYLIST-TYPE:VOD", 1)
+
+		// Calculate total expected segments and find highest existing segment
+		effectiveDuration := session.Duration - session.TranscodingOffset
+		totalSegments := int(math.Ceil(effectiveDuration / hlsSegmentDuration))
+
+		// Find the highest segment number in the current playlist
+		highestExisting := -1
+		lines := strings.Split(playlistContent, "\n")
+		segmentExt := ".m4s"
+		if !session.HasDV && !session.HasHDR {
+			segmentExt = ".ts"
+		}
+		for _, line := range lines {
+			if strings.HasPrefix(line, "segment") && strings.HasSuffix(line, segmentExt) {
+				// Extract segment number from "segment0.m4s" or "segment0.ts"
+				numStr := strings.TrimPrefix(line, "segment")
+				numStr = strings.TrimSuffix(numStr, segmentExt)
+				if num, err := strconv.Atoi(numStr); err == nil && num > highestExisting {
+					highestExisting = num
+				}
+			}
+		}
+
+		// Add entries for remaining segments that haven't been transcoded yet
+		var extraSegments strings.Builder
+		for i := highestExisting + 1; i < totalSegments; i++ {
+			// Calculate duration for this segment (last segment may be shorter)
+			segDuration := hlsSegmentDuration
+			segEndTime := float64(i+1) * hlsSegmentDuration
+			if segEndTime > effectiveDuration {
+				segDuration = effectiveDuration - float64(i)*hlsSegmentDuration
+				if segDuration < 0.1 {
+					continue // Skip very short final segments
+				}
+			}
+			extraSegments.WriteString(fmt.Sprintf("#EXTINF:%.6f,\nsegment%d%s\n", segDuration, i, segmentExt))
+		}
+
+		if extraSegments.Len() > 0 {
+			// Insert extra segments before any existing ENDLIST or at the end
+			playlistContent = strings.TrimRight(playlistContent, "\n") + "\n" + extraSegments.String()
+		}
+
+		// Add ENDLIST to mark playlist as complete
+		playlistContent = strings.TrimRight(playlistContent, "\n") + "\n#EXT-X-ENDLIST\n"
+	}
+
 	if authToken != "" {
 		lines := strings.Split(playlistContent, "\n")
 		for i, line := range lines {
