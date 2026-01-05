@@ -42,6 +42,33 @@ interface MediaGridProps {
   minimalCardLevel?: number; // 0=minimal, 1=+image, 2=+gradient, 3=+text overlay
 }
 
+// Static styles for MinimalCard - avoids object creation per render
+const minimalCardStyles = {
+  base: {
+    flex: 1,
+    aspectRatio: 2 / 3,
+    backgroundColor: '#2a1245',
+    borderRadius: 8,
+    overflow: 'hidden' as const,
+    borderWidth: 3,
+    borderColor: 'transparent',
+  },
+  focused: {
+    flex: 1,
+    aspectRatio: 2 / 3,
+    backgroundColor: '#2a1245',
+    borderRadius: 8,
+    overflow: 'hidden' as const,
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  image: { width: '100%' as const, height: '100%' as const, position: 'absolute' as const },
+  gradient: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, height: '50%' as const },
+  textContainer: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, padding: 8, alignItems: 'center' as const },
+  title: { color: '#fff', fontSize: 14, fontWeight: '600' as const, textAlign: 'center' as const },
+  year: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
+};
+
 // Optimized card for native focus mode - uses cached images
 const MinimalCard = React.memo(function MinimalCard({
   item,
@@ -59,20 +86,12 @@ const MinimalCard = React.memo(function MinimalCard({
       onPress={onPress}
       onFocus={onFocus}
       hasTVPreferredFocus={autoFocus}
-      style={({ focused }) => ({
-        flex: 1,
-        aspectRatio: 2 / 3,
-        backgroundColor: '#2a1245',
-        borderRadius: 8,
-        overflow: 'hidden',
-        borderWidth: focused ? 3 : 0,
-        borderColor: '#fff',
-      })}
+      style={({ focused }) => focused ? minimalCardStyles.focused : minimalCardStyles.base}
     >
       {item.poster?.url ? (
         <CachedImage
           source={item.poster.url}
-          style={{ width: '100%', height: '100%', position: 'absolute' }}
+          style={minimalCardStyles.image}
           contentFit="cover"
           transition={0}
           priority="low"
@@ -80,20 +99,24 @@ const MinimalCard = React.memo(function MinimalCard({
         />
       ) : null}
 
-      {/* Title and year */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 8, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', textAlign: 'center' }} numberOfLines={2}>
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.8)']}
+        style={minimalCardStyles.gradient}
+        pointerEvents="none"
+      />
+
+      <View style={minimalCardStyles.textContainer}>
+        <Text style={minimalCardStyles.title} numberOfLines={2}>
           {item.name}
         </Text>
         {item.year ? (
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
-            {item.year}
-          </Text>
+          <Text style={minimalCardStyles.year}>{item.year}</Text>
         ) : null}
       </View>
     </Pressable>
   );
 });
+
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
   const isCompact = theme.breakpoint === 'compact';
@@ -479,8 +502,7 @@ const MediaGrid = React.memo(
       }
 
       // Native focus mode: Use Pressable focus with a proper grid layout
-      // This is faster on Android TV as it avoids JS-based focus management re-renders
-      // Keep ScrollView simple - no removeClippedSubviews or scrollEventThrottle for smooth scrolling
+      // NO onFocus callbacks - relies on native scroll behavior for maximum performance
       if (useNativeFocus) {
         return (
           <ScrollView
