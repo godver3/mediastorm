@@ -86,6 +86,20 @@ const formatResolution = (resolution?: string): string | null => {
   return '480p';
 };
 
+// Resolution colors - premium feel for higher resolutions
+const getResolutionColor = (resolution: string): { bg: string; text: string } => {
+  switch (resolution) {
+    case '2160p':
+      return { bg: 'rgba(138, 43, 226, 0.85)', text: '#fff' }; // Purple/Violet for 4K
+    case '1080p':
+      return { bg: 'rgba(59, 130, 246, 0.85)', text: '#fff' }; // Blue for 1080p
+    case '720p':
+      return { bg: 'rgba(20, 184, 166, 0.85)', text: '#fff' }; // Teal for 720p
+    default:
+      return { bg: 'rgba(107, 114, 128, 0.85)', text: '#fff' }; // Gray for 480p and below
+  }
+};
+
 export default function MediaInfoDisplay({
   mediaType = 'movie',
   title,
@@ -246,12 +260,17 @@ export default function MediaInfoDisplay({
 
   const hdrDisplay = buildHdrDisplay();
   const resolutionBadge = formatResolution(resolution);
+  const resolutionColors = resolutionBadge ? getResolutionColor(resolutionBadge) : null;
 
   // Allow more lines for filename display since they tend to be longer
   const maxLines = showFilename ? 3 : 2;
 
-  // Check if we have any badges to display
-  const hasBadges = resolutionBadge || hdrDisplay.badge;
+  // Determine format badge: DV > HDR10 > SDR
+  const formatBadge = hdrDisplay.badge || 'SDR';
+  const isSDR = !hdrDisplay.badge;
+
+  // Check if we have any badges to display (always true now since we show SDR)
+  const hasBadges = resolutionBadge || formatBadge;
 
   // Hide color info for native players (VLC/RNV) - only show for Expo/Web/System players
   const showColorInfo =
@@ -265,15 +284,15 @@ export default function MediaInfoDisplay({
         </Text>
         {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
         {hasBadges && (
-          <View style={styles.badgesRow}>
-            {resolutionBadge && (
-              <View style={styles.resolutionBadgeContainer}>
-                <Text style={styles.resolutionBadgeText}>{resolutionBadge}</Text>
-              </View>
-            )}
-            {hdrDisplay.badge && (
-              <View style={styles.hdrBadgeContainer}>
-                <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+          <View style={styles.badgesColumn}>
+            <View style={isSDR ? styles.sdrBadgeContainer : styles.hdrBadgeContainer}>
+              <Text style={isSDR ? styles.sdrBadgeText : styles.hdrBadgeText}>{formatBadge}</Text>
+            </View>
+            {resolutionBadge && resolutionColors && (
+              <View style={[styles.resolutionBadgeContainer, { backgroundColor: resolutionColors.bg }]}>
+                <Text style={[styles.resolutionBadgeText, { color: resolutionColors.text }]}>
+                  {resolutionBadge}
+                </Text>
               </View>
             )}
           </View>
@@ -290,15 +309,13 @@ export default function MediaInfoDisplay({
       </Text>
       {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
       {hasBadges && (
-        <View style={styles.badgesRow}>
-          {resolutionBadge && (
-            <View style={styles.resolutionBadgeContainer}>
-              <Text style={styles.resolutionBadgeText}>{resolutionBadge}</Text>
-            </View>
-          )}
-          {hdrDisplay.badge && (
-            <View style={styles.hdrBadgeContainer}>
-              <Text style={styles.hdrBadgeText}>{hdrDisplay.badge}</Text>
+        <View style={styles.badgesColumn}>
+          <View style={isSDR ? styles.sdrBadgeContainer : styles.hdrBadgeContainer}>
+            <Text style={isSDR ? styles.sdrBadgeText : styles.hdrBadgeText}>{formatBadge}</Text>
+          </View>
+          {resolutionBadge && resolutionColors && (
+            <View style={[styles.resolutionBadgeContainer, { backgroundColor: resolutionColors.bg }]}>
+              <Text style={[styles.resolutionBadgeText, { color: resolutionColors.text }]}>{resolutionBadge}</Text>
             </View>
           )}
         </View>
@@ -370,25 +387,11 @@ const createStyles = (
       marginTop: getScaledValue(4),
       letterSpacing: getScaledValue(0.3),
     },
-    badgesRow: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-      alignItems: 'center',
+    badgesColumn: {
+      flexDirection: 'column',
+      alignItems: 'flex-end',
       marginTop: getScaledValue(6),
-      gap: getScaledValue(6),
-    },
-    resolutionBadgeContainer: {
-      backgroundColor: 'rgba(100, 149, 237, 0.85)',
-      paddingHorizontal: getScaledValue(8),
-      paddingVertical: getScaledValue(3),
-      borderRadius: getScaledValue(4),
-    },
-    resolutionBadgeText: {
-      fontSize: getScaledValue(isWeb ? 10 : 11),
-      fontWeight: '700',
-      color: '#fff',
-      textAlign: 'center',
-      letterSpacing: getScaledValue(0.5),
+      gap: getScaledValue(4),
     },
     hdrBadgeContainer: {
       backgroundColor: 'rgba(255, 215, 0, 0.85)',
@@ -400,6 +403,30 @@ const createStyles = (
       fontSize: getScaledValue(isWeb ? 10 : 11),
       fontWeight: '700',
       color: '#000',
+      textAlign: 'center',
+      letterSpacing: getScaledValue(0.5),
+    },
+    sdrBadgeContainer: {
+      backgroundColor: 'rgba(156, 163, 175, 0.85)',
+      paddingHorizontal: getScaledValue(8),
+      paddingVertical: getScaledValue(3),
+      borderRadius: getScaledValue(4),
+    },
+    sdrBadgeText: {
+      fontSize: getScaledValue(isWeb ? 10 : 11),
+      fontWeight: '700',
+      color: '#fff',
+      textAlign: 'center',
+      letterSpacing: getScaledValue(0.5),
+    },
+    resolutionBadgeContainer: {
+      paddingHorizontal: getScaledValue(8),
+      paddingVertical: getScaledValue(3),
+      borderRadius: getScaledValue(4),
+    },
+    resolutionBadgeText: {
+      fontSize: getScaledValue(isWeb ? 10 : 11),
+      fontWeight: '700',
       textAlign: 'center',
       letterSpacing: getScaledValue(0.5),
     },
