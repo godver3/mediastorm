@@ -199,6 +199,35 @@ var SettingsSchema = map[string]interface{}{
 			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
 		},
 	},
+	"network": map[string]interface{}{
+		"label": "Network URL Switching",
+		"icon":  "wifi",
+		"group": "server",
+		"order": 1,
+		"fields": map[string]interface{}{
+			"homeWifiSSID": map[string]interface{}{
+				"type":        "text",
+				"label":       "Home WiFi Name",
+				"description": "WiFi network name (SSID) to detect for home network. When connected, app uses Home URL.",
+				"placeholder": "MyHomeWiFi",
+				"order":       0,
+			},
+			"homeBackendUrl": map[string]interface{}{
+				"type":        "text",
+				"label":       "Home Backend URL",
+				"description": "Backend URL to use when connected to home WiFi (e.g., http://192.168.1.100:7777/api)",
+				"placeholder": "http://192.168.1.100:7777/api",
+				"order":       1,
+			},
+			"remoteBackendUrl": map[string]interface{}{
+				"type":        "text",
+				"label":       "Remote Backend URL",
+				"description": "Backend URL to use when on mobile data or other networks (e.g., https://myserver.example.com:7777/api)",
+				"placeholder": "https://myserver.example.com:7777/api",
+				"order":       2,
+			},
+		},
+	},
 	"streaming": map[string]interface{}{
 		"label": "Streaming",
 		"icon":  "play-circle",
