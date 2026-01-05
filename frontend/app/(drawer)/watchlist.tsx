@@ -18,7 +18,6 @@ import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -194,15 +193,6 @@ export default function WatchlistScreen() {
               useNativeFocus={true}
               useMinimalCards={true}
             />
-
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.8)']}
-              locations={[0, 1]}
-              start={{ x: 0.5, y: 0.6 }}
-              end={{ x: 0.5, y: 1 }}
-              style={styles.bottomGradient}
-            />
           </View>
         </FixedSafeAreaView>
       </>
@@ -265,16 +255,6 @@ export default function WatchlistScreen() {
             />
           </SpatialNavigationNode>
 
-          {Platform.isTV && (
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.8)']}
-              locations={[0, 1]}
-              start={{ x: 0.5, y: 0.6 }}
-              end={{ x: 0.5, y: 1 }}
-              style={styles.bottomGradient}
-            />
-          )}
         </View>
       </FixedSafeAreaView>
     </SpatialNavigationRoot>
@@ -314,12 +294,5 @@ const createStyles = (theme: NovaTheme) =>
     },
     filterButtonActive: {
       borderColor: theme.colors.accent.primary,
-    },
-    bottomGradient: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      height: '40%',
     },
   });
