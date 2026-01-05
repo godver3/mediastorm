@@ -547,6 +547,8 @@ export interface UserShelfConfig {
   name: string;
   enabled: boolean;
   order: number;
+  type?: 'builtin' | 'mdblist'; // Type of shelf - builtin or custom MDBList
+  listUrl?: string; // MDBList URL for custom lists
 }
 
 export interface UserHomeShelvesSettings {
@@ -873,6 +875,22 @@ class ApiService {
       params.set('userId', userId);
     }
     return this.request<TrendingItem[]>(`/discover/new?${params.toString()}`);
+  }
+
+  // Get custom MDBList items
+  // If limit is provided, only that many items will be enriched with metadata
+  // Returns items and total count for pagination
+  async getCustomList(
+    listUrl: string,
+    limit?: number,
+  ): Promise<{ items: TrendingItem[]; total: number }> {
+    const params = new URLSearchParams({ url: listUrl });
+    if (limit && limit > 0) {
+      params.set('limit', limit.toString());
+    }
+    return this.request<{ items: TrendingItem[]; total: number }>(
+      `/lists/custom?${params.toString()}`,
+    );
   }
 
   // Search movies

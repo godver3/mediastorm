@@ -115,6 +115,8 @@ export interface BackendShelfConfig {
   name: string;
   enabled: boolean;
   order: number;
+  type?: 'builtin' | 'mdblist'; // Type of shelf - builtin or custom MDBList
+  listUrl?: string; // MDBList URL for custom lists
 }
 
 export type TrendingMovieSource = 'all' | 'released';
