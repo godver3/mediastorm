@@ -419,10 +419,10 @@
                         }
                     }
 
-                    // Check homeShelves section
+                    // Check homeShelves section - use lenient comparison for shelves
                     if (!hasActualOverrides && settings.homeShelves) {
                         const globalHomeShelves = currentSettings.homeShelves || {};
-                        if (!deepEqual(normalizeForComparison(settings.homeShelves), normalizeForComparison(globalHomeShelves))) {
+                        if (!homeShelvesEqual(settings.homeShelves, globalHomeShelves)) {
                             hasActualOverrides = true;
                         }
                     }
@@ -750,10 +750,10 @@
             }
         }
 
-        // Check homeShelves section
+        // Check homeShelves section - use lenient comparison for shelves
         if (!hasActualOverrides && userSettings.homeShelves) {
             const globalHomeShelves = currentSettings.homeShelves || {};
-            if (!deepEqual(normalizeForComparison(userSettings.homeShelves), normalizeForComparison(globalHomeShelves))) {
+            if (!homeShelvesEqual(userSettings.homeShelves, globalHomeShelves)) {
                 hasActualOverrides = true;
             }
         }
@@ -1435,6 +1435,46 @@
         return true;
     }
 
+    // Compare two shelf objects - considers them equal if core properties match
+    // This handles cases where profile shelf is missing type/listUrl but otherwise matches global
+    function shelfEqual(profileShelf, globalShelf) {
+        if (!profileShelf || !globalShelf) return profileShelf === globalShelf;
+        // Core properties must match
+        if (profileShelf.id !== globalShelf.id) return false;
+        if (profileShelf.name !== globalShelf.name) return false;
+        if (profileShelf.enabled !== globalShelf.enabled) return false;
+        if (profileShelf.order !== globalShelf.order) return false;
+        // If profile has type/listUrl, they must match global
+        if (profileShelf.type && profileShelf.type !== globalShelf.type) return false;
+        if (profileShelf.listUrl && profileShelf.listUrl !== globalShelf.listUrl) return false;
+        return true;
+    }
+
+    // Compare two shelf arrays - considers them equal if all shelves match (using shelfEqual)
+    function shelvesEqual(profileShelves, globalShelves) {
+        if (!profileShelves || !globalShelves) return profileShelves === globalShelves;
+        if (profileShelves.length !== globalShelves.length) return false;
+        // Sort both arrays by ID for consistent comparison
+        const sortedProfile = [...profileShelves].sort((a, b) => a.id.localeCompare(b.id));
+        const sortedGlobal = [...globalShelves].sort((a, b) => a.id.localeCompare(b.id));
+        for (let i = 0; i < sortedProfile.length; i++) {
+            if (!shelfEqual(sortedProfile[i], sortedGlobal[i])) return false;
+        }
+        return true;
+    }
+
+    // Compare homeShelves sections - uses shelvesEqual for shelves array
+    function homeShelvesEqual(profileHomeShelves, globalHomeShelves) {
+        if (!profileHomeShelves || !globalHomeShelves) return profileHomeShelves === globalHomeShelves;
+        // Compare shelves using lenient comparison
+        if (!shelvesEqual(profileHomeShelves.shelves, globalHomeShelves.shelves)) return false;
+        // Compare trendingMovieSource
+        const profileTMS = profileHomeShelves.trendingMovieSource || '';
+        const globalTMS = globalHomeShelves.trendingMovieSource || '';
+        if (profileTMS !== globalTMS) return false;
+        return true;
+    }
+
     // Strip values from userSettings that match global settings (treat as inherited)
     // This ensures we only store actual overrides, not duplicate values
     function stripInheritedValues(userSettings, globalSettings) {
@@ -1467,8 +1507,15 @@
                     console.log('stripInheritedValues: skipping null value', section, key, value);
                     continue;
                 }
-                // Keep if different from global (after normalization)
-                if (!deepEqual(normValue, normGlobal)) {
+                // Use lenient comparison for shelves array (handles missing type/listUrl properties)
+                let isEqual;
+                if (section === 'homeShelves' && key === 'shelves') {
+                    isEqual = shelvesEqual(value, globalValue);
+                } else {
+                    isEqual = deepEqual(normValue, normGlobal);
+                }
+                // Keep if different from global
+                if (!isEqual) {
                     console.log('stripInheritedValues: keeping different value', section, key, 'profile:', normValue, 'global:', normGlobal);
                     sectionStripped[key] = value;
                 } else {
@@ -1561,9 +1608,8 @@
                     originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
                     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
                     showToast('Settings saved successfully');
-                    // Update override indicators based on whether there are actual overrides
-                    const hasOverrides = Object.keys(strippedSettings).length > 0;
-                    if (userOverrides) userOverrides[selectedUserId] = hasOverrides;
+                    // Recalculate override status from actual values to ensure consistency
+                    recalculateUserOverrides(selectedUserId);
                     updateUserDropdownIndicators();
                     updateClientDropdownIndicators();
                     updateRevertButtonVisibility();
@@ -1701,13 +1747,48 @@
     function renderShelvesOrderUI() {
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
+        let inheritanceSource = 'global'; // Track where shelves come from
+        let isInherited = false;
+
         if (selectedUserId && userSettings && isPerUserSection) {
-            shelves = userSettings.homeShelves?.shelves || [];
+            // Check if profile has its own shelves configured
+            const profileShelves = userSettings.homeShelves?.shelves;
+            const globalShelves = currentSettings.homeShelves?.shelves || [];
+
+            if (profileShelves && profileShelves.length > 0) {
+                // Profile has custom shelves - check if they differ from global (lenient comparison)
+                if (!shelvesEqual(profileShelves, globalShelves)) {
+                    shelves = profileShelves;
+                    inheritanceSource = 'profile';
+                    isInherited = false;
+                } else {
+                    // Profile shelves match global - treat as inherited
+                    shelves = globalShelves;
+                    inheritanceSource = 'global';
+                    isInherited = true;
+                }
+            } else {
+                // Profile doesn't have shelves - inherit from global
+                shelves = globalShelves;
+                inheritanceSource = 'global';
+                isInherited = true;
+            }
         } else {
             shelves = currentSettings.homeShelves?.shelves || [];
         }
 
         if (!shelves.length) return '<p class="form-hint">No shelves configured.</p>';
+
+        // Build inheritance badge for section
+        let inheritanceBadgeHtml = '';
+        if (selectedUserId) {
+            if (isInherited) {
+                inheritanceBadgeHtml = '<span class="inheritance-badge inherited" title="Using global default" style="margin-left:8px;font-size:11px;padding:2px 8px;background:rgba(100,100,100,0.3);border-radius:4px;color:#aaa;">From Global</span>';
+            } else {
+                inheritanceBadgeHtml = '<span class="inheritance-badge overridden" title="Profile has custom configuration" style="margin-left:8px;font-size:11px;padding:2px 8px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;">Profile</span>' +
+                    '<button type="button" class="inheritance-reset" onclick="resetShelvesToGlobal()" title="Reset to global defaults" style="margin-left:4px;background:none;border:none;color:#888;cursor:pointer;font-size:14px;">↩</button>';
+            }
+        }
 
         // Sort by order for display
         const sortedShelves = [...shelves].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1715,15 +1796,18 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
-            const isCustom = s.type === 'mdblist';
-            const typeLabel = isCustom ? '<span class="shelf-type-badge">MDBList</span>' : '';
-            const deleteBtn = isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '';
+            const isCustom = !!s.listUrl;
+            const typeLabel = isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '';
+            const actionsHtml = isCustom ? '<div class="shelf-actions">'+
+                '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>'+
+                '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>'+
+            '</div>' : '';
             // Use display index (i) for drag reordering, store shelf ID for reference
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
                 '<span class="shelf-name">'+s.name+typeLabel+'</span>'+
                 '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
-                deleteBtn+
+                actionsHtml+
             '</div>';
         }).join('');
 
@@ -1743,36 +1827,102 @@
             '.toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:0.3s;}'+
             '.shelf-toggle input:checked + .toggle-slider{background-color:#8a2be2;}'+
             '.shelf-toggle input:checked + .toggle-slider:before{transform:translateX(18px);}'+
-            '.shelf-delete-btn{background:none;border:none;color:#888;font-size:18px;cursor:pointer;padding:0 0 0 10px;line-height:1;}'+
-            '.shelf-delete-btn:hover{color:#e94560;}'+
+            '.shelf-edit-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:16px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:8px;}'+
+            '.shelf-edit-btn:hover{color:#8a2be2;background:rgba(138,43,226,0.15);}'+
+            '.shelf-delete-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:18px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:4px;}'+
+            '.shelf-delete-btn:hover{color:#e94560;background:rgba(233,69,96,0.15);}'+
+            '.shelf-actions{display:flex;align-items:center;}'+
+            '@media(max-width:768px){'+
+                '.shelf-row{flex-wrap:wrap;}'+
+                '.shelf-actions{width:100%;margin-top:8px;padding-left:28px;gap:8px;}'+
+                '.shelf-edit-btn,.shelf-delete-btn{min-width:44px;min-height:44px;font-size:20px;padding:10px 12px;margin-left:0;}'+
+                '.add-custom-list-form .form-row{flex-wrap:wrap;}'+
+                '.add-custom-list-form .form-group{flex:none !important;width:100%;}'+
+                '.add-custom-list-form button{width:100%;margin-bottom:0;margin-top:4px;}'+
+            '}'+
             '.add-custom-list-form{margin-top:16px;padding:16px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px dashed rgba(255,255,255,0.1);}'+
             '.add-custom-list-form .form-row{display:flex;gap:12px;align-items:flex-end;}'+
             '.add-custom-list-form .form-group{flex:1;}'+
             '.add-custom-list-form input{width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;}'+
             '.add-custom-list-form button{padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;white-space:nowrap;}'+
             '.add-custom-list-form button:hover{background:#9b3ce6;}'+
+            // Inherited styling - greyed out when inheriting from global
+            '.shelves-inherited .shelf-row{opacity:0.6;background:rgba(100,116,139,0.08);border:1px solid rgba(100,116,139,0.25);}'+
+            '.shelves-inherited .shelf-handle{color:#555;}'+
+            '.shelves-inherited .shelf-name{color:#888;}'+
+            '.shelves-inherited .toggle-slider{opacity:0.6;background:rgba(100,116,139,0.2);}'+
+            '.shelves-inherited .shelf-toggle input:checked + .toggle-slider{opacity:0.6;background:rgba(99,102,241,0.5);}'+
+            '.shelves-inherited .add-custom-list-form{opacity:0.6;}'+
+            '.shelves-inherited .add-custom-list-form input,.shelves-inherited .add-custom-list-form select,.shelves-inherited .add-custom-list-form button{opacity:0.7;}'+
+            '.add-custom-list-form select{width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;cursor:pointer;}'+
+            '.add-custom-list-form select option{background:#1a1a2e;color:white;}'+
             '</style>';
 
         const addCustomListForm = '<div class="add-custom-list-form">'+
             '<h4 style="margin:0 0 12px 0;font-size:14px;font-weight:500;">Add Custom List</h4>'+
             '<div class="form-row">'+
                 '<div class="form-group">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Type</label>'+
+                    '<select id="newShelfType">'+
+                        '<option value="mdblist">MDBList</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Name</label>'+
                     '<input type="text" id="newShelfName" placeholder="My Custom List">'+
                 '</div>'+
                 '<div class="form-group" style="flex:2;">'+
-                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">MDBList URL</label>'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">URL</label>'+
                     '<input type="text" id="newShelfUrl" placeholder="https://mdblist.com/lists/username/list-name/json">'+
                 '</div>'+
-                '<button onclick="addCustomShelf()">Add</button>'+
+                '<button onclick="addCustomShelf()" style="margin-bottom:1rem;">Add</button>'+
             '</div>'+
             '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json</p>'+
         '</div>';
 
+        // Add inherited class to wrapper when inheriting from global
+        const inheritedClass = (selectedUserId && isInherited) ? ' shelves-inherited' : '';
+
         return styles+
-            '<p class="form-hint" style="margin-bottom:8px;">Drag to reorder. Toggle to show/hide shelves on the home screen.</p>'+
+            '<div class="shelves-wrapper'+inheritedClass+'">'+
+            '<div style="display:flex;align-items:center;margin-bottom:8px;"><p class="form-hint" style="margin:0;">Drag to reorder. Toggle to show/hide shelves on the home screen.</p>'+inheritanceBadgeHtml+'</div>'+
             '<div class="shelves-container" id="shelvesContainer">'+rows+'</div>'+
-            addCustomListForm;
+            addCustomListForm+
+            '</div>';
+    }
+
+    // Reset profile shelves to global defaults
+    function resetShelvesToGlobal() {
+        if (!selectedUserId || !userSettings) return;
+        // Remove shelves from userSettings to inherit from global
+        if (userSettings.homeShelves) {
+            delete userSettings.homeShelves.shelves;
+            // Clean up empty homeShelves object
+            if (Object.keys(userSettings.homeShelves).length === 0) {
+                delete userSettings.homeShelves;
+            }
+        }
+        renderSettings();
+    }
+
+    // Ensure profile has its own copy of shelves before editing
+    // This copies global shelves to profile if profile doesn't have custom shelves
+    function ensureProfileShelves() {
+        if (!selectedUserId || !userSettings) return false;
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        if (!isPerUserSection) return false;
+
+        // Check if profile already has shelves
+        if (userSettings.homeShelves?.shelves && userSettings.homeShelves.shelves.length > 0) {
+            return true; // Already has shelves
+        }
+
+        // Copy global shelves to profile
+        const globalShelves = currentSettings.homeShelves?.shelves || [];
+        if (!userSettings.homeShelves) userSettings.homeShelves = {};
+        // Deep copy to avoid modifying global
+        userSettings.homeShelves.shelves = JSON.parse(JSON.stringify(globalShelves));
+        return true;
     }
 
     // Toggle shelf enabled state
@@ -1780,6 +1930,8 @@
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
+            // Ensure profile has its own shelves before editing
+            ensureProfileShelves();
             shelves = userSettings.homeShelves?.shelves || [];
         } else {
             shelves = currentSettings.homeShelves?.shelves || [];
@@ -1792,35 +1944,69 @@
         }
     }
 
-    // Add custom MDBList shelf
+    // Validate shelf URL based on type
+    function validateShelfUrl(type, url) {
+        switch (type) {
+            case 'mdblist':
+                if (!url.includes('mdblist.com/lists/')) {
+                    alert('Invalid MDBList URL. Format: https://mdblist.com/lists/{username}/{list-name}');
+                    return false;
+                }
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    // Auto-fix shelf URL based on type
+    function fixShelfUrl(type, url) {
+        url = url.replace(/\/+$/, '');
+        switch (type) {
+            case 'mdblist':
+                if (!url.endsWith('/json')) {
+                    url = url + '/json';
+                }
+                return url;
+            default:
+                return url;
+        }
+    }
+
+    // Get display label for shelf type
+    function getShelfTypeLabel(type) {
+        switch (type) {
+            case 'mdblist': return 'MDBList';
+            default: return type;
+        }
+    }
+
+    // Add custom shelf
     function addCustomShelf() {
+        const typeSelect = document.getElementById('newShelfType');
         const nameInput = document.getElementById('newShelfName');
         const urlInput = document.getElementById('newShelfUrl');
+        const shelfType = typeSelect?.value || 'mdblist';
         const name = nameInput?.value?.trim();
         let url = urlInput?.value?.trim();
 
         if (!name || !url) {
-            alert('Please enter both a name and MDBList URL');
+            alert('Please enter both a name and URL');
             return;
         }
 
-        // Validate URL contains mdblist.com/lists/
-        if (!url.includes('mdblist.com/lists/')) {
-            alert('Invalid MDBList URL. Format: https://mdblist.com/lists/{username}/{list-name}');
+        // Validate URL based on type
+        if (!validateShelfUrl(shelfType, url)) {
             return;
         }
 
-        // Auto-fix: remove trailing slash and add /json if missing
-        url = url.replace(/\/+$/, '');
-        if (!url.endsWith('/json')) {
-            url = url + '/json';
-        }
+        // Auto-fix URL based on type
+        url = fixShelfUrl(shelfType, url);
 
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
-            if (!userSettings.homeShelves) userSettings.homeShelves = {};
-            if (!userSettings.homeShelves.shelves) userSettings.homeShelves.shelves = [];
+            // Ensure profile has its own shelves before adding
+            ensureProfileShelves();
             shelves = userSettings.homeShelves.shelves;
         } else {
             if (!currentSettings.homeShelves) currentSettings.homeShelves = {};
@@ -1831,7 +2017,7 @@
         // Generate unique ID from URL
         const urlParts = url.split('/');
         const listName = urlParts[urlParts.length - 2] || 'custom';
-        const id = 'mdblist-' + listName + '-' + Date.now();
+        const id = shelfType + '-' + listName + '-' + Date.now();
 
         // Add new shelf at the end
         const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
@@ -1840,11 +2026,12 @@
             name: name,
             enabled: true,
             order: maxOrder + 1,
-            type: 'mdblist',
+            type: shelfType,
             listUrl: url
         });
 
         // Clear inputs
+        if (typeSelect) typeSelect.value = 'mdblist';
         nameInput.value = '';
         urlInput.value = '';
 
@@ -1858,6 +2045,8 @@
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
+            // Ensure profile has its own shelves before deleting
+            ensureProfileShelves();
             shelves = userSettings.homeShelves?.shelves || [];
         } else {
             shelves = currentSettings.homeShelves?.shelves || [];
@@ -1868,6 +2057,105 @@
             shelves.splice(index, 1);
             renderSettings();
         }
+    }
+
+    // Edit custom shelf - shows inline edit form
+    function editCustomShelf(shelfId) {
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            ensureProfileShelves();
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        const shelf = shelves.find(s => s.id === shelfId);
+        if (!shelf) return;
+
+        // Create modal HTML
+        const modalHtml = `
+            <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
+                <div style="background:#1a1a2e;border-radius:12px;padding:24px;max-width:500px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${getShelfTypeLabel(shelf.type)} List</h3>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
+                        <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
+                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                    <div style="display:flex;gap:12px;justify-content:flex-end;">
+                        <button onclick="closeEditShelfModal()" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:white;cursor:pointer;">Cancel</button>
+                        <button onclick="saveEditedShelf('${shelfId}')" style="padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add modal to body
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // Focus the name input
+        document.getElementById('editShelfName').focus();
+
+        // Close on escape key
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                closeEditShelfModal();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+
+        // Close on backdrop click
+        document.getElementById('editShelfModal').addEventListener('click', (e) => {
+            if (e.target.id === 'editShelfModal') {
+                closeEditShelfModal();
+            }
+        });
+    }
+
+    function closeEditShelfModal() {
+        const modal = document.getElementById('editShelfModal');
+        if (modal) modal.remove();
+    }
+
+    function saveEditedShelf(shelfId) {
+        const nameInput = document.getElementById('editShelfName');
+        const urlInput = document.getElementById('editShelfUrl');
+        const name = nameInput?.value?.trim();
+        let url = urlInput?.value?.trim();
+
+        if (!name || !url) {
+            alert('Please enter both a name and URL');
+            return;
+        }
+
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        const shelf = shelves.find(s => s.id === shelfId);
+        if (!shelf) return;
+
+        // Validate URL based on existing type
+        if (!validateShelfUrl(shelf.type, url)) {
+            return;
+        }
+
+        // Auto-fix URL based on existing type
+        url = fixShelfUrl(shelf.type, url);
+
+        shelf.name = name;
+        shelf.listUrl = url;
+        closeEditShelfModal();
+        renderSettings();
     }
 
     // Drag and drop state
@@ -1913,8 +2201,8 @@
         const row = e.target.closest(rowClass);
         if (!row) return;
 
-        // Don't start drag if clicking on the toggle
-        if (e.target.closest('.shelf-toggle')) return;
+        // Don't start drag if clicking on interactive elements
+        if (e.target.closest('.shelf-toggle') || e.target.closest('.shelf-edit-btn') || e.target.closest('.shelf-delete-btn')) return;
 
         e.preventDefault();
         ensureDragListeners();
@@ -1996,6 +2284,8 @@
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
+            // Ensure profile has its own shelves before reordering
+            ensureProfileShelves();
             shelves = userSettings.homeShelves?.shelves || [];
         } else {
             shelves = currentSettings.homeShelves?.shelves || [];
@@ -2930,9 +3220,8 @@
                     userSettings = strippedSettings;
                     originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
                     showToast('User settings saved successfully');
-                    // Update user override indicator based on whether there are actual overrides
-                    const hasOverrides = Object.keys(strippedSettings).length > 0;
-                    if (userOverrides) userOverrides[selectedUserId] = hasOverrides;
+                    // Recalculate override status from actual values to ensure consistency
+                    recalculateUserOverrides(selectedUserId);
                     updateUserDropdownIndicators();
                     updateClientDropdownIndicators(); // Update "Profile Defaults" indicator
                     updateRevertButtonVisibility();

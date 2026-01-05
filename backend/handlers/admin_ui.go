@@ -396,9 +396,22 @@ var SettingsSchema = map[string]interface{}{
 		"parent":   "homeShelves",
 		"key":      "shelves",
 		"fields": map[string]interface{}{
-			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Display name"},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Show this shelf"},
-			"order":   map[string]interface{}{"type": "number", "label": "Order", "description": "Sort order (lower = first)"},
+			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Display name", "order": 0},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Show this shelf", "order": 1},
+			"type": map[string]interface{}{
+				"type":        "select",
+				"label":       "Type",
+				"options":     []string{"builtin", "mdblist"},
+				"description": "Shelf type (builtin or custom MDBList)",
+				"order":       2,
+			},
+			"listUrl": map[string]interface{}{
+				"type":        "text",
+				"label":       "MDBList URL",
+				"description": "Format: https://mdblist.com/lists/{username}/{list-name}/json",
+				"showWhen":    "type=mdblist",
+				"order":       3,
+			},
 		},
 	},
 	"display": map[string]interface{}{
