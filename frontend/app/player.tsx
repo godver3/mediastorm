@@ -4109,9 +4109,10 @@ export default function PlayerScreen() {
   });
 
   useEffect(() => {
-    // Only recreate session for HLS streams (HDR/DV content)
-    // Check for either DV or HDR10 content since both use HLS streaming
-    if (!isHlsStream || !sourcePath || !(routeHasDolbyVision || routeHasHDR10)) {
+    // Only recreate session for HLS streams
+    // TESTING: Removed HDR/DV check since SDR now also uses HLS
+    // Original: if (!isHlsStream || !sourcePath || !(routeHasDolbyVision || routeHasHDR10)) {
+    if (!isHlsStream || !sourcePath) {
       return;
     }
 
@@ -4855,9 +4856,9 @@ export default function PlayerScreen() {
               // Always disable VLC's built-in subtitles - we use SubtitleOverlay for consistent sizing
               selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
-              // Use react-native-video for HDR content (VLC tone-maps to SDR)
-              // hasAnyHDR includes both route params AND detected HDR from video metadata
-              forceRnvPlayer={hasAnyHDR}
+              // TESTING: Force react-native-video for ALL content (normally only HDR uses rnv)
+              // Original: forceRnvPlayer={hasAnyHDR} - VLC tone-maps HDR to SDR so we use rnv for HDR
+              forceRnvPlayer={true}
               forceNativeFullscreen={Platform.OS !== 'web' && hasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{

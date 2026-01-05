@@ -214,17 +214,19 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 	maxRequested := t.session.MaxSegmentRequested
 	sessionID := t.session.ID
 	outputDir := t.session.OutputDir
-	hasDV := t.session.HasDV
-	hasHDR := t.session.HasHDR
+	// TESTING: hasDV/hasHDR unused since we always use .m4s
+	_ = t.session.HasDV
+	_ = t.session.HasHDR
 	t.session.mu.RUnlock()
 
 	// Only throttle if player has started requesting segments
 	if maxRequested >= 0 {
 		// Check actual segment files on disk (more accurate than SegmentsCreated counter)
-		segmentExt := ".ts"
-		if hasDV || hasHDR {
-			segmentExt = ".m4s"
-		}
+		// TESTING: Always use .m4s for all content
+		segmentExt := ".m4s"
+		// if hasDV || hasHDR {
+		// 	segmentExt = ".m4s"
+		// }
 		pattern := filepath.Join(outputDir, "segment*"+segmentExt)
 		segmentFiles, _ := filepath.Glob(pattern)
 
@@ -1991,9 +1993,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			}
 		}
 	} else {
-		segmentExt = ".ts"
-		// Check if it's HEVC and tag as hvc1
-		args = append(args, "-tag:v", "hvc1")
+		// TESTING: Use fMP4 for all content (normally SDR uses .ts MPEG-TS segments)
+		// This allows testing HLS with react-native-video for SDR content
+		// Don't force codec tag - let FFmpeg auto-detect (works for both H.264 and HEVC)
+		segmentExt = ".m4s"
+		log.Printf("[hls] session %s: using fMP4 segments for SDR content (testing, no codec tag forced)", session.ID)
 	}
 
 	// Audio handling
@@ -2566,8 +2570,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				completed := session.Completed
 				pid := session.FFmpegPID
 				outputDir := session.OutputDir
-				hasDV := session.HasDV
-				hasHDR := session.HasHDR
+				// TESTING: hasDV/hasHDR unused since we always use .m4s
+				_ = session.HasDV
+				_ = session.HasHDR
 				session.mu.RUnlock()
 
 				// Don't rate limit if completed or player hasn't requested any segments yet
@@ -2582,10 +2587,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				}
 
 				// Find segment files on disk
-				segmentExt := ".ts"
-				if hasDV || hasHDR {
-					segmentExt = ".m4s"
-				}
+				// TESTING: Always use .m4s for all content
+				segmentExt := ".m4s"
+				// if hasDV || hasHDR {
+				// 	segmentExt = ".m4s"
+				// }
 				pattern := filepath.Join(outputDir, "segment*"+segmentExt)
 				segmentFiles, _ := filepath.Glob(pattern)
 
@@ -3650,10 +3656,11 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		// Find the highest segment number in the current playlist
 		highestExisting := -1
 		lines := strings.Split(playlistContent, "\n")
+		// TESTING: Always use .m4s for all content (normally SDR uses .ts)
 		segmentExt := ".m4s"
-		if !session.HasDV && !session.HasHDR {
-			segmentExt = ".ts"
-		}
+		// if !session.HasDV && !session.HasHDR {
+		// 	segmentExt = ".ts"
+		// }
 		for _, line := range lines {
 			if strings.HasPrefix(line, "segment") && strings.HasSuffix(line, segmentExt) {
 				// Extract segment number from "segment0.m4s" or "segment0.ts"
@@ -4303,8 +4310,9 @@ func (m *HLSManager) Shutdown() {
 func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment string) {
 	session.mu.RLock()
 	outputDir := session.OutputDir
-	hasDV := session.HasDV
-	hasHDR := session.HasHDR
+	// TESTING: hasDV/hasHDR unused since we always use .m4s
+	_ = session.HasDV
+	_ = session.HasHDR
 	sessionID := session.ID
 	earliestBuffered := session.EarliestBufferedSegment
 	lastServedSegment := session.LastSegmentServed
@@ -4337,10 +4345,11 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 		return
 	}
 
-	segmentExt := ".ts"
-	if hasDV || hasHDR {
-		segmentExt = ".m4s"
-	}
+	// TESTING: Always use .m4s for all content
+	segmentExt := ".m4s"
+	// if hasDV || hasHDR {
+	// 	segmentExt = ".m4s"
+	// }
 
 	// Delete segments older than cutoff (segments the player has already watched)
 	deletedCount := 0

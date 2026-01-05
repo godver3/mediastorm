@@ -223,11 +223,13 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // On native platforms (iOS/Android), use HLS streaming for HDR or incompatible audio
+  // TESTING: Force HLS for ALL native content (normally only HDR/incompatible audio uses HLS)
+  // Original logic:
   // - HDR (Dolby Vision/HDR10) requires HLS for proper passthrough to react-native-video
   // - TrueHD/DTS audio requires HLS to transcode audio to AAC (VLC can't play these codecs)
   // - SDR content with compatible audio uses direct streaming to VLC player
-  const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10 || options.needsAudioTranscode);
+  // const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10 || options.needsAudioTranscode);
+  const useHlsOnNative = Platform.OS !== 'web';
   console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, needsAudioTranscode=${options.needsAudioTranscode}, webdavPath=${webdavPath.substring(0, 100)}...`);
 
   if (useHlsOnNative) {
