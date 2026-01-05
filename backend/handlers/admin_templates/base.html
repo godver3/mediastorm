@@ -3,7 +3,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f0f0f">
     <title>{{block "title" .}}strmr Admin{{end}}</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/api/static/favicon-32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/api/static/favicon-16.png">
@@ -31,6 +34,16 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+        }
+
+        /* Prevent zooming on mobile */
+        html {
+            touch-action: manipulation;
+        }
+
+        input, select, textarea, button {
+            font-size: 16px; /* Prevents iOS zoom on input focus */
+            touch-action: manipulation;
         }
 
         body {
@@ -405,6 +418,12 @@
         .toggle input:checked + .toggle-slider::before {
             background: white;
             transform: translateX(20px);
+        }
+
+        /* Toggle fields - ensure description doesn't overlap */
+        .form-group-toggle .toggle {
+            display: block;
+            margin-bottom: 2.25rem;
         }
 
         .btn {
