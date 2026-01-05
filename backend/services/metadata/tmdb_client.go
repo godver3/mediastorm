@@ -46,7 +46,7 @@ func newTMDBClient(apiKey, language string, httpc *http.Client) *tmdbClient {
 		apiKey:      strings.TrimSpace(apiKey),
 		language:    language,
 		httpc:       httpc,
-		minInterval: 50 * time.Millisecond, // TMDB has generous rate limits
+		minInterval: 20 * time.Millisecond, // TMDB has generous rate limits
 	}
 }
 
