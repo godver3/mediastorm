@@ -9,7 +9,7 @@ type FloatingHeroData = {
   title: string;
   description: string;
   headerImage: string;
-  year?: number;
+  year?: number | string; // Can be number for actual year or string for explore card "+X More"
   mediaType?: string;
 };
 

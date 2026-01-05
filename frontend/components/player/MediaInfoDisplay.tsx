@@ -80,9 +80,9 @@ const formatResolution = (resolution?: string): string | null => {
   const height = parseInt(match[2], 10);
   if (isNaN(height)) return null;
   // Categorize by height
-  if (height >= 2160) return '2160p';
-  if (height >= 1080) return '1080p';
-  if (height >= 720) return '720p';
+  if (height > 1080) return '2160p';
+  if (height > 720) return '1080p';
+  if (height === 720) return '720p';
   return '480p';
 };
 

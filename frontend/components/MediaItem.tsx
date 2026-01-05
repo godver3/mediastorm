@@ -348,31 +348,6 @@ const createStyles = (theme: NovaTheme) => {
       width: '100%',
       height: '100%',
     },
-    exploreOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      justifyContent: 'flex-end',
-      alignItems: 'center',
-      paddingBottom: theme.spacing.lg,
-    },
-    exploreTitle: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.primary,
-      fontWeight: '700',
-      textAlign: 'center',
-      textShadowColor: 'rgba(0, 0, 0, 0.8)',
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 4,
-      zIndex: 1,
-    },
-    exploreSubtitle: {
-      ...theme.typography.body.sm,
-      color: theme.colors.text.secondary,
-      textAlign: 'center',
-      textShadowColor: 'rgba(0, 0, 0, 0.8)',
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 4,
-      zIndex: 1,
-    },
   });
 };
 
@@ -434,15 +409,20 @@ const MediaItem = memo(function MediaItem({
                   <Image source={posterUrl} style={styles.collageImage} contentFit="cover" />
                 </View>
               ))}
-              <LinearGradient
-                pointerEvents="none"
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.9)']}
-                locations={[0, 0.5, 1]}
-                style={styles.exploreOverlay}
-              >
-                <Text style={styles.exploreTitle}>{title.name}</Text>
-                <Text style={styles.exploreSubtitle}>+{title.year} More</Text>
-              </LinearGradient>
+              <View style={[styles.info, styles.infoCompact]}>
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                  locations={[0, 0.6, 1]}
+                  start={{ x: 0.5, y: 0 }}
+                  end={{ x: 0.5, y: 1 }}
+                  style={styles.textGradient}
+                />
+                <Text style={styles.titleCompact} numberOfLines={2}>
+                  {title.name}
+                </Text>
+                <Text style={styles.yearCompact}>+{title.year} More</Text>
+              </View>
             </View>
           ) : title.poster?.url ? (
             <Image source={title.poster.url} style={styles.poster} contentFit="cover" />
@@ -531,15 +511,20 @@ const MediaItem = memo(function MediaItem({
               <Image source={posterUrl} style={styles.collageImage} contentFit="cover" transition={0} />
             </View>
           ))}
-          <LinearGradient
-            pointerEvents="none"
-            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.9)']}
-            locations={[0, 0.5, 1]}
-            style={styles.exploreOverlay}
-          >
-            <Text style={styles.exploreTitle}>{title.name}</Text>
-            <Text style={styles.exploreSubtitle}>+{title.year} More</Text>
-          </LinearGradient>
+          <View style={[styles.infoCompact]}>
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+              locations={[0, 0.6, 1]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={styles.textGradient}
+            />
+            <Text style={styles.titleTV} numberOfLines={2}>
+              {title.name}
+            </Text>
+            <Text style={styles.yearTV}>+{title.year} More</Text>
+          </View>
         </View>
       ) : title.poster?.url ? (
         <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />
