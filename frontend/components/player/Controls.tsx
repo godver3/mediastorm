@@ -60,6 +60,8 @@ interface ControlsProps {
   /** Seek amounts for skip buttons */
   seekBackwardSeconds?: number;
   seekForwardSeconds?: number;
+  /** Picture-in-Picture (iOS only) */
+  onEnterPip?: () => void;
 }
 
 type TrackOption = {
@@ -111,6 +113,7 @@ const Controls: React.FC<ControlsProps> = ({
   onSubtitleOffsetLater,
   seekBackwardSeconds = 10,
   seekForwardSeconds = 30,
+  onEnterPip,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -162,6 +165,8 @@ const Controls: React.FC<ControlsProps> = ({
   // Always show subtitle button when onSelectSubtitleTrack is provided (for external subtitle search)
   const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack);
   const showFullscreenButton = Boolean(onToggleFullscreen) && !isMobile && !isLiveTV && !isTvPlatform;
+  // PiP button: only show on iOS mobile (not TV, not live TV)
+  const showPipButton = Boolean(onEnterPip) && isMobile && Platform.OS === 'ios' && !isLiveTV;
 
   // Compute a key for the secondary row that changes when buttons change,
   // forcing the spatial navigation tree to be regenerated
@@ -415,8 +420,8 @@ const Controls: React.FC<ControlsProps> = ({
                     )}
                   </View>
                 )}
-                {/* Mobile landscape: track selection in main row */}
-                {isMobile && isLandscape && (hasAudioSelection || hasSubtitleSelection) && (
+                {/* Mobile landscape: track selection and PiP in main row */}
+                {isMobile && isLandscape && (hasAudioSelection || hasSubtitleSelection || showPipButton) && (
                   <View style={styles.mobileTrackGroup}>
                     {hasAudioSelection && audioSummary && (
                       <Pressable onPress={handleOpenAudioMenu} style={styles.mobileTrackButton}>
@@ -428,6 +433,12 @@ const Controls: React.FC<ControlsProps> = ({
                       <Pressable onPress={handleOpenSubtitlesMenu} style={styles.mobileTrackButton}>
                         <Ionicons name="chatbubble-ellipses" size={18} color={theme.colors.text.primary} />
                         <Text style={styles.mobileTrackLabel}>{subtitleSummary}</Text>
+                      </Pressable>
+                    )}
+                    {showPipButton && (
+                      <Pressable onPress={onEnterPip} style={styles.mobileTrackButton}>
+                        <Ionicons name="browsers-outline" size={18} color={theme.colors.text.primary} />
+                        <Text style={styles.mobileTrackLabel}>PiP</Text>
                       </Pressable>
                     )}
                   </View>
@@ -473,7 +484,7 @@ const Controls: React.FC<ControlsProps> = ({
             </View>
           )}
           {/* Secondary row: hidden in mobile landscape (track selection moved to main row) */}
-          {!(isMobile && isLandscape) && (hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset)) && (
+          {!(isMobile && isLandscape) && (hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset) || (showPipButton && !isLandscape)) && (
             <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
               <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                 {hasAudioSelection && audioSummary && (
@@ -539,6 +550,17 @@ const Controls: React.FC<ControlsProps> = ({
                       disabled={isSeeking || activeMenu !== null}
                     />
                     <Text style={styles.trackLabel}>{subtitleSummary}</Text>
+                  </View>
+                )}
+                {/* PiP button for mobile portrait */}
+                {showPipButton && !isLandscape && (
+                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                    <Pressable
+                      onPress={onEnterPip}
+                      style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
+                      <Ionicons name="browsers-outline" size={24} color={theme.colors.text.primary} />
+                    </Pressable>
+                    <Text style={styles.trackLabel}>PiP</Text>
                   </View>
                 )}
                 {/* Episode navigation buttons for TV platforms */}
@@ -784,6 +806,17 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     trackButton: {
       marginRight: 0,
+    },
+    // PiP button styled to match FocusablePressable
+    pipButton: {
+      backgroundColor: theme.colors.overlay.button,
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.sm,
+      borderRadius: theme.radius.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
     },
     secondaryRow: {
       marginTop: theme.spacing.sm,

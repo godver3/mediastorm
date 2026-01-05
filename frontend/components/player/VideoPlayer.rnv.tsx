@@ -40,6 +40,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       onNativeFullscreenExit,
       nowPlaying,
       onVideoSize,
+      onPictureInPictureStatusChanged,
     },
     ref,
   ) => {
@@ -353,6 +354,13 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     }, [forceNativeFullscreen, onNativeFullscreenExit, onToggleFullscreen]);
 
+    const handlePictureInPictureStatusChanged = useCallback(
+      (e: { isActive: boolean }) => {
+        onPictureInPictureStatusChanged?.(e.isActive);
+      },
+      [onPictureInPictureStatusChanged],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
@@ -367,6 +375,9 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           } else {
             videoRef.current?.presentFullscreenPlayer();
           }
+        },
+        enterPip: () => {
+          videoRef.current?.enterPictureInPicture();
         },
       }),
       [isFullscreen],
@@ -460,6 +471,8 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             playWhenInactive={true}
             // Suppress "LIVE" indicator on Android TV for HLS streams
             controlsStyles={{ liveLabel: '' }}
+            // PiP status callback (iOS only)
+            onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
           />
         </View>
       </Pressable>
