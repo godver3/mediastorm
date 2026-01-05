@@ -155,12 +155,6 @@ export default function DrawerLayout() {
         <Tabs.Screen name="profiles" options={{ title: 'Profiles' }} />
         <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
         <Tabs.Screen
-          name="explore"
-          options={{
-            href: null,
-          }}
-        />
-        <Tabs.Screen
           name="tv"
           options={{
             href: null,
@@ -232,7 +226,6 @@ export default function DrawerLayout() {
           <Stack.Screen name="live" />
           <Stack.Screen name="profiles" />
           <Stack.Screen name="settings" />
-          <Stack.Screen name="explore" />
           <Stack.Screen name="tv" />
           <Stack.Screen name="nav-test-basic" />
           <Stack.Screen name="nav-test-manual" />

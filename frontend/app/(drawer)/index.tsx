@@ -94,8 +94,17 @@ const MAX_SHELF_ITEMS_ON_HOME = 20;
 
 // Helper to create explore card with 4-poster collage
 // Prefers non-displayed items (after MAX_SHELF_ITEMS_ON_HOME) for variety
-function createExploreCard(shelfId: string, allCards: CardData[]): CardData {
-  const remainingCount = allCards.length - MAX_SHELF_ITEMS_ON_HOME;
+// Optional overrideRemainingCount can be passed when we know the total from API
+function createExploreCard(
+  shelfId: string,
+  allCards: CardData[],
+  overrideRemainingCount?: number,
+): CardData {
+  const remainingCount = overrideRemainingCount ?? allCards.length - MAX_SHELF_ITEMS_ON_HOME;
+  const totalCount =
+    overrideRemainingCount !== undefined
+      ? overrideRemainingCount + MAX_SHELF_ITEMS_ON_HOME
+      : allCards.length;
   const collagePosters: string[] = [];
 
   // First, try to pick posters from non-displayed items (index >= MAX_SHELF_ITEMS_ON_HOME)
@@ -132,7 +141,7 @@ function createExploreCard(shelfId: string, allCards: CardData[]): CardData {
     id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
     title: 'Explore',
     year: `+${remainingCount} More`,
-    description: `View all ${allCards.length} items`,
+    description: `View all ${totalCount} items`,
     headerImage: collagePosters[0] || '',
     cardImage: collagePosters[0] || '',
     collagePosters,
@@ -288,6 +297,7 @@ function IndexScreen() {
 
   // Custom list data storage (for MDBList shelves)
   const [customListData, setCustomListData] = useState<Record<string, TrendingItem[]>>({});
+  const [customListTotals, setCustomListTotals] = useState<Record<string, number>>({});
   const [customListLoading, setCustomListLoading] = useState<Record<string, boolean>>({});
   const fetchedListUrlsRef = React.useRef<Set<string>>(new Set());
 
@@ -312,8 +322,13 @@ function IndexScreen() {
         setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
 
         try {
-          const items = await apiService.getCustomList(shelf.listUrl);
+          // Only fetch limited items for home page display
+          const { items, total } = await apiService.getCustomList(
+            shelf.listUrl,
+            MAX_SHELF_ITEMS_ON_HOME,
+          );
           setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
+          setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
         } catch (err) {
           console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
         } finally {
@@ -677,10 +692,15 @@ function IndexScreen() {
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreCard, ...limitedCards];
   }, [watchlistItems, watchlistYears]);
-  const continueWatchingCards = useMemo(
-    () => mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems),
-    [continueWatchingItems, seriesOverviews, watchlistItems],
-  );
+  const continueWatchingCards = useMemo(() => {
+    const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems);
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allCards;
+    }
+    const exploreCard = createExploreCard('continue-watching', allCards);
+    const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreCard, ...limitedCards];
+  }, [continueWatchingItems, seriesOverviews, watchlistItems]);
 
   useEffect(() => {
     if (!continueWatchingItems || continueWatchingItems.length === 0) {
@@ -889,15 +909,18 @@ function IndexScreen() {
     const result: Record<string, CardData[]> = {};
     for (const [shelfId, items] of Object.entries(customListData)) {
       const allCards = mapTrendingToCards(items);
-      if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      const totalCount = customListTotals[shelfId] ?? allCards.length;
+      if (totalCount <= MAX_SHELF_ITEMS_ON_HOME) {
         result[shelfId] = allCards;
       } else {
-        const exploreCard = createExploreCard(shelfId, allCards);
+        // Create explore card showing remaining count based on total
+        const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
+        const exploreCard = createExploreCard(shelfId, allCards, remainingCount);
         result[shelfId] = [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
       }
     }
     return result;
-  }, [customListData]);
+  }, [customListData, customListTotals]);
 
   // Generate titles for each custom list shelf (mobile)
   const customListTitles = useMemo(() => {
@@ -907,41 +930,22 @@ function IndexScreen() {
         ...item.title,
         uniqueKey: `custom:${shelfId}:${item.title.id}`,
       }));
-      if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      const totalCount = customListTotals[shelfId] ?? allTitles.length;
+      if (totalCount <= MAX_SHELF_ITEMS_ON_HOME) {
         result[shelfId] = allTitles;
       } else {
-        const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+        const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
         const collagePosters: string[] = [];
-        // Prefer non-displayed items for collage
-        const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
-        if (nonDisplayedTitles.length >= 4) {
-          const step = Math.floor(nonDisplayedTitles.length / 4);
-          for (let i = 0; i < 4; i++) {
-            const title = nonDisplayedTitles[i * step];
-            if (title?.poster?.url) {
-              collagePosters.push(title.poster.url);
-            }
-          }
-        } else {
-          for (const title of nonDisplayedTitles) {
-            if (title?.poster?.url && collagePosters.length < 4) {
-              collagePosters.push(title.poster.url);
-            }
-          }
-        }
-        // Fill remaining from displayed items
-        if (collagePosters.length < 4) {
-          const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-          for (const title of displayedTitles) {
-            if (title?.poster?.url && collagePosters.length < 4) {
-              collagePosters.push(title.poster.url);
-            }
+        // Use displayed items for collage since we only fetched limited items
+        for (const title of allTitles) {
+          if (title?.poster?.url && collagePosters.length < 4) {
+            collagePosters.push(title.poster.url);
           }
         }
         const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
           id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
           name: 'Explore',
-          overview: `View all ${allTitles.length} items`,
+          overview: `View all ${totalCount} items`,
           year: remainingCount,
           language: 'en',
           mediaType: 'explore',
@@ -959,7 +963,7 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData]);
+  }, [customListData, customListTotals]);
 
   const watchlistTitles = useMemo(() => {
     const allTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
@@ -1013,10 +1017,49 @@ function IndexScreen() {
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreTitle, ...limitedTitles];
   }, [watchlistItems, watchlistYears]);
-  const continueWatchingTitles = useMemo(
-    () => mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems),
-    [continueWatchingItems, seriesOverviews, watchlistItems],
-  );
+  const continueWatchingTitles = useMemo(() => {
+    const allTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allTitles;
+    }
+    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    const collagePosters: string[] = [];
+    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
+    if (nonDisplayedTitles.length >= 4) {
+      const step = Math.floor(nonDisplayedTitles.length / 4);
+      for (let i = 0; i < 4; i++) {
+        const title = nonDisplayedTitles[i * step];
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    if (collagePosters.length < 4) {
+      for (const title of allTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
+      id: `${EXPLORE_CARD_ID_PREFIX}continue-watching`,
+      name: 'Explore',
+      overview: `View all ${allTitles.length} items`,
+      year: remainingCount,
+      language: 'en',
+      mediaType: 'explore',
+      poster: {
+        url: collagePosters[0] || '',
+        type: 'poster',
+        width: 0,
+        height: 0,
+      },
+      uniqueKey: 'explore:continue-watching',
+      collagePosters,
+    };
+    const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreTitle, ...limitedTitles];
+  }, [continueWatchingItems, seriesOverviews, watchlistItems]);
   const trendingMovieTitles = useMemo(() => {
     const allTitles =
       trendingMovies?.map((item) => ({
@@ -1379,12 +1422,8 @@ function IndexScreen() {
       // Handle explore cards
       if (typeof card.id === 'string' && card.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = card.id.replace(EXPLORE_CARD_ID_PREFIX, '');
-        if (shelfId === 'watchlist') {
-          router.push('/watchlist');
-        } else {
-          // For custom lists, navigate to explore page
-          router.push(`/explore?shelf=${shelfId}`);
-        }
+        // All explore cards now navigate to watchlist with shelf parameter
+        router.push(shelfId === 'watchlist' ? '/watchlist' : `/watchlist?shelf=${shelfId}`);
         return;
       }
 
@@ -1467,12 +1506,8 @@ function IndexScreen() {
       // Handle explore cards
       if (typeof item.id === 'string' && item.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = item.id.replace(EXPLORE_CARD_ID_PREFIX, '');
-        if (shelfId === 'watchlist') {
-          router.push('/watchlist');
-        } else {
-          // For custom lists, navigate to explore page
-          router.push(`/explore?shelf=${shelfId}`);
-        }
+        // All explore cards now navigate to watchlist with shelf parameter
+        router.push(shelfId === 'watchlist' ? '/watchlist' : `/watchlist?shelf=${shelfId}`);
         return;
       }
 
