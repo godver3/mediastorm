@@ -902,6 +902,7 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				"filename":       filename,
 				"profile_id":     session.ProfileID,
 				"profile_name":   session.ProfileName,
+				"client_ip":      session.ClientIP,
 				"created_at":     session.CreatedAt,
 				"last_access":    session.LastAccess,
 				"duration":       session.Duration,
