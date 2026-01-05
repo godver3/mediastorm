@@ -147,6 +147,8 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 			Name:    s.Name,
 			Enabled: s.Enabled,
 			Order:   s.Order,
+			Type:    s.Type,
+			ListURL: s.ListURL,
 		}
 	}
 	return result

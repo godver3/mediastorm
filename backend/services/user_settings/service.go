@@ -117,6 +117,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 }
 
 // Update saves the user's settings.
+// If the settings are empty (no actual overrides), the user entry is deleted instead.
 func (s *Service) Update(userID string, settings models.UserSettings) error {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -126,9 +127,66 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.settings[userID] = settings
+	// If settings are empty, delete the entry instead of saving
+	if isSettingsEmpty(settings) {
+		delete(s.settings, userID)
+	} else {
+		s.settings[userID] = settings
+	}
 
 	return s.saveLocked()
+}
+
+// isSettingsEmpty checks if user settings have no actual values set.
+// Empty arrays, zero values, and empty strings are considered "not set".
+func isSettingsEmpty(s models.UserSettings) bool {
+	// Check Playback - if any field is non-default, not empty
+	if s.Playback.PreferredPlayer != "" ||
+		s.Playback.PreferredAudioLanguage != "" ||
+		s.Playback.PreferredSubtitleLanguage != "" ||
+		s.Playback.PreferredSubtitleMode != "" ||
+		s.Playback.UseLoadingScreen ||
+		s.Playback.SubtitleSize != 0 {
+		return false
+	}
+
+	// Check HomeShelves
+	if len(s.HomeShelves.Shelves) > 0 || s.HomeShelves.TrendingMovieSource != "" {
+		return false
+	}
+
+	// Check Filtering - pointer fields
+	if s.Filtering.MaxSizeMovieGB != nil ||
+		s.Filtering.MaxSizeEpisodeGB != nil ||
+		s.Filtering.MaxResolution != "" ||
+		s.Filtering.HDRDVPolicy != "" ||
+		s.Filtering.PrioritizeHdr != nil ||
+		len(s.Filtering.FilterOutTerms) > 0 ||
+		len(s.Filtering.PreferredTerms) > 0 ||
+		s.Filtering.BypassFilteringForAIOStreamsOnly != nil {
+		return false
+	}
+
+	// Check LiveTV
+	if len(s.LiveTV.HiddenChannels) > 0 ||
+		len(s.LiveTV.FavoriteChannels) > 0 ||
+		len(s.LiveTV.SelectedCategories) > 0 {
+		return false
+	}
+
+	// Check Display
+	if len(s.Display.BadgeVisibility) > 0 {
+		return false
+	}
+
+	// Check Network
+	if s.Network.HomeWifiSSID != "" ||
+		s.Network.HomeBackendUrl != "" ||
+		s.Network.RemoteBackendUrl != "" {
+		return false
+	}
+
+	return true
 }
 
 // Delete removes a user's settings.
