@@ -22,7 +22,7 @@ import type { NovaTheme } from '../theme';
 import MediaItem from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 
-type DisplayTitle = Title & { uniqueKey?: string };
+type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
 
 interface MediaGridProps {
   title: string;
@@ -418,43 +418,59 @@ const MediaGrid = React.memo(
               showsVerticalScrollIndicator={false}
             >
               <View style={styles.mobileGridContainer}>
-                {items.map((item, index) => (
-                  <Pressable
-                    key={keyExtractor(item, index)}
-                    style={styles.mobileCard}
-                    onPress={() => onItemPress?.(item)}
-                    android_ripple={{ color: theme.colors.accent.primary + '30' }}
-                  >
-                    <View style={styles.cardImageContainer}>
-                      {item.poster?.url ? (
-                        <RNImage source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
-                      ) : (
-                        <View style={styles.placeholder}>
-                          <Text style={styles.placeholderImageText}>No Image</Text>
+                {items.map((item, index) => {
+                  const isExploreCard = item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
+                  const yearDisplay = item.mediaType === 'explore' && item.year ? `+${item.year} More` : item.year;
+
+                  return (
+                    <Pressable
+                      key={keyExtractor(item, index)}
+                      style={styles.mobileCard}
+                      onPress={() => onItemPress?.(item)}
+                      android_ripple={{ color: theme.colors.accent.primary + '30' }}
+                    >
+                      <View style={styles.cardImageContainer}>
+                        {isExploreCard ? (
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+                            {item.collagePosters!.slice(0, 4).map((poster, i) => (
+                              <RNImage
+                                key={`collage-${i}`}
+                                source={{ uri: poster }}
+                                style={{ width: '50%', height: '50%' }}
+                                resizeMode="cover"
+                              />
+                            ))}
+                          </View>
+                        ) : item.poster?.url ? (
+                          <RNImage source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.placeholder}>
+                            <Text style={styles.placeholderImageText}>No Image</Text>
+                          </View>
+                        )}
+                        {item.mediaType && item.mediaType !== 'explore' && (
+                          <View style={styles.badge}>
+                            <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
+                          </View>
+                        )}
+                        <View style={styles.cardTextContainer}>
+                          <LinearGradient
+                            pointerEvents="none"
+                            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                            locations={[0, 0.6, 1]}
+                            start={{ x: 0.5, y: 0 }}
+                            end={{ x: 0.5, y: 1 }}
+                            style={styles.cardTextGradient}
+                          />
+                          <Text style={styles.cardTitle} numberOfLines={2}>
+                            {item.name}
+                          </Text>
+                          {yearDisplay ? <Text style={styles.cardYear}>{yearDisplay}</Text> : null}
                         </View>
-                      )}
-                      {item.mediaType && (
-                        <View style={styles.badge}>
-                          <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
-                        </View>
-                      )}
-                      <View style={styles.cardTextContainer}>
-                        <LinearGradient
-                          pointerEvents="none"
-                          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                          locations={[0, 0.6, 1]}
-                          start={{ x: 0.5, y: 0 }}
-                          end={{ x: 0.5, y: 1 }}
-                          style={styles.cardTextGradient}
-                        />
-                        <Text style={styles.cardTitle} numberOfLines={2}>
-                          {item.name}
-                        </Text>
-                        {item.year ? <Text style={styles.cardYear}>{item.year}</Text> : null}
                       </View>
-                    </View>
-                  </Pressable>
-                ))}
+                    </Pressable>
+                  );
+                })}
               </View>
             </ScrollView>
           );

@@ -16,6 +16,7 @@ interface MediaItemProps {
     isWatched?: boolean; // Movie: watched or not
     watchState?: 'none' | 'partial' | 'complete'; // Series: no episodes, some, all (excluding specials)
     unwatchedCount?: number; // Number of unwatched episodes
+    collagePosters?: string[]; // For explore cards - 4 posters for 2x2 collage
   };
   onPress?: () => void;
   onLongPress?: () => void;
@@ -332,6 +333,46 @@ const createStyles = (theme: NovaTheme) => {
       textAlign: 'center',
       marginTop: theme.spacing.xs,
     },
+    // Explore card collage styles (2x2 poster grid)
+    collageContainer: {
+      flex: 1,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    collageQuadrant: {
+      width: '50%',
+      height: '50%',
+      padding: 1,
+    },
+    collageImage: {
+      width: '100%',
+      height: '100%',
+    },
+    exploreOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      paddingBottom: theme.spacing.lg,
+    },
+    exploreTitle: {
+      ...theme.typography.title.md,
+      color: theme.colors.text.primary,
+      fontWeight: '700',
+      textAlign: 'center',
+      textShadowColor: 'rgba(0, 0, 0, 0.8)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+      zIndex: 1,
+    },
+    exploreSubtitle: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      textAlign: 'center',
+      textShadowColor: 'rgba(0, 0, 0, 0.8)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+      zIndex: 1,
+    },
   });
 };
 
@@ -386,6 +427,23 @@ const MediaItem = memo(function MediaItem({
               <Text style={styles.moreCardText}>{title.name}</Text>
               <Text style={styles.moreCardSubtext}>View all</Text>
             </LinearGradient>
+          ) : title.mediaType === 'explore' && title.collagePosters && title.collagePosters.length >= 4 ? (
+            <View style={styles.collageContainer}>
+              {title.collagePosters.slice(0, 4).map((posterUrl, index) => (
+                <View key={index} style={styles.collageQuadrant}>
+                  <Image source={posterUrl} style={styles.collageImage} contentFit="cover" />
+                </View>
+              ))}
+              <LinearGradient
+                pointerEvents="none"
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.9)']}
+                locations={[0, 0.5, 1]}
+                style={styles.exploreOverlay}
+              >
+                <Text style={styles.exploreTitle}>{title.name}</Text>
+                <Text style={styles.exploreSubtitle}>+{title.year} More</Text>
+              </LinearGradient>
+            </View>
           ) : title.poster?.url ? (
             <Image source={title.poster.url} style={styles.poster} contentFit="cover" />
           ) : (
@@ -393,14 +451,18 @@ const MediaItem = memo(function MediaItem({
               <Text style={styles.placeholderText}>No artwork available</Text>
             </View>
           )}
-          {/* Release status badge (top-left) */}
-          {title.mediaType !== 'more' && shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && (
-            <View style={styles.releaseStatusBadge}>
-              <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
-            </View>
-          )}
+          {/* Release status badge (top-left) - hide for special card types */}
+          {title.mediaType !== 'more' &&
+            title.mediaType !== 'explore' &&
+            shouldShowBadge('releaseStatus', badgeVisibility) &&
+            releaseIcon && (
+              <View style={styles.releaseStatusBadge}>
+                <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
+              </View>
+            )}
           {/* Progress badge - hide if less than 5% */}
           {title.mediaType !== 'more' &&
+            title.mediaType !== 'explore' &&
             shouldShowBadge('watchProgress', badgeVisibility) &&
             title.percentWatched !== undefined &&
             title.percentWatched >= 5 && (
@@ -410,6 +472,7 @@ const MediaItem = memo(function MediaItem({
             )}
           {/* Watch state badge (bottom-right) */}
           {title.mediaType !== 'more' &&
+            title.mediaType !== 'explore' &&
             (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
             (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
               <View style={styles.watchStateBadge}>
@@ -422,7 +485,8 @@ const MediaItem = memo(function MediaItem({
                   title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
               </View>
             )}
-          {title.mediaType !== 'more' && (
+          {/* Info overlay - hide for special card types (they have their own overlay) */}
+          {title.mediaType !== 'more' && title.mediaType !== 'explore' && (
             <View style={[styles.info, styles.infoCompact]}>
               <LinearGradient
                 pointerEvents="none"
@@ -460,6 +524,23 @@ const MediaItem = memo(function MediaItem({
           <Text style={styles.moreCardText}>{title.name}</Text>
           <Text style={styles.moreCardSubtext}>View all</Text>
         </LinearGradient>
+      ) : title.mediaType === 'explore' && title.collagePosters && title.collagePosters.length >= 4 ? (
+        <View style={styles.collageContainer}>
+          {title.collagePosters.slice(0, 4).map((posterUrl, index) => (
+            <View key={index} style={styles.collageQuadrant}>
+              <Image source={posterUrl} style={styles.collageImage} contentFit="cover" transition={0} />
+            </View>
+          ))}
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.9)']}
+            locations={[0, 0.5, 1]}
+            style={styles.exploreOverlay}
+          >
+            <Text style={styles.exploreTitle}>{title.name}</Text>
+            <Text style={styles.exploreSubtitle}>+{title.year} More</Text>
+          </LinearGradient>
+        </View>
       ) : title.poster?.url ? (
         <Image source={title.poster.url} style={styles.poster} contentFit="cover" transition={0} />
       ) : (
@@ -467,20 +548,24 @@ const MediaItem = memo(function MediaItem({
           <Text style={styles.placeholderText}>No artwork available</Text>
         </View>
       )}
-      {/* Release status badge (top-left) */}
-      {title.mediaType !== 'more' && shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && (
-        <View style={styles.releaseStatusBadge}>
-          <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
-        </View>
-      )}
-      {/* Media type badge */}
-      {title.mediaType && title.mediaType !== 'more' && (
+      {/* Release status badge (top-left) - hide for special card types */}
+      {title.mediaType !== 'more' &&
+        title.mediaType !== 'explore' &&
+        shouldShowBadge('releaseStatus', badgeVisibility) &&
+        releaseIcon && (
+          <View style={styles.releaseStatusBadge}>
+            <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
+          </View>
+        )}
+      {/* Media type badge - hide for special card types */}
+      {title.mediaType && title.mediaType !== 'more' && title.mediaType !== 'explore' && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
         </View>
       )}
       {/* Progress badge - hide if less than 5% */}
       {title.mediaType !== 'more' &&
+        title.mediaType !== 'explore' &&
         shouldShowBadge('watchProgress', badgeVisibility) &&
         title.percentWatched !== undefined &&
         title.percentWatched >= 5 && (
@@ -490,6 +575,7 @@ const MediaItem = memo(function MediaItem({
         )}
       {/* Watch state badge (bottom-right) */}
       {title.mediaType !== 'more' &&
+        title.mediaType !== 'explore' &&
         (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
         (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
           <View style={styles.watchStateBadge}>
@@ -502,8 +588,8 @@ const MediaItem = memo(function MediaItem({
               title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
           </View>
         )}
-      {/* Overlay info to match Search page */}
-      {title.mediaType !== 'more' && (
+      {/* Overlay info to match Search page - hide for special card types */}
+      {title.mediaType !== 'more' && title.mediaType !== 'explore' && (
         <View style={[styles.infoCompact]}>
           <LinearGradient
             pointerEvents="none"

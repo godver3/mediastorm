@@ -1697,26 +1697,228 @@
             '</div>';
     }
 
+    // Render home shelves order UI with drag-and-drop
+    function renderShelvesOrderUI() {
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        if (!shelves.length) return '<p class="form-hint">No shelves configured.</p>';
+
+        // Sort by order for display
+        const sortedShelves = [...shelves].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        const rows = sortedShelves.map((s, i) => {
+            const enabledClass = s.enabled ? '' : ' disabled';
+            const toggleChecked = s.enabled ? 'checked' : '';
+            const isCustom = s.type === 'mdblist';
+            const typeLabel = isCustom ? '<span class="shelf-type-badge">MDBList</span>' : '';
+            const deleteBtn = isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '';
+            // Use display index (i) for drag reordering, store shelf ID for reference
+            return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
+                '<span class="shelf-handle">☰</span>'+
+                '<span class="shelf-name">'+s.name+typeLabel+'</span>'+
+                '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
+                deleteBtn+
+            '</div>';
+        }).join('');
+
+        const styles = '<style>'+
+            '.shelves-container{position:relative;}'+
+            '.shelf-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;cursor:grab;user-select:none;touch-action:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease,opacity 0.15s ease;}'+
+            '.shelf-row:active{cursor:grabbing;}'+
+            '.shelf-row.dragging{background:rgba(138,43,226,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;transform:scale(1.02);}'+
+            '.shelf-row.drag-over{border-top:2px solid #8a2be2;margin-top:-2px;}'+
+            '.shelf-row.disabled{opacity:0.5;}'+
+            '.shelf-handle{color:#666;margin-right:12px;font-size:16px;}'+
+            '.shelf-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;}'+
+            '.shelf-type-badge{font-size:10px;padding:2px 6px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;font-weight:normal;}'+
+            '.shelf-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;}'+
+            '.shelf-toggle input{opacity:0;width:0;height:0;}'+
+            '.toggle-slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#444;border-radius:22px;transition:0.3s;}'+
+            '.toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:0.3s;}'+
+            '.shelf-toggle input:checked + .toggle-slider{background-color:#8a2be2;}'+
+            '.shelf-toggle input:checked + .toggle-slider:before{transform:translateX(18px);}'+
+            '.shelf-delete-btn{background:none;border:none;color:#888;font-size:18px;cursor:pointer;padding:0 0 0 10px;line-height:1;}'+
+            '.shelf-delete-btn:hover{color:#e94560;}'+
+            '.add-custom-list-form{margin-top:16px;padding:16px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px dashed rgba(255,255,255,0.1);}'+
+            '.add-custom-list-form .form-row{display:flex;gap:12px;align-items:flex-end;}'+
+            '.add-custom-list-form .form-group{flex:1;}'+
+            '.add-custom-list-form input{width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;}'+
+            '.add-custom-list-form button{padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;white-space:nowrap;}'+
+            '.add-custom-list-form button:hover{background:#9b3ce6;}'+
+            '</style>';
+
+        const addCustomListForm = '<div class="add-custom-list-form">'+
+            '<h4 style="margin:0 0 12px 0;font-size:14px;font-weight:500;">Add Custom List</h4>'+
+            '<div class="form-row">'+
+                '<div class="form-group">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Name</label>'+
+                    '<input type="text" id="newShelfName" placeholder="My Custom List">'+
+                '</div>'+
+                '<div class="form-group" style="flex:2;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">MDBList URL</label>'+
+                    '<input type="text" id="newShelfUrl" placeholder="https://mdblist.com/lists/username/list-name/json">'+
+                '</div>'+
+                '<button onclick="addCustomShelf()">Add</button>'+
+            '</div>'+
+            '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json</p>'+
+        '</div>';
+
+        return styles+
+            '<p class="form-hint" style="margin-bottom:8px;">Drag to reorder. Toggle to show/hide shelves on the home screen.</p>'+
+            '<div class="shelves-container" id="shelvesContainer">'+rows+'</div>'+
+            addCustomListForm;
+    }
+
+    // Toggle shelf enabled state
+    function toggleShelfEnabled(shelfId, enabled) {
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        const shelf = shelves.find(s => s.id === shelfId);
+        if (shelf) {
+            shelf.enabled = enabled;
+            renderSettings();
+        }
+    }
+
+    // Add custom MDBList shelf
+    function addCustomShelf() {
+        const nameInput = document.getElementById('newShelfName');
+        const urlInput = document.getElementById('newShelfUrl');
+        const name = nameInput?.value?.trim();
+        let url = urlInput?.value?.trim();
+
+        if (!name || !url) {
+            alert('Please enter both a name and MDBList URL');
+            return;
+        }
+
+        // Validate URL contains mdblist.com/lists/
+        if (!url.includes('mdblist.com/lists/')) {
+            alert('Invalid MDBList URL. Format: https://mdblist.com/lists/{username}/{list-name}');
+            return;
+        }
+
+        // Auto-fix: remove trailing slash and add /json if missing
+        url = url.replace(/\/+$/, '');
+        if (!url.endsWith('/json')) {
+            url = url + '/json';
+        }
+
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            if (!userSettings.homeShelves) userSettings.homeShelves = {};
+            if (!userSettings.homeShelves.shelves) userSettings.homeShelves.shelves = [];
+            shelves = userSettings.homeShelves.shelves;
+        } else {
+            if (!currentSettings.homeShelves) currentSettings.homeShelves = {};
+            if (!currentSettings.homeShelves.shelves) currentSettings.homeShelves.shelves = [];
+            shelves = currentSettings.homeShelves.shelves;
+        }
+
+        // Generate unique ID from URL
+        const urlParts = url.split('/');
+        const listName = urlParts[urlParts.length - 2] || 'custom';
+        const id = 'mdblist-' + listName + '-' + Date.now();
+
+        // Add new shelf at the end
+        const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+        shelves.push({
+            id: id,
+            name: name,
+            enabled: true,
+            order: maxOrder + 1,
+            type: 'mdblist',
+            listUrl: url
+        });
+
+        // Clear inputs
+        nameInput.value = '';
+        urlInput.value = '';
+
+        renderSettings();
+    }
+
+    // Delete custom shelf
+    function deleteCustomShelf(shelfId) {
+        if (!confirm('Delete this custom list?')) return;
+
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        const index = shelves.findIndex(s => s.id === shelfId);
+        if (index !== -1) {
+            shelves.splice(index, 1);
+            renderSettings();
+        }
+    }
+
     // Drag and drop state
     let dragState = null;
+    let dragType = null; // 'priority' or 'shelves'
+
+    function initDragDrop() {
+        initPriorityDragDrop();
+        initShelvesDragDrop();
+    }
 
     function initPriorityDragDrop() {
         const container = document.getElementById('priorityContainer');
         if (!container) return;
 
-        container.addEventListener('touchstart', handleDragStart, {passive: false});
+        container.addEventListener('touchstart', (e) => handleDragStart(e, 'priority'), {passive: false});
         container.addEventListener('touchmove', handleDragMove, {passive: false});
         container.addEventListener('touchend', handleDragEnd);
-        container.addEventListener('mousedown', handleDragStart);
-        document.addEventListener('mousemove', handleDragMove);
-        document.addEventListener('mouseup', handleDragEnd);
+        container.addEventListener('mousedown', (e) => handleDragStart(e, 'priority'));
     }
 
-    function handleDragStart(e) {
-        const row = e.target.closest('.priority-row');
+    function initShelvesDragDrop() {
+        const container = document.getElementById('shelvesContainer');
+        if (!container) return;
+
+        container.addEventListener('touchstart', (e) => handleDragStart(e, 'shelves'), {passive: false});
+        container.addEventListener('touchmove', handleDragMove, {passive: false});
+        container.addEventListener('touchend', handleDragEnd);
+        container.addEventListener('mousedown', (e) => handleDragStart(e, 'shelves'));
+    }
+
+    // Shared mouse event listeners (added once)
+    let dragListenersAdded = false;
+    function ensureDragListeners() {
+        if (dragListenersAdded) return;
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+        dragListenersAdded = true;
+    }
+
+    function handleDragStart(e, type) {
+        const rowClass = type === 'priority' ? '.priority-row' : '.shelf-row';
+        const row = e.target.closest(rowClass);
         if (!row) return;
 
+        // Don't start drag if clicking on the toggle
+        if (e.target.closest('.shelf-toggle')) return;
+
         e.preventDefault();
+        ensureDragListeners();
+
         const touch = e.touches ? e.touches[0] : e;
         const rect = row.getBoundingClientRect();
 
@@ -1727,6 +1929,7 @@
             offsetY: touch.clientY - rect.top,
             rowHeight: rect.height + 6 // include margin
         };
+        dragType = type;
 
         row.classList.add('dragging');
     }
@@ -1735,9 +1938,14 @@
         if (!dragState) return;
         e.preventDefault();
 
+        const containerId = dragType === 'priority' ? 'priorityContainer' : 'shelvesContainer';
+        const rowClass = dragType === 'priority' ? '.priority-row' : '.shelf-row';
+
         const touch = e.touches ? e.touches[0] : e;
-        const container = document.getElementById('priorityContainer');
-        const rows = container.querySelectorAll('.priority-row');
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const rows = container.querySelectorAll(rowClass);
         const containerRect = container.getBoundingClientRect();
 
         // Calculate new position
@@ -1759,19 +1967,58 @@
     function handleDragEnd(e) {
         if (!dragState) return;
 
-        const container = document.getElementById('priorityContainer');
-        const rows = container.querySelectorAll('.priority-row');
-        rows.forEach(r => r.classList.remove('dragging', 'drag-over'));
+        const containerId = dragType === 'priority' ? 'priorityContainer' : 'shelvesContainer';
+        const rowClass = dragType === 'priority' ? '.priority-row' : '.shelf-row';
+
+        const container = document.getElementById(containerId);
+        if (container) {
+            const rows = container.querySelectorAll(rowClass);
+            rows.forEach(r => r.classList.remove('dragging', 'drag-over'));
+        }
 
         // Perform the reorder if position changed
         if (dragState.newIndex !== undefined && dragState.newIndex !== dragState.index) {
-            const providers = currentSettings.streaming?.debridProviders || [];
-            const [moved] = providers.splice(dragState.index, 1);
-            providers.splice(dragState.newIndex, 0, moved);
+            if (dragType === 'priority') {
+                const providers = currentSettings.streaming?.debridProviders || [];
+                const [moved] = providers.splice(dragState.index, 1);
+                providers.splice(dragState.newIndex, 0, moved);
+            } else if (dragType === 'shelves') {
+                reorderShelves(dragState.index, dragState.newIndex);
+            }
             renderSettings();
         }
 
         dragState = null;
+        dragType = null;
+    }
+
+    function reorderShelves(fromIndex, toIndex) {
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        let shelves;
+        if (selectedUserId && userSettings && isPerUserSection) {
+            shelves = userSettings.homeShelves?.shelves || [];
+        } else {
+            shelves = currentSettings.homeShelves?.shelves || [];
+        }
+
+        // Sort shelves by current order to get display order
+        const sortedShelves = [...shelves].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        // Get the shelf being moved based on display position
+        const movedShelf = sortedShelves[fromIndex];
+        if (!movedShelf) return;
+
+        // Remove from sorted list and insert at new position
+        sortedShelves.splice(fromIndex, 1);
+        sortedShelves.splice(toIndex, 0, movedShelf);
+
+        // Update order values based on new positions
+        sortedShelves.forEach((shelf, i) => {
+            const originalShelf = shelves.find(s => s.id === shelf.id);
+            if (originalShelf) {
+                originalShelf.order = i;
+            }
+        });
     }
 
     function renderObjectSection(sectionKey, sectionDef) {
@@ -1790,7 +2037,7 @@
                 const inheritanceClass = (selectedUserId || selectedClientId)
                     ? (inheritanceInfo.isOverridden ? ' field-overridden' : ' field-inherited')
                     : '';
-                return '<div class="form-group'+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
+                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+errorHtml+'</div>';
             }).join('');
 
         // Add provider priority UI for streaming section
@@ -1914,7 +2161,9 @@
             // Only render as nested if parent matches AND section doesn't have its own group
             if (nestedDef.parent === sectionKey && !nestedDef.group) {
                 if (selectedUserId && !perUserSections.includes(nestedKey)) continue;
-                nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+renderArraySection(nestedKey, nestedDef)+'</div>';
+                // Use custom shelves UI for home shelves configuration
+                const nestedContent = nestedKey === 'homeShelves.shelves' ? renderShelvesOrderUI() : renderArraySection(nestedKey, nestedDef);
+                nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+nestedContent+'</div>';
             }
         }
         return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+disabledClass+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+comingSoonHtml+messagesHtml+contentHtml+nestedHtml+'</div></div>';
@@ -2642,8 +2891,8 @@
             if (section) { section.classList.add('open'); section.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
         }
 
-        // Initialize drag-drop for provider priority
-        initPriorityDragDrop();
+        // Initialize drag-drop for provider priority and shelves
+        initDragDrop();
     }
     async function saveAllSettings() {
         try {
