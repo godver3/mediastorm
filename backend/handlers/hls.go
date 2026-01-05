@@ -2862,7 +2862,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	if idleTriggered {
 		log.Printf("[hls] session %s: transcoding stopped due to IDLE_TIMEOUT after %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
-	} else if completionPercent < 95 && expectedSegments > 0 {
+	} else if completionPercent < 95 && expectedSegments > 0 && (err != nil || inputErrorDetected) {
+		// Only trigger premature completion recovery if there was actual evidence of failure:
+		// - FFmpeg exited with non-zero code (err != nil), OR
+		// - Input errors were detected (connection issues, etc.)
+		// If FFmpeg exited cleanly (code 0) with no errors, the metadata duration was likely wrong
+		// and we should trust that FFmpeg processed the complete file.
 		log.Printf("[hls] session %s: PREMATURE_COMPLETION at %.1f%% (expected %d segments, got %d)",
 			session.ID, completionPercent, expectedSegments, actualSegments)
 
@@ -2913,6 +2918,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 		log.Printf("[hls] session %s: premature completion recovery exhausted (%d/%d attempts)",
 			session.ID, recoveryAttempts, hlsMaxRecoveryAttempts)
+	} else if completionPercent < 95 && expectedSegments > 0 {
+		// Segment count mismatch but FFmpeg exited cleanly - likely incorrect metadata duration
+		log.Printf("[hls] session %s: transcoding completed in %v with segment mismatch (%.1f%% - expected %d segments, got %d) - FFmpeg exited cleanly so metadata duration was likely incorrect",
+			session.ID, completionTime, completionPercent, expectedSegments, actualSegments)
 	} else {
 		log.Printf("[hls] session %s: transcoding completed successfully in %v (bytes streamed: %d, segments: %d)",
 			session.ID, completionTime, session.BytesStreamed, session.SegmentsCreated)
