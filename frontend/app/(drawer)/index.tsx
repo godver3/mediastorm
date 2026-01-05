@@ -71,9 +71,10 @@ type CardData = {
   tmdbId?: number;
   imdbId?: string;
   tvdbId?: number;
-  year?: number;
+  year?: number | string;
   percentWatched?: number;
   seriesOverview?: string; // For series, store the show overview separately from episode description
+  collagePosters?: string[]; // For explore cards: array of 4 poster URLs to display in a grid
 };
 
 type HeroContent = {
@@ -88,8 +89,56 @@ const HERO_PLACEHOLDER: HeroContent = {
   headerImage: 'https://via.placeholder.com/1920x1080/333/fff?text=Loading...',
 };
 
-const WATCHLIST_MORE_CARD_ID = '__watchlist_more__';
-const MAX_WATCHLIST_ITEMS_ON_HOME = 10;
+const EXPLORE_CARD_ID_PREFIX = '__explore__';
+const MAX_SHELF_ITEMS_ON_HOME = 20;
+
+// Helper to create explore card with 4-poster collage
+// Prefers non-displayed items (after MAX_SHELF_ITEMS_ON_HOME) for variety
+function createExploreCard(shelfId: string, allCards: CardData[]): CardData {
+  const remainingCount = allCards.length - MAX_SHELF_ITEMS_ON_HOME;
+  const collagePosters: string[] = [];
+
+  // First, try to pick posters from non-displayed items (index >= MAX_SHELF_ITEMS_ON_HOME)
+  const nonDisplayedCards = allCards.slice(MAX_SHELF_ITEMS_ON_HOME);
+  if (nonDisplayedCards.length >= 4) {
+    // Evenly distribute across non-displayed items
+    const step = Math.floor(nonDisplayedCards.length / 4);
+    for (let i = 0; i < 4; i++) {
+      const card = nonDisplayedCards[i * step];
+      if (card?.cardImage) {
+        collagePosters.push(card.cardImage);
+      }
+    }
+  } else {
+    // Not enough non-displayed items, use all of them first
+    for (const card of nonDisplayedCards) {
+      if (card?.cardImage && collagePosters.length < 4) {
+        collagePosters.push(card.cardImage);
+      }
+    }
+  }
+
+  // Fill remaining slots from displayed items if needed
+  if (collagePosters.length < 4) {
+    const displayedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    for (const card of displayedCards) {
+      if (card?.cardImage && collagePosters.length < 4) {
+        collagePosters.push(card.cardImage);
+      }
+    }
+  }
+
+  return {
+    id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
+    title: 'Explore',
+    year: `+${remainingCount} More`,
+    description: `View all ${allCards.length} items`,
+    headerImage: collagePosters[0] || '',
+    cardImage: collagePosters[0] || '',
+    collagePosters,
+    mediaType: 'explore',
+  };
+}
 
 const getConnectionStatusMessage = (
   retryCountdown: number | null,
@@ -236,6 +285,45 @@ function IndexScreen() {
   const { showToast } = useToast();
   const hasAuthFailureRef = React.useRef(false);
   const previousSettingsLoadedAtRef = React.useRef<number | null>(null);
+
+  // Custom list data storage (for MDBList shelves)
+  const [customListData, setCustomListData] = useState<Record<string, TrendingItem[]>>({});
+  const [customListLoading, setCustomListLoading] = useState<Record<string, boolean>>({});
+  const fetchedListUrlsRef = React.useRef<Set<string>>(new Set());
+
+  // Get custom shelves from settings
+  const customShelves = useMemo(() => {
+    const allShelves =
+      userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
+    return allShelves.filter((shelf) => shelf.type === 'mdblist' && shelf.listUrl && shelf.enabled);
+  }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
+
+  // Fetch custom list data when custom shelves change
+  useEffect(() => {
+    if (customShelves.length === 0) return;
+
+    const fetchCustomLists = async () => {
+      for (const shelf of customShelves) {
+        if (!shelf.listUrl) continue;
+        // Skip if we've already fetched this URL
+        if (fetchedListUrlsRef.current.has(shelf.listUrl)) continue;
+
+        fetchedListUrlsRef.current.add(shelf.listUrl);
+        setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
+
+        try {
+          const items = await apiService.getCustomList(shelf.listUrl);
+          setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
+        } catch (err) {
+          console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
+        } finally {
+          setCustomListLoading((prev) => ({ ...prev, [shelf.id]: false }));
+        }
+      }
+    };
+
+    void fetchCustomLists();
+  }, [customShelves]);
 
   const backendLoadError = useMemo(() => {
     if (settingsLoading || settingsError) {
@@ -576,23 +664,19 @@ function IndexScreen() {
   // Cache series overviews for continue watching items
   const [seriesOverviews, setSeriesOverviews] = useState<Map<string, string>>(new Map());
 
+  // Cache years for watchlist items missing year data
+  const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
+
   const watchlistCards = useMemo(() => {
-    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems));
-    if (allCards.length <= MAX_WATCHLIST_ITEMS_ON_HOME) {
+    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears));
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
-    const limitedCards = allCards.slice(0, MAX_WATCHLIST_ITEMS_ON_HOME);
-    const remainingCount = allCards.length - MAX_WATCHLIST_ITEMS_ON_HOME;
-    const moreCard: CardData = {
-      id: WATCHLIST_MORE_CARD_ID,
-      title: `+${remainingCount} More`,
-      description: 'View your full watchlist',
-      headerImage: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
-      cardImage: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
-      mediaType: 'more',
-    };
-    return [...limitedCards, moreCard];
-  }, [watchlistItems]);
+    // Create explore card and put it at the front
+    const exploreCard = createExploreCard('watchlist', allCards);
+    const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreCard, ...limitedCards];
+  }, [watchlistItems, watchlistYears]);
   const continueWatchingCards = useMemo(
     () => mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems),
     [continueWatchingItems, seriesOverviews, watchlistItems],
@@ -684,53 +768,368 @@ function IndexScreen() {
     void fetchOverviews();
   }, [continueWatchingItems, watchlistItems]);
 
-  const trendingMovieCards = useMemo(() => mapTrendingToCards(trendingMovies ?? undefined), [trendingMovies]);
-  const trendingShowCards = useMemo(() => mapTrendingToCards(trendingTVShows ?? undefined), [trendingTVShows]);
+  // Fetch missing year data for watchlist items
+  useEffect(() => {
+    if (!watchlistItems || watchlistItems.length === 0) {
+      return;
+    }
+
+    const fetchMissingYears = async () => {
+      const updates = new Map<string, number>();
+      const seriesToFetch: Array<{
+        id: string;
+        tvdbId?: string;
+        tmdbId?: string;
+        name: string;
+      }> = [];
+      const moviesToFetch: Array<{
+        id: string;
+        imdbId?: string;
+        tmdbId?: string;
+        name: string;
+      }> = [];
+
+      for (const item of watchlistItems) {
+        // Skip if we already have the year (either from API or cached)
+        if (item.year && item.year > 0) {
+          continue;
+        }
+        if (watchlistYears.has(item.id)) {
+          continue;
+        }
+
+        const isSeries =
+          item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
+
+        if (isSeries) {
+          seriesToFetch.push({
+            id: item.id,
+            tvdbId: item.externalIds?.tvdb,
+            tmdbId: item.externalIds?.tmdb,
+            name: item.name,
+          });
+        } else {
+          moviesToFetch.push({
+            id: item.id,
+            imdbId: item.externalIds?.imdb,
+            tmdbId: item.externalIds?.tmdb,
+            name: item.name,
+          });
+        }
+      }
+
+      // Batch fetch series details
+      if (seriesToFetch.length > 0) {
+        try {
+          const batchResponse = await apiService.batchSeriesDetails(
+            seriesToFetch.map((q) => ({
+              tvdbId: q.tvdbId,
+              tmdbId: q.tmdbId,
+              name: q.name,
+            })),
+          );
+
+          for (let i = 0; i < batchResponse.results.length; i++) {
+            const result = batchResponse.results[i];
+            const query = seriesToFetch[i];
+
+            if (result.details?.title.year && result.details.title.year > 0) {
+              updates.set(query.id, result.details.title.year);
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to batch fetch series years:', error);
+        }
+      }
+
+      // Fetch movie details individually (no batch API for movies)
+      for (const movie of moviesToFetch) {
+        try {
+          const details = await apiService.getMovieDetails({
+            imdbId: movie.imdbId,
+            tmdbId: movie.tmdbId ? Number(movie.tmdbId) : undefined,
+            name: movie.name,
+          });
+          if (details?.year && details.year > 0) {
+            updates.set(movie.id, details.year);
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch movie year for ${movie.name}:`, error);
+        }
+      }
+
+      if (updates.size > 0) {
+        setWatchlistYears((prev) => new Map([...prev, ...updates]));
+      }
+    };
+
+    void fetchMissingYears();
+  }, [watchlistItems, watchlistYears]);
+
+  const trendingMovieCards = useMemo(() => {
+    const allCards = mapTrendingToCards(trendingMovies ?? undefined);
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allCards;
+    }
+    const exploreCard = createExploreCard('trending-movies', allCards);
+    return [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
+  }, [trendingMovies]);
+
+  const trendingShowCards = useMemo(() => {
+    const allCards = mapTrendingToCards(trendingTVShows ?? undefined);
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allCards;
+    }
+    const exploreCard = createExploreCard('trending-shows', allCards);
+    return [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
+  }, [trendingTVShows]);
+
+  // Generate cards for each custom list shelf
+  const customListCards = useMemo(() => {
+    const result: Record<string, CardData[]> = {};
+    for (const [shelfId, items] of Object.entries(customListData)) {
+      const allCards = mapTrendingToCards(items);
+      if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+        result[shelfId] = allCards;
+      } else {
+        const exploreCard = createExploreCard(shelfId, allCards);
+        result[shelfId] = [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
+      }
+    }
+    return result;
+  }, [customListData]);
+
+  // Generate titles for each custom list shelf (mobile)
+  const customListTitles = useMemo(() => {
+    const result: Record<string, (Title & { uniqueKey: string; collagePosters?: string[] })[]> = {};
+    for (const [shelfId, items] of Object.entries(customListData)) {
+      const allTitles = items.map((item) => ({
+        ...item.title,
+        uniqueKey: `custom:${shelfId}:${item.title.id}`,
+      }));
+      if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+        result[shelfId] = allTitles;
+      } else {
+        const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+        const collagePosters: string[] = [];
+        // Prefer non-displayed items for collage
+        const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
+        if (nonDisplayedTitles.length >= 4) {
+          const step = Math.floor(nonDisplayedTitles.length / 4);
+          for (let i = 0; i < 4; i++) {
+            const title = nonDisplayedTitles[i * step];
+            if (title?.poster?.url) {
+              collagePosters.push(title.poster.url);
+            }
+          }
+        } else {
+          for (const title of nonDisplayedTitles) {
+            if (title?.poster?.url && collagePosters.length < 4) {
+              collagePosters.push(title.poster.url);
+            }
+          }
+        }
+        // Fill remaining from displayed items
+        if (collagePosters.length < 4) {
+          const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+          for (const title of displayedTitles) {
+            if (title?.poster?.url && collagePosters.length < 4) {
+              collagePosters.push(title.poster.url);
+            }
+          }
+        }
+        const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
+          id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
+          name: 'Explore',
+          overview: `View all ${allTitles.length} items`,
+          year: remainingCount,
+          language: 'en',
+          mediaType: 'explore',
+          poster: {
+            url: collagePosters[0] || '',
+            type: 'poster',
+            width: 0,
+            height: 0,
+          },
+          uniqueKey: `explore:${shelfId}`,
+          collagePosters,
+        };
+        const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+        result[shelfId] = [exploreTitle, ...limitedTitles];
+      }
+    }
+    return result;
+  }, [customListData]);
 
   const watchlistTitles = useMemo(() => {
-    const allTitles = mapWatchlistToTitles(watchlistItems);
-    if (allTitles.length <= MAX_WATCHLIST_ITEMS_ON_HOME) {
+    const allTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
-    const limitedTitles = allTitles.slice(0, MAX_WATCHLIST_ITEMS_ON_HOME);
-    const remainingCount = allTitles.length - MAX_WATCHLIST_ITEMS_ON_HOME;
-    const moreTitle: Title & { uniqueKey: string } = {
-      id: WATCHLIST_MORE_CARD_ID,
-      name: `+${remainingCount} More`,
-      overview: 'View your full watchlist',
-      year: 0,
+    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    // Pick 4 posters for collage - prefer non-displayed items
+    const collagePosters: string[] = [];
+    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
+    if (nonDisplayedTitles.length >= 4) {
+      const step = Math.floor(nonDisplayedTitles.length / 4);
+      for (let i = 0; i < 4; i++) {
+        const title = nonDisplayedTitles[i * step];
+        if (title?.poster?.url) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    } else {
+      for (const title of nonDisplayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    // Fill remaining from displayed items
+    if (collagePosters.length < 4) {
+      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+      for (const title of displayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
+      id: `${EXPLORE_CARD_ID_PREFIX}watchlist`,
+      name: 'Explore',
+      overview: `View all ${allTitles.length} items`,
+      year: remainingCount, // Will be displayed as "+X More"
       language: 'en',
-      mediaType: 'more',
+      mediaType: 'explore',
       poster: {
-        url: 'https://via.placeholder.com/600x900/1a1a2e/e94560?text=...',
+        url: collagePosters[0] || '',
         type: 'poster',
         width: 0,
         height: 0,
       },
-      uniqueKey: 'more:watchlist',
+      uniqueKey: 'explore:watchlist',
+      collagePosters,
     };
-    return [...limitedTitles, moreTitle];
-  }, [watchlistItems]);
+    const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreTitle, ...limitedTitles];
+  }, [watchlistItems, watchlistYears]);
   const continueWatchingTitles = useMemo(
     () => mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems),
     [continueWatchingItems, seriesOverviews, watchlistItems],
   );
-  const trendingMovieTitles = useMemo(
-    () =>
+  const trendingMovieTitles = useMemo(() => {
+    const allTitles =
       trendingMovies?.map((item) => ({
         ...item.title,
         uniqueKey: `movie:${item.title.id}`,
-      })) ?? [],
-    [trendingMovies],
-  );
-  const trendingShowTitles = useMemo(
-    () =>
+      })) ?? [];
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allTitles;
+    }
+    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    // Pick 4 posters for collage - prefer non-displayed items
+    const collagePosters: string[] = [];
+    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
+    if (nonDisplayedTitles.length >= 4) {
+      const step = Math.floor(nonDisplayedTitles.length / 4);
+      for (let i = 0; i < 4; i++) {
+        const title = nonDisplayedTitles[i * step];
+        if (title?.poster?.url) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    } else {
+      for (const title of nonDisplayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    // Fill remaining from displayed items
+    if (collagePosters.length < 4) {
+      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+      for (const title of displayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[]; displayYear?: string } = {
+      id: `${EXPLORE_CARD_ID_PREFIX}trending-movies`,
+      name: 'Explore',
+      overview: `View all ${allTitles.length} items`,
+      year: remainingCount,
+      language: 'en',
+      mediaType: 'explore',
+      poster: {
+        url: collagePosters[0] || '',
+        type: 'poster',
+        width: 0,
+        height: 0,
+      },
+      uniqueKey: 'explore:trending-movies',
+      collagePosters,
+    };
+    const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreTitle, ...limitedTitles];
+  }, [trendingMovies]);
+
+  const trendingShowTitles = useMemo(() => {
+    const allTitles =
       trendingTVShows?.map((item) => ({
         ...item.title,
         uniqueKey: `show:${item.title.id}`,
-      })) ?? [],
-    [trendingTVShows],
-  );
+      })) ?? [];
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+      return allTitles;
+    }
+    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    // Pick 4 posters for collage - prefer non-displayed items
+    const collagePosters: string[] = [];
+    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
+    if (nonDisplayedTitles.length >= 4) {
+      const step = Math.floor(nonDisplayedTitles.length / 4);
+      for (let i = 0; i < 4; i++) {
+        const title = nonDisplayedTitles[i * step];
+        if (title?.poster?.url) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    } else {
+      for (const title of nonDisplayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    // Fill remaining from displayed items
+    if (collagePosters.length < 4) {
+      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+      for (const title of displayedTitles) {
+        if (title?.poster?.url && collagePosters.length < 4) {
+          collagePosters.push(title.poster.url);
+        }
+      }
+    }
+    const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
+      id: `${EXPLORE_CARD_ID_PREFIX}trending-shows`,
+      name: 'Explore',
+      overview: `View all ${allTitles.length} items`,
+      year: remainingCount,
+      language: 'en',
+      mediaType: 'explore',
+      poster: {
+        url: collagePosters[0] || '',
+        type: 'poster',
+        width: 0,
+        height: 0,
+      },
+      uniqueKey: 'explore:trending-shows',
+      collagePosters,
+    };
+    const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return [exploreTitle, ...limitedTitles];
+  }, [trendingTVShows]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
   const [mobileHeroIndex, setMobileHeroIndex] = useState(0);
@@ -977,9 +1376,15 @@ function IndexScreen() {
 
   const handleCardSelect = useCallback(
     (card: CardData) => {
-      // Handle "more" card for watchlist
-      if (card.id === WATCHLIST_MORE_CARD_ID) {
-        router.push('/watchlist');
+      // Handle explore cards
+      if (typeof card.id === 'string' && card.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
+        const shelfId = card.id.replace(EXPLORE_CARD_ID_PREFIX, '');
+        if (shelfId === 'watchlist') {
+          router.push('/watchlist');
+        } else {
+          // For custom lists, navigate to explore page
+          router.push(`/explore?shelf=${shelfId}`);
+        }
         return;
       }
 
@@ -1059,9 +1464,15 @@ function IndexScreen() {
 
   const handleTitlePress = useCallback(
     (item: Title) => {
-      // Handle "more" card for watchlist
-      if (item.id === WATCHLIST_MORE_CARD_ID) {
-        router.push('/watchlist');
+      // Handle explore cards
+      if (typeof item.id === 'string' && item.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
+        const shelfId = item.id.replace(EXPLORE_CARD_ID_PREFIX, '');
+        if (shelfId === 'watchlist') {
+          router.push('/watchlist');
+        } else {
+          // For custom lists, navigate to explore page
+          router.push(`/explore?shelf=${shelfId}`);
+        }
         return;
       }
 
@@ -1324,6 +1735,18 @@ function IndexScreen() {
       },
     };
 
+    // Add custom list shelves to the map (include all custom shelves, even if data not loaded yet)
+    for (const config of shelfConfig) {
+      if (config.type === 'mdblist' && config.listUrl) {
+        shelfDataMap[config.id] = {
+          cards: customListCards[config.id] ?? [],
+          autoFocus: false,
+          collapseIfEmpty: true,
+          showEmptyState: customListLoading[config.id] ?? true,
+        };
+      }
+    }
+
     // Build shelves based on configuration
     const shelves = shelfConfig
       .filter((config) => config.enabled)
@@ -1348,12 +1771,15 @@ function IndexScreen() {
   }, [
     shouldUseMobileLayout,
     settings,
+    userSettings,
     continueWatchingCards,
     continueWatchingLoading,
     trendingMovieCards,
     trendingShowCards,
     watchlistCards,
     watchlistLoading,
+    customListCards,
+    customListLoading,
   ]);
 
   // Track navigation structure changes for debugging
@@ -1423,6 +1849,17 @@ function IndexScreen() {
         onItemPress: handleTitlePress,
       },
     };
+
+    // Add custom list shelves to the mobile map (include all custom shelves, even if data not loaded yet)
+    for (const config of mobileShelfConfig) {
+      if (config.type === 'mdblist' && config.listUrl) {
+        mobileShelfDataMap[config.id] = {
+          titles: customListTitles[config.id] ?? [],
+          loading: customListLoading[config.id],
+          onItemPress: handleTitlePress,
+        };
+      }
+    }
 
     return (
       <>
@@ -1957,6 +2394,42 @@ function VirtualizedShelf({
           {({ isFocused }: { isFocused: boolean }) => {
             // Android TV rendering with 2x badge and full content
             if (isAndroidTV) {
+              // Explore card collage for Android TV
+              if (card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4) {
+                return (
+                  <Pressable
+                    style={[styles.card, isFocused && styles.cardFocused]}
+                    renderToHardwareTextureAndroid
+                    tvParallaxProperties={{ enabled: false }}
+                  >
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+                      {card.collagePosters.slice(0, 4).map((poster, i) => (
+                        <Image
+                          key={`collage-${i}`}
+                          source={poster}
+                          style={{ width: '50%', height: '50%' }}
+                          contentFit="cover"
+                          transition={0}
+                        />
+                      ))}
+                    </View>
+                    <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
+                      <LinearGradient
+                        pointerEvents="none"
+                        colors={['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']}
+                        locations={[0, 0.5, 1]}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={styles.cardTextGradient}
+                      />
+                      <Text style={styles.cardTitleAndroidTV} numberOfLines={1}>
+                        {card.title}
+                      </Text>
+                      {card.year ? <Text style={styles.cardMetaAndroidTV}>{card.year}</Text> : null}
+                    </View>
+                  </Pressable>
+                );
+              }
               return (
                 <Pressable
                   style={[styles.card, isFocused && styles.cardFocused]}
@@ -1987,6 +2460,41 @@ function VirtualizedShelf({
               );
             }
             // Full rendering for other platforms
+            // Special rendering for explore cards with collage
+            if (card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4) {
+              return (
+                <Pressable
+                  style={[styles.card, isFocused && styles.cardFocused]}
+                  tvParallaxProperties={{ enabled: false }}
+                >
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+                    {card.collagePosters.slice(0, 4).map((poster, i) => (
+                      <Image
+                        key={`collage-${i}`}
+                        source={poster}
+                        style={{ width: '50%', height: '50%' }}
+                        contentFit="cover"
+                        transition={0}
+                      />
+                    ))}
+                  </View>
+                  <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
+                    <LinearGradient
+                      pointerEvents="none"
+                      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']}
+                      locations={[0, 0.5, 1]}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={styles.cardTextGradient}
+                    />
+                    <Text style={styles.cardTitle} numberOfLines={1}>
+                      {card.title}
+                    </Text>
+                    {card.year ? <Text style={styles.cardMeta}>{card.year}</Text> : null}
+                  </View>
+                </Pressable>
+              );
+            }
             return (
               <Pressable
                 style={[styles.card, isFocused && styles.cardFocused]}
@@ -2702,7 +3210,10 @@ function mapTrendingToCards(items?: TrendingItem[]): CardData[] {
   }));
 }
 
-function mapWatchlistToTrendingItems(items?: WatchlistItem[]) {
+function mapWatchlistToTrendingItems(
+  items?: WatchlistItem[],
+  cachedYears?: Map<string, number>,
+) {
   if (!items) {
     return [];
   }
@@ -2719,7 +3230,7 @@ function mapWatchlistToTrendingItems(items?: WatchlistItem[]) {
       imdbId: item.externalIds?.imdb,
       tmdbId: item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined,
       tvdbId: item.externalIds?.tvdb ? Number(item.externalIds.tvdb) : undefined,
-      year: item.year ?? 0,
+      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
     } as Title,
   }));
 }
@@ -2844,7 +3355,10 @@ function mapContinueWatchingToCards(
     .filter((card): card is CardData => card !== null);
 }
 
-function mapWatchlistToTitles(items?: WatchlistItem[]): Array<Title & { uniqueKey: string }> {
+function mapWatchlistToTitles(
+  items?: WatchlistItem[],
+  cachedYears?: Map<string, number>,
+): Array<Title & { uniqueKey: string }> {
   if (!items) {
     return [];
   }
@@ -2862,7 +3376,7 @@ function mapWatchlistToTitles(items?: WatchlistItem[]): Array<Title & { uniqueKe
       id: item.id,
       name: item.name,
       overview: item.overview ?? '',
-      year: item.year ?? 0,
+      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
       language: 'en',
       mediaType: item.mediaType,
       poster: item.posterUrl ? { url: item.posterUrl, type: 'poster', width: 0, height: 0 } : undefined,

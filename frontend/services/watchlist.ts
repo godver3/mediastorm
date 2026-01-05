@@ -1,6 +1,9 @@
 import type { Title, WatchlistItem } from './api';
 
-export function mapWatchlistToTitles(items: WatchlistItem[]): Array<Title & { uniqueKey: string }> {
+export function mapWatchlistToTitles(
+  items: WatchlistItem[],
+  cachedYears?: Map<string, number>,
+): Array<Title & { uniqueKey: string }> {
   if (!items) {
     return [];
   }
@@ -19,7 +22,7 @@ export function mapWatchlistToTitles(items: WatchlistItem[]): Array<Title & { un
       id: item.id,
       name: item.name,
       overview: item.overview ?? '',
-      year: item.year ?? 0,
+      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
       language: 'en',
       mediaType: item.mediaType,
       poster: item.posterUrl ? { url: item.posterUrl, type: 'poster', width: 0, height: 0 } : undefined,
