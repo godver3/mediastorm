@@ -167,25 +167,49 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
 // Settings cascade: Global -> Profile -> Client (client settings win)
 func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) models.FilterSettings {
-	// Start with global settings
+	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   globalSettings.Filtering.MaxSizeMovieGB,
-		MaxSizeEpisodeGB: globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB: models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:    globalSettings.Filtering.PrioritizeHdr,
+		PrioritizeHdr:    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
 	}
 
-	// Layer 2: Profile settings override global
+	// Layer 2: Profile settings override global (field-by-field, only if set)
 	if userID != "" && s.userSettings != nil {
 		userSettings, err := s.userSettings.Get(userID)
 		if err != nil {
 			log.Printf("[debrid] failed to get user settings for %s: %v", userID, err)
 		} else if userSettings != nil {
 			log.Printf("[debrid] using per-user filtering settings for user %s", userID)
-			filterSettings = userSettings.Filtering
+			profileFiltering := userSettings.Filtering
+			if profileFiltering.MaxSizeMovieGB != nil {
+				filterSettings.MaxSizeMovieGB = profileFiltering.MaxSizeMovieGB
+			}
+			if profileFiltering.MaxSizeEpisodeGB != nil {
+				filterSettings.MaxSizeEpisodeGB = profileFiltering.MaxSizeEpisodeGB
+			}
+			if profileFiltering.MaxResolution != "" {
+				filterSettings.MaxResolution = profileFiltering.MaxResolution
+			}
+			if profileFiltering.HDRDVPolicy != "" {
+				filterSettings.HDRDVPolicy = profileFiltering.HDRDVPolicy
+			}
+			if profileFiltering.PrioritizeHdr != nil {
+				filterSettings.PrioritizeHdr = profileFiltering.PrioritizeHdr
+			}
+			if profileFiltering.FilterOutTerms != nil {
+				filterSettings.FilterOutTerms = profileFiltering.FilterOutTerms
+			}
+			if profileFiltering.PreferredTerms != nil {
+				filterSettings.PreferredTerms = profileFiltering.PreferredTerms
+			}
+			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
+				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
+			}
 		}
 	}
 
@@ -197,10 +221,10 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 		} else if clientSettings != nil && !clientSettings.IsEmpty() {
 			log.Printf("[debrid] applying per-client filtering overrides for client %s", clientID)
 			if clientSettings.MaxSizeMovieGB != nil {
-				filterSettings.MaxSizeMovieGB = *clientSettings.MaxSizeMovieGB
+				filterSettings.MaxSizeMovieGB = clientSettings.MaxSizeMovieGB
 			}
 			if clientSettings.MaxSizeEpisodeGB != nil {
-				filterSettings.MaxSizeEpisodeGB = *clientSettings.MaxSizeEpisodeGB
+				filterSettings.MaxSizeEpisodeGB = clientSettings.MaxSizeEpisodeGB
 			}
 			if clientSettings.MaxResolution != nil {
 				filterSettings.MaxResolution = *clientSettings.MaxResolution
@@ -209,7 +233,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
 			}
 			if clientSettings.PrioritizeHdr != nil {
-				filterSettings.PrioritizeHdr = *clientSettings.PrioritizeHdr
+				filterSettings.PrioritizeHdr = clientSettings.PrioritizeHdr
 			}
 			if clientSettings.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
@@ -358,11 +382,11 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			ExpectedTitle:       parsed.Title,
 			ExpectedYear:        parsed.Year,
 			MediaType:           parsed.MediaType,
-			MaxSizeMovieGB:      filterSettings.MaxSizeMovieGB,
-			MaxSizeEpisodeGB:    filterSettings.MaxSizeEpisodeGB,
+			MaxSizeMovieGB:      models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
+			MaxSizeEpisodeGB:    models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
 			MaxResolution:       filterSettings.MaxResolution,
 			HDRDVPolicy:         filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-			PrioritizeHdr:       filterSettings.PrioritizeHdr,
+			PrioritizeHdr:       models.BoolVal(filterSettings.PrioritizeHdr, false),
 			AlternateTitles:     opts.AlternateTitles,
 			FilterOutTerms:      filterSettings.FilterOutTerms,
 			TotalSeriesEpisodes: opts.TotalSeriesEpisodes,

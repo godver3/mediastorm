@@ -1111,14 +1111,14 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
 		},
 		Filtering: models.FilterSettings{
-			MaxSizeMovieGB:                   globalSettings.Filtering.MaxSizeMovieGB,
-			MaxSizeEpisodeGB:                 globalSettings.Filtering.MaxSizeEpisodeGB,
+			MaxSizeMovieGB:                   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+			MaxSizeEpisodeGB:                 models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 			MaxResolution:                    globalSettings.Filtering.MaxResolution,
 			HDRDVPolicy:                      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-			PrioritizeHdr:                    globalSettings.Filtering.PrioritizeHdr,
+			PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 			FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
-			BypassFilteringForAIOStreamsOnly: globalSettings.Filtering.BypassFilteringForAIOStreamsOnly,
+			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 		},
 		LiveTV: models.LiveTVSettings{
 			HiddenChannels:     []string{},
@@ -1211,14 +1211,14 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 
 	// Build the filtering settings from global
 	globalFilterSettings := models.FilterSettings{
-		MaxSizeMovieGB:                   globalSettings.Filtering.MaxSizeMovieGB,
-		MaxSizeEpisodeGB:                 globalSettings.Filtering.MaxSizeEpisodeGB,
+		MaxSizeMovieGB:                   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:                 models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:                    globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:                      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:                    globalSettings.Filtering.PrioritizeHdr,
+		PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
-		BypassFilteringForAIOStreamsOnly: globalSettings.Filtering.BypassFilteringForAIOStreamsOnly,
+		BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 	}
 
 	var propagatedProfiles, propagatedClients int
