@@ -19,6 +19,7 @@ type metadataService interface {
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
+	GetCustomList(listURL string) ([]models.TrendingItem, error)
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -263,4 +264,40 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// CustomList fetches items from a custom MDBList URL
+func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
+	listURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if listURL == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
+		return
+	}
+
+	// Validate URL contains mdblist.com/lists/
+	if !strings.Contains(listURL, "mdblist.com/lists/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid MDBList URL format"})
+		return
+	}
+
+	// Auto-fix: remove trailing slashes and add /json if missing
+	listURL = strings.TrimRight(listURL, "/")
+	if !strings.HasSuffix(listURL, "/json") {
+		listURL = listURL + "/json"
+	}
+
+	items, err := h.Service.GetCustomList(listURL)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
 }
