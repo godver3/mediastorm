@@ -113,7 +113,7 @@ type VideoFullProber interface {
 
 // HLSCreator interface for creating HLS sessions
 type HLSCreator interface {
-	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int) (*HLSSessionResult, error)
+	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string) (*HLSSessionResult, error)
 }
 
 // HLSSessionResult contains HLS session info
@@ -807,6 +807,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					hasHDR10,
 					selectedAudioTrack,
 					selectedSubtitleTrack,
+					userID,
 				)
 				if err != nil {
 					log.Printf("[prequeue] HLS session creation failed (non-fatal): %v", err)

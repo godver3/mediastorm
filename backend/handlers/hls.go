@@ -304,6 +304,7 @@ type HLSSession struct {
 	// Profile tracking
 	ProfileID   string
 	ProfileName string
+	ClientIP    string
 
 	// Track selection (-1 means use default)
 	AudioTrackIndex    int // Selected audio stream index (ffprobe index), -1 = all/default
@@ -767,7 +768,7 @@ func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
 }
 
 // CreateSession starts a new HLS transcoding session
-func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string) (*HLSSession, error) {
+func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -848,6 +849,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		TranscodingOffset:   startOffset, // Initially same as StartOffset, updated on recovery
 		ProfileID:           profileID,
 		ProfileName:         profileName,
+		ClientIP:            clientIP,
 		AudioTrackIndex:     audioTrackIndex,
 		SubtitleTrackIndex:  subtitleTrackIndex,
 		StreamStartTime:      now,

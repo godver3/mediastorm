@@ -975,6 +975,8 @@ export default function PlayerScreen() {
             start: pauseTeardownTimeRef.current,
             audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
             subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
+            profileId: activeUserId ?? undefined,
+            profileName: activeUser?.name,
           });
 
           hlsSessionIdRef.current = response.sessionId;
@@ -1113,7 +1115,7 @@ export default function PlayerScreen() {
   }, [initialSourcePath]);
 
   // Setup playback progress tracking
-  const { activeUserId } = useUserProfiles();
+  const { activeUserId, activeUser } = useUserProfiles();
 
   // Build media item ID based on type using stable identifiers
   const mediaItemId = useMemo(() => {
@@ -2172,6 +2174,8 @@ export default function PlayerScreen() {
               start: safeTarget,
               audioTrack: currentAudioTrack ?? undefined,
               subtitleTrack: currentSubtitleTrack ?? undefined,
+              profileId: activeUserId ?? undefined,
+              profileName: activeUser?.name,
             });
             response = newSessionResponse;
             hlsSessionIdRef.current = response.sessionId;
@@ -2193,6 +2197,8 @@ export default function PlayerScreen() {
             start: safeTarget,
             audioTrack: currentAudioTrack ?? undefined,
             subtitleTrack: currentSubtitleTrack ?? undefined,
+            profileId: activeUserId ?? undefined,
+            profileName: activeUser?.name,
           });
 
           // Store session ID for keepalive pings when paused
@@ -3422,6 +3428,8 @@ export default function PlayerScreen() {
             start: currentTimeRef.current, // Resume from current position
             audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
             subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
+            profileId: activeUserId ?? undefined,
+            profileName: activeUser?.name,
           });
 
           // Store session ID for keepalive pings when paused
@@ -4214,6 +4222,8 @@ export default function PlayerScreen() {
           start: safeTarget,
           audioTrack: selectedAudioTrackIndex ?? undefined,
           subtitleTrack: selectedSubtitleTrackIndex ?? undefined,
+          profileId: activeUserId ?? undefined,
+          profileName: activeUser?.name,
         });
 
         // Store session ID for keepalive pings when paused

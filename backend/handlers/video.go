@@ -2031,7 +2031,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, audioTrackIndex, subtitleTrackIndex)
 
-	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, audioTrackIndex, subtitleTrackIndex, profileID, profileName)
+	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r))
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
@@ -2252,7 +2252,7 @@ func (h *VideoHandler) GetSubtitleExtractManager() *SubtitleExtractManager {
 
 // CreateHLSSession implements the HLSCreator interface for prequeue.
 // This creates an HLS session for HDR content so the frontend can use native player.
-func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int) (*HLSSessionResult, error) {
+func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string) (*HLSSessionResult, error) {
 	if h == nil {
 		return nil, errors.New("video handler is nil")
 	}
@@ -2271,7 +2271,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		hasHDR = true // DV Profile 7 has HDR10 base layer
 	}
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex, "", "")
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}
