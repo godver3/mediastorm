@@ -571,7 +571,7 @@
         }
 
         .section-header:hover {
-            background: var(--bg-hover);
+            background: transparent;
         }
 
         .section-title {
@@ -639,6 +639,44 @@
 
         .section.has-changes .section-title svg {
             color: var(--accent);
+        }
+
+        .section.disabled {
+            opacity: 0.6;
+        }
+
+        .section.disabled .section-content .form-group {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .section.disabled .section-content input,
+        .section.disabled .section-content select,
+        .section.disabled .section-content button:not(.section-toggle) {
+            pointer-events: none;
+            cursor: not-allowed;
+        }
+
+        .section-coming-soon {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: var(--radius);
+            color: var(--accent);
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            margin-bottom: 1rem;
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .section-coming-soon svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
         }
 
         .section-content {

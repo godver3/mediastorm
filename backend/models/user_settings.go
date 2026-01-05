@@ -8,6 +8,16 @@ type UserSettings struct {
 	Filtering   FilterSettings      `json:"filtering"`
 	LiveTV      LiveTVSettings      `json:"liveTV"`
 	Display     DisplaySettings     `json:"display"`
+	Network     NetworkSettings     `json:"network"`
+}
+
+// NetworkSettings configures network-aware backend URL switching.
+// When the device is connected to the home WiFi network (matching HomeWifiSSID),
+// the frontend will use HomeBackendUrl. Otherwise, it uses RemoteBackendUrl.
+type NetworkSettings struct {
+	HomeWifiSSID     string `json:"homeWifiSSID"`     // WiFi SSID to detect for home network
+	HomeBackendUrl   string `json:"homeBackendUrl"`   // Backend URL when on home WiFi
+	RemoteBackendUrl string `json:"remoteBackendUrl"` // Backend URL when on mobile/other networks
 }
 
 // DisplaySettings controls UI display preferences.
@@ -110,6 +120,11 @@ func DefaultUserSettings() UserSettings {
 		},
 		Display: DisplaySettings{
 			BadgeVisibility: []string{"watchProgress"},
+		},
+		Network: NetworkSettings{
+			HomeWifiSSID:     "",
+			HomeBackendUrl:   "",
+			RemoteBackendUrl: "",
 		},
 	}
 }

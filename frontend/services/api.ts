@@ -309,6 +309,10 @@ export interface ClientFilterSettings {
   prioritizeHdr?: boolean;
   filterOutTerms?: string[];
   preferredTerms?: string[];
+  // Network settings for URL switching based on WiFi
+  homeWifiSSID?: string;
+  homeBackendUrl?: string;
+  remoteBackendUrl?: string;
 }
 
 export interface HlsSessionStartResponse {
@@ -582,12 +586,19 @@ export interface UserDisplaySettings {
   badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 }
 
+export interface UserNetworkSettings {
+  homeWifiSSID: string; // WiFi SSID to detect for home network
+  homeBackendUrl: string; // Backend URL when on home WiFi
+  remoteBackendUrl: string; // Backend URL when on mobile/other networks
+}
+
 export interface UserSettings {
   playback: UserPlaybackSettings;
   homeShelves: UserHomeShelvesSettings;
   filtering: UserFilterSettings;
   liveTV: UserLiveTVSettings;
   display: UserDisplaySettings;
+  network: UserNetworkSettings;
 }
 
 // Prequeue types for pre-loading playback streams

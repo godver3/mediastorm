@@ -149,6 +149,8 @@ module.exports = ({ config }) => {
           UIBackgroundModes: ['audio'],
           NSLocalNetworkUsageDescription:
             'strmr needs to connect to your media server on your local network.',
+          NSLocationWhenInUseUsageDescription:
+            'strmr uses your location to detect your WiFi network and automatically switch between home and remote server URLs.',
           ...(isTV
             ? {
                 UIUserInterfaceStyle: 'Automatic',

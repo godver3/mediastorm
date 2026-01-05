@@ -1,7 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 
-import { apiService, UserSettings } from '@/services/api';
+import { apiService, UserSettings, ClientFilterSettings } from '@/services/api';
+import { getClientId } from '@/services/clientId';
+import {
+  cacheNetworkSettings,
+  getNetworkBasedUrl,
+  getCachedNetworkSettings,
+  type NetworkUrlResult,
+} from '@/services/networkUrl';
 
 const STORAGE_KEY = 'strmr.backendUrl';
 const DEFAULT_PORT = 7777;
@@ -128,6 +136,12 @@ export interface BackendDisplaySettings {
   badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 }
 
+export interface BackendNetworkSettings {
+  homeWifiSSID: string; // WiFi SSID to detect for home network
+  homeBackendUrl: string; // Backend URL when on home WiFi
+  remoteBackendUrl: string; // Backend URL when on mobile/other networks
+}
+
 export interface BackendSettings {
   server: BackendServerSettings;
   usenet: BackendUsenetSettings[];
@@ -143,6 +157,7 @@ export interface BackendSettings {
   homeShelves: BackendHomeShelvesSettings;
   filtering: BackendFilterSettings;
   display?: BackendDisplaySettings;
+  network?: BackendNetworkSettings;
   demoMode?: boolean;
 }
 
@@ -165,6 +180,9 @@ interface BackendSettingsContextValue {
   loadUserSettings: (userId: string) => Promise<UserSettings>;
   updateUserSettings: (userId: string, settings: UserSettings) => Promise<UserSettings>;
   clearUserSettings: () => void;
+  // Network-based URL switching
+  networkUrlInfo: NetworkUrlResult | null;
+  checkNetworkAndUpdateUrl: () => Promise<void>;
 }
 
 const BackendSettingsContext = createContext<BackendSettingsContextValue | undefined>(undefined);
@@ -228,9 +246,13 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [userSettingsLoading, setUserSettingsLoading] = useState(false);
+  const [clientSettings, setClientSettings] = useState<ClientFilterSettings | null>(null);
+  const [networkUrlInfo, setNetworkUrlInfo] = useState<NetworkUrlResult | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryFnRef = useRef<(() => Promise<boolean>) | null>(null);
+  const lastAppliedNetworkUrlRef = useRef<string | null>(null);
+  const clientIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -323,6 +345,72 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     await AsyncStorage.setItem(STORAGE_KEY, trimmed);
   }, []);
 
+  // Check current network and update URL if network settings are configured
+  // Priority: client settings > user settings > global settings
+  const checkNetworkAndUpdateUrl = useCallback(async (): Promise<void> => {
+    console.log('[BackendSettings] checkNetworkAndUpdateUrl: Starting...');
+    if (!mountedRef.current) {
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: Component not mounted, returning');
+      return;
+    }
+
+    try {
+      // Priority: client > user > global
+      let networkConfig = null;
+      let source: 'client' | 'user' | 'global' = 'global';
+
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: Checking available settings...');
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl:   clientSettings:', JSON.stringify(clientSettings));
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl:   userSettings?.network:', JSON.stringify(userSettings?.network));
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl:   settings?.network:', JSON.stringify(settings?.network));
+
+      if (clientSettings?.homeWifiSSID) {
+        networkConfig = clientSettings;
+        source = 'client';
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: Using CLIENT settings');
+      } else if (userSettings?.network?.homeWifiSSID) {
+        networkConfig = userSettings.network;
+        source = 'user';
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: Using USER settings');
+      } else if (settings?.network?.homeWifiSSID) {
+        networkConfig = settings.network;
+        source = 'global';
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: Using GLOBAL settings');
+      } else {
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: No network settings found at any level');
+      }
+
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: Final networkConfig:', JSON.stringify(networkConfig));
+
+      // Get network-based URL (uses cached settings if available)
+      const result = await getNetworkBasedUrl(networkConfig);
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: getNetworkBasedUrl result:', JSON.stringify(result));
+
+      if (mountedRef.current) {
+        setNetworkUrlInfo(result);
+      }
+
+      // If we got a URL and it's different from current, apply it
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: result.url:', result.url);
+      console.log('[BackendSettings] checkNetworkAndUpdateUrl: lastAppliedNetworkUrlRef:', lastAppliedNetworkUrlRef.current);
+      if (result.url && result.url !== lastAppliedNetworkUrlRef.current) {
+        console.log(
+          `[BackendSettings] Network changed - source: ${source}, isHome: ${result.isHomeNetwork}, SSID: ${result.currentSSID}, switching to: ${result.url}`,
+        );
+        lastAppliedNetworkUrlRef.current = result.url;
+        applyApiBaseUrl(result.url);
+        // Don't persist - the network URL is dynamic based on current network
+        // The manually set URL is still stored as fallback
+      } else if (!result.url) {
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: No URL returned, not changing');
+      } else {
+        console.log('[BackendSettings] checkNetworkAndUpdateUrl: URL unchanged, not applying');
+      }
+    } catch (err) {
+      console.warn('[BackendSettings] Failed to check network URL:', err);
+    }
+  }, [clientSettings, userSettings?.network, settings?.network, applyApiBaseUrl]);
+
   // Returns: { success: boolean, authRequired: boolean }
   const refreshSettingsInternal = useCallback(async (): Promise<{ success: boolean; authRequired: boolean }> => {
     if (!mountedRef.current) {
@@ -341,6 +429,13 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       setLastLoadedAt(Date.now());
       setIsBackendReachable(true);
       stopRetryTimer();
+
+      // Cache network settings for offline use
+      if (result?.network) {
+        await cacheNetworkSettings(result.network);
+        console.log('[BackendSettings] Cached network settings:', result.network.homeWifiSSID || '(none)');
+      }
+
       return { success: true, authRequired: false };
     } catch (err) {
       const message = formatErrorMessage(err);
@@ -398,20 +493,66 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     }
   }, [refreshSettingsInternal, startRetryTimer]);
 
+  // Load client settings (device-specific settings including network)
+  const loadClientSettings = useCallback(async (): Promise<void> => {
+    console.log('[BackendSettings] loadClientSettings: Starting...');
+    try {
+      const clientId = await getClientId();
+      clientIdRef.current = clientId;
+      console.log('[BackendSettings] loadClientSettings: clientId:', clientId);
+      const settings = await apiService.getClientSettings(clientId);
+      console.log('[BackendSettings] loadClientSettings: Loaded settings:', JSON.stringify(settings));
+      if (mountedRef.current) {
+        setClientSettings(settings);
+        console.log('[BackendSettings] loadClientSettings: Settings applied to state');
+      }
+      // Cache client's network settings with highest priority
+      if (settings?.homeWifiSSID) {
+        await cacheNetworkSettings(settings, 'client');
+        console.log('[BackendSettings] Cached client network settings:', settings.homeWifiSSID);
+      } else {
+        console.log('[BackendSettings] loadClientSettings: No homeWifiSSID in client settings');
+      }
+    } catch (err) {
+      // Client settings might not exist yet, that's OK
+      console.log('[BackendSettings] Could not load client settings:', err);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     const initialise = async () => {
+      // First, try to use cached network settings for initial URL selection
+      // This allows the app to connect correctly even before fetching fresh settings
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        if (cancelled) {
-          return;
+        const cachedNetwork = await getCachedNetworkSettings();
+        if (!cancelled && cachedNetwork?.homeWifiSSID) {
+          const networkResult = await getNetworkBasedUrl(cachedNetwork);
+          if (!cancelled && networkResult.url) {
+            console.log('[BackendSettings] Using cached network URL on startup:', networkResult.url);
+            applyApiBaseUrl(networkResult.url);
+            lastAppliedNetworkUrlRef.current = networkResult.url;
+            setNetworkUrlInfo(networkResult);
+          }
         }
-        applyApiBaseUrl(stored ?? undefined);
       } catch (err) {
-        console.warn('Failed to read stored backend URL. Falling back to defaults.', err);
-        if (!cancelled) {
-          applyApiBaseUrl(undefined);
+        console.warn('[BackendSettings] Failed to apply cached network URL:', err);
+      }
+
+      // Fall back to stored URL if no network URL was applied
+      if (!lastAppliedNetworkUrlRef.current) {
+        try {
+          const stored = await AsyncStorage.getItem(STORAGE_KEY);
+          if (cancelled) {
+            return;
+          }
+          applyApiBaseUrl(stored ?? undefined);
+        } catch (err) {
+          console.warn('Failed to read stored backend URL. Falling back to defaults.', err);
+          if (!cancelled) {
+            applyApiBaseUrl(undefined);
+          }
         }
       }
 
@@ -424,6 +565,11 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         console.log('[BackendSettings] Calling refreshSettings...');
         await refreshSettings();
         console.log('[BackendSettings] refreshSettings completed');
+
+        // Load client-specific settings (including network settings)
+        if (!cancelled) {
+          await loadClientSettings();
+        }
       } catch (err) {
         if (!cancelled) {
           console.warn('[BackendSettings] Failed to load backend settings:', err);
@@ -436,7 +582,39 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     return () => {
       cancelled = true;
     };
-  }, [applyApiBaseUrl, refreshSettings]);
+  }, [applyApiBaseUrl, refreshSettings, loadClientSettings]);
+
+  // Check network when app becomes active (user returns to app)
+  useEffect(() => {
+    if (Platform.OS === 'web') return; // Web doesn't support AppState or network detection
+
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        // Re-check network when app becomes active
+        void checkNetworkAndUpdateUrl();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      subscription.remove();
+    };
+  }, [checkNetworkAndUpdateUrl]);
+
+  // Check network whenever settings are updated with new network config
+  // Watches client, user, and global settings (priority: client > user > global)
+  useEffect(() => {
+    const hasNetworkSettings = clientSettings?.homeWifiSSID || userSettings?.network?.homeWifiSSID || settings?.network?.homeWifiSSID;
+    console.log('[BackendSettings] Network settings effect triggered:');
+    console.log('[BackendSettings]   hasNetworkSettings:', !!hasNetworkSettings);
+    console.log('[BackendSettings]   clientSettings?.homeWifiSSID:', clientSettings?.homeWifiSSID);
+    console.log('[BackendSettings]   userSettings?.network?.homeWifiSSID:', userSettings?.network?.homeWifiSSID);
+    console.log('[BackendSettings]   settings?.network?.homeWifiSSID:', settings?.network?.homeWifiSSID);
+    if (hasNetworkSettings) {
+      console.log('[BackendSettings] Calling checkNetworkAndUpdateUrl from settings effect...');
+      void checkNetworkAndUpdateUrl();
+    }
+  }, [clientSettings, userSettings?.network, settings?.network, checkNetworkAndUpdateUrl]);
 
   const setBackendUrlHandler = useCallback(
     async (url: string) => {
@@ -489,6 +667,11 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       if (mountedRef.current) {
         setUserSettings(result);
       }
+      // Cache user's network settings for offline use (if configured)
+      if (result?.network?.homeWifiSSID) {
+        await cacheNetworkSettings(result.network);
+        console.log('[BackendSettings] Cached user network settings:', result.network.homeWifiSSID);
+      }
       return result;
     } finally {
       if (mountedRef.current) {
@@ -506,6 +689,11 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       const updated = await apiService.updateUserSettings(userId, next);
       if (mountedRef.current) {
         setUserSettings(updated);
+      }
+      // Cache updated network settings for offline use
+      if (updated?.network?.homeWifiSSID) {
+        await cacheNetworkSettings(updated.network);
+        console.log('[BackendSettings] Cached updated user network settings:', updated.network.homeWifiSSID);
       }
       return updated;
     } finally {
@@ -538,6 +726,8 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       loadUserSettings,
       updateUserSettings: updateUserSettingsHandler,
       clearUserSettings,
+      networkUrlInfo,
+      checkNetworkAndUpdateUrl,
     }),
     [
       backendUrl,
@@ -557,6 +747,8 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       loadUserSettings,
       updateUserSettingsHandler,
       clearUserSettings,
+      networkUrlInfo,
+      checkNetworkAndUpdateUrl,
     ],
   );
 

@@ -98,7 +98,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display'];
+    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display', 'network'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -319,8 +319,10 @@
                 });
                 if (response.ok) {
                     const settings = await response.json();
-                    // Check if any client filter fields have actual values that differ from inherited
+                    // Check if any client fields have actual values that differ from inherited
                     let hasActualOverrides = false;
+
+                    // Check filtering fields
                     for (const key of clientFilterFields) {
                         const clientVal = settings[key];
                         if (clientVal === undefined || clientVal === null) continue;
@@ -344,6 +346,17 @@
                         if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
                             hasActualOverrides = true;
                             break;
+                        }
+                    }
+
+                    // Check network fields (simpler - just check if set and non-empty)
+                    if (!hasActualOverrides) {
+                        for (const key of clientNetworkFields) {
+                            const clientVal = settings[key];
+                            if (clientVal !== undefined && clientVal !== null && clientVal !== '') {
+                                hasActualOverrides = true;
+                                break;
+                            }
                         }
                     }
                     client.hasOverrides = hasActualOverrides;
@@ -747,8 +760,10 @@
             return;
         }
 
-        // Check if any client filter fields have actual values that differ from inherited
+        // Check if any client fields have actual values that differ from inherited
         let hasActualOverrides = false;
+
+        // Check filtering fields
         for (const key of clientFilterFields) {
             const clientVal = clientSettings[key];
             if (clientVal === undefined || clientVal === null) continue;
@@ -774,6 +789,17 @@
             if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
                 hasActualOverrides = true;
                 break;
+            }
+        }
+
+        // Check network fields (simpler - just check if set and non-empty)
+        if (!hasActualOverrides) {
+            for (const key of clientNetworkFields) {
+                const clientVal = clientSettings[key];
+                if (clientVal !== undefined && clientVal !== null && clientVal !== '') {
+                    hasActualOverrides = true;
+                    break;
+                }
             }
         }
 
@@ -809,6 +835,7 @@
         'x': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
         'shield': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
         'key': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>',
+        'wifi': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>',
     };
 
     function getIcon(name) { return icons[name] || icons['server']; }
@@ -823,12 +850,20 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms', 'bypassFilteringForAioStreamsOnly'];
+    // Map network field paths to client settings keys
+    const clientNetworkFields = ['homeWifiSSID', 'homeBackendUrl', 'remoteBackendUrl'];
 
     function getClientSettingsKey(path) {
         // filtering.maxSizeMovieGb -> maxSizeMovieGb
+        // network.homeWifiSSID -> homeWifiSSID
         const keys = path.split('.');
-        if (keys[0] === 'filtering' && keys.length === 2 && clientFilterFields.includes(keys[1])) {
-            return keys[1];
+        if (keys.length === 2) {
+            if (keys[0] === 'filtering' && clientFilterFields.includes(keys[1])) {
+                return keys[1];
+            }
+            if (keys[0] === 'network' && clientNetworkFields.includes(keys[1])) {
+                return keys[1];
+            }
         }
         return null;
     }
@@ -1782,11 +1817,15 @@
         const sectionMessages = validationErrors[sectionKey]?.messages || [];
         const hasChanges = sectionHasChanges(sectionKey);
 
+        // Check if this section is disabled (coming soon)
+        const isDisabled = sectionKey === 'network';
+        const disabledClass = isDisabled ? ' disabled' : '';
+
         // Warning badge for section header
         const warningBadge = errorCount > 0 ? '<span class="section-warning">'+errorCount+'</span>' : '';
 
         // Save button for section header (only show when section has changes and not a custom section)
-        const saveBtn = (hasChanges && !sectionDef.custom) ? '<button class="section-save-btn" onclick="saveSection(\''+sectionKey+'\', event)" title="Save changes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save</button>' : '';
+        const saveBtn = (hasChanges && !sectionDef.custom && !isDisabled) ? '<button class="section-save-btn" onclick="saveSection(\''+sectionKey+'\', event)" title="Save changes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save</button>' : '';
 
         // Section-level validation messages
         let messagesHtml = '';
@@ -1794,6 +1833,12 @@
             messagesHtml = sectionMessages.map(msg =>
                 '<div class="section-validation-msg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+msg+'</div>'
             ).join('');
+        }
+
+        // Coming soon notice for disabled sections
+        let comingSoonHtml = '';
+        if (isDisabled) {
+            comingSoonHtml = '<div class="section-coming-soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Coming in app version 1.4.x - Requires native app update</div>';
         }
 
         // Handle custom sections (like profiles, userAccounts)
@@ -1818,7 +1863,7 @@
                 nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+renderArraySection(nestedKey, nestedDef)+'</div>';
             }
         }
-        return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+messagesHtml+contentHtml+nestedHtml+'</div></div>';
+        return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+disabledClass+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+comingSoonHtml+messagesHtml+contentHtml+nestedHtml+'</div></div>';
     }
 
     // Profile management functions
@@ -2513,7 +2558,7 @@
         let html = bannerHtml;
 
         // Sections that can be configured per-client (subset of perUserSections)
-        const clientSections = ['filtering'];
+        const clientSections = ['filtering', 'network'];
 
         for (const group of groups) {
             const groupSections = Object.entries(schema).filter(([key, def]) => {

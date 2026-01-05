@@ -37,6 +37,7 @@ type Settings struct {
 	Plex            PlexSettings           `json:"plex,omitempty"`
 	Log             LogConfig              `json:"log"`
 	ScheduledTasks  ScheduledTasksSettings `json:"scheduledTasks,omitempty"`
+	Network         NetworkSettings        `json:"network,omitempty"`
 }
 
 type ServerSettings struct {
@@ -441,6 +442,16 @@ type ScheduledTasksSettings struct {
 	CheckIntervalSeconds int             `json:"checkIntervalSeconds"` // How often scheduler checks for due tasks (default: 60)
 }
 
+// NetworkSettings configures network-aware backend URL switching.
+// When the device is connected to the home WiFi network (matching HomeWifiSSID),
+// the frontend will use HomeBackendUrl. Otherwise, it uses RemoteBackendUrl.
+// This allows seamless switching between local and remote access.
+type NetworkSettings struct {
+	HomeWifiSSID     string `json:"homeWifiSSID"`     // WiFi SSID to detect for home network (e.g., "MyHomeWiFi")
+	HomeBackendUrl   string `json:"homeBackendUrl"`   // Backend URL when on home WiFi (e.g., "http://192.168.1.100:7777/api")
+	RemoteBackendUrl string `json:"remoteBackendUrl"` // Backend URL when on mobile/other networks (e.g., "https://myserver.com:7777/api")
+}
+
 // DefaultSettings returns sane defaults for a fresh install.
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
@@ -505,6 +516,11 @@ func DefaultSettings() Settings {
 		ScheduledTasks: ScheduledTasksSettings{
 			Tasks:                []ScheduledTask{},
 			CheckIntervalSeconds: 60, // Check every 60 seconds
+		},
+		Network: NetworkSettings{
+			HomeWifiSSID:     "",
+			HomeBackendUrl:   "",
+			RemoteBackendUrl: "",
 		},
 	}
 }
