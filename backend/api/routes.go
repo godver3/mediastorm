@@ -150,6 +150,8 @@ func Register(
 	// Content discovery and metadata (all authenticated users)
 	protected.HandleFunc("/discover/new", metadataHandler.DiscoverNew).Methods(http.MethodGet)
 	protected.HandleFunc("/discover/new", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/lists/custom", metadataHandler.CustomList).Methods(http.MethodGet)
+	protected.HandleFunc("/lists/custom", handleOptions).Methods(http.MethodOptions)
 
 	protected.HandleFunc("/search", metadataHandler.Search).Methods(http.MethodGet)
 	protected.HandleFunc("/search", handleOptions).Methods(http.MethodOptions)
