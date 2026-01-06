@@ -6,10 +6,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
 import { getTVScaleMultiplier, ANDROID_TV_TO_TVOS_RATIO } from '@/theme/tokens/tvScale';
 
+/** A segment of styled text within a subtitle cue */
+export interface StyledTextSegment {
+  text: string;
+  italic: boolean;
+}
+
 export interface VTTCue {
   startTime: number; // seconds
   endTime: number; // seconds
-  text: string;
+  text: string; // Plain text (for compatibility)
+  segments: StyledTextSegment[]; // Styled segments for rendering
 }
 
 /** Time range of available subtitle cues */
@@ -66,6 +73,69 @@ function parseVTTTimestamp(timestamp: string): number {
 }
 
 /**
+ * Parse text with <i> tags into styled segments
+ * Handles nested tags and converts to flat segment array
+ */
+function parseStyledText(text: string): StyledTextSegment[] {
+  const segments: StyledTextSegment[] = [];
+
+  // Decode HTML entities first
+  const decoded = text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ');
+
+  // Match <i>...</i> tags and non-italic text between them
+  // Use a state machine approach to handle the text
+  let remaining = decoded;
+  let inItalic = false;
+
+  while (remaining.length > 0) {
+    if (inItalic) {
+      // Look for closing </i> tag
+      const closeMatch = remaining.match(/^([\s\S]*?)<\/i>/i);
+      if (closeMatch) {
+        if (closeMatch[1]) {
+          segments.push({ text: closeMatch[1], italic: true });
+        }
+        remaining = remaining.slice(closeMatch[0].length);
+        inItalic = false;
+      } else {
+        // No closing tag found, treat rest as italic
+        segments.push({ text: remaining, italic: true });
+        break;
+      }
+    } else {
+      // Look for opening <i> tag
+      const openMatch = remaining.match(/^([\s\S]*?)<i>/i);
+      if (openMatch) {
+        if (openMatch[1]) {
+          // Strip any other HTML tags from non-italic text
+          const cleaned = openMatch[1].replace(/<[^>]+>/g, '');
+          if (cleaned) {
+            segments.push({ text: cleaned, italic: false });
+          }
+        }
+        remaining = remaining.slice(openMatch[0].length);
+        inItalic = true;
+      } else {
+        // No more <i> tags, add rest as non-italic (strip other tags)
+        const cleaned = remaining.replace(/<[^>]+>/g, '');
+        if (cleaned) {
+          segments.push({ text: cleaned, italic: false });
+        }
+        break;
+      }
+    }
+  }
+
+  // If no segments were created (e.g., empty string), return empty array
+  // If text had no tags at all, we should have one non-italic segment
+  return segments;
+}
+
+/**
  * Parse VTT file content into an array of cues
  */
 function parseVTT(content: string): VTTCue[] {
@@ -89,12 +159,14 @@ function parseVTT(content: string): VTTCue[] {
 
       // Collect text lines until empty line or next cue
       const textLines: string[] = [];
+      const rawLines: string[] = []; // Keep raw lines with tags for styled parsing
       i++;
       while (i < lines.length && lines[i].trim() !== '' && !lines[i].includes('-->')) {
         // Skip cue identifiers (numeric lines before timestamps)
         const trimmed = lines[i].trim();
         if (!/^\d+$/.test(trimmed)) {
-          // Strip VTT tags like <c.color>, </c>, <i>, </i>, etc.
+          rawLines.push(trimmed);
+          // Also create plain text version (strip all tags) for compatibility
           const cleanedText = trimmed
             .replace(/<[^>]+>/g, '') // Remove all HTML-like tags
             .replace(/&lt;/g, '<')
@@ -108,11 +180,14 @@ function parseVTT(content: string): VTTCue[] {
         i++;
       }
 
-      if (textLines.length > 0) {
+      if (textLines.length > 0 || rawLines.length > 0) {
+        const rawText = rawLines.join('\n');
+        const segments = parseStyledText(rawText);
         cues.push({
           startTime,
           endTime,
           text: textLines.join('\n'),
+          segments: segments.length > 0 ? segments : [{ text: textLines.join('\n'), italic: false }],
         });
       }
     } else {
@@ -504,11 +579,25 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
                     scaledTextStyles,
                     { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
                   ]}>
-                  {cue.text}
+                  {cue.segments.map((segment, segIndex) => (
+                    <Text
+                      key={`seg-${segIndex}`}
+                      style={segment.italic ? styles.italicText : undefined}>
+                      {segment.text}
+                    </Text>
+                  ))}
                 </Text>
               ))}
               {/* White text on top */}
-              <Text style={[styles.subtitleText, scaledTextStyles]}>{cue.text}</Text>
+              <Text style={[styles.subtitleText, scaledTextStyles]}>
+                {cue.segments.map((segment, segIndex) => (
+                  <Text
+                    key={`seg-${segIndex}`}
+                    style={segment.italic ? styles.italicText : undefined}>
+                    {segment.text}
+                  </Text>
+                ))}
+              </Text>
             </View>
           ))}
         </View>
@@ -579,6 +668,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
     paddingVertical: 2,
+  },
+  // Italic text style for <i> tags in VTT
+  italicText: {
+    fontStyle: 'italic',
   },
 });
 
