@@ -4923,6 +4923,7 @@ export default function PlayerScreen() {
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
+              isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
             />
           )}
 
@@ -4942,6 +4943,7 @@ export default function PlayerScreen() {
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
               onCuesRangeChange={handleSubtitleCuesRangeChange}
+              isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
             />
           )}
 
@@ -4958,6 +4960,7 @@ export default function PlayerScreen() {
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
+              isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
             />
           )}
 

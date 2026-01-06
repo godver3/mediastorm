@@ -49,6 +49,8 @@ interface SubtitleOverlayProps {
   videoHeight?: number;
   /** Callback when the available cue time range changes (for seek detection) */
   onCuesRangeChange?: (range: SubtitleCuesRange | null) => void;
+  /** Whether content is HDR/Dolby Vision - uses grey text for better visibility */
+  isHDRContent?: boolean;
 }
 
 /**
@@ -232,6 +234,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   videoWidth,
   videoHeight,
   onCuesRangeChange,
+  isHDRContent = false,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -562,6 +565,13 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     };
   }, [sizeScale]);
 
+  // HDR content uses grey text for better visibility against bright HDR highlights
+  const hdrTextColor = useMemo(() => {
+    if (!isHDRContent) return undefined;
+    // Use a light grey that's visible against HDR content but not as harsh as pure white
+    return { color: '#CCCCCC' };
+  }, [isHDRContent]);
+
   // Always render container to capture dimensions via onLayout
   // Only render subtitle content when enabled and we have active cues
   return (
@@ -588,8 +598,8 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
                   ))}
                 </Text>
               ))}
-              {/* White text on top */}
-              <Text style={[styles.subtitleText, scaledTextStyles]}>
+              {/* White text on top (or grey for HDR content) */}
+              <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
                 {cue.segments.map((segment, segIndex) => (
                   <Text
                     key={`seg-${segIndex}`}
