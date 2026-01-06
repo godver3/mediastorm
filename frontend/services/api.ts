@@ -1076,6 +1076,12 @@ class ApiService {
     return `${this.baseUrl}/live/stream?${params.toString()}`;
   }
 
+  async clearLivePlaylistCache(): Promise<{ status: string; cleared: number }> {
+    return this.request<{ status: string; cleared: number }>('/live/cache/clear', {
+      method: 'POST',
+    });
+  }
+
   async searchIndexer(
     query: string,
     limit = 50,
