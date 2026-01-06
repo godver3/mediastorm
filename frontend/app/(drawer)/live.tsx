@@ -44,6 +44,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 
 import { useLiveChannels, type LiveChannel } from '@/hooks/useLiveChannels';
+import apiService from '@/services/api';
 
 interface ChannelCardProps {
   channel: LiveChannel;
@@ -800,6 +801,20 @@ function LiveScreen() {
     }
   }, [refreshSettings, showToast]);
 
+  const [isRefreshingPlaylist, setIsRefreshingPlaylist] = useState(false);
+  const handleRefreshPlaylist = useCallback(async () => {
+    setIsRefreshingPlaylist(true);
+    try {
+      await apiService.clearLivePlaylistCache();
+      await refresh();
+      showToast('Playlist refreshed', { tone: 'success' });
+    } catch {
+      showToast('Failed to refresh playlist', { tone: 'danger' });
+    } finally {
+      setIsRefreshingPlaylist(false);
+    }
+  }, [refresh, showToast]);
+
   const handleHideChannel = useCallback(
     async (channel: LiveChannel) => {
       await hideChannel(channel.id);
@@ -1038,6 +1053,14 @@ function LiveScreen() {
                   <View style={styles.headerRow}>
                     <Text style={styles.title}>Live TV</Text>
                     <View style={styles.actionsRow}>
+                      <FocusablePressable
+                        text={Platform.isTV ? 'Refresh' : undefined}
+                        icon="refresh-outline"
+                        onSelect={handleRefreshPlaylist}
+                        loading={isRefreshingPlaylist}
+                        focusKey="live-refresh"
+                        style={styles.headerActionButton}
+                      />
                       <FocusablePressable
                         text={Platform.isTV ? 'Categories' : undefined}
                         icon="albums-outline"

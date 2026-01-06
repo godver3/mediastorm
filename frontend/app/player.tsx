@@ -4858,7 +4858,8 @@ export default function PlayerScreen() {
               onTracksAvailable={handleTracksAvailable}
               // TESTING: Force react-native-video for ALL content (normally only HDR uses rnv)
               // Original: forceRnvPlayer={hasAnyHDR} - VLC tone-maps HDR to SDR so we use rnv for HDR
-              forceRnvPlayer={true}
+              // Exception: Live TV uses system player, not rnv
+              forceRnvPlayer={!isLiveTV}
               forceNativeFullscreen={Platform.OS !== 'web' && hasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{

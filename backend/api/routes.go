@@ -194,6 +194,8 @@ func Register(
 
 	protected.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
 	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/cache/clear", liveHandler.ClearCache).Methods(http.MethodPost)
+	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
 

@@ -366,3 +366,45 @@ func (h *LiveHandler) saveToCache(key string, data []byte, contentType string) e
 
 	return nil
 }
+
+// ClearCache removes all cached playlists, forcing a fresh fetch on next request.
+func (h *LiveHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
+	h.cacheMu.Lock()
+	defer h.cacheMu.Unlock()
+
+	// Read all files in cache directory
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Cache directory doesn't exist, nothing to clear
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok","cleared":0}`))
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"failed to read cache directory: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	cleared := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Only remove .m3u and .meta files
+		if strings.HasSuffix(name, ".m3u") || strings.HasSuffix(name, ".meta") {
+			path := filepath.Join(cacheDir, name)
+			if err := os.Remove(path); err != nil {
+				log.Printf("[live] failed to remove cache file %s: %v", name, err)
+			} else {
+				cleared++
+			}
+		}
+	}
+
+	log.Printf("[live] cleared %d cached playlist files", cleared)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"ok","cleared":%d}`, cleared)))
+}
