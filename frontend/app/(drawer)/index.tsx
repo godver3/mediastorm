@@ -92,50 +92,32 @@ const HERO_PLACEHOLDER: HeroContent = {
 const EXPLORE_CARD_ID_PREFIX = '__explore__';
 const MAX_SHELF_ITEMS_ON_HOME = 20;
 
+// Helper to pick N random posters from displayed items
+function pickRandomPosters<T>(items: T[], getPoster: (item: T) => string | undefined, count: number = 4): string[] {
+  const displayedItems = items.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+  const itemsWithPosters = displayedItems.filter((item) => getPoster(item));
+  if (itemsWithPosters.length <= count) {
+    return itemsWithPosters.map((item) => getPoster(item)!);
+  }
+  // Fisher-Yates shuffle to pick random items
+  const shuffled = [...itemsWithPosters];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, count).map((item) => getPoster(item)!);
+}
+
 // Helper to create explore card with 4-poster collage
-// Prefers non-displayed items (after MAX_SHELF_ITEMS_ON_HOME) for variety
+// Uses random posters from displayed items on the shelf
 // Optional overrideRemainingCount can be passed when we know the total from API
-function createExploreCard(
-  shelfId: string,
-  allCards: CardData[],
-  overrideRemainingCount?: number,
-): CardData {
+function createExploreCard(shelfId: string, allCards: CardData[], overrideRemainingCount?: number): CardData {
   const remainingCount = overrideRemainingCount ?? allCards.length - MAX_SHELF_ITEMS_ON_HOME;
   const totalCount =
-    overrideRemainingCount !== undefined
-      ? overrideRemainingCount + MAX_SHELF_ITEMS_ON_HOME
-      : allCards.length;
-  const collagePosters: string[] = [];
+    overrideRemainingCount !== undefined ? overrideRemainingCount + MAX_SHELF_ITEMS_ON_HOME : allCards.length;
 
-  // First, try to pick posters from non-displayed items (index >= MAX_SHELF_ITEMS_ON_HOME)
-  const nonDisplayedCards = allCards.slice(MAX_SHELF_ITEMS_ON_HOME);
-  if (nonDisplayedCards.length >= 4) {
-    // Evenly distribute across non-displayed items
-    const step = Math.floor(nonDisplayedCards.length / 4);
-    for (let i = 0; i < 4; i++) {
-      const card = nonDisplayedCards[i * step];
-      if (card?.cardImage) {
-        collagePosters.push(card.cardImage);
-      }
-    }
-  } else {
-    // Not enough non-displayed items, use all of them first
-    for (const card of nonDisplayedCards) {
-      if (card?.cardImage && collagePosters.length < 4) {
-        collagePosters.push(card.cardImage);
-      }
-    }
-  }
-
-  // Fill remaining slots from displayed items if needed
-  if (collagePosters.length < 4) {
-    const displayedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    for (const card of displayedCards) {
-      if (card?.cardImage && collagePosters.length < 4) {
-        collagePosters.push(card.cardImage);
-      }
-    }
-  }
+  // Pick 4 random posters from displayed items
+  const collagePosters = pickRandomPosters(allCards, (card) => card.cardImage, 4);
 
   return {
     id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
@@ -303,8 +285,7 @@ function IndexScreen() {
 
   // Get custom shelves from settings
   const customShelves = useMemo(() => {
-    const allShelves =
-      userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
+    const allShelves = userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
     return allShelves.filter((shelf) => shelf.type === 'mdblist' && shelf.listUrl && shelf.enabled);
   }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
 
@@ -323,10 +304,7 @@ function IndexScreen() {
 
         try {
           // Only fetch limited items for home page display
-          const { items, total } = await apiService.getCustomList(
-            shelf.listUrl,
-            MAX_SHELF_ITEMS_ON_HOME,
-          );
+          const { items, total } = await apiService.getCustomList(shelf.listUrl, MAX_SHELF_ITEMS_ON_HOME);
           setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
           setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
         } catch (err) {
@@ -818,8 +796,7 @@ function IndexScreen() {
           continue;
         }
 
-        const isSeries =
-          item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
+        const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
 
         if (isSeries) {
           seriesToFetch.push({
@@ -935,13 +912,8 @@ function IndexScreen() {
         result[shelfId] = allTitles;
       } else {
         const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
-        const collagePosters: string[] = [];
-        // Use displayed items for collage since we only fetched limited items
-        for (const title of allTitles) {
-          if (title?.poster?.url && collagePosters.length < 4) {
-            collagePosters.push(title.poster.url);
-          }
-        }
+        // Pick random posters from displayed items
+        const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
         const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
           id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
           name: 'Explore',
@@ -971,33 +943,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick 4 posters for collage - prefer non-displayed items
-    const collagePosters: string[] = [];
-    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
-    if (nonDisplayedTitles.length >= 4) {
-      const step = Math.floor(nonDisplayedTitles.length / 4);
-      for (let i = 0; i < 4; i++) {
-        const title = nonDisplayedTitles[i * step];
-        if (title?.poster?.url) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    } else {
-      for (const title of nonDisplayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
-    // Fill remaining from displayed items
-    if (collagePosters.length < 4) {
-      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-      for (const title of displayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
+    // Pick random posters from displayed items
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}watchlist`,
       name: 'Explore',
@@ -1023,24 +970,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    const collagePosters: string[] = [];
-    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
-    if (nonDisplayedTitles.length >= 4) {
-      const step = Math.floor(nonDisplayedTitles.length / 4);
-      for (let i = 0; i < 4; i++) {
-        const title = nonDisplayedTitles[i * step];
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
-    if (collagePosters.length < 4) {
-      for (const title of allTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
+    // Pick random posters from displayed items
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}continue-watching`,
       name: 'Explore',
@@ -1070,33 +1001,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick 4 posters for collage - prefer non-displayed items
-    const collagePosters: string[] = [];
-    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
-    if (nonDisplayedTitles.length >= 4) {
-      const step = Math.floor(nonDisplayedTitles.length / 4);
-      for (let i = 0; i < 4; i++) {
-        const title = nonDisplayedTitles[i * step];
-        if (title?.poster?.url) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    } else {
-      for (const title of nonDisplayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
-    // Fill remaining from displayed items
-    if (collagePosters.length < 4) {
-      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-      for (const title of displayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
+    // Pick random posters from displayed items
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[]; displayYear?: string } = {
       id: `${EXPLORE_CARD_ID_PREFIX}trending-movies`,
       name: 'Explore',
@@ -1127,33 +1033,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick 4 posters for collage - prefer non-displayed items
-    const collagePosters: string[] = [];
-    const nonDisplayedTitles = allTitles.slice(MAX_SHELF_ITEMS_ON_HOME);
-    if (nonDisplayedTitles.length >= 4) {
-      const step = Math.floor(nonDisplayedTitles.length / 4);
-      for (let i = 0; i < 4; i++) {
-        const title = nonDisplayedTitles[i * step];
-        if (title?.poster?.url) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    } else {
-      for (const title of nonDisplayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
-    // Fill remaining from displayed items
-    if (collagePosters.length < 4) {
-      const displayedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-      for (const title of displayedTitles) {
-        if (title?.poster?.url && collagePosters.length < 4) {
-          collagePosters.push(title.poster.url);
-        }
-      }
-    }
+    // Pick random posters from displayed items
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}trending-shows`,
       name: 'Explore',
@@ -3245,10 +3126,7 @@ function mapTrendingToCards(items?: TrendingItem[]): CardData[] {
   }));
 }
 
-function mapWatchlistToTrendingItems(
-  items?: WatchlistItem[],
-  cachedYears?: Map<string, number>,
-) {
+function mapWatchlistToTrendingItems(items?: WatchlistItem[], cachedYears?: Map<string, number>) {
   if (!items) {
     return [];
   }
@@ -3265,7 +3143,7 @@ function mapWatchlistToTrendingItems(
       imdbId: item.externalIds?.imdb,
       tmdbId: item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined,
       tvdbId: item.externalIds?.tvdb ? Number(item.externalIds.tvdb) : undefined,
-      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
+      year: item.year && item.year > 0 ? item.year : (cachedYears?.get(item.id) ?? 0),
     } as Title,
   }));
 }
@@ -3411,7 +3289,7 @@ function mapWatchlistToTitles(
       id: item.id,
       name: item.name,
       overview: item.overview ?? '',
-      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
+      year: item.year && item.year > 0 ? item.year : (cachedYears?.get(item.id) ?? 0),
       language: 'en',
       mediaType: item.mediaType,
       poster: item.posterUrl ? { url: item.posterUrl, type: 'poster', width: 0, height: 0 } : undefined,
