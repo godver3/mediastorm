@@ -113,7 +113,7 @@ type VideoFullProber interface {
 
 // HLSCreator interface for creating HLS sessions
 type HLSCreator interface {
-	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string) (*HLSSessionResult, error)
+	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string, startOffset float64) (*HLSSessionResult, error)
 }
 
 // HLSSessionResult contains HLS session info
@@ -778,7 +778,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		// When TrueHD/DTS is present, we need transmux to exclude those tracks even if compatible audio exists
 		// This is because the player may still encounter the incompatible codec in the container
 		needsAudioTranscode := hasTrueHD // Always transcode if TrueHD/DTS present
-		needsHLS := hasDV || hasHDR10 || needsAudioTranscode
+		// TESTING: Force HLS for all native content to test fMP4 with react-native-video
+		needsHLS := true // hasDV || hasHDR10 || needsAudioTranscode
 		if needsHLS {
 			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 				e.HasDolbyVision = hasDV
@@ -787,8 +788,12 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 				e.NeedsAudioTranscode = needsAudioTranscode
 			})
 
-			reason := "HDR"
-			if hasTrueHD {
+			reason := "SDR (testing fMP4)"
+			if hasDV {
+				reason = "Dolby Vision"
+			} else if hasHDR10 {
+				reason = "HDR10"
+			} else if hasTrueHD {
 				if hasCompatibleAudio {
 					reason = "TrueHD/DTS present (using compatible track, excluding TrueHD)"
 				} else {
@@ -808,6 +813,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					selectedAudioTrack,
 					selectedSubtitleTrack,
 					userID,
+					startOffset,
 				)
 				if err != nil {
 					log.Printf("[prequeue] HLS session creation failed (non-fatal): %v", err)

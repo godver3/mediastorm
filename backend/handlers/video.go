@@ -2252,7 +2252,7 @@ func (h *VideoHandler) GetSubtitleExtractManager() *SubtitleExtractManager {
 
 // CreateHLSSession implements the HLSCreator interface for prequeue.
 // This creates an HLS session for HDR content so the frontend can use native player.
-func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string) (*HLSSessionResult, error) {
+func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string, startOffset float64) (*HLSSessionResult, error) {
 	if h == nil {
 		return nil, errors.New("video handler is nil")
 	}
@@ -2260,7 +2260,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		return nil, errors.New("HLS manager not configured")
 	}
 
-	log.Printf("[video] CreateHLSSession: creating session for path=%q hasDV=%v dvProfile=%s hasHDR=%v audioTrack=%d subtitleTrack=%d", path, hasDV, dvProfile, hasHDR, audioTrackIndex, subtitleTrackIndex)
+	log.Printf("[video] CreateHLSSession: creating session for path=%q hasDV=%v dvProfile=%s hasHDR=%v audioTrack=%d subtitleTrack=%d startOffset=%.2f", path, hasDV, dvProfile, hasHDR, audioTrackIndex, subtitleTrackIndex, startOffset)
 
 	// DV Profile 7 has enhancement layers that many devices can't decode
 	// Fall back to HDR10 base layer for better compatibility
@@ -2271,7 +2271,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		hasHDR = true // DV Profile 7 has HDR10 base layer
 	}
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}

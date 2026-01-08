@@ -1696,7 +1696,7 @@
                 } else {
                     fieldValue = item[fieldKey];
                 }
-                return '<div class="form-group"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
+                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
             const testResult = isTestable ? '<span id="test-result-'+sectionKey+'-'+index+'" class="test-result"></span>' : '';

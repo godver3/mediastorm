@@ -1860,6 +1860,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}
 
+	// Normalize all output stream timestamps to start at 0
+	// This ensures A/V sync when transcoding TrueHD/DTS audio (which have variable timing)
+	// and helps maintain subtitle sync across seek operations
+	args = append(args, "-start_at_zero")
+
 	args = append(args,
 		"-map", "0:v:0", // Map primary video stream
 	)
@@ -1996,6 +2001,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// TESTING: Use fMP4 for all content (normally SDR uses .ts MPEG-TS segments)
 		// This allows testing HLS with react-native-video for SDR content
 		// Don't force codec tag - let FFmpeg auto-detect (works for both H.264 and HEVC)
+		needsFmp4 = true
 		segmentExt = ".m4s"
 		log.Printf("[hls] session %s: using fMP4 segments for SDR content (testing, no codec tag forced)", session.ID)
 	}
@@ -2013,10 +2019,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					// Must specify channel_layout for iOS AVPlayer compatibility (otherwise shows "media may be damaged")
 					// TrueHD has variable timing - use aresample filter with async to maintain A/V sync
 					// async=1000 allows up to 1000 samples of drift correction per second
-					// first_pts=0 ensures audio starts at the beginning of the stream
+					// Note: -start_at_zero (set earlier) normalizes all stream timestamps for proper A/V sync
 					log.Printf("[hls] session %s: transcoding selected TrueHD track to AAC", session.ID)
 					args = append(args,
-						"-af", "aresample=async=1000:first_pts=0",
+						"-af", "aresample=async=1000",
 						"-c:a", "aac", "-ac", "6", "-ar", "48000", "-channel_layout", "5.1", "-b:a", "192k")
 					audioCodecHandled = true
 				}
@@ -2031,7 +2037,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			// Must specify channel_layout for iOS AVPlayer compatibility
 			// Use aresample filter with async for proper A/V sync during transcoding
 			args = append(args,
-				"-af", "aresample=async=1000:first_pts=0",
+				"-af", "aresample=async=1000",
 				"-c:a:0", "aac", "-ac:a:0", "6", "-ar:a:0", "48000", "-channel_layout:a:0", "5.1", "-b:a:0", "192k",
 				"-c:a:1", "copy")
 		} else if hasTrueHD && !hasCompatibleAudio {
@@ -2040,7 +2046,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			// TrueHD has variable timing - use aresample filter with async to maintain A/V sync
 			log.Printf("[hls] session %s: transcoding TrueHD to AAC (no compatible alternative)", session.ID)
 			args = append(args,
-				"-af", "aresample=async=1000:first_pts=0",
+				"-af", "aresample=async=1000",
 				"-c:a", "aac", "-ac", "6", "-ar", "48000", "-channel_layout", "5.1", "-b:a", "192k")
 		} else {
 			// Copy compatible audio
@@ -4036,15 +4042,35 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 	log.Printf("[hls] using URL for subtitle extraction: %s", streamURL)
 
 	// Build ffmpeg command to extract subtitle track to VTT
+	// If the session has a StartOffset (warm start/seek), we need to:
+	// 1. Seek to the start offset so subtitles align with the HLS stream
+	// 2. Use -start_at_zero to normalize timestamps to start at 0
+	// This matches the behavior of the main transcoding pipeline
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-i", streamURL,
+	}
+
+	// Add input seeking if session has a start offset
+	if session.StartOffset > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
+		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs to match HLS start offset",
+			session.ID, session.StartOffset)
+	}
+
+	args = append(args, "-i", streamURL)
+
+	// Normalize output timestamps to start at 0 (matches main transcoding pipeline)
+	if session.StartOffset > 0 {
+		args = append(args, "-start_at_zero")
+	}
+
+	args = append(args,
 		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
 		"-c", "webvtt",
 		"-f", "webvtt",
 		outputPath,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 

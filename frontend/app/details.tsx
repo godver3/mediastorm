@@ -1815,7 +1815,8 @@ export default function DetailsScreen() {
       }
 
       const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
-      const needsHLS = hasAnyHDR || prequeueStatus.needsAudioTranscode;
+      // TESTING: Force HLS for all native content (normally only HDR/TrueHD uses HLS)
+      const needsHLS = Platform.OS !== 'web'; // hasAnyHDR || prequeueStatus.needsAudioTranscode;
 
       // Build stream URL
       let streamUrl: string;
@@ -1855,7 +1856,9 @@ export default function DetailsScreen() {
           ? 'TrueHD/DTS audio'
           : prequeueStatus.hasDolbyVision
             ? 'Dolby Vision'
-            : 'HDR10';
+            : prequeueStatus.hasHdr10
+              ? 'HDR10'
+              : 'SDR (testing)';
         console.log(`[prequeue] ${contentType} detected, creating HLS session (${reason})...`);
         setSelectionInfo(`Creating HLS session for ${contentType}...`);
 
