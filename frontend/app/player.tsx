@@ -4244,6 +4244,7 @@ export default function PlayerScreen() {
           subtitleTrack: selectedSubtitleTrackIndex ?? undefined,
           profileId: activeUserId ?? undefined,
           profileName: activeUser?.name,
+          trackSwitch: true, // Skip waiting for first segment for faster track switching
         });
 
         // Store session ID for keepalive pings when paused

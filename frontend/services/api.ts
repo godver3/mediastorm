@@ -1753,6 +1753,7 @@ class ApiService {
     subtitleTrack?: number;
     profileId?: string;
     profileName?: string;
+    trackSwitch?: boolean;
   }): Promise<HlsSessionStartResponse> {
     const trimmedPath = params.path?.trim();
     if (!trimmedPath) {
@@ -1800,6 +1801,11 @@ class ApiService {
     }
     if (params.profileName) {
       queryParts.push(`profileName=${encodeURIComponent(params.profileName)}`);
+    }
+
+    // Track switch flag skips waiting for first segment (faster audio/subtitle changes)
+    if (params.trackSwitch) {
+      queryParts.push('trackSwitch=true');
     }
 
     return this.request<HlsSessionStartResponse>(`/video/hls/start?${queryParts.join('&')}`);
