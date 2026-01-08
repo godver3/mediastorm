@@ -2478,13 +2478,18 @@ export default function PlayerScreen() {
       }
 
       if (meta?.seekable) {
-        const absoluteSeekable = playbackOffsetRef.current + meta.seekable;
-        if (absoluteSeekable > sessionBufferEndRef.current) {
-          sessionBufferEndRef.current = absoluteSeekable;
+        // For HLS streams, seekableDuration reports the full video duration (from the playlist),
+        // not the actual transcoded content. Only use it for duration display, not buffer tracking.
+        if (!isHlsStream) {
+          const absoluteSeekable = playbackOffsetRef.current + meta.seekable;
+          if (absoluteSeekable > sessionBufferEndRef.current) {
+            sessionBufferEndRef.current = absoluteSeekable;
+          }
         }
         updateDuration(meta.seekable, 'progress.seekable');
       }
       if (meta?.playable) {
+        // playableDuration reflects actual buffered/transcoded content - use this for HLS buffer tracking
         const absolutePlayable = playbackOffsetRef.current + meta.playable;
         if (absolutePlayable > sessionBufferEndRef.current) {
           sessionBufferEndRef.current = absolutePlayable;
