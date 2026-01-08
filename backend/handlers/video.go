@@ -2040,9 +2040,13 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 
 	// For warm start fMP4 sessions, wait for first segment and parse actual start offset
 	// This is needed because FFmpeg seeks to the nearest keyframe, not the exact requested time
+	// Skip this wait for track switches (audio/subtitle changes during playback) to reduce latency
 	actualStartOffset := session.StartOffset
-	if (hasDV || hasHDR) && startSeconds > 0 {
+	isTrackSwitch := r.URL.Query().Get("trackSwitch") == "true"
+	if (hasDV || hasHDR) && startSeconds > 0 && !isTrackSwitch {
 		actualStartOffset = h.hlsManager.WaitForActualStartOffset(session, 15*time.Second)
+	} else if isTrackSwitch {
+		log.Printf("[video] skipping WaitForActualStartOffset for track switch (start=%.3fs)", startSeconds)
 	}
 
 	// Return session ID, playlist URL, and duration (if available)

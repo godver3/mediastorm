@@ -411,7 +411,8 @@ type cachedProbeEntry struct {
 
 const (
 	// TTL for cached probe results (shared between prequeue and HLS)
-	probeCacheTTL = 60 * time.Second
+	// Increased to 2 hours to avoid re-probing during audio/subtitle track switches
+	probeCacheTTL = 2 * time.Hour
 )
 
 const (
