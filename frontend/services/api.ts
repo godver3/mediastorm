@@ -320,6 +320,7 @@ export interface HlsSessionStartResponse {
   playlistUrl: string;
   duration?: number;
   startOffset?: number;
+  actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
   remainingDuration?: number;
 }
 
@@ -339,6 +340,7 @@ export interface HlsSessionStatus {
 export interface HlsSeekResponse {
   sessionId: string;
   startOffset: number;
+  actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
   duration?: number;
   playlistUrl: string;
 }
@@ -346,6 +348,7 @@ export interface HlsSeekResponse {
 export interface HlsKeepaliveResponse {
   status: string;
   startOffset: number;
+  actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
   segmentDuration: number;
   duration?: number;
 }

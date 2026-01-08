@@ -1300,6 +1300,14 @@ export default function PlayerScreen() {
   const hasAppliedInitialTracksRef = useRef(false);
 
   useEffect(() => {
+    // IMPORTANT: Skip entire effect during HLS seek transition
+    // warmStartHlsSession already set the correct offsets and we don't want to overwrite them
+    // with stale route params (initialStartOffset is from route params and doesn't update on seek)
+    if (pausedForSeekRef.current || isRecreatingHlsSessionRef.current) {
+      console.log('🎬 [player] skipping initialization during seek transition');
+      return;
+    }
+
     console.log('🎬 [player] Initializing with startOffset:', initialStartOffset, {
       isHlsStream,
       isExistingHlsSession,
@@ -1332,10 +1340,7 @@ export default function PlayerScreen() {
 
     // For existing HLS sessions with a start offset, playbackOffsetRef was already set above
     // For new sessions or existing sessions starting from 0, start at 0
-    // IMPORTANT: Skip resetting during HLS seek transition - warmStartHlsSession already set the correct offset
-    if (pausedForSeekRef.current) {
-      console.log('🎬 [player] skipping offset reset during seek transition');
-    } else if (isExistingHlsSession && initialStartOffset > 0) {
+    if (isExistingHlsSession && initialStartOffset > 0) {
       // Existing HLS session starts at the offset (playbackOffsetRef already set above)
       sessionBufferEndRef.current = initialStartOffset;
       currentTimeRef.current = initialStartOffset;
@@ -2147,7 +2152,7 @@ export default function PlayerScreen() {
 
         // Check if we have an existing session - use seek endpoint for faster response
         const existingSessionId = hlsSessionIdRef.current;
-        let response: { sessionId: string; playlistUrl: string; duration?: number; startOffset?: number };
+        let response: { sessionId: string; playlistUrl: string; duration?: number; startOffset?: number; actualStartOffset?: number };
 
         if (existingSessionId) {
           console.log('[player] seeking within existing HLS session', {
@@ -2161,6 +2166,10 @@ export default function PlayerScreen() {
           // it tries to prefetch segments from the old (now-deleted) playlist.
           // Use empty string (not null) to prevent fallback to resolvedMovie.
           console.log('[player] clearing video source before seek to prevent race condition');
+          // Mark recreation flags BEFORE clearing URL to prevent race condition where
+          // isHlsStream becomes false and triggers subtitle probe effect for SDR content
+          isRecreatingHlsSessionRef.current = true;
+          skipTrackPreferencesRef.current = true;
           setCurrentMovieUrl('');
 
           try {
@@ -2170,6 +2179,7 @@ export default function PlayerScreen() {
               playlistUrl: seekResponse.playlistUrl,
               duration: seekResponse.duration,
               startOffset: seekResponse.startOffset,
+              actualStartOffset: seekResponse.actualStartOffset, // For subtitle sync
             };
             console.log('[player] HLS seek completed', { response });
           } catch (seekError) {
@@ -2564,6 +2574,13 @@ export default function PlayerScreen() {
         pausedForSeekRef.current = false;
         setIsVideoBuffering(false);
         setPaused(false);
+      }
+      // Clear recreation flags now that the new source has loaded
+      if (isRecreatingHlsSessionRef.current) {
+        isRecreatingHlsSessionRef.current = false;
+      }
+      if (skipTrackPreferencesRef.current) {
+        skipTrackPreferencesRef.current = false;
       }
     },
     [applyPendingSessionSeek, updateDuration],
@@ -3764,6 +3781,13 @@ export default function PlayerScreen() {
       return;
     }
 
+    // Skip during HLS seek transitions - isHlsStream temporarily becomes false when URL is cleared
+    // but we're still in an HLS playback context and shouldn't reset subtitle tracks
+    if (isRecreatingHlsSessionRef.current || pausedForSeekRef.current) {
+      console.log('[player] skipping subtitle probe during HLS seek transition');
+      return;
+    }
+
     // If we have pre-extracted subtitles, use them instead of probing
     if (preExtractedSubtitles && preExtractedSubtitles.length > 0) {
       console.log('[player] using pre-extracted subtitle tracks:', preExtractedSubtitles.length);
@@ -4914,16 +4938,16 @@ export default function PlayerScreen() {
 
           {/* Sidecar subtitle overlay for HLS/fMP4 streams (HDR/DV content) */}
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
-          {/* VTT cues are relative to session start, so we need to offset by -playbackOffset */}
-          {/* to convert absolute currentTime to session-relative time for cue matching */}
-          {/* Use actualPlaybackOffsetRef (keyframe-aligned) for accurate subtitle sync after seeks */}
+          {/* VTT cues and video output both start at time 0 (due to FFmpeg -start_at_zero) */}
+          {/* currentTime = playbackOffset + playerRelativeTime, so we offset by -playbackOffset */}
+          {/* to get adjustedTime = playerRelativeTime, which matches VTT time directly */}
           {/* User offset is also applied (negated: positive = later subtitles = decrease adjustedTime) */}
           {isHlsStream && sidecarSubtitleUrl && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-actualPlaybackOffsetRef.current - subtitleOffset}
+              timeOffset={-playbackOffsetRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}

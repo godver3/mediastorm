@@ -2040,13 +2040,19 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 
 	// For warm start fMP4 sessions, wait for first segment and parse actual start offset
 	// This is needed because FFmpeg seeks to the nearest keyframe, not the exact requested time
-	// Skip this wait for track switches (audio/subtitle changes during playback) to reduce latency
+	// The actual start offset is critical for VTT subtitle sync - without it, subtitles will be late
 	actualStartOffset := session.StartOffset
 	isTrackSwitch := r.URL.Query().Get("trackSwitch") == "true"
-	if (hasDV || hasHDR) && startSeconds > 0 && !isTrackSwitch {
-		actualStartOffset = h.hlsManager.WaitForActualStartOffset(session, 15*time.Second)
-	} else if isTrackSwitch {
-		log.Printf("[video] skipping WaitForActualStartOffset for track switch (start=%.3fs)", startSeconds)
+	if (hasDV || hasHDR) && startSeconds > 0 {
+		// Use shorter timeout for track switches to reduce latency while still getting accurate timing
+		timeout := 15 * time.Second
+		if isTrackSwitch {
+			timeout = 5 * time.Second
+		}
+		actualStartOffset = h.hlsManager.WaitForActualStartOffset(session, timeout)
+		if isTrackSwitch {
+			log.Printf("[video] track switch: parsed actualStartOffset=%.3fs (requested=%.3fs)", actualStartOffset, startSeconds)
+		}
 	}
 
 	// Return session ID, playlist URL, and duration (if available)

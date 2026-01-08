@@ -3483,12 +3483,15 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 	outputDir := session.OutputDir
 	session.mu.RUnlock()
 
-	// Remove all segment files (.ts and .m4s)
+	// Remove all segment files (.ts, .m4s) and VTT subtitle files
+	// VTT files MUST be cleared on seek to prevent stale subtitle timing
+	// The new FFmpeg process will regenerate VTT from the new seek position
 	patterns := []string{
 		filepath.Join(outputDir, "segment*.ts"),
 		filepath.Join(outputDir, "segment*.m4s"),
 		filepath.Join(outputDir, "init.mp4"),
 		filepath.Join(outputDir, "stream.m3u8"),
+		filepath.Join(outputDir, "subtitles_*.vtt"),
 	}
 
 	var removeCount int
