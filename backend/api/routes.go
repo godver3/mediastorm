@@ -197,6 +197,7 @@ func Register(
 	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/hls/start", videoHandler.StartLiveHLSSession).Methods(http.MethodGet, http.MethodOptions)
 
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)

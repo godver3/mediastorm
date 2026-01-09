@@ -349,6 +349,9 @@ type HLSSession struct {
 	subtitleExtracting       map[int]bool    // Tracks which subtitle tracks are currently being extracted
 	FatalErrorTime   time.Time
 	BitstreamErrors  int // Count of bitstream filter errors (to detect persistent issues)
+
+	// Live TV session fields
+	IsLive bool // True for live TV streams (no duration, no seeking)
 }
 
 const (
@@ -782,6 +785,194 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// The actual start offset is stored in session.StartOffset for the frontend to use
 	// The frontend should seek to the start offset after loading the HLS stream
 	return session, nil
+}
+
+// CreateLiveSession creates an HLS session for live TV streams
+// Unlike VOD sessions, live sessions don't have a known duration and don't support seeking
+func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL string) (*HLSSession, error) {
+	sessionID := generateSessionID()
+	outputDir := filepath.Join(m.baseDir, sessionID)
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create session directory: %w", err)
+	}
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+
+	now := time.Now()
+	session := &HLSSession{
+		ID:                      sessionID,
+		Path:                    liveURL,
+		OriginalPath:            liveURL,
+		OutputDir:               outputDir,
+		CreatedAt:               now,
+		LastAccess:              now,
+		Cancel:                  cancel,
+		IsLive:                  true,
+		Duration:                0, // Unknown for live
+		StartOffset:             0,
+		TranscodingOffset:       0,
+		StreamStartTime:         now,
+		LastSegmentRequest:      now,
+		MinSegmentRequested:     -1,
+		MaxSegmentRequested:     -1,
+		LastPlaybackSegment:     -1,
+		LastSegmentServed:       -1,
+		EarliestBufferedSegment: -1,
+		AudioTrackIndex:         -1, // Use default
+		SubtitleTrackIndex:      -1, // No subtitles for live TV
+	}
+
+	m.mu.Lock()
+	m.sessions[sessionID] = session
+	m.mu.Unlock()
+
+	// Start live transcoding in background
+	go func() {
+		if err := m.startLiveTranscoding(bgCtx, session); err != nil {
+			log.Printf("[hls] live session %s transcoding failed: %v", sessionID, err)
+			session.mu.Lock()
+			session.Completed = true
+			session.mu.Unlock()
+		}
+	}()
+
+	log.Printf("[hls] created live session %s for URL %q", sessionID, liveURL)
+	return session, nil
+}
+
+// startLiveTranscoding starts FFmpeg for live TV HLS output
+func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSession) error {
+	log.Printf("[hls] live session %s: starting live transcoding for %s", session.ID, session.Path)
+
+	playlistPath := filepath.Join(session.OutputDir, "stream.m3u8")
+	segmentPattern := filepath.Join(session.OutputDir, "segment%d.ts")
+
+	// Build FFmpeg args optimized for live input
+	args := []string{
+		"-nostdin",
+		"-y",
+		"-loglevel", "warning",
+		// Live input options
+		"-fflags", "+genpts+discardcorrupt",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "3",
+		"-i", session.Path,
+		// Output options - copy video, transcode audio to AAC for compatibility
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-ac", "2",
+		"-b:a", "128k",
+		"-ar", "48000",
+		// HLS output
+		"-f", "hls",
+		"-hls_time", "2",
+		"-hls_list_size", "10", // Keep last 10 segments for live
+		"-hls_flags", "delete_segments+append_list",
+		"-hls_segment_filename", segmentPattern,
+		playlistPath,
+	}
+
+	log.Printf("[hls] live session %s: starting FFmpeg with args: %v", session.ID, args)
+
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
+	cmd.Dir = session.OutputDir
+
+	// Capture stderr for logging
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("create stderr pipe: %w", err)
+	}
+
+	session.mu.Lock()
+	session.FFmpegCmd = cmd
+	session.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	session.mu.Lock()
+	session.FFmpegPID = cmd.Process.Pid
+	session.mu.Unlock()
+
+	log.Printf("[hls] live session %s: FFmpeg started (PID=%d)", session.ID, cmd.Process.Pid)
+
+	// Log stderr in background
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stderr.Read(buf)
+			if n > 0 {
+				log.Printf("[hls] live session %s: FFmpeg: %s", session.ID, string(buf[:n]))
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	// Start idle timeout goroutine - kills FFmpeg if no segments requested for 30s
+	idleDone := make(chan struct{})
+	go func() {
+		defer close(idleDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				session.mu.RLock()
+				lastRequest := session.LastSegmentRequest
+				segmentCount := session.SegmentRequestCount
+				session.mu.RUnlock()
+
+				idleTime := time.Since(lastRequest)
+
+				// Startup timeout: if no segment requests after 30s, kill FFmpeg
+				if segmentCount == 0 && idleTime > hlsStartupTimeout {
+					log.Printf("[hls] live session %s: STARTUP_TIMEOUT - no segment requests after %v",
+						session.ID, idleTime)
+					session.mu.Lock()
+					session.IdleTimeoutTriggered = true
+					session.mu.Unlock()
+					if cmd.Process != nil {
+						_ = cmd.Process.Kill()
+					}
+					return
+				}
+
+				// Idle timeout: if no segment requests for 30s after playback started
+				if segmentCount > 0 && idleTime > hlsIdleTimeout {
+					log.Printf("[hls] live session %s: IDLE_TIMEOUT - no requests for %v (%d segments served)",
+						session.ID, idleTime, segmentCount)
+					session.mu.Lock()
+					session.IdleTimeoutTriggered = true
+					session.mu.Unlock()
+					if cmd.Process != nil {
+						_ = cmd.Process.Kill()
+					}
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for FFmpeg to complete
+	err = cmd.Wait()
+	if err != nil {
+		if ctx.Err() != nil {
+			log.Printf("[hls] live session %s: FFmpeg stopped (context cancelled)", session.ID)
+			return nil
+		}
+		return fmt.Errorf("ffmpeg exited with error: %w", err)
+	}
+
+	log.Printf("[hls] live session %s: FFmpeg completed normally", session.ID)
+	return nil
 }
 
 // waitForFirstSegment polls for the first HLS segment to be available

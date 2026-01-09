@@ -1079,6 +1079,17 @@ class ApiService {
     return `${this.baseUrl}/live/stream?${params.toString()}`;
   }
 
+  async startLiveHlsSession(sourceUrl: string): Promise<{
+    sessionId: string;
+    playlistUrl: string;
+    isLive: boolean;
+  }> {
+    const params = new URLSearchParams({ url: sourceUrl });
+    return this.request<{ sessionId: string; playlistUrl: string; isLive: boolean }>(
+      `/live/hls/start?${params.toString()}`,
+    );
+  }
+
   async clearLivePlaylistCache(): Promise<{ status: string; cleared: number }> {
     return this.request<{ status: string; cleared: number }>('/live/cache/clear', {
       method: 'POST',

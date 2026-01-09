@@ -443,7 +443,7 @@ function LiveScreen() {
   );
 
   const handleChannelSelect = useCallback(
-    (channel: LiveChannel) => {
+    async (channel: LiveChannel) => {
       // In selection mode, toggle channel selection instead of playing
       if (isSelectionMode) {
         const selectionOrder = getChannelSelectionOrder(channel.id);
@@ -465,35 +465,69 @@ function LiveScreen() {
       }
 
       showToast(`Playing: ${channel.name}`, { tone: 'success' });
-      const streamTarget = channel.streamUrl ?? channel.url;
-      router.push({
-        pathname: '/player',
-        params: {
-          movie: streamTarget,
-          headerImage: channel.logo ?? '',
-          title: channel.name ?? 'Live Channel',
-          preferSystemPlayer: '1',
-          mediaType: 'channel',
-        },
-      });
+
+      // Start HLS session for live TV (iOS native player requires HLS)
+      try {
+        const hlsSession = await apiService.startLiveHlsSession(channel.url);
+        const authToken = apiService.getAuthToken();
+        const hlsPlaylistUrl = `${apiService.baseUrl}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+
+        router.push({
+          pathname: '/player',
+          params: {
+            movie: hlsPlaylistUrl,
+            headerImage: channel.logo ?? '',
+            title: channel.name ?? 'Live Channel',
+            mediaType: 'channel',
+          },
+        });
+      } catch (error) {
+        console.error('[live] Failed to start HLS session:', error);
+        showToast('Failed to start live stream', { tone: 'danger' });
+      }
     },
     [router, showToast, isSelectionMode, getChannelSelectionOrder, toggleChannelSelection, selectedChannels.length],
   );
 
+  // Convert channels to use HLS streaming
+  const startHlsSessionsForChannels = useCallback(
+    async (channels: typeof selectedChannels): Promise<typeof selectedChannels | null> => {
+      try {
+        const authToken = apiService.getAuthToken();
+        const hlsChannels = await Promise.all(
+          channels.map(async (channel) => {
+            const hlsSession = await apiService.startLiveHlsSession(channel.url);
+            const hlsPlaylistUrl = `${apiService.baseUrl}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+            return { ...channel, streamUrl: hlsPlaylistUrl };
+          }),
+        );
+        return hlsChannels;
+      } catch (error) {
+        console.error('[live] Failed to start HLS sessions for multiscreen:', error);
+        showToast('Failed to start live streams', { tone: 'danger' });
+        return null;
+      }
+    },
+    [showToast],
+  );
+
   // Handle multiscreen button press
   const handleMultiscreenPress = useCallback(() => {
-    withSelectGuard(() => {
+    withSelectGuard(async () => {
       if (isSelectionMode) {
         // Already in selection mode
         if (selectedChannels.length >= 2) {
           // Launch if we have enough channels
           const channels = launchMultiscreen();
           if (channels) {
-            showToast(`Launching ${channels.length} channels`, { tone: 'success' });
-            router.push({
-              pathname: '/multiscreen',
-              params: { channels: JSON.stringify(channels) },
-            });
+            showToast(`Starting ${channels.length} channels...`, { tone: 'success' });
+            const hlsChannels = await startHlsSessionsForChannels(channels);
+            if (hlsChannels) {
+              router.push({
+                pathname: '/multiscreen',
+                params: { channels: JSON.stringify(hlsChannels) },
+              });
+            }
           }
         } else if (selectedChannels.length === 0) {
           // Exit selection mode if no channels selected
@@ -508,21 +542,24 @@ function LiveScreen() {
         showToast('Select up to 5 channels for multiscreen', { tone: 'info' });
       }
     });
-  }, [withSelectGuard, isSelectionMode, selectedChannels.length, launchMultiscreen, showToast, router, enterSelectionMode, exitSelectionMode]);
+  }, [withSelectGuard, isSelectionMode, selectedChannels.length, launchMultiscreen, showToast, router, enterSelectionMode, exitSelectionMode, startHlsSessionsForChannels]);
 
   // Handle resume button press
   const handleResumePress = useCallback(() => {
-    withSelectGuard(() => {
+    withSelectGuard(async () => {
       const channels = resumeSession();
       if (channels) {
-        showToast(`Resuming ${channels.length} channels`, { tone: 'success' });
-        router.push({
-          pathname: '/multiscreen',
-          params: { channels: JSON.stringify(channels) },
-        });
+        showToast(`Starting ${channels.length} channels...`, { tone: 'success' });
+        const hlsChannels = await startHlsSessionsForChannels(channels);
+        if (hlsChannels) {
+          router.push({
+            pathname: '/multiscreen',
+            params: { channels: JSON.stringify(hlsChannels) },
+          });
+        }
       }
     });
-  }, [withSelectGuard, resumeSession, showToast, router]);
+  }, [withSelectGuard, resumeSession, showToast, router, startHlsSessionsForChannels]);
 
   const handleFocus = useCallback(() => {
     // Lock spatial navigation to prevent d-pad from navigating away while typing
