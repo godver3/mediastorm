@@ -79,7 +79,6 @@ func Register(
 	debugHandler *handlers.DebugHandler,
 	logsHandler *handlers.LogsHandler,
 	liveHandler *handlers.LiveHandler,
-	debugVideoHandler *handlers.DebugVideoHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
 	clientsHandler *handlers.ClientsHandler,
@@ -300,14 +299,6 @@ func Register(
 			`"lastGC":` + itoa64(m.LastGC) +
 			`}`))
 	}).Methods(http.MethodGet, http.MethodOptions)
-
-	// MP4Box debug endpoints for DV/HDR testing (master only)
-	debugRouter := protected.PathPrefix("/video/debug").Subrouter()
-	debugRouter.Use(MasterOnlyMiddleware())
-	debugRouter.HandleFunc("/mp4box/start", debugVideoHandler.StartMP4BoxHLSSession).Methods(http.MethodGet, http.MethodOptions)
-	debugRouter.HandleFunc("/mp4box/probe", debugVideoHandler.ProbeVideoURL).Methods(http.MethodGet, http.MethodOptions)
-	debugRouter.HandleFunc("/mp4box/{sessionID}/stream.m3u8", debugVideoHandler.ServeMP4BoxPlaylist).Methods(http.MethodGet, http.MethodOptions)
-	debugRouter.HandleFunc("/mp4box/{sessionID}/{segment}", debugVideoHandler.ServeMP4BoxSegment).Methods(http.MethodGet, http.MethodOptions)
 
 	// User profile routes (with ownership validation)
 	profileProtected.HandleFunc("", usersHandler.List).Methods(http.MethodGet)

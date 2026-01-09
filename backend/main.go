@@ -359,9 +359,6 @@ func main() {
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency)
 
-	// Create debug video handler with MP4Box for DV/HDR testing
-	debugVideoHandler := handlers.NewDebugVideoHandler("MP4Box", settings.Transmux.FFprobePath)
-
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
 
@@ -381,7 +378,6 @@ func main() {
 		debugHandler,
 		logsHandler,
 		liveHandler,
-		debugVideoHandler,
 		userSettingsHandler,
 		subtitlesHandler,
 		clientsHandler,
@@ -706,12 +702,6 @@ func main() {
 	if videoHandler != nil {
 		log.Println("🧹 Cleaning up video handler...")
 		videoHandler.Shutdown()
-	}
-
-	// Cleanup debug video handler (MP4Box sessions)
-	if debugVideoHandler != nil {
-		log.Println("🧹 Cleaning up debug video handler...")
-		debugVideoHandler.Shutdown()
 	}
 
 	// Shutdown HTTP server gracefully

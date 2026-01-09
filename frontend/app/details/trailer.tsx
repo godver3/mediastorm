@@ -127,15 +127,16 @@ export const TrailerModal = ({ visible, trailer, onClose, theme }: TrailerModalP
       title: trailerName,
     });
   } else if (useNativePlayer && trailer.url) {
-    const { VLCPlayer } = require('react-native-vlc-media-player');
+    const Video = require('react-native-video').default;
     playerContent = (
-      <VLCPlayer
-        style={styles.trailerVlcPlayer}
+      <Video
+        style={styles.trailerVideoPlayer}
         source={{ uri: trailer.url }}
-        autoplay
-        autoAspectRatio
-        onStopped={onClose}
-        onEnded={onClose}
+        paused={false}
+        resizeMode="contain"
+        onEnd={onClose}
+        onError={() => onClose()}
+        controls
       />
     );
   } else {
@@ -248,7 +249,7 @@ const createTrailerStyles = (theme: NovaTheme) =>
       borderRadius: theme.radius.md,
       overflow: 'hidden',
     },
-    trailerVlcPlayer: {
+    trailerVideoPlayer: {
       width: '100%',
       height: '100%',
     },

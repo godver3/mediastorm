@@ -75,6 +75,8 @@ import type {
 } from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
+import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
+import { useHlsSession, type HlsSessionResponse } from '@/hooks/useHlsSession';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { updateNowPlaying, updatePlaybackPosition, clearNowPlaying, setupRemoteCommands } from 'now-playing-manager';
@@ -286,127 +288,6 @@ const resolveSelectedTrackId = (
   return fallbackId ?? options[0]?.id ?? null;
 };
 
-const normalizeLanguageForMatching = (lang: string): string => {
-  return lang.toLowerCase().trim();
-};
-
-const findAudioTrackByLanguage = (streams: AudioStreamMetadata[], preferredLanguage: string): number | null => {
-  if (!preferredLanguage || !streams?.length) {
-    return null;
-  }
-
-  const normalizedPref = normalizeLanguageForMatching(preferredLanguage);
-
-  // Try exact match on language code or title
-  for (const stream of streams) {
-    const language = normalizeLanguageForMatching(stream.language || '');
-    const title = normalizeLanguageForMatching(stream.title || '');
-
-    if (language === normalizedPref || title === normalizedPref) {
-      return stream.index;
-    }
-  }
-
-  // Try partial match (e.g., "eng" matches "English")
-  for (const stream of streams) {
-    const language = normalizeLanguageForMatching(stream.language || '');
-    const title = normalizeLanguageForMatching(stream.title || '');
-
-    if (
-      language.includes(normalizedPref) ||
-      title.includes(normalizedPref) ||
-      normalizedPref.includes(language) ||
-      normalizedPref.includes(title)
-    ) {
-      return stream.index;
-    }
-  }
-
-  return null;
-};
-
-const isStreamForced = (stream: SubtitleStreamMetadata): boolean => {
-  // Check isForced flag, disposition.forced, or title containing "forced"
-  if (stream.isForced) return true;
-  if ((stream.disposition?.forced ?? 0) > 0) return true;
-  if (stream.title?.toLowerCase().includes('forced')) return true;
-  return false;
-};
-
-const isStreamSDH = (stream: SubtitleStreamMetadata): boolean => {
-  const title = stream.title?.toLowerCase() || '';
-  return title.includes('sdh') || title.includes('hearing impaired') || title.includes('cc');
-};
-
-const findSubtitleTrackByPreference = (
-  streams: SubtitleStreamMetadata[],
-  preferredLanguage: string | undefined,
-  mode: 'off' | 'on' | 'forced-only' | undefined,
-): number | null => {
-  if (!streams?.length || mode === 'off') {
-    return null;
-  }
-
-  const normalizedPref = preferredLanguage ? normalizeLanguageForMatching(preferredLanguage) : null;
-
-  // Helper to check if stream matches the preferred language
-  const matchesLanguage = (stream: SubtitleStreamMetadata): boolean => {
-    if (!normalizedPref) return true; // No preference means any language matches
-    const language = normalizeLanguageForMatching(stream.language || '');
-    const title = normalizeLanguageForMatching(stream.title || '');
-    // Exact or partial match
-    return (
-      language === normalizedPref ||
-      title === normalizedPref ||
-      language.includes(normalizedPref) ||
-      normalizedPref.includes(language)
-    );
-  };
-
-  // For forced-only mode: only consider forced tracks
-  if (mode === 'forced-only') {
-    const forcedStreams = streams.filter((s) => isStreamForced(s) && matchesLanguage(s));
-    if (forcedStreams.length > 0) {
-      return forcedStreams[0].index;
-    }
-    return null;
-  }
-
-  // For 'on' mode: prefer SDH > no title/plain > anything else, exclude forced
-  if (mode === 'on') {
-    // Get all non-forced streams matching the language
-    const nonForcedMatches = streams.filter((s) => !isStreamForced(s) && matchesLanguage(s));
-
-    if (nonForcedMatches.length > 0) {
-      // Priority 1: SDH subtitles
-      const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s));
-      if (sdhMatch) {
-        return sdhMatch.index;
-      }
-
-      // Priority 2: No title (plain/full subtitles)
-      const plainMatch = nonForcedMatches.find((s) => !s.title || s.title.trim() === '');
-      if (plainMatch) {
-        return plainMatch.index;
-      }
-
-      // Priority 3: Any non-forced match
-      return nonForcedMatches[0].index;
-    }
-
-    // Fallback: if no non-forced matches, try any stream matching language (including forced)
-    const anyMatch = streams.filter((s) => matchesLanguage(s));
-    if (anyMatch.length > 0) {
-      return anyMatch[0].index;
-    }
-
-    // Last resort: first available stream
-    return streams[0].index;
-  }
-
-  return null;
-};
-
 export default function PlayerScreen() {
   const { settings, userSettings, refreshSettings } = useBackendSettings();
   const { hideLoadingScreen } = useLoadingScreen();
@@ -445,8 +326,8 @@ export default function PlayerScreen() {
     }
 
     // Expo Router automatically decodes URL params, but we need to re-encode
-    // special characters for VLC to work correctly.
-    // URLSearchParams doesn't encode semicolons which breaks VLC's URL parsing.
+    // special characters for proper URL parsing.
+    // URLSearchParams doesn't encode semicolons which breaks some URL parsers.
     try {
       const url = new URL(movieParam);
       // Re-encode path segments while preserving slashes
@@ -795,8 +676,7 @@ export default function PlayerScreen() {
 
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hasStartedPlaying, setHasStartedPlaying] = useState<boolean>(false);
-  // For HDR content (Dolby Vision/HDR10), we need to use React Native Video player with HLS
-  // VLCKit does not support HDR output - it tone-maps to SDR
+  // Track HDR content type (Dolby Vision/HDR10) for proper player configuration
   const [hasDolbyVision, setHasDolbyVision] = useState<boolean>(routeHasDolbyVision);
   const [isFilenameDisplayed, setIsFilenameDisplayed] = useState<boolean>(false);
   // Mobile stream info modal (on TV, this is handled in Controls component)
@@ -864,7 +744,6 @@ export default function PlayerScreen() {
   }, []); // Only run on mount
 
   // Prevent screen saver / display sleep while video is playing
-  // This is needed because VLC player on Android doesn't handle this automatically
   useEffect(() => {
     if (paused) {
       deactivateKeepAwake();
@@ -966,71 +845,6 @@ export default function PlayerScreen() {
     };
   }, [paused, isHlsStream, currentMovieUrl, pauseTeardownActive]);
 
-  // Pause teardown restoration: When user resumes after teardown, create a new HLS session
-  useEffect(() => {
-    if (!paused && pauseTeardownActive && initialSourcePath) {
-      console.log('[player] pause teardown: resuming from teardown, creating new HLS session', {
-        savedTime: pauseTeardownTimeRef.current,
-      });
-
-      // Create new HLS session starting from saved time
-      const restoreSession = async () => {
-        try {
-          const response = await apiService.createHlsSession({
-            path: initialSourcePath,
-            dv: routeHasDolbyVision,
-            dvProfile: routeDvProfile || undefined,
-            hdr: routeHasHDR10,
-            forceAAC: forceAacFromRoute,
-            start: pauseTeardownTimeRef.current,
-            audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
-            subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
-            profileId: activeUserId ?? undefined,
-            profileName: activeUser?.name,
-          });
-
-          hlsSessionIdRef.current = response.sessionId;
-
-          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-          const playlistBase = `${baseUrl}${response.playlistUrl}`;
-          const authToken = apiService.getAuthToken();
-          const playlistWithKey = authToken
-            ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
-            : playlistBase;
-
-          console.log('[player] pause teardown: restored HLS session', {
-            playlistUrl: playlistWithKey,
-            startOffset: response.startOffset,
-            actualStartOffset: response.actualStartOffset,
-          });
-
-          // Update playback offset if the session has a start offset
-          if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
-            playbackOffsetRef.current = response.startOffset;
-            sessionBufferEndRef.current = response.startOffset;
-            // Use actualStartOffset for subtitle sync (keyframe-aligned)
-            actualPlaybackOffsetRef.current =
-              typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
-                ? response.actualStartOffset
-                : response.startOffset;
-          }
-
-          // Restore the video URL - this will trigger the video to load
-          setCurrentMovieUrl(playlistWithKey);
-          setPauseTeardownActive(false);
-          setPauseTeardownFrame(null);
-        } catch (error) {
-          console.error('[player] pause teardown: failed to restore session', error);
-          setPauseTeardownActive(false);
-          setPauseTeardownFrame(null);
-          showToast('Failed to resume playback', { tone: 'danger' });
-        }
-      };
-
-      restoreSession();
-    }
-  }, [paused, pauseTeardownActive, initialSourcePath, routeHasDolbyVision, routeDvProfile, routeHasHDR10, forceAacFromRoute, showToast]);
-
   // Check if the current URL is already an HLS session playlist (not just the /hls/start endpoint)
   // Session playlist URLs look like: /video/hls/{sessionId}/stream.m3u8
   // We should NOT create a new session if we already have a playlist URL
@@ -1057,20 +871,19 @@ export default function PlayerScreen() {
   const hideControlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref for extending controls visibility (used by subtitle offset buttons)
   const extendControlsVisibilityRef = useRef<(() => void) | null>(null);
-  // Track the current HLS session ID for keepalive pings when paused
-  const hlsSessionIdRef = useRef<string | null>(null);
+  // Note: hlsSessionIdRef is now provided by useHlsSession hook
   const currentTimeRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
   const nowPlayingLastUpdateRef = useRef<number>(0); // Throttle iOS Now Playing updates
   const playbackOffsetRef = useRef<number>(initialStartOffset);
   const actualPlaybackOffsetRef = useRef<number>(initialStartOffset); // Keyframe-aligned start for subtitle sync
-  const sessionBufferEndRef = useRef<number>(initialStartOffset);
+  // Note: sessionBufferEndRef is now provided by useHlsSession hook
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoEndedNaturallyRef = useRef(false); // Track if video ended naturally (vs user exit)
   const userNavigatedToEpisodeRef = useRef(false); // Track if user explicitly navigated (via Next/Prev button)
   const warmStartDebounceResolveRef = useRef<((value: boolean) => void) | null>(null);
-  const pendingSessionSeekRef = useRef<number | null>(null);
+  // Note: pendingSessionSeekRef is now provided by useHlsSession hook
   const pendingSeekAttemptRef = useRef<{ attempts: number; lastAttemptMs: number }>({
     attempts: 0,
     lastAttemptMs: 0,
@@ -1078,12 +891,7 @@ export default function PlayerScreen() {
   const hasAttemptedInitialWarmStartRef = useRef(false);
   const hasReceivedPlayerLoadRef = useRef(false);
   const hlsSessionRetryCountRef = useRef(0);
-  // Track when we're recreating HLS sessions (for track change or seek) vs loading a new video
-  // When true, the reset effect should preserve current track selections
-  const isRecreatingHlsSessionRef = useRef(false);
-  // Track when we should skip re-applying language preferences in metadata effect
-  // Set when recreating HLS sessions, cleared after metadata effect runs
-  const skipTrackPreferencesRef = useRef(false);
+  // Note: isRecreatingHlsSessionRef and skipTrackPreferencesRef are now provided by useHlsSession hook
   const isRetryingHlsSessionRef = useRef(false);
   const isSeekingRef = useRef<boolean>(false);
   const pausedForSeekRef = useRef<boolean>(false); // Track if we paused for HLS session seek or track switching
@@ -1126,6 +934,95 @@ export default function PlayerScreen() {
 
   // Setup playback progress tracking
   const { activeUserId, activeUser } = useUserProfiles();
+
+  // Refs for HLS session callbacks (populated later, accessed by callbacks)
+  const playbackOffsetCallbackRef = useRef<((offset: number) => void) | null>(null);
+  const fatalErrorCallbackRef = useRef<((error: string) => void) | null>(null);
+
+  // Initialize HLS session hook for managing session lifecycle
+  const [hlsSessionState, hlsSessionActions, hlsSessionRefs] = useHlsSession({
+    sourcePath: initialSourcePath || '',
+    initialPlaylistUrl: resolvedMovie && String(resolvedMovie).includes('/video/hls/') ? resolvedMovie : undefined,
+    initialStartOffset,
+    hasDolbyVision: routeHasDolbyVision,
+    dolbyVisionProfile: routeDvProfile || undefined,
+    hasHDR10: routeHasHDR10,
+    forceAAC: forceAacFromRoute,
+    profileId: activeUserId ?? undefined,
+    profileName: activeUser?.name,
+    onOffsetCorrection: useCallback((serverOffset: number) => {
+      playbackOffsetCallbackRef.current?.(serverOffset);
+    }, []),
+    onFatalError: useCallback((error: string) => {
+      fatalErrorCallbackRef.current?.(error);
+    }, []),
+  });
+
+  // Destructure commonly used refs from the hook for easier access
+  const {
+    sessionIdRef: hlsSessionIdRef,
+    sessionBufferEndRef,
+    isRecreatingRef: isRecreatingHlsSessionRef,
+    skipTrackPreferencesRef,
+    pendingSeekRef: pendingSessionSeekRef,
+  } = hlsSessionRefs;
+
+  // Pause teardown restoration: When user resumes after teardown, create a new HLS session
+  // Note: This effect must be after useHlsSession initialization as it uses hlsSessionActions
+  useEffect(() => {
+    if (!paused && pauseTeardownActive && initialSourcePath) {
+      console.log('[player] pause teardown: resuming from teardown, creating new HLS session', {
+        savedTime: pauseTeardownTimeRef.current,
+      });
+
+      // Create new HLS session starting from saved time
+      const restoreSession = async () => {
+        try {
+          // Update hook's track refs with current player selections
+          hlsSessionRefs.audioTrackRef.current = selectedAudioTrackIndexRef.current ?? undefined;
+          hlsSessionRefs.subtitleTrackRef.current = selectedSubtitleTrackIndexRef.current ?? undefined;
+
+          // Use the hook's createSession for consistent session management
+          const response = await hlsSessionActions.createSession(pauseTeardownTimeRef.current, {
+            audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
+            subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
+          });
+
+          if (!response) {
+            throw new Error('Failed to create session');
+          }
+
+          console.log('[player] pause teardown: restored HLS session', {
+            playlistUrl: response.playlistUrl,
+            startOffset: response.startOffset,
+            actualStartOffset: response.actualStartOffset,
+          });
+
+          // Update playback offset if the session has a start offset
+          if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
+            playbackOffsetRef.current = response.startOffset;
+            // Use actualStartOffset for subtitle sync (keyframe-aligned)
+            actualPlaybackOffsetRef.current =
+              typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
+                ? response.actualStartOffset
+                : response.startOffset;
+          }
+
+          // Restore the video URL - this will trigger the video to load
+          setCurrentMovieUrl(response.playlistUrl);
+          setPauseTeardownActive(false);
+          setPauseTeardownFrame(null);
+        } catch (error) {
+          console.error('[player] pause teardown: failed to restore session', error);
+          setPauseTeardownActive(false);
+          setPauseTeardownFrame(null);
+          showToast('Failed to resume playback', { tone: 'danger' });
+        }
+      };
+
+      restoreSession();
+    }
+  }, [paused, pauseTeardownActive, initialSourcePath, showToast, hlsSessionActions, hlsSessionRefs]);
 
   // Build media item ID based on type using stable identifiers
   const mediaItemId = useMemo(() => {
@@ -1188,20 +1085,36 @@ export default function PlayerScreen() {
   });
 
   // Extract HLS session ID from existing playlist URL (for sessions created by details screen)
+  // Note: The useHlsSession hook handles initial extraction, this syncs runtime changes
   useEffect(() => {
     if (!isExistingHlsSession || !effectiveMovie) {
       return;
     }
     // URL format: /video/hls/{sessionId}/stream.m3u8
     const match = String(effectiveMovie).match(/\/video\/hls\/([^/]+)\/stream\.m3u8/);
-    if (match && match[1]) {
+    if (match && match[1] && hlsSessionIdRef.current !== match[1]) {
       hlsSessionIdRef.current = match[1];
       console.log('[player] extracted HLS session ID from URL:', match[1]);
     }
-  }, [isExistingHlsSession, effectiveMovie]);
+  }, [isExistingHlsSession, effectiveMovie, hlsSessionIdRef]);
 
   // Track if we've already shown a fatal error alert (to prevent duplicate alerts)
   const hasShownFatalErrorRef = useRef(false);
+
+  // Set up callback refs for HLS session hook
+  useEffect(() => {
+    playbackOffsetCallbackRef.current = (serverOffset: number) => {
+      playbackOffsetRef.current = serverOffset;
+    };
+    fatalErrorCallbackRef.current = (error: string) => {
+      if (!hasShownFatalErrorRef.current) {
+        hasShownFatalErrorRef.current = true;
+        console.warn('[player] HLS session fatal error:', error);
+        showToast(`Stream error: ${error}`, { tone: 'danger', duration: 5000 });
+        router.back();
+      }
+    };
+  }, [showToast, router]);
 
   // Send keepalive pings and poll for session status to detect stream errors
   // The backend kills FFmpeg after 30s of no segment requests, but players buffer aggressively
@@ -1219,58 +1132,31 @@ export default function PlayerScreen() {
         return;
       }
 
-      // Send keepalive ping with current playback time for rate limiting
-      // Also send bufferStart (using currentTime as approximation since players buffer from current position forward)
-      // Backend uses this to avoid deleting segments the player still needs
-      // Response includes segment timing info for accurate subtitle sync
-      try {
-        const response = await apiService.keepaliveHlsSession(
-          sessionId,
-          currentTimeRef.current,
-          currentTimeRef.current,
-        );
-        // Validate playback offset matches server's startOffset
-        // This catches any desync between frontend and backend
-        if (response.startOffset !== undefined) {
-          const offsetDelta = Math.abs(response.startOffset - playbackOffsetRef.current);
-          if (offsetDelta > 0.5) {
-            console.warn('[player] keepalive: playback offset mismatch, correcting', {
-              serverStartOffset: response.startOffset,
-              clientPlaybackOffset: playbackOffsetRef.current,
-              segmentDuration: response.segmentDuration,
-              delta: offsetDelta,
-            });
-            playbackOffsetRef.current = response.startOffset;
-          } else {
-            // Log periodically to confirm sync is working (every 60s worth of keepalives)
-            if (Math.floor(currentTimeRef.current / 60) !== Math.floor((currentTimeRef.current - 10) / 60)) {
-              console.log('[player] keepalive: segment timing in sync', {
-                startOffset: response.startOffset,
-                segmentDuration: response.segmentDuration,
-                currentTime: currentTimeRef.current,
-              });
-            }
-          }
+      // Send keepalive ping using the hook's method (includes offset validation)
+      const keepaliveResponse = await hlsSessionActions.keepalive(
+        currentTimeRef.current,
+        currentTimeRef.current,
+      );
+
+      // Log periodically to confirm sync is working (every 60s worth of keepalives)
+      if (keepaliveResponse?.startOffset !== undefined) {
+        if (Math.floor(currentTimeRef.current / 60) !== Math.floor((currentTimeRef.current - 10) / 60)) {
+          console.log('[player] keepalive: segment timing in sync', {
+            startOffset: keepaliveResponse.startOffset,
+            segmentDuration: keepaliveResponse.segmentDuration,
+            currentTime: currentTimeRef.current,
+          });
         }
-      } catch (error) {
-        console.warn('[player] keepalive ping failed:', error);
       }
 
       // Poll for session status to detect fatal errors
-      try {
-        const status = await apiService.getHlsSessionStatus(sessionId);
-
-        if (status.status === 'error' && status.fatalError && !hasShownFatalErrorRef.current) {
-          hasShownFatalErrorRef.current = true;
-          console.warn('[player] HLS session fatal error:', status.fatalError);
-
-          // Show error toast and navigate back
-          showToast(`Stream error: ${status.fatalError}`, { tone: 'danger', duration: 5000 });
-          router.back();
-        }
-      } catch (error) {
-        // Status check failed - might be session expired, not necessarily an error
-        console.debug('[player] status check failed:', error);
+      // Note: Fatal errors are also handled by the hook's onFatalError callback
+      const status = await hlsSessionActions.getStatus();
+      if (status?.status === 'error' && status.fatalError && !hasShownFatalErrorRef.current) {
+        hasShownFatalErrorRef.current = true;
+        console.warn('[player] HLS session fatal error:', status.fatalError);
+        showToast(`Stream error: ${status.fatalError}`, { tone: 'danger', duration: 5000 });
+        router.back();
       }
     }, 10000);
 
@@ -1281,7 +1167,7 @@ export default function PlayerScreen() {
       clearInterval(intervalId);
       hasShownFatalErrorRef.current = false;
     };
-  }, [isHlsStream]);
+  }, [isHlsStream, hlsSessionActions, hlsSessionIdRef, showToast, router]);
 
   useEffect(() => {
     setCurrentMovieUrl(resolvedMovie ?? null);
@@ -1458,7 +1344,6 @@ export default function PlayerScreen() {
   const [playerImplementation, setPlayerImplementation] = useState<VideoImplementation | 'unknown'>('unknown');
   const usesSystemManagedControls = useMemo(() => {
     // Never use system controls - we always want custom controls for track selection
-    // Previously: prefersSystemControls && playerImplementation !== 'vlc'
     return false;
   }, [prefersSystemControls, playerImplementation]);
   const shouldAutoHideControls = !usesSystemManagedControls;
@@ -1744,14 +1629,8 @@ export default function PlayerScreen() {
 
   const playerImplementationLabel = useMemo(() => {
     switch (playerImplementation) {
-      case 'vlc':
-        return 'React Native VLC';
       case 'rnv':
         return 'React Native Video';
-      case 'expo':
-        return 'Expo Video';
-      case 'web':
-        return 'Web Player';
       case 'mobile-system':
         return 'System Player';
       default:
@@ -2146,135 +2025,65 @@ export default function PlayerScreen() {
       setIsVideoBuffering(true);
 
       try {
-        // Use refs to get current track indices (avoids stale closure values)
-        const currentAudioTrack = selectedAudioTrackIndexRef.current;
-        const currentSubtitleTrack = selectedSubtitleTrackIndexRef.current;
-
-        // Check if we have an existing session - use seek endpoint for faster response
-        const existingSessionId = hlsSessionIdRef.current;
-        let response: { sessionId: string; playlistUrl: string; duration?: number; startOffset?: number; actualStartOffset?: number };
-
-        if (existingSessionId) {
-          console.log('[player] seeking within existing HLS session', {
-            sessionId: existingSessionId,
-            targetTime: safeTarget,
-          });
-
-          // CRITICAL: Clear the video source BEFORE calling seek API.
-          // This stops iOS AVPlayer from trying to access segments that the backend
-          // is about to delete. Without this, the player errors with -12312 because
-          // it tries to prefetch segments from the old (now-deleted) playlist.
-          // Use empty string (not null) to prevent fallback to resolvedMovie.
+        // CRITICAL: Clear the video source BEFORE calling seek API.
+        // This stops iOS AVPlayer from trying to access segments that the backend
+        // is about to delete. Without this, the player errors with -12312 because
+        // it tries to prefetch segments from the old (now-deleted) playlist.
+        // Use empty string (not null) to prevent fallback to resolvedMovie.
+        if (hlsSessionIdRef.current) {
           console.log('[player] clearing video source before seek to prevent race condition');
           // Mark recreation flags BEFORE clearing URL to prevent race condition where
           // isHlsStream becomes false and triggers subtitle probe effect for SDR content
-          isRecreatingHlsSessionRef.current = true;
-          skipTrackPreferencesRef.current = true;
+          hlsSessionActions.setRecreating(true);
+          hlsSessionActions.setSkipTrackPreferences(true);
           setCurrentMovieUrl('');
+        }
 
-          try {
-            const seekResponse = await apiService.seekHlsSession(existingSessionId, safeTarget);
-            response = {
-              sessionId: seekResponse.sessionId,
-              playlistUrl: seekResponse.playlistUrl,
-              duration: seekResponse.duration,
-              startOffset: seekResponse.startOffset,
-              actualStartOffset: seekResponse.actualStartOffset, // For subtitle sync
-            };
-            console.log('[player] HLS seek completed', { response });
-          } catch (seekError) {
-            console.warn('[player] HLS seek failed, falling back to new session', seekError);
-            // Fall through to create new session
-            const newSessionResponse = await apiService.createHlsSession({
-              path: trimmedPath,
-              dv: routeHasDolbyVision,
-              dvProfile: routeDvProfile || undefined,
-              hdr: routeHasHDR10,
-              forceAAC: forceAacFromRoute,
-              start: safeTarget,
-              audioTrack: currentAudioTrack ?? undefined,
-              subtitleTrack: currentSubtitleTrack ?? undefined,
-              profileId: activeUserId ?? undefined,
-              profileName: activeUser?.name,
-            });
-            response = newSessionResponse;
-            hlsSessionIdRef.current = response.sessionId;
+        // Use refs to get current track indices (avoids stale closure values)
+        const currentAudioTrack = selectedAudioTrackIndexRef.current ?? undefined;
+        const currentSubtitleTrack = selectedSubtitleTrackIndexRef.current ?? undefined;
+
+        // Update the hook's track refs before seeking
+        hlsSessionRefs.audioTrackRef.current = currentAudioTrack;
+        hlsSessionRefs.subtitleTrackRef.current = currentSubtitleTrack;
+
+        // Use the hook's seek method which handles API calls and session management
+        const response = await hlsSessionActions.seek(safeTarget);
+
+        if (!response) {
+          console.error('🚨 Failed to warm start HLS session: no response');
+          if (warmStartTokenRef.current === token) {
+            setIsVideoBuffering(false);
           }
-        } else {
-          console.log('[player] creating new HLS session with tracks', {
-            audioTrack: currentAudioTrack,
-            subtitleTrack: currentSubtitleTrack,
-            audioTrackType: typeof currentAudioTrack,
-            subtitleTrackType: typeof currentSubtitleTrack,
-          });
-
-          response = await apiService.createHlsSession({
-            path: trimmedPath,
-            dv: routeHasDolbyVision,
-            dvProfile: routeDvProfile || undefined,
-            hdr: routeHasHDR10,
-            forceAAC: forceAacFromRoute,
-            start: safeTarget,
-            audioTrack: currentAudioTrack ?? undefined,
-            subtitleTrack: currentSubtitleTrack ?? undefined,
-            profileId: activeUserId ?? undefined,
-            profileName: activeUser?.name,
-          });
-
-          // Store session ID for keepalive pings when paused
-          hlsSessionIdRef.current = response.sessionId;
+          return false;
         }
 
         if (warmStartTokenRef.current !== token) {
           return true;
         }
 
-        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const playlistBase = `${baseUrl}${response.playlistUrl}`;
-        const existingToken = (() => {
-          try {
-            if (!effectiveMovie) {
-              return '';
-            }
-            const currentUrl = new URL(String(effectiveMovie));
-            const token = currentUrl.searchParams.get('token');
-            return token ? token.trim() : '';
-          } catch {
-            return '';
-          }
-        })();
-        const authToken = apiService.getAuthToken() || existingToken;
-        // Add cache-busting parameter to force player to reload playlist after seek
-        // iOS AVPlayer caches HLS playlists and won't reload if URL is identical
-        const cacheBuster = `_t=${Date.now()}`;
-        const playlistWithKey = authToken
-          ? `${playlistBase}?token=${encodeURIComponent(authToken)}&${cacheBuster}`
-          : `${playlistBase}?${cacheBuster}`;
+        const sessionStart = response.startOffset ?? safeTarget;
+        const actualSessionStart = response.actualStartOffset ?? sessionStart;
 
-        const sessionStart =
-          typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
-        // Use actualStartOffset for subtitle sync (keyframe-aligned), fallback to sessionStart
-        const actualSessionStart =
-          typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
-            ? response.actualStartOffset
-            : sessionStart;
         console.log('[player] warmStartHLS setting offsets', {
           responseStartOffset: response.startOffset,
           responseActualStartOffset: response.actualStartOffset,
           sessionStart,
           actualSessionStart,
           safeTarget,
-          playlistUrl: playlistWithKey,
+          playlistUrl: response.playlistUrl?.substring(0, 80),
         });
+
+        // Update player-specific offset refs (not managed by hook)
         playbackOffsetRef.current = sessionStart;
         actualPlaybackOffsetRef.current = actualSessionStart; // For subtitle sync
-        sessionBufferEndRef.current = sessionStart;
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
-        const pendingSeek = Math.max(0, safeTarget - sessionStart);
-        pendingSessionSeekRef.current = pendingSeek > 0.5 ? pendingSeek : null;
+
+        // Reset pending seek attempt tracking
         pendingSeekAttemptRef.current.attempts = 0;
         pendingSeekAttemptRef.current.lastAttemptMs = 0;
+
         console.log(
           '[player] warmStartHLS set playbackOffsetRef.current =',
           playbackOffsetRef.current,
@@ -2285,13 +2094,14 @@ export default function PlayerScreen() {
         );
         console.log('[player] warmStartHLS subtitle transition', {
           newSubtitleTimeOffset: -actualPlaybackOffsetRef.current,
-          newPlaylistUrl: playlistWithKey.substring(0, 80),
-          newSubtitleUrl: playlistWithKey.replace(/stream\.m3u8/, 'subtitles.vtt').substring(0, 80),
+          newPlaylistUrl: response.playlistUrl?.substring(0, 80),
+          newSubtitleUrl: response.playlistUrl?.replace(/stream\.m3u8/, 'subtitles.vtt').substring(0, 80),
         });
+
         // Mark that we're recreating HLS session to preserve track selections
-        isRecreatingHlsSessionRef.current = true;
-        skipTrackPreferencesRef.current = true;
-        setCurrentMovieUrl(playlistWithKey);
+        hlsSessionActions.setRecreating(true);
+        hlsSessionActions.setSkipTrackPreferences(true);
+        setCurrentMovieUrl(response.playlistUrl);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
         // Reset progress event counter for fresh debug logs after seek
@@ -2312,16 +2122,13 @@ export default function PlayerScreen() {
       }
     },
     [
-      effectiveMovie,
-      forceAacFromRoute,
       isHlsStream,
-      routeDvProfile,
-      routeHasDolbyVision,
-      routeHasHDR10,
       sourcePath,
       updateDuration,
-      // Note: We use refs (selectedAudioTrackIndexRef, selectedSubtitleTrackIndexRef)
-      // instead of direct values to avoid stale closure issues during seek
+      hlsSessionActions,
+      hlsSessionRefs,
+      hlsSessionIdRef,
+      pendingSessionSeekRef,
     ],
   );
 
@@ -3458,44 +3265,33 @@ export default function PlayerScreen() {
         );
 
         try {
-          // Create a fresh HLS session - this will get a new session ID
+          // Update hook's track refs with current player selections
+          hlsSessionRefs.audioTrackRef.current = selectedAudioTrackIndexRef.current ?? undefined;
+          hlsSessionRefs.subtitleTrackRef.current = selectedSubtitleTrackIndexRef.current ?? undefined;
+
+          // Create a fresh HLS session using the hook - this will get a new session ID
           // The server may have restarted FFmpeg with different codec parameters (DV fallback)
-          const response = await apiService.createHlsSession({
-            path: initialSourcePath,
-            dv: routeHasDolbyVision,
-            dvProfile: routeDvProfile || undefined,
-            hdr: routeHasHDR10,
-            forceAAC: forceAacFromRoute,
-            start: currentTimeRef.current, // Resume from current position
+          const response = await hlsSessionActions.createSession(currentTimeRef.current, {
             audioTrack: selectedAudioTrackIndexRef.current ?? undefined,
             subtitleTrack: selectedSubtitleTrackIndexRef.current ?? undefined,
-            profileId: activeUserId ?? undefined,
-            profileName: activeUser?.name,
           });
 
-          // Store session ID for keepalive pings when paused
-          hlsSessionIdRef.current = response.sessionId;
-
-          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-          const playlistBase = `${baseUrl}${response.playlistUrl}`;
-          const authToken = apiService.getAuthToken();
-          const playlistWithKey = authToken
-            ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
-            : playlistBase;
+          if (!response) {
+            throw new Error('Failed to create retry session');
+          }
 
           console.log('[player] created new HLS session for retry', {
-            playlistUrl: playlistWithKey,
+            playlistUrl: response.playlistUrl,
             startOffset: response.startOffset,
             actualStartOffset: response.actualStartOffset,
           });
 
           // Update the video source to the new session
-          setCurrentMovieUrl(playlistWithKey);
+          setCurrentMovieUrl(response.playlistUrl);
 
           // Update playback offset if the session has a start offset
           if (typeof response.startOffset === 'number' && response.startOffset >= 0) {
             playbackOffsetRef.current = response.startOffset;
-            sessionBufferEndRef.current = response.startOffset;
             // Use actualStartOffset for subtitle sync (keyframe-aligned)
             actualPlaybackOffsetRef.current =
               typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
@@ -3520,7 +3316,7 @@ export default function PlayerScreen() {
       showToast(`Playback error: ${errorMessage}`, { tone: 'danger', duration: 5000 });
       router.back();
     },
-    [isHlsStream, initialSourcePath, routeHasDolbyVision, routeDvProfile, routeHasHDR10, forceAacFromRoute, showToast],
+    [isHlsStream, initialSourcePath, showToast, hlsSessionActions, hlsSessionRefs],
   );
 
   const handleVideoEnd = useCallback(() => {
@@ -3628,7 +3424,7 @@ export default function PlayerScreen() {
 
   const handleTracksAvailable = useCallback(
     (audioTracks: TrackInfo[], subtitleTracks: TrackInfo[]) => {
-      console.log('[player] player tracks available (VLC/Expo)', { audioTracks, subtitleTracks });
+      console.log('[player] player tracks available', { audioTracks, subtitleTracks });
 
       // Build track options from player-reported tracks, filtering out "Disable" options
       const playerAudioOptions: TrackOption[] = audioTracks
@@ -3653,7 +3449,7 @@ export default function PlayerScreen() {
         setSelectedAudioTrackId(playerAudioOptions[0]?.id ?? null);
       }
 
-      // Only use VLC's subtitle tracks if we don't have backend-probed tracks
+      // Only use player-reported subtitle tracks if we don't have backend-probed tracks
       // For non-HLS streams, backend tracks are more reliable (correct indices)
       if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && !backendSubtitleTracks) {
         const mergedSubtitles = [SUBTITLE_OFF_OPTION, ...playerSubtitleOptions];
@@ -3924,20 +3720,20 @@ export default function PlayerScreen() {
             setSelectedSubtitleTrackId('off');
           } else {
             // No preferred language set - check if current selection is valid
-            // This handles the race condition where VLC set an invalid track id
+            // This handles the race condition where the player set an invalid track id
             setSelectedSubtitleTrackId((current) => {
               if (current && validTrackIds.has(current)) {
                 return current; // Current selection is valid, keep it
               }
-              // Current selection is invalid (from VLC), default to first track or off
+              // Current selection is invalid, default to first track or off
               const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
               return firstTrackId;
             });
           }
         } else {
           // No text-based subtitle tracks found (e.g., only PGS bitmap subs)
-          // Clear any VLC-reported tracks and show only "Off" option
-          console.log('[player] no text-based subtitle tracks found, clearing VLC-reported tracks');
+          // Clear any player-reported tracks and show only "Off" option
+          console.log('[player] no text-based subtitle tracks found, clearing player-reported tracks');
           setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
           setSelectedSubtitleTrackId('off');
         }
@@ -3966,7 +3762,7 @@ export default function PlayerScreen() {
     }
 
     // Wait for backend probe to complete before starting extraction
-    // This prevents race condition where VLC reports incorrect track indices
+    // This prevents race condition where the player reports incorrect track indices
     if (backendSubtitleTracks === null) {
       console.log('[player] subtitle extraction waiting for backend probe');
       return;
@@ -3984,7 +3780,7 @@ export default function PlayerScreen() {
     }
 
     // Validate track index is within range of backend-probed tracks
-    // This prevents race condition where VLC reports absolute stream indices (e.g., 14)
+    // This prevents race condition where the player reports absolute stream indices (e.g., 14)
     // before the backend probe completes and sets correct relative indices (0-4)
     if (selectedSubtitleTrackIndex >= backendSubtitleTracks.length) {
       console.log('[player] subtitle extraction skipped - track index out of range', {
@@ -4262,47 +4058,28 @@ export default function PlayerScreen() {
           subtitleTrackType: typeof selectedSubtitleTrackIndex,
         });
 
-        const response = await apiService.createHlsSession({
-          path: trimmedPath,
-          dv: routeHasDolbyVision,
-          dvProfile: routeDvProfile || undefined,
-          hdr: routeHasHDR10,
-          forceAAC: forceAacFromRoute,
-          start: safeTarget,
+        // Use hook's createSession for consistent session management
+        const response = await hlsSessionActions.createSession(safeTarget, {
           audioTrack: selectedAudioTrackIndex ?? undefined,
           subtitleTrack: selectedSubtitleTrackIndex ?? undefined,
-          profileId: activeUserId ?? undefined,
-          profileName: activeUser?.name,
           trackSwitch: true, // Skip waiting for first segment for faster track switching
         });
 
-        // Store session ID for keepalive pings when paused
-        hlsSessionIdRef.current = response.sessionId;
+        if (!response) {
+          throw new Error('Failed to create session');
+        }
 
-        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const playlistBase = `${baseUrl}${response.playlistUrl}`;
-        const authToken = apiService.getAuthToken();
-        const playlistWithKey = authToken
-          ? `${playlistBase}${playlistBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}`
-          : playlistBase;
-
-        const sessionStart =
-          typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
-        // Use actualStartOffset for subtitle sync (keyframe-aligned), fallback to sessionStart
-        const actualSessionStart =
-          typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
-            ? response.actualStartOffset
-            : sessionStart;
+        const sessionStart = response.startOffset ?? safeTarget;
+        const actualSessionStart = response.actualStartOffset ?? sessionStart;
 
         playbackOffsetRef.current = sessionStart;
         actualPlaybackOffsetRef.current = actualSessionStart; // For subtitle sync
-        sessionBufferEndRef.current = sessionStart;
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
         // Mark that we're recreating HLS session to preserve track selections
-        isRecreatingHlsSessionRef.current = true;
-        skipTrackPreferencesRef.current = true;
-        setCurrentMovieUrl(playlistWithKey);
+        hlsSessionActions.setRecreating(true);
+        hlsSessionActions.setSkipTrackPreferences(true);
+        setCurrentMovieUrl(response.playlistUrl);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
         // Reset progress event counter for fresh debug logs after track change
@@ -4319,7 +4096,7 @@ export default function PlayerScreen() {
           sessionStart,
           actualSessionStart,
           responseStartOffset: response.startOffset,
-          newPlaylistUrl: playlistWithKey.substring(0, 100),
+          newPlaylistUrl: response.playlistUrl?.substring(0, 100),
           subtitleTrackIndex: selectedSubtitleTrackIndex,
           willUseNewVttUrl: true,
         });
@@ -4343,14 +4120,11 @@ export default function PlayerScreen() {
     selectedSubtitleTrackIndex,
     isHlsStream,
     sourcePath,
-    routeHasDolbyVision,
-    routeHasHDR10,
     audioTrackOptions.length,
     subtitleTrackOptions.length,
-    routeDvProfile,
-    forceAacFromRoute,
     updateDuration,
     applyPendingSessionSeek,
+    hlsSessionActions,
   ]);
 
   const styles = useMemo(() => createPlayerStyles(theme), [theme]);
@@ -4414,6 +4188,9 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     let isMounted = true;
+    // Capture the skip flag at effect start, before async operations
+    // This prevents race conditions where handleLoad clears the flag before the async fetch completes
+    const shouldSkipPreferencesAtStart = skipTrackPreferencesRef.current;
 
     const fetchMetadata = async () => {
       try {
@@ -4446,8 +4223,6 @@ export default function PlayerScreen() {
                 '[player] HLS URL detected - no sourcePath available, skipping metadata fetch',
                 resolvedMovie,
               );
-              // TEMPORARILY DISABLED - testing VLC for all content
-              // setHasDolbyVision(true);
               return;
             }
           } else {
@@ -4462,17 +4237,6 @@ export default function PlayerScreen() {
         if (!isMounted) {
           return;
         }
-
-        // Detect Dolby Vision content
-        // TEMPORARILY DISABLED - testing VLC for all content
-        // const isDV = detectDolbyVision(metadata);
-        // setHasDolbyVision(isDV);
-        // if (isDV) {
-        //   console.log('🎬 Dolby Vision detected - using Expo player for DV support', {
-        //     videoStreams: metadata.videoStreams,
-        //     primaryStream: metadata.videoStreams?.[0],
-        //   });
-        // }
 
         // Extract video color metadata for HDR info display
         if (metadata.videoStreams && metadata.videoStreams.length > 0) {
@@ -4537,10 +4301,10 @@ export default function PlayerScreen() {
 
         // When recreating HLS sessions (seek/track change), skip re-applying language preferences
         // The current track selections should be preserved from the previous session
-        const shouldSkipTrackPreferences = skipTrackPreferencesRef.current;
-        if (shouldSkipTrackPreferences) {
+        // Use the captured value from effect start to handle async timing - by the time this runs,
+        // handleLoad may have already cleared skipTrackPreferencesRef, but we captured it earlier.
+        if (shouldSkipPreferencesAtStart) {
           console.log('[player] HLS session recreation - skipping track preference application');
-          skipTrackPreferencesRef.current = false;
           // Still build and set audio options so the track menu shows correctly
           const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
           setAudioTrackOptions(audioOptions);
@@ -4883,12 +4647,10 @@ export default function PlayerScreen() {
               onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
               onImplementationResolved={handleImplementationResolved}
               selectedAudioTrackIndex={isHlsStream ? undefined : selectedAudioTrackIndex}
-              // Always disable VLC's built-in subtitles - we use SubtitleOverlay for consistent sizing
+              // Always disable player's built-in subtitles - we use SubtitleOverlay for consistent sizing
               selectedSubtitleTrackIndex={undefined}
               onTracksAvailable={handleTracksAvailable}
-              // TESTING: Force react-native-video for ALL content (normally only HDR uses rnv)
-              // Original: forceRnvPlayer={hasAnyHDR} - VLC tone-maps HDR to SDR so we use rnv for HDR
-              // Exception: Live TV uses system player, not rnv
+              // Force react-native-video for all content (exception: Live TV uses system player)
               forceRnvPlayer={!isLiveTV}
               forceNativeFullscreen={Platform.OS !== 'web' && hasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
@@ -4957,10 +4719,10 @@ export default function PlayerScreen() {
             />
           )}
 
-          {/* Extracted subtitle overlay for non-HLS streams (VLC direct playback) */}
+          {/* Extracted subtitle overlay for non-HLS streams (direct playback) */}
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
           {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
-          {/* timeOffset: -firstCueTime to align VTT cues with VLC position, -subtitleOffset for user adjustment */}
+          {/* timeOffset: -firstCueTime to align VTT cues with player position, -subtitleOffset for user adjustment */}
           {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && (
             <SubtitleOverlay
               vttUrl={extractedSubtitleUrl}

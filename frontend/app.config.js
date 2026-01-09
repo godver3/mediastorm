@@ -56,7 +56,6 @@ module.exports = ({ config }) => {
         },
       },
     ],
-    'expo-video',
   ];
 
   // Add dev-client for non-TV builds only (tvOS doesn't support it well)
