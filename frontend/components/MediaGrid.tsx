@@ -23,17 +23,6 @@ import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-// Helper to check if a badge should be shown
-const shouldShowBadge = (badgeType: string, visibility?: string[]): boolean => {
-  const implementedBadges = ['watchProgress', 'releaseStatus'];
-  if (!implementedBadges.includes(badgeType)) {
-    return false;
-  }
-  const DEFAULT_BADGE_VISIBILITY = ['watchProgress'];
-  const badges = visibility ?? DEFAULT_BADGE_VISIBILITY;
-  return badges.includes(badgeType);
-};
-
 type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
 
 interface MediaGridProps {
@@ -245,6 +234,16 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
       fontWeight: '700',
       fontSize: 10,
       letterSpacing: 0.5,
+    },
+    // Release status badge (top-left)
+    releaseStatusBadge: {
+      position: 'absolute',
+      top: theme.spacing.xs,
+      left: theme.spacing.xs,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
     },
     cardTextContainer: {
       position: 'absolute',
@@ -460,20 +459,23 @@ const MediaGrid = React.memo(
                             <Text style={styles.placeholderImageText}>No Image</Text>
                           </View>
                         )}
+                        {/* Release status badge (top-left) for movies */}
+                        {item.mediaType === 'movie' && (() => {
+                          const releaseIcon = getMovieReleaseIcon(item);
+                          return releaseIcon ? (
+                            <View style={styles.releaseStatusBadge}>
+                              <MaterialCommunityIcons
+                                name={releaseIcon.name}
+                                size={14}
+                                color={releaseIcon.color}
+                              />
+                            </View>
+                          ) : null;
+                        })()}
+                        {/* Media type badge (top-right) */}
                         {item.mediaType && item.mediaType !== 'explore' && (
                           <View style={styles.badge}>
-                            {item.mediaType === 'movie' && shouldShowBadge('releaseStatus', badgeVisibility) && getMovieReleaseIcon(item) ? (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                                <MaterialCommunityIcons
-                                  name={getMovieReleaseIcon(item)!.name}
-                                  size={10}
-                                  color={getMovieReleaseIcon(item)!.color}
-                                />
-                                <Text style={styles.badgeText}>MOVIE</Text>
-                              </View>
-                            ) : (
-                              <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
-                            )}
+                            <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
                           </View>
                         )}
                         <View style={styles.cardTextContainer}>
