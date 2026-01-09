@@ -1821,6 +1821,7 @@ export default function DetailsScreen() {
       // Build stream URL
       let streamUrl: string;
       let hlsDuration: number | undefined;
+      let hlsActualStartOffset: number | undefined;
 
       // Log the decision factors for HLS path
       console.log('[prequeue] HLS decision factors:', {
@@ -1944,7 +1945,8 @@ export default function DetailsScreen() {
           const authToken = apiService.getAuthToken();
           streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
           hlsDuration = hlsResponse.duration;
-          console.log('[prequeue] Created HLS session, using URL:', streamUrl);
+          hlsActualStartOffset = hlsResponse.actualStartOffset;
+          console.log('[prequeue] Created HLS session, using URL:', streamUrl, 'actualStartOffset:', hlsActualStartOffset);
         } catch (hlsError) {
           console.error('[prequeue] Failed to create HLS session:', hlsError);
           throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
@@ -2030,6 +2032,7 @@ export default function DetailsScreen() {
           ...(prequeueStatus.dolbyVisionProfile ? { dvProfile: prequeueStatus.dolbyVisionProfile } : {}),
           ...(prequeueStatus.needsAudioTranscode ? { forceAAC: '1' } : {}),
           ...(typeof startOffset === 'number' ? { startOffset: String(startOffset) } : {}),
+          ...(typeof hlsActualStartOffset === 'number' ? { actualStartOffset: String(hlsActualStartOffset) } : {}),
           ...(typeof hlsDuration === 'number' ? { durationHint: String(hlsDuration) } : {}),
           ...(titleId ? { titleId } : {}),
           ...(imdbId ? { imdbId } : {}),

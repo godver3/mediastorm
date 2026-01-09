@@ -36,6 +36,7 @@ export interface PlayerParams extends Record<string, any> {
   hdr10?: string;
   forceAAC?: string;
   startOffset?: string;
+  actualStartOffset?: string; // Keyframe-aligned start time for subtitle sync
   titleId?: string;
   imdbId?: string;
   tvdbId?: string;
