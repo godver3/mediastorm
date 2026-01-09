@@ -61,24 +61,6 @@ type VideoProbeResult struct {
 	DolbyVisionProfile string
 }
 
-// AudioStreamInfo contains audio stream metadata for track selection
-type AudioStreamInfo struct {
-	Index    int
-	Codec    string
-	Language string
-	Title    string
-}
-
-// SubtitleStreamInfo contains subtitle stream metadata for track selection
-type SubtitleStreamInfo struct {
-	Index     int
-	Codec     string // e.g., "subrip", "ass" - needed for sidecar VTT extraction
-	Language  string
-	Title     string
-	IsForced  bool
-	IsDefault bool
-}
-
 // VideoMetadataResult contains stream metadata for track selection
 type VideoMetadataResult struct {
 	AudioStreams    []AudioStreamInfo
@@ -515,17 +497,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 						lastErr = probeErr
 						continue
 					}
-					// Check for DV profile 5 (no HDR fallback layer)
-					if probeResult != nil && probeResult.HasDolbyVision {
-						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
-						if dvProfileNum == 5 {
-							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
-								probeResult.DolbyVisionProfile, dvProfileNum)
+					// Check DV profile compatibility using helper
+					if probeResult != nil {
+						if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
+							log.Printf("[prequeue] DV profile %s incompatible with 'hdr' policy: %v, trying next result",
+								probeResult.DolbyVisionProfile, err)
 							resolution = nil
-							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							lastErr = err
 							continue
 						}
-						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+						if probeResult.HasDolbyVision {
+							log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
+						}
 					}
 					cachedProbeResult = probeResult
 				}
@@ -562,17 +545,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 						lastErr = probeErr
 						continue
 					}
-					// Check for DV profile 5 (no HDR fallback layer)
-					if probeResult != nil && probeResult.HasDolbyVision {
-						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
-						if dvProfileNum == 5 {
-							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
-								probeResult.DolbyVisionProfile, dvProfileNum)
+					// Check DV profile compatibility using helper
+					if probeResult != nil {
+						if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
+							log.Printf("[prequeue] DV profile %s incompatible with 'hdr' policy: %v, trying next result",
+								probeResult.DolbyVisionProfile, err)
 							resolution = nil
-							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							lastErr = err
 							continue
 						}
-						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+						if probeResult.HasDolbyVision {
+							log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
+						}
 					}
 					cachedProbeResult = probeResult
 				}
@@ -607,17 +591,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 						lastErr = probeErr
 						continue
 					}
-					// Check for DV profile 5 (no HDR fallback layer)
-					if probeResult != nil && probeResult.HasDolbyVision {
-						dvProfileNum := parseDVProfile(probeResult.DolbyVisionProfile)
-						if dvProfileNum == 5 {
-							log.Printf("[prequeue] DV profile %s (profile %d) incompatible with 'hdr' policy (no HDR fallback), trying next result",
-								probeResult.DolbyVisionProfile, dvProfileNum)
+					// Check DV profile compatibility using helper
+					if probeResult != nil {
+						if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
+							log.Printf("[prequeue] DV profile %s incompatible with 'hdr' policy: %v, trying next result",
+								probeResult.DolbyVisionProfile, err)
 							resolution = nil
-							lastErr = fmt.Errorf("DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer")
+							lastErr = err
 							continue
 						}
-						log.Printf("[prequeue] DV profile %s (profile %d) compatible with 'hdr' policy (has HDR fallback)", probeResult.DolbyVisionProfile, dvProfileNum)
+						if probeResult.HasDolbyVision {
+							log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
+						}
 					}
 					cachedProbeResult = probeResult
 				}
@@ -952,46 +937,15 @@ func (h *PrequeueHandler) StartSubtitles(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Convert playback.SubtitleTrackInfo to handlers.SubtitleTrackInfo
-	tracks := make([]SubtitleTrackInfo, len(entry.SubtitleTracks))
-	for i, t := range entry.SubtitleTracks {
-		tracks[i] = SubtitleTrackInfo{
-			Index:         t.Index,
-			AbsoluteIndex: t.AbsoluteIndex,
-			Language:      t.Language,
-			Title:         t.Title,
-			Codec:         t.Codec,
-			Forced:        t.Forced,
-		}
-	}
+	// Convert playback tracks to handler format and start extraction
+	tracks := ConvertPlaybackTracksToHandler(entry.SubtitleTracks)
 
-	// Start extraction with the provided offset
 	log.Printf("[prequeue] Starting subtitle extraction for %s with %d tracks at offset %.3f",
 		prequeueID, len(tracks), req.StartOffset)
 	sessions := h.subtitleExtractor.StartPreExtraction(r.Context(), entry.StreamPath, tracks, req.StartOffset)
 
-	// Convert sessions to SubtitleSessionInfo
-	sessionInfos := make(map[int]*models.SubtitleSessionInfo)
-	for relativeIdx, session := range sessions {
-		if relativeIdx < 0 || relativeIdx >= len(entry.SubtitleTracks) {
-			continue
-		}
-		track := entry.SubtitleTracks[relativeIdx]
-		session.mu.Lock()
-		firstCueTime := session.FirstCueTime
-		session.mu.Unlock()
-		sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
-			SessionID:    session.ID,
-			VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
-			TrackIndex:   relativeIdx,
-			Language:     track.Language,
-			Title:        track.Title,
-			Codec:        track.Codec,
-			IsForced:     track.Forced,
-			IsExtracting: !session.IsExtractionComplete(),
-			FirstCueTime: firstCueTime,
-		}
-	}
+	// Convert sessions to SubtitleSessionInfo using the playback track metadata
+	sessionInfos := ConvertSessionsFromPlaybackTracks(sessions, entry.SubtitleTracks)
 
 	// Store the sessions in the prequeue entry
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
@@ -1073,177 +1027,12 @@ func (h *PrequeueHandler) createEpisodeResolver(ctx context.Context, titleName s
 	return filter.NewSeriesEpisodeResolver(seasonCounts)
 }
 
-// compatibleAudioCodecs lists codecs that can be played without transcoding
-var compatibleAudioCodecs = map[string]bool{
-	"aac": true, "ac3": true, "eac3": true, "mp3": true,
-}
-
-// isIncompatibleAudioCodec returns true for codecs that need transcoding (TrueHD, DTS, etc.)
-func isIncompatibleAudioCodec(codec string) bool {
-	c := strings.ToLower(strings.TrimSpace(codec))
-	return c == "truehd" || c == "dts" || strings.HasPrefix(c, "dts-") ||
-		c == "dts_hd" || c == "dtshd" || c == "mlp"
-}
-
-// isCommentaryTrack checks if an audio track is a commentary track based on its title
-func isCommentaryTrack(title string) bool {
-	lowerTitle := strings.ToLower(strings.TrimSpace(title))
-	commentaryIndicators := []string{
-		"commentary",
-		"director's commentary",
-		"directors commentary",
-		"audio commentary",
-		"cast commentary",
-		"crew commentary",
-		"isolated score",
-		"music only",
-		"score only",
-	}
-	for _, indicator := range commentaryIndicators {
-		if strings.Contains(lowerTitle, indicator) {
-			return true
-		}
-	}
-	return false
-}
-
-// findAudioTrackByLanguage finds an audio track matching the preferred language
-// Prefers compatible audio codecs (AAC, AC3, etc.) over TrueHD/DTS when multiple tracks exist
-// Skips commentary tracks unless they are the only option
+// findAudioTrackByLanguage wraps the helper function for backward compatibility
 func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, preferredLanguage string) int {
-	if preferredLanguage == "" || len(streams) == 0 {
-		return -1
-	}
-
-	normalizedPref := strings.ToLower(strings.TrimSpace(preferredLanguage))
-
-	// Helper to check if language matches
-	matchesLanguage := func(stream AudioStreamInfo) bool {
-		language := strings.ToLower(strings.TrimSpace(stream.Language))
-		title := strings.ToLower(strings.TrimSpace(stream.Title))
-		// Exact match
-		if language == normalizedPref || title == normalizedPref {
-			return true
-		}
-		// Partial match (skip empty strings to avoid false positives)
-		if language != "" && (strings.Contains(language, normalizedPref) || strings.Contains(normalizedPref, language)) {
-			return true
-		}
-		if title != "" && (strings.Contains(title, normalizedPref) || strings.Contains(normalizedPref, title)) {
-			return true
-		}
-		return false
-	}
-
-	// First pass: find compatible codec (AAC, AC3, etc.) matching language, skipping commentary tracks
-	for _, stream := range streams {
-		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] && !isCommentaryTrack(stream.Title) {
-			log.Printf("[prequeue] Preferred compatible audio track %d (%s) for language %q",
-				stream.Index, stream.Codec, preferredLanguage)
-			return stream.Index
-		}
-	}
-
-	// Second pass: find any track matching language (even TrueHD/DTS), skipping commentary
-	for _, stream := range streams {
-		if matchesLanguage(stream) && !isCommentaryTrack(stream.Title) {
-			if isIncompatibleAudioCodec(stream.Codec) {
-				log.Printf("[prequeue] Selected incompatible audio track %d (%s) for language %q - will need HLS transcoding",
-					stream.Index, stream.Codec, preferredLanguage)
-			}
-			return stream.Index
-		}
-	}
-
-	// Third pass: fallback to compatible codec including commentary if nothing else matches
-	for _, stream := range streams {
-		if matchesLanguage(stream) && compatibleAudioCodecs[strings.ToLower(stream.Codec)] {
-			log.Printf("[prequeue] Fallback to compatible audio track %d (%s, commentary) for language %q",
-				stream.Index, stream.Codec, preferredLanguage)
-			return stream.Index
-		}
-	}
-
-	// Fourth pass: any matching track including commentary
-	for _, stream := range streams {
-		if matchesLanguage(stream) {
-			if isIncompatibleAudioCodec(stream.Codec) {
-				log.Printf("[prequeue] Fallback to incompatible audio track %d (%s, commentary) for language %q - will need HLS transcoding",
-					stream.Index, stream.Codec, preferredLanguage)
-			}
-			return stream.Index
-		}
-	}
-
-	return -1
+	return FindAudioTrackByLanguage(streams, preferredLanguage)
 }
 
-// findSubtitleTrackByPreference finds a subtitle track matching the preferences
+// findSubtitleTrackByPreference wraps the helper function for backward compatibility
 func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode string) int {
-	if len(streams) == 0 || mode == "off" {
-		return -1
-	}
-
-	normalizedPref := strings.ToLower(strings.TrimSpace(preferredLanguage))
-
-	// Filter by mode
-	var candidateStreams []SubtitleStreamInfo
-	if mode == "forced-only" {
-		for _, s := range streams {
-			if s.IsForced {
-				candidateStreams = append(candidateStreams, s)
-			}
-		}
-		if len(candidateStreams) == 0 {
-			// No forced subtitles available
-			return -1
-		}
-	} else {
-		candidateStreams = streams
-	}
-
-	// If language preference is set, try to find a match
-	if normalizedPref != "" {
-		// Try exact match
-		for _, stream := range candidateStreams {
-			language := strings.ToLower(strings.TrimSpace(stream.Language))
-			title := strings.ToLower(strings.TrimSpace(stream.Title))
-
-			if language == normalizedPref || title == normalizedPref {
-				return stream.Index
-			}
-		}
-
-		// Try partial match (skip empty strings to avoid false positives)
-		for _, stream := range candidateStreams {
-			language := strings.ToLower(strings.TrimSpace(stream.Language))
-			title := strings.ToLower(strings.TrimSpace(stream.Title))
-
-			if language != "" && (strings.Contains(language, normalizedPref) || strings.Contains(normalizedPref, language)) {
-				return stream.Index
-			}
-			if title != "" && (strings.Contains(title, normalizedPref) || strings.Contains(normalizedPref, title)) {
-				return stream.Index
-			}
-		}
-	}
-
-	// If mode is 'on' and no language match, return first available
-	if mode == "on" && len(candidateStreams) > 0 {
-		return candidateStreams[0].Index
-	}
-
-	return -1
-}
-
-// parseDVProfile extracts the profile number from a Dolby Vision profile string.
-// Format: "dvhe.05.06" or "dav1.05.06" where second segment is the profile number.
-// Returns 0 if format is not recognized.
-func parseDVProfile(dvProfile string) int {
-	parts := strings.Split(dvProfile, ".")
-	if len(parts) >= 2 {
-		profile, _ := strconv.Atoi(parts[1])
-		return profile
-	}
-	return 0
+	return FindSubtitleTrackByPreference(streams, preferredLanguage, mode)
 }

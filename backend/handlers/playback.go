@@ -73,59 +73,19 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[playback-handler] Probe failed (non-fatal): %v", probeErr)
 		} else if probeResult != nil && len(probeResult.SubtitleStreams) > 0 {
 			// Check if this is DV/HDR10 content (which requires HLS for video transcoding)
-			// Note: TrueHD audio alone doesn't require HLS - VLC can play TrueHD natively
+			// Note: TrueHD audio alone doesn't require HLS - player can handle it natively
 			// So we still pre-extract subtitles for TrueHD content
 			needsHLS := probeResult.HasDolbyVision || probeResult.HasHDR10
 			if !needsHLS {
-				log.Printf("[playback-handler] Starting subtitle pre-extraction for %d tracks", len(probeResult.SubtitleStreams))
-
-				// Convert to SubtitleTrackInfo format
-				// Index = relative (0, 1, 2) for frontend selection
-				// AbsoluteIndex = ffprobe stream index for ffmpeg -map
-				tracks := make([]SubtitleTrackInfo, len(probeResult.SubtitleStreams))
-				for i, s := range probeResult.SubtitleStreams {
-					tracks[i] = SubtitleTrackInfo{
-						Index:         i,       // Relative index for frontend track selection
-						AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
-						Language:      s.Language,
-						Title:         s.Title,
-						Codec:         s.Codec,
-						Forced:        s.IsForced,
-					}
-				}
-
 				// Use background context so extraction continues after HTTP response is sent
 				// The request context would cancel extraction when the response completes
-				// Pass startOffset so subtitles are extracted from the resume position
-				sessions := h.SubtitleExtractor.StartPreExtraction(context.Background(), resolution.WebDAVPath, tracks, request.StartOffset)
-
-				// Convert sessions to SubtitleSessionInfo and store in resolution
-				// Keys are relative indices (0, 1, 2) matching what frontend expects
-				sessionInfos := make(map[int]*models.SubtitleSessionInfo)
-				for relativeIdx, session := range sessions {
-					// relativeIdx is 0-based subtitle index, use directly to access subtitleStreams
-					if relativeIdx < 0 || relativeIdx >= len(probeResult.SubtitleStreams) {
-						continue
-					}
-					stream := &probeResult.SubtitleStreams[relativeIdx]
-					// Get first cue time for subtitle sync (may be 0 if extraction not complete)
-					session.mu.Lock()
-					firstCueTime := session.FirstCueTime
-					session.mu.Unlock()
-					sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
-						SessionID:    session.ID,
-						VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
-						TrackIndex:   relativeIdx,
-						Language:     stream.Language,
-						Title:        stream.Title,
-						Codec:        stream.Codec,
-						IsForced:     stream.IsForced,
-						IsExtracting: !session.IsExtractionComplete(),
-						FirstCueTime: firstCueTime,
-					}
-				}
-				resolution.SubtitleSessions = sessionInfos
-				log.Printf("[playback-handler] Pre-extraction started for %d subtitle sessions", len(sessionInfos))
+				resolution.SubtitleSessions = StartSubtitleExtraction(
+					context.Background(),
+					h.SubtitleExtractor,
+					resolution.WebDAVPath,
+					probeResult.SubtitleStreams,
+					request.StartOffset,
+				)
 			} else {
 				log.Printf("[playback-handler] DV/HDR10 content detected, skipping subtitle pre-extraction (will use HLS sidecar)")
 			}
