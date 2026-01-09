@@ -161,6 +161,8 @@ func Register(
 	protected.HandleFunc("/metadata/series/batch", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/metadata/movies/details", metadataHandler.MovieDetails).Methods(http.MethodGet)
 	protected.HandleFunc("/metadata/movies/details", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/movies/releases", metadataHandler.BatchMovieReleases).Methods(http.MethodPost)
+	protected.HandleFunc("/metadata/movies/releases", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/metadata/trailers", metadataHandler.Trailers).Methods(http.MethodGet)
 	protected.HandleFunc("/metadata/trailers", handleOptions).Methods(http.MethodOptions)
 

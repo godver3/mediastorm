@@ -18,6 +18,7 @@ type metadataService interface {
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
+	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
 	GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error)
 }
@@ -156,6 +157,25 @@ func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Requ
 	results := h.Service.BatchSeriesDetails(r.Context(), req.Queries)
 
 	response := models.BatchSeriesDetailsResponse{
+		Results: results,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *MetadataHandler) BatchMovieReleases(w http.ResponseWriter, r *http.Request) {
+	var req models.BatchMovieReleasesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	results := h.Service.BatchMovieReleases(r.Context(), req.Queries)
+
+	response := models.BatchMovieReleasesResponse{
 		Results: results,
 	}
 

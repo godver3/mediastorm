@@ -621,6 +621,7 @@ type mdblistItem struct {
 	Adult       int    `json:"adult"`
 	Title       string `json:"title"`
 	TVDBID      *int64 `json:"tvdbid"`
+	TMDBID      *int64 `json:"tmdb_id"`
 	IMDBID      string `json:"imdb_id"`
 	MediaType   string `json:"mediatype"` // "movie" or "show"
 	ReleaseYear int    `json:"release_year"`

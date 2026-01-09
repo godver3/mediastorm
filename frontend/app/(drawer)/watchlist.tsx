@@ -7,7 +7,7 @@ import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, type Title, type TrendingItem } from '@/services/api';
+import { apiService, type Title, type TrendingItem, type SeriesWatchState } from '@/services/api';
 import {
   DefaultFocus,
   SpatialNavigationNode,
@@ -114,6 +114,11 @@ export default function WatchlistScreen() {
   const [customListItems, setCustomListItems] = useState<TrendingItem[]>([]);
   const [customListLoading, setCustomListLoading] = useState(false);
   const [customListError, setCustomListError] = useState<string | null>(null);
+
+  // Cache for movie release data
+  const [movieReleases, setMovieReleases] = useState<
+    Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>
+  >(new Map());
 
   const isCustomList = shelfConfig?.type === 'mdblist' && !!shelfConfig?.listUrl;
 
@@ -269,7 +274,121 @@ export default function WatchlistScreen() {
     void fetchMissingYears();
   }, [items, watchlistYears]);
 
-  const watchlistTitles = useMemo(() => mapWatchlistToTitles(items, watchlistYears), [items, watchlistYears]);
+  // Fetch release data for movies when releaseStatus badge is enabled
+  useEffect(() => {
+    const badgeVisibility = userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [];
+    if (!badgeVisibility.includes('releaseStatus')) {
+      return;
+    }
+
+    const moviesToFetch: Array<{ id: string; tmdbId?: number; imdbId?: string }> = [];
+
+    // From watchlist
+    if (items) {
+      for (const item of items) {
+        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+        const imdbId = item.externalIds?.imdb;
+        if (item.mediaType === 'movie' && (tmdbId || imdbId) && !movieReleases.has(item.id)) {
+          moviesToFetch.push({ id: item.id, tmdbId, imdbId });
+        }
+      }
+    }
+
+    // From continue watching (movies only - no nextEpisode)
+    if (continueWatchingItems) {
+      for (const item of continueWatchingItems) {
+        const isMovie = !item.nextEpisode;
+        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+        const imdbId = item.externalIds?.imdb;
+        if (isMovie && (tmdbId || imdbId) && !movieReleases.has(item.seriesId)) {
+          moviesToFetch.push({ id: item.seriesId, tmdbId, imdbId });
+        }
+      }
+    }
+
+    // From trending movies
+    if (trendingMovies) {
+      for (const item of trendingMovies) {
+        if (
+          item.title.mediaType === 'movie' &&
+          (item.title.tmdbId || item.title.imdbId) &&
+          !movieReleases.has(item.title.id) &&
+          !item.title.theatricalRelease &&
+          !item.title.homeRelease
+        ) {
+          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+        }
+      }
+    }
+
+    // From custom list
+    for (const item of customListItems) {
+      if (
+        item.title.mediaType === 'movie' &&
+        (item.title.tmdbId || item.title.imdbId) &&
+        !movieReleases.has(item.title.id) &&
+        !item.title.theatricalRelease &&
+        !item.title.homeRelease
+      ) {
+        moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+      }
+    }
+
+    if (moviesToFetch.length === 0) {
+      return;
+    }
+
+    const fetchReleases = async () => {
+      try {
+        const batchResponse = await apiService.batchMovieReleases(
+          moviesToFetch.map((m) => ({ titleId: m.id, tmdbId: m.tmdbId, imdbId: m.imdbId })),
+        );
+
+        const updates = new Map<
+          string,
+          { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }
+        >();
+
+        for (let i = 0; i < batchResponse.results.length; i++) {
+          const result = batchResponse.results[i];
+          const movie = moviesToFetch[i];
+
+          if (!result.error) {
+            updates.set(movie.id, {
+              theatricalRelease: result.theatricalRelease,
+              homeRelease: result.homeRelease,
+            });
+          }
+        }
+
+        if (updates.size > 0) {
+          setMovieReleases((prev) => new Map([...prev, ...updates]));
+        }
+      } catch (error) {
+        console.warn('Failed to batch fetch movie releases:', error);
+      }
+    };
+
+    void fetchReleases();
+  }, [items, continueWatchingItems, trendingMovies, customListItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
+
+  const watchlistTitles = useMemo(() => {
+    const baseTitles = mapWatchlistToTitles(items, watchlistYears);
+    // Merge cached release data for movies
+    return baseTitles.map((title) => {
+      if (title.mediaType === 'movie') {
+        const cachedReleases = movieReleases.get(title.id);
+        if (cachedReleases) {
+          return {
+            ...title,
+            theatricalRelease: title.theatricalRelease ?? cachedReleases.theatricalRelease,
+            homeRelease: title.homeRelease ?? cachedReleases.homeRelease,
+          };
+        }
+      }
+      return title;
+    });
+  }, [items, watchlistYears, movieReleases]);
 
   // Map continue watching items to titles
   const continueWatchingTitles = useMemo((): WatchlistTitle[] => {
@@ -277,6 +396,7 @@ export default function WatchlistScreen() {
     return continueWatchingItems.map((item) => {
       // Determine media type: if there's a nextEpisode, it's a series; otherwise it's a movie
       const isMovie = !item.nextEpisode;
+      const cachedReleases = isMovie ? movieReleases.get(item.seriesId) : undefined;
       return {
         id: item.seriesId,
         name: item.seriesTitle,
@@ -287,18 +407,25 @@ export default function WatchlistScreen() {
         poster: item.posterUrl ? { url: item.posterUrl, type: 'poster' as const, width: 0, height: 0 } : undefined,
         backdrop: item.backdropUrl ? { url: item.backdropUrl, type: 'backdrop' as const, width: 0, height: 0 } : undefined,
         uniqueKey: `cw:${item.seriesId}`,
+        theatricalRelease: cachedReleases?.theatricalRelease,
+        homeRelease: cachedReleases?.homeRelease,
       };
     });
-  }, [continueWatchingItems]);
+  }, [continueWatchingItems, movieReleases]);
 
   // Map trending items to titles
   const trendingMovieTitles = useMemo((): WatchlistTitle[] => {
     if (!trendingMovies) return [];
-    return trendingMovies.map((item) => ({
-      ...item.title,
-      uniqueKey: `tm:${item.title.id}`,
-    }));
-  }, [trendingMovies]);
+    return trendingMovies.map((item) => {
+      const cachedReleases = movieReleases.get(item.title.id);
+      return {
+        ...item.title,
+        uniqueKey: `tm:${item.title.id}`,
+        theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
+        homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
+      };
+    });
+  }, [trendingMovies, movieReleases]);
 
   const trendingTVTitles = useMemo((): WatchlistTitle[] => {
     if (!trendingTVShows) return [];
@@ -310,11 +437,16 @@ export default function WatchlistScreen() {
 
   // Map custom list items to titles
   const customListTitles = useMemo((): WatchlistTitle[] => {
-    return customListItems.map((item, index) => ({
-      ...item.title,
-      uniqueKey: `cl:${item.title.id}-${index}`,
-    }));
-  }, [customListItems]);
+    return customListItems.map((item, index) => {
+      const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
+      return {
+        ...item.title,
+        uniqueKey: `cl:${item.title.id}-${index}`,
+        theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
+        homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
+      };
+    });
+  }, [customListItems, movieReleases]);
 
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {

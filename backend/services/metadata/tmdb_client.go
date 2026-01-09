@@ -632,6 +632,83 @@ func (c *tmdbClient) fetchExternalID(ctx context.Context, mediaType string, tmdb
 	return "", lastErr
 }
 
+// findMovieByIMDBID looks up a movie's TMDB ID using its IMDB ID
+func (c *tmdbClient) findMovieByIMDBID(ctx context.Context, imdbID string) (int64, error) {
+	if !c.isConfigured() {
+		return 0, errors.New("tmdb api key not configured")
+	}
+	if imdbID == "" {
+		return 0, errors.New("imdb id required")
+	}
+
+	// Ensure IMDB ID has tt prefix
+	if !strings.HasPrefix(imdbID, "tt") {
+		imdbID = "tt" + imdbID
+	}
+
+	endpoint := fmt.Sprintf("%s/find/%s?api_key=%s&external_source=imdb_id", tmdbBaseURL, imdbID, c.apiKey)
+
+	var lastErr error
+	backoff := 300 * time.Millisecond
+
+	for attempt := 0; attempt < 3; attempt++ {
+		// Rate limiting
+		c.throttleMu.Lock()
+		since := time.Since(c.lastRequest)
+		if since < c.minInterval {
+			time.Sleep(c.minInterval - since)
+		}
+		c.lastRequest = time.Now()
+		c.throttleMu.Unlock()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return 0, err
+		}
+
+		resp, err := c.httpc.Do(req)
+		if err != nil {
+			lastErr = err
+			log.Printf("[tmdb] findMovieByIMDBID http error (attempt %d/3): %v", attempt+1, err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			log.Printf("[tmdb] findMovieByIMDBID rate limited (attempt %d/3): status %d", attempt+1, resp.StatusCode)
+			lastErr = fmt.Errorf("tmdb find %s failed: %s", imdbID, resp.Status)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return 0, fmt.Errorf("tmdb find %s failed: %s", imdbID, resp.Status)
+		}
+
+		var result struct {
+			MovieResults []struct {
+				ID int64 `json:"id"`
+			} `json:"movie_results"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			return 0, err
+		}
+
+		if len(result.MovieResults) > 0 {
+			return result.MovieResults[0].ID, nil
+		}
+		return 0, fmt.Errorf("no movie found for IMDB ID %s", imdbID)
+	}
+
+	return 0, lastErr
+}
+
 func mapTMDBReleaseType(releaseType int) string {
 	switch releaseType {
 	case 1:

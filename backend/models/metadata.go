@@ -155,3 +155,28 @@ type BatchSeriesDetailsItem struct {
 type BatchSeriesDetailsResponse struct {
 	Results []BatchSeriesDetailsItem `json:"results"`
 }
+
+// BatchMovieReleasesQuery represents a query for movie release data
+type BatchMovieReleasesQuery struct {
+	TitleID string `json:"titleId,omitempty"`
+	TMDBID  int64  `json:"tmdbId,omitempty"`
+	IMDBID  string `json:"imdbId,omitempty"`
+}
+
+// BatchMovieReleasesRequest represents a batch request for movie releases
+type BatchMovieReleasesRequest struct {
+	Queries []BatchMovieReleasesQuery `json:"queries"`
+}
+
+// BatchMovieReleasesItem represents a single result in a batch response
+type BatchMovieReleasesItem struct {
+	Query       BatchMovieReleasesQuery `json:"query"`
+	Theatrical  *Release                `json:"theatricalRelease,omitempty"`
+	HomeRelease *Release                `json:"homeRelease,omitempty"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+// BatchMovieReleasesResponse represents the response for a batch releases request
+type BatchMovieReleasesResponse struct {
+	Results []BatchMovieReleasesItem `json:"results"`
+}
