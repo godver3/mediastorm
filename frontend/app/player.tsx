@@ -25,6 +25,7 @@ import {
   useLockSpatialNavigation,
   useSpatialNavigator,
 } from '@/services/tv-navigation';
+import Constants from 'expo-constants';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
@@ -4743,8 +4744,10 @@ export default function PlayerScreen() {
                     style={[
                       styles.overlayContent,
                       // On Android mobile, apply safe area padding to controls overlay (not the container)
-                      // so the video doesn't shift when status bar toggles
-                      Platform.OS === 'android' && !Platform.isTV && isPortrait && { paddingTop: safeAreaInsets.top },
+                      // so the video doesn't shift when status bar toggles.
+                      // Use Constants.statusBarHeight (stable) instead of safeAreaInsets.top (dynamic)
+                      // to prevent the controls from "bumping down" when the status bar appears.
+                      Platform.OS === 'android' && !Platform.isTV && isPortrait && { paddingTop: Constants.statusBarHeight ?? 0 },
                     ]}
                     pointerEvents="box-none"
                   >
