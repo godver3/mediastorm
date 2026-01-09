@@ -607,6 +607,8 @@ export default function PlayerScreen() {
   // This prevents AVPlayer from throwing "stream ended unexpectedly" errors.
   // On resume, we create a new HLS session starting from the saved time.
   useEffect(() => {
+    // TEMPORARILY DISABLED: Pause teardown causing issues, disabling for debugging
+    return;
     // Only apply to HLS streams on native platforms (where AVPlayer is used)
     const shouldUsePauseTeardown = isHlsStream && Platform.OS !== 'web';
 
