@@ -707,6 +707,9 @@ export default function PlayerScreen() {
   const isRetryingHlsSessionRef = useRef(false);
   const isSeekingRef = useRef<boolean>(false);
   const pausedForSeekRef = useRef<boolean>(false); // Track if we paused for HLS session seek or track switching
+  // Track skip button seek target to prevent stale progress events from flickering the time display
+  // reachedAt tracks when we first got close to target, to continue protecting for a window afterward
+  const skipSeekTargetRef = useRef<{ target: number; timestamp: number; reachedAt?: number } | null>(null);
   const controlsOpacity = useRef(new Animated.Value(isTvPlatform ? 1 : 0)).current;
   const canUseNativeDriver = Platform.OS !== 'web';
   const theme = useTheme();
@@ -2036,8 +2039,47 @@ export default function PlayerScreen() {
       // stale progress events from overwriting the correct seek position.
       // We still continue processing the rest of the function (resume logic, etc.)
       if (!pausedForSeekRef.current) {
-        currentTimeRef.current = absoluteTime;
-        setCurrentTime(absoluteTime);
+        // Check if we're expecting a skip button seek to complete
+        const skipTarget = skipSeekTargetRef.current;
+        if (skipTarget) {
+          const now = Date.now();
+          const timeSinceSkip = now - skipTarget.timestamp;
+          const distanceFromTarget = Math.abs(absoluteTime - skipTarget.target);
+          const isCloseToTarget = distanceFromTarget < 2;
+
+          // Total protection timeout - after this, accept any progress
+          if (timeSinceSkip > 1500) {
+            console.log('[player] skip seek timeout, accepting progress', { absoluteTime, target: skipTarget.target });
+            skipSeekTargetRef.current = null;
+            currentTimeRef.current = absoluteTime;
+            setCurrentTime(absoluteTime);
+          } else if (isCloseToTarget) {
+            // We've reached the target - mark when and accept this update
+            if (!skipTarget.reachedAt) {
+              console.log('[player] skip seek reached target', { absoluteTime, target: skipTarget.target });
+              skipTarget.reachedAt = now;
+            }
+            currentTimeRef.current = absoluteTime;
+            setCurrentTime(absoluteTime);
+          } else if (skipTarget.reachedAt) {
+            // We already reached target but this event is far from it (stale)
+            // Only accept if we've been at target long enough (500ms buffer for late events)
+            const timeSinceReached = now - skipTarget.reachedAt;
+            if (timeSinceReached > 500) {
+              console.log('[player] skip seek protection ended, accepting progress', { absoluteTime, target: skipTarget.target });
+              skipSeekTargetRef.current = null;
+              currentTimeRef.current = absoluteTime;
+              setCurrentTime(absoluteTime);
+            } else {
+              console.log('[player] skip seek ignoring stale event after reaching target', { absoluteTime, target: skipTarget.target, timeSinceReached });
+            }
+          } else {
+            console.log('[player] skip seek ignoring stale event before reaching target', { absoluteTime, target: skipTarget.target, timeSinceSkip });
+          }
+        } else {
+          currentTimeRef.current = absoluteTime;
+          setCurrentTime(absoluteTime);
+        }
       }
 
       // Track first progress event for diagnostics
@@ -2831,8 +2873,14 @@ export default function PlayerScreen() {
         }
 
         if (performed) {
-          currentTimeRef.current = time;
-          setCurrentTime(time);
+          // Only update time if this seek's target is still the active target
+          // This prevents cancelled/stale seeks from overwriting newer skip targets
+          const activeSkipTarget = skipSeekTargetRef.current;
+          const isStaleSeek = activeSkipTarget && Math.abs(activeSkipTarget.target - time) > 1;
+          if (!isStaleSeek) {
+            currentTimeRef.current = time;
+            setCurrentTime(time);
+          }
           // Check if we need to re-extract subtitles for the new position
           triggerSubtitleReExtractionRef.current?.(time);
         }
@@ -2967,12 +3015,30 @@ export default function PlayerScreen() {
   const seekForwardSeconds = settings?.playback?.seekForwardSeconds ?? 30;
 
   const handleSkipBackward = useCallback(() => {
-    const targetTime = Math.max(0, currentTimeRef.current - seekBackwardSeconds);
+    // Use the pending skip target if one exists and is recent, otherwise use currentTimeRef
+    // This prevents async operations (HLS session recreation, progress events) from
+    // resetting the position between rapid skip button presses
+    const skipTarget = skipSeekTargetRef.current;
+    const baseTime = skipTarget && Date.now() - skipTarget.timestamp < 2000
+      ? skipTarget.target
+      : currentTimeRef.current;
+    const targetTime = Math.max(0, baseTime - seekBackwardSeconds);
+    console.log('[player] skip backward', { from: baseTime, to: targetTime, skipAmount: seekBackwardSeconds, usedPendingTarget: !!skipTarget });
+    skipSeekTargetRef.current = { target: targetTime, timestamp: Date.now() };
     seek(targetTime);
   }, [seek, seekBackwardSeconds]);
 
   const handleSkipForward = useCallback(() => {
-    const targetTime = currentTimeRef.current + seekForwardSeconds;
+    // Use the pending skip target if one exists and is recent, otherwise use currentTimeRef
+    // This prevents async operations (HLS session recreation, progress events) from
+    // resetting the position between rapid skip button presses
+    const skipTarget = skipSeekTargetRef.current;
+    const baseTime = skipTarget && Date.now() - skipTarget.timestamp < 2000
+      ? skipTarget.target
+      : currentTimeRef.current;
+    const targetTime = baseTime + seekForwardSeconds;
+    console.log('[player] skip forward', { from: baseTime, to: targetTime, skipAmount: seekForwardSeconds, usedPendingTarget: !!skipTarget });
+    skipSeekTargetRef.current = { target: targetTime, timestamp: Date.now() };
     seek(targetTime);
   }, [seek, seekForwardSeconds]);
 
