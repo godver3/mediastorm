@@ -8,7 +8,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 interface ControlsProps {
@@ -62,6 +62,8 @@ interface ControlsProps {
   seekForwardSeconds?: number;
   /** Picture-in-Picture (iOS only) */
   onEnterPip?: () => void;
+  /** Flash the skip button on double-tap (mobile only) */
+  flashSkipButton?: 'backward' | 'forward' | null;
 }
 
 type TrackOption = {
@@ -114,6 +116,7 @@ const Controls: React.FC<ControlsProps> = ({
   seekBackwardSeconds = 10,
   seekForwardSeconds = 30,
   onEnterPip,
+  flashSkipButton,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -125,6 +128,30 @@ const Controls: React.FC<ControlsProps> = ({
   const isLandscape = width >= height;
   const isSeekable = Number.isFinite(duration) && duration > 0;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
+
+  // Flash animation for skip buttons (triggered by double-tap on mobile)
+  const skipBackwardScale = useRef(new Animated.Value(1)).current;
+  const skipForwardScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!flashSkipButton) return;
+
+    const scaleValue = flashSkipButton === 'backward' ? skipBackwardScale : skipForwardScale;
+
+    // Quick scale up and down animation
+    Animated.sequence([
+      Animated.timing(scaleValue, {
+        toValue: 1.3,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleValue, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [flashSkipButton, skipBackwardScale, skipForwardScale]);
 
   const audioSummary = useMemo(() => {
     if (!audioTracks.length) {
@@ -309,14 +336,14 @@ const Controls: React.FC<ControlsProps> = ({
             </View>
           )}
           {onSkipBackward && (
-            <View style={styles.skipButtonContainer}>
+            <Animated.View style={[styles.skipButtonContainer, { transform: [{ scale: skipBackwardScale }] }]}>
               <Pressable onPress={onSkipBackward} style={styles.skipButton}>
                 <View style={styles.skipButtonContent}>
                   <Text style={styles.skipButtonText}>{seekBackwardSeconds}</Text>
                   <Ionicons name="play-back" size={20} color={theme.colors.text.primary} />
                 </View>
               </Pressable>
-            </View>
+            </Animated.View>
           )}
           <DefaultFocus>
             <Pressable onPress={onPlayPause} style={styles.centerPlayButton}>
@@ -324,14 +351,14 @@ const Controls: React.FC<ControlsProps> = ({
             </Pressable>
           </DefaultFocus>
           {onSkipForward && (
-            <View style={styles.skipButtonContainer}>
+            <Animated.View style={[styles.skipButtonContainer, { transform: [{ scale: skipForwardScale }] }]}>
               <Pressable onPress={onSkipForward} style={styles.skipButton}>
                 <View style={styles.skipButtonContent}>
                   <Text style={styles.skipButtonText}>{seekForwardSeconds}</Text>
                   <Ionicons name="play-forward" size={20} color={theme.colors.text.primary} />
                 </View>
               </Pressable>
-            </View>
+            </Animated.View>
           )}
           {onNextEpisode && (
             <View style={styles.skipButtonContainer}>

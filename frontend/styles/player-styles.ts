@@ -116,4 +116,9 @@ export const createPlayerStyles = (theme: NovaTheme) =>
     debugError: {
       color: '#ff8a80',
     },
+    // Double-tap overlay for mobile skip forward/backward
+    doubleTapOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 1,
+    },
   });

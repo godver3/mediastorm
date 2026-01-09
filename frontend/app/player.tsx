@@ -327,6 +327,10 @@ export default function PlayerScreen() {
     isTvPlatform || (Platform.OS === 'web' && !prefersSystemControls),
   );
   const controlsVisibleRef = useRef<boolean>(controlsVisible);
+  // Double-tap gesture handling for mobile skip forward/backward
+  const lastTapRef = useRef<{ time: number; side: 'left' | 'right' } | null>(null);
+  const [flashSkipButton, setFlashSkipButton] = useState<'backward' | 'forward' | null>(null);
+  const DOUBLE_TAP_DELAY = 300; // ms
   const [isVideoBuffering, setIsVideoBuffering] = useState<boolean>(false);
   const [seekIndicatorAmount, setSeekIndicatorAmount] = useState<number>(0);
   const seekIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2972,6 +2976,49 @@ export default function PlayerScreen() {
     seek(targetTime);
   }, [seek, seekForwardSeconds]);
 
+  // Double-tap handler for mobile skip forward/backward
+  const isMobilePlatform = Platform.OS !== 'web' && !Platform.isTV;
+  const handleDoubleTapSeek = useCallback(
+    (event: { nativeEvent: { locationX: number } }) => {
+      if (!isMobilePlatform || isLiveTV || usesSystemManagedControls) {
+        handleVideoInteract();
+        return;
+      }
+
+      const { locationX } = event.nativeEvent;
+      const screenMidpoint = windowWidth / 2;
+      const side: 'left' | 'right' = locationX < screenMidpoint ? 'left' : 'right';
+      const now = Date.now();
+
+      if (lastTapRef.current && now - lastTapRef.current.time < DOUBLE_TAP_DELAY && lastTapRef.current.side === side) {
+        // Double-tap detected on same side
+        lastTapRef.current = null;
+
+        if (side === 'left') {
+          handleSkipBackward();
+          setFlashSkipButton('backward');
+        } else {
+          handleSkipForward();
+          setFlashSkipButton('forward');
+        }
+
+        // Clear flash after animation
+        setTimeout(() => setFlashSkipButton(null), 400);
+      } else {
+        // First tap - record it and show/hide controls after a short delay if no second tap
+        lastTapRef.current = { time: now, side };
+        setTimeout(() => {
+          // If no second tap occurred, treat as single tap
+          if (lastTapRef.current && lastTapRef.current.time === now) {
+            lastTapRef.current = null;
+            handleVideoInteract();
+          }
+        }, DOUBLE_TAP_DELAY);
+      }
+    },
+    [isMobilePlatform, isLiveTV, usesSystemManagedControls, windowWidth, handleSkipBackward, handleSkipForward, handleVideoInteract, DOUBLE_TAP_DELAY],
+  );
+
   useEffect(() => {
     if (!usesSystemManagedControls) {
       showControls();
@@ -4580,6 +4627,14 @@ export default function PlayerScreen() {
             />
           )}
 
+          {/* Double-tap overlay for mobile skip forward/backward */}
+          {isMobilePlatform && !isLiveTV && !usesSystemManagedControls && (
+            <Pressable
+              style={styles.doubleTapOverlay}
+              onPress={handleDoubleTapSeek}
+            />
+          )}
+
           {(() => {
             const hasDuration = Number.isFinite(duration) && duration > 0;
             const hasPlaybackContext = hasDuration || currentTime > 0 || isVideoBuffering || paused || isLiveTV;
@@ -4823,6 +4878,7 @@ export default function PlayerScreen() {
                           seekForwardSeconds={seekForwardSeconds}
                           shuffleMode={shuffleMode}
                           onEnterPip={handleEnterPip}
+                          flashSkipButton={flashSkipButton}
                         />
                       </SpatialNavigationNode>
                     </View>
