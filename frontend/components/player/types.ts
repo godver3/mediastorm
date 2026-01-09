@@ -1,4 +1,4 @@
-export type VideoImplementation = 'mobile-system' | 'web' | 'vlc' | 'expo' | 'rnv';
+export type VideoImplementation = 'mobile-system' | 'rnv';
 
 export type VideoPlayerHandle = {
   seek: (seconds: number) => void;
@@ -56,7 +56,7 @@ export interface VideoPlayerProps {
   onNativeFullscreenExit?: () => void;
   mediaType?: string;
   nowPlaying?: NowPlayingMetadata;
-  /** Subtitle size scale factor (1.0 = default, used for VLC built-in subtitles) */
+  /** Subtitle size scale factor (1.0 = default) */
   subtitleSize?: number;
   /** Video resize mode: 'cover' fills container (may crop), 'contain' shows full video (may letterbox). Default: 'cover' */
   resizeMode?: VideoResizeMode;

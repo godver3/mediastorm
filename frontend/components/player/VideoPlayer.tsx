@@ -1,41 +1,14 @@
 import type { CSSProperties } from 'react';
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { Platform, UIManager, View, type ViewStyle } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { isMobileWeb } from './isMobileWeb';
-
-import ExpoVideoPlayer from './VideoPlayer.expo';
 import type { VideoImplementation, VideoPlayerHandle, VideoPlayerProps, VideoProgressMeta } from './types';
 
 type PlayerComponent = React.ForwardRefExoticComponent<VideoPlayerProps & React.RefAttributes<VideoPlayerHandle>>;
 
-const loadWebPlayer = (): PlayerComponent | null => {
-  if (Platform.OS !== 'web') {
-    return null;
-  }
-
-  try {
-    return require('./VideoPlayer.web').default as PlayerComponent;
-  } catch (error) {
-    console.warn('Warning: unable to load web player implementation', error);
-    return null;
-  }
-};
-
-const loadVlcPlayer = (): PlayerComponent | null => {
-  if (Platform.OS === 'web') {
-    return null;
-  }
-
-  try {
-    return require('./VideoPlayer.vlc').default as PlayerComponent;
-  } catch (error) {
-    console.warn('Warning: unable to load VLC player implementation', error);
-    return null;
-  }
-};
-
+// Only load RNV player on native platforms
 const loadRnvPlayer = (): PlayerComponent | null => {
   if (Platform.OS === 'web') {
     return null;
@@ -49,8 +22,6 @@ const loadRnvPlayer = (): PlayerComponent | null => {
   }
 };
 
-const WebVideoPlayer = loadWebPlayer();
-const VlcVideoPlayer = loadVlcPlayer();
 const RnvVideoPlayer = loadRnvPlayer();
 
 export type {
@@ -63,38 +34,22 @@ export type {
 } from './types';
 
 const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props, ref) => {
-  const { onImplementationResolved, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen, ...rest } = props;
-  const shouldUseVlc = useShouldUseVlc();
+  const { onImplementationResolved, forceNativeFullscreen, ...rest } = props;
 
   const implementation = useMemo((): { key: VideoImplementation; Component: PlayerComponent } => {
+    // Mobile web uses inline system player
     if (Platform.OS === 'web' && isMobileWeb()) {
       return { key: 'mobile-system', Component: MobileSystemVideoPlayer };
     }
 
-    if (Platform.OS === 'web' && WebVideoPlayer) {
-      return { key: 'web', Component: WebVideoPlayer };
-    }
-
-    // Force RNV (react-native-video) if explicitly requested
-    // This is used for Dolby Vision/HDR content testing
-    if (forceRnvPlayer && RnvVideoPlayer) {
+    // Native platforms use react-native-video
+    if (RnvVideoPlayer) {
       return { key: 'rnv', Component: RnvVideoPlayer };
     }
 
-    // Use RNV (react-native-video) for HDR content on native platforms
-    // - iOS/tvOS: AVPlayer with HLS properly supports HDR10 and Dolby Vision
-    // - Android/Android TV: ExoPlayer with HLS properly supports HDR10 and Dolby Vision
-    // VLCKit/libVLC does not support HDR output - it tone-maps to SDR
-    if (forceNativeFullscreen && Platform.OS !== 'web' && RnvVideoPlayer) {
-      return { key: 'rnv', Component: RnvVideoPlayer };
-    }
-
-    if (shouldUseVlc && VlcVideoPlayer) {
-      return { key: 'vlc', Component: VlcVideoPlayer };
-    }
-
-    return { key: 'expo', Component: ExpoVideoPlayer };
-  }, [shouldUseVlc, forceExpoPlayer, forceRnvPlayer, forceNativeFullscreen]);
+    // Fallback for mobile web on non-mobile detection
+    return { key: 'mobile-system', Component: MobileSystemVideoPlayer };
+  }, []);
 
   const lastImplementationRef = useRef<VideoImplementation | null>(null);
   useEffect(() => {
@@ -115,49 +70,6 @@ const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props
 });
 
 VideoPlayer.displayName = 'VideoPlayer';
-
-const useShouldUseVlc = () => {
-  return useMemo(() => {
-    if (Platform.OS === 'web') {
-      return false;
-    }
-
-    if (!VlcVideoPlayer) {
-      return false;
-    }
-
-    const managerConfig = getVlcViewManagerConfig();
-    return Boolean(managerConfig);
-  }, []);
-};
-
-const getVlcViewManagerConfig = () => {
-  const managerName = 'RCTVLCPlayer';
-  const rnUiManager: typeof UIManager & {
-    getViewManagerConfig?: (name: string) => any;
-    hasViewManagerConfig?: (name: string) => boolean;
-  } = UIManager as any;
-
-  try {
-    if (typeof rnUiManager.getViewManagerConfig === 'function') {
-      const config = rnUiManager.getViewManagerConfig(managerName);
-      if (config) {
-        return config;
-      }
-    }
-
-    if (typeof rnUiManager.hasViewManagerConfig === 'function') {
-      const hasConfig = rnUiManager.hasViewManagerConfig(managerName);
-      if (hasConfig) {
-        return rnUiManager.getViewManagerConfig?.(managerName) ?? hasConfig;
-      }
-    }
-  } catch (error) {
-    console.warn('Warning: unable to load VLC view manager config', error);
-  }
-
-  return null;
-};
 
 export default VideoPlayer;
 
@@ -215,24 +127,11 @@ const MobileSystemVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerP
     ref,
     () => ({
       seek: (seconds: number) => {
-        console.log('[MobileSystemVideoPlayer] seek called', {
-          seconds,
-          hasVideoRef: !!videoRef.current,
-          currentTime: videoRef.current?.currentTime,
-        });
         if (!videoRef.current) {
-          console.warn('[MobileSystemVideoPlayer] seek called but videoRef is null');
           return;
         }
-        console.log('[MobileSystemVideoPlayer] attempting to set currentTime', {
-          from: videoRef.current.currentTime,
-          to: seconds,
-        });
         try {
           videoRef.current.currentTime = seconds;
-          console.log('[MobileSystemVideoPlayer] currentTime set successfully', {
-            newCurrentTime: videoRef.current.currentTime,
-          });
         } catch (error) {
           console.warn('[MobileSystemVideoPlayer] unable to seek', error);
         }

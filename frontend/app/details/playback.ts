@@ -223,14 +223,9 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // TESTING: Force HLS for ALL native content (normally only HDR/incompatible audio uses HLS)
-  // Original logic:
-  // - HDR (Dolby Vision/HDR10) requires HLS for proper passthrough to react-native-video
-  // - TrueHD/DTS audio requires HLS to transcode audio to AAC (VLC can't play these codecs)
-  // - SDR content with compatible audio uses direct streaming to VLC player
-  // const useHlsOnNative = Platform.OS !== 'web' && (options.hasDolbyVision || options.hasHDR10 || options.needsAudioTranscode);
+  // Native platforms always use HLS with react-native-video for consistent experience
   const useHlsOnNative = Platform.OS !== 'web';
-  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, needsAudioTranscode=${options.needsAudioTranscode}, webdavPath=${webdavPath.substring(0, 100)}...`);
+  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`);
 
   if (useHlsOnNative) {
     const hdrType = options.hasDolbyVision ? 'Dolby Vision' : options.hasHDR10 ? 'HDR10' : 'SDR';
@@ -298,8 +293,8 @@ export const buildStreamUrl = (
   // External URLs should be routed through the video proxy endpoint, not constructed as WebDAV URLs
   const isExternalUrl = webdavPath.startsWith('http://') || webdavPath.startsWith('https://');
 
-  // For all platforms (including web), use direct WebDAV URLs with basic auth (except for debrid paths and external URLs)
-  // For web browsers, we'll check if transmuxing is needed after constructing the URL
+  // For web platform, use direct WebDAV URLs with basic auth (except for debrid paths and external URLs)
+  // Native platforms already returned via HLS path above
   if (settings?.webdav && !isDebridPath && !isExternalUrl) {
     const webdavConfig = settings.webdav;
 
@@ -325,39 +320,34 @@ export const buildStreamUrl = (
       // Construct URL with basic auth: http://username:password@host:port/path
       const directUrl = `${baseUrl.protocol}//${username}:${password}@${baseUrl.host}${encodedPath}`;
 
-      // For web browsers, check if transmuxing is needed
-      if (Platform.OS === 'web') {
-        let lower = webdavPath.toLowerCase();
-        try {
-          lower = decodeURIComponent(webdavPath).toLowerCase();
-        } catch {
-          // ignore decode errors, fall back to original lower-case path
-        }
+      // Check if transmuxing is needed for web
+      let lower = webdavPath.toLowerCase();
+      try {
+        lower = decodeURIComponent(webdavPath).toLowerCase();
+      } catch {
+        // ignore decode errors, fall back to original lower-case path
+      }
 
-        let naiveExt = '';
-        try {
-          const parsed = new URL(lower, 'http://placeholder');
-          const pathName = parsed.pathname;
-          const dotIndex = pathName.lastIndexOf('.');
-          naiveExt = dotIndex >= 0 ? pathName.substring(dotIndex) : '';
-        } catch {
-          const dotIndex = lower.lastIndexOf('.');
-          naiveExt = dotIndex >= 0 ? lower.substring(dotIndex) : '';
-        }
-        const knownProblemExts = ['.mkv', '.ts', '.m2ts', '.mts', '.avi', '.mpg', '.mpeg'];
-        const looksObfuscated = /\.mkv_|\.ts_|\.avi_|\.mpg_|\.mpeg_/i.test(lower);
-        const needsTransmux = naiveExt !== '.mp4' && (knownProblemExts.includes(naiveExt) || looksObfuscated);
+      let naiveExt = '';
+      try {
+        const parsed = new URL(lower, 'http://placeholder');
+        const pathName = parsed.pathname;
+        const dotIndex = pathName.lastIndexOf('.');
+        naiveExt = dotIndex >= 0 ? pathName.substring(dotIndex) : '';
+      } catch {
+        const dotIndex = lower.lastIndexOf('.');
+        naiveExt = dotIndex >= 0 ? lower.substring(dotIndex) : '';
+      }
+      const knownProblemExts = ['.mkv', '.ts', '.m2ts', '.mts', '.avi', '.mpg', '.mpeg'];
+      const looksObfuscated = /\.mkv_|\.ts_|\.avi_|\.mpg_|\.mpeg_/i.test(lower);
+      const needsTransmux = naiveExt !== '.mp4' && (knownProblemExts.includes(naiveExt) || looksObfuscated);
 
-        // If transmuxing is needed for web, use the video streaming endpoint with WebDAV auth
-        if (needsTransmux || options.forceTransmux) {
-          console.log('🎬 Web browser needs transmuxing, using video streaming endpoint with WebDAV auth');
-          // Fall through to proxy endpoint with WebDAV credentials
-        } else {
-          console.log('🎬 Using direct WebDAV URL for web browser (no transmuxing needed)');
-          return directUrl;
-        }
+      // If transmuxing is needed for web, use the video streaming endpoint with WebDAV auth
+      if (needsTransmux || options.forceTransmux) {
+        console.log('🎬 Web browser needs transmuxing, using video streaming endpoint with WebDAV auth');
+        // Fall through to proxy endpoint with WebDAV credentials
       } else {
-        console.log('🎬 Using direct WebDAV URL for native player');
+        console.log('🎬 Using direct WebDAV URL for web browser (no transmuxing needed)');
         return directUrl;
       }
     } catch (urlError) {
@@ -905,8 +895,7 @@ export const initiatePlayback = async (
   const needsHLS = hasAnyHDR || needsAudioTranscode;
 
   // Build stream URL
-  // On native platforms: HDR or incompatible audio uses HLS for react-native-video
-  // SDR content with compatible audio uses direct streaming for VLC
+  // On native platforms: Always use HLS for react-native-video
   // On web: Use direct streaming with transmux as needed
   let streamUrl = buildStreamUrl(playback.webdavPath, settings, {
     hasDolbyVision,
@@ -918,7 +907,7 @@ export const initiatePlayback = async (
     subtitleTrack: selectedSubtitleTrack,
     profileId: options.profileId,
     profileName: options.profileName,
-    // Disable transmux for native SDR with compatible audio - VLC handles MKV natively
+    // Disable transmux for native - HLS handles all formats
     disableTransmux: isNativePlatform && !needsHLS,
   });
 
@@ -986,7 +975,7 @@ export const initiatePlayback = async (
     Platform.OS,
   );
 
-  // Build pre-extracted subtitles JSON for SDR content (VLC path)
+  // Build pre-extracted subtitles JSON if available
   const preExtractedSubtitles =
     playback.subtitleSessions && Object.keys(playback.subtitleSessions).length > 0
       ? JSON.stringify(Object.values(playback.subtitleSessions))
