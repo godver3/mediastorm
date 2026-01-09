@@ -2086,6 +2086,50 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[video] created HLS session %s (duration=%.2fs)", session.ID, session.Duration)
 }
 
+// StartLiveHLSSession creates a new HLS session for live TV streams
+func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	liveURL := r.URL.Query().Get("url")
+	if liveURL == "" {
+		http.Error(w, "missing url parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Validate URL scheme
+	if !strings.HasPrefix(liveURL, "http://") && !strings.HasPrefix(liveURL, "https://") {
+		http.Error(w, "invalid url scheme", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[video] creating live HLS session for URL: %s", liveURL)
+
+	session, err := h.hlsManager.CreateLiveSession(r.Context(), liveURL)
+	if err != nil {
+		log.Printf("[video] failed to create live HLS session: %v", err)
+		http.Error(w, fmt.Sprintf("failed to create live HLS session: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	response := map[string]interface{}{
+		"sessionId":   session.ID,
+		"playlistUrl": fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID),
+		"isLive":      true,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("[video] failed to encode live HLS session response: %v", err)
+	}
+
+	log.Printf("[video] created live HLS session %s", session.ID)
+}
+
 // ServeHLSPlaylist serves the HLS playlist for a session
 func (h *VideoHandler) ServeHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {
