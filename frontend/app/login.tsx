@@ -794,7 +794,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       fontSize: s(16),
       color: theme.colors.text.primary,
       textAlign: 'left',
-      minWidth: s(340),
+      width: '100%',
       height: s(56),
       // Web-specific: ensure outline is visible on focus
       ...(isWeb ? { outlineStyle: 'none' } : {}),
