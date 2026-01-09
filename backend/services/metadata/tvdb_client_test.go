@@ -39,7 +39,7 @@ func TestTVDBClientSetsAcceptLanguageHeader(t *testing.T) {
 		}),
 	}
 
-	client := newTVDBClient("apikey", "en", httpc)
+	client := newTVDBClient("apikey", "en", httpc, 24)
 	client.minInterval = 0
 
 	var dest map[string]any
@@ -81,7 +81,7 @@ func TestTVDBClientEpisodeTranslationCaching(t *testing.T) {
 		}),
 	}
 
-	client := newTVDBClient("apikey", "en", httpc)
+	client := newTVDBClient("apikey", "en", httpc, 24)
 	client.minInterval = 0
 
 	translation, err := client.episodeTranslation(123, "eng")
@@ -144,7 +144,7 @@ func TestTVDBClientSeriesEpisodesBySeasonType(t *testing.T) {
 		}),
 	}
 
-	client := newTVDBClient("apikey", "en", httpc)
+	client := newTVDBClient("apikey", "en", httpc, 24)
 	client.minInterval = 0
 
 	episodes, err := client.seriesEpisodesBySeasonType(42, "official", "en")

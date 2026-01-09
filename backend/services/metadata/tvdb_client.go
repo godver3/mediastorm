@@ -30,15 +30,31 @@ type tvdbClient struct {
 	minInterval time.Duration
 
 	episodeTranslationCache sync.Map
+	translationCacheTTL     time.Duration
 }
 
-func newTVDBClient(apiKey, language string, httpc *http.Client) *tvdbClient {
+// episodeTranslationCacheEntry wraps a translation with its fetch time for TTL
+type episodeTranslationCacheEntry struct {
+	translation *tvdbEpisodeTranslation
+	fetchedAt   time.Time
+}
+
+func newTVDBClient(apiKey, language string, httpc *http.Client, cacheTTLHours int) *tvdbClient {
 	if httpc == nil {
 		httpc = &http.Client{Timeout: 15 * time.Second}
 	}
+	if cacheTTLHours <= 0 {
+		cacheTTLHours = 24
+	}
 	// TVDB uses 3-letter ISO 639-2 codes, normalize from 2-letter to 3-letter
 	language = normalizeTVDBLanguage(language)
-	return &tvdbClient{apiKey: apiKey, language: language, httpc: httpc, minInterval: 20 * time.Millisecond}
+	return &tvdbClient{
+		apiKey:              apiKey,
+		language:            language,
+		httpc:               httpc,
+		minInterval:         20 * time.Millisecond,
+		translationCacheTTL: time.Duration(cacheTTLHours) * time.Hour,
+	}
 }
 
 // normalizeTVDBLanguage converts 2-letter ISO 639-1 codes to 3-letter ISO 639-2 codes for TVDB
@@ -206,16 +222,21 @@ func (c *tvdbClient) episodeTranslation(id int64, lang string) (*tvdbEpisodeTran
 	}
 	key := fmt.Sprintf("%d:%s", id, lang)
 	if cached, ok := c.episodeTranslationCache.Load(key); ok {
-		if cached == nil {
-			return nil, nil
-		}
-		if translation, ok := cached.(*tvdbEpisodeTranslation); ok {
-			// return a copy to avoid callers mutating cached value
-			clone := *translation
-			if strings.TrimSpace(clone.Name) == "" && strings.TrimSpace(clone.Overview) == "" {
-				return nil, nil
+		if entry, ok := cached.(*episodeTranslationCacheEntry); ok {
+			// Check TTL
+			if time.Since(entry.fetchedAt) < c.translationCacheTTL {
+				if entry.translation == nil {
+					return nil, nil
+				}
+				// return a copy to avoid callers mutating cached value
+				clone := *entry.translation
+				if strings.TrimSpace(clone.Name) == "" && strings.TrimSpace(clone.Overview) == "" {
+					return nil, nil
+				}
+				return &clone, nil
 			}
-			return &clone, nil
+			// TTL expired, delete stale entry
+			c.episodeTranslationCache.Delete(key)
 		}
 	}
 
@@ -224,18 +245,27 @@ func (c *tvdbClient) episodeTranslation(id int64, lang string) (*tvdbEpisodeTran
 	}
 	endpoint := fmt.Sprintf("https://api4.thetvdb.com/v4/episodes/%d/translations/%s", id, lang)
 	if err := c.doGET(endpoint, nil, &resp); err != nil {
-		c.episodeTranslationCache.Store(key, (*tvdbEpisodeTranslation)(nil))
+		c.episodeTranslationCache.Store(key, &episodeTranslationCacheEntry{
+			translation: nil,
+			fetchedAt:   time.Now(),
+		})
 		return nil, err
 	}
 
 	translation := resp.Data
 	if strings.TrimSpace(translation.Name) == "" && strings.TrimSpace(translation.Overview) == "" {
-		c.episodeTranslationCache.Store(key, (*tvdbEpisodeTranslation)(nil))
+		c.episodeTranslationCache.Store(key, &episodeTranslationCacheEntry{
+			translation: nil,
+			fetchedAt:   time.Now(),
+		})
 		return nil, nil
 	}
 	// store pointer in cache; make sure copy escapes
 	result := translation
-	c.episodeTranslationCache.Store(key, &result)
+	c.episodeTranslationCache.Store(key, &episodeTranslationCacheEntry{
+		translation: &result,
+		fetchedAt:   time.Now(),
+	})
 	return &translation, nil
 }
 

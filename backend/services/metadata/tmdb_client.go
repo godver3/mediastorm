@@ -209,56 +209,29 @@ func (c *tmdbClient) trending(ctx context.Context, mediaType string) ([]models.T
 
 	items := make([]models.TrendingItem, len(payload.Results))
 
-	// Fetch IMDB IDs concurrently for all items
-	var wg sync.WaitGroup
+	// Build trending items (IMDB IDs are enriched separately by the service layer with caching)
 	for idx, r := range payload.Results {
-		wg.Add(1)
-		go func(idx int, r struct {
-			ID               int64   `json:"id"`
-			Name             string  `json:"name"`
-			Title            string  `json:"title"`
-			Overview         string  `json:"overview"`
-			OriginalLanguage string  `json:"original_language"`
-			PosterPath       string  `json:"poster_path"`
-			BackdropPath     string  `json:"backdrop_path"`
-			Popularity       float64 `json:"popularity"`
-			VoteAverage      float64 `json:"vote_average"`
-			FirstAirDate     string  `json:"first_air_date"`
-			ReleaseDate      string  `json:"release_date"`
-			MediaType        string  `json:"media_type"`
-		}) {
-			defer wg.Done()
+		title := models.Title{
+			ID:         fmt.Sprintf("tmdb:%s:%d", mediaType, r.ID),
+			Name:       pickTMDBName(mediaType, r.Name, r.Title),
+			Overview:   r.Overview,
+			Language:   r.OriginalLanguage,
+			MediaType:  mapMediaType(mediaType),
+			TMDBID:     r.ID,
+			Popularity: scoreFallback(r.Popularity, r.VoteAverage),
+		}
+		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
 
-			title := models.Title{
-				ID:         fmt.Sprintf("tmdb:%s:%d", mediaType, r.ID),
-				Name:       pickTMDBName(mediaType, r.Name, r.Title),
-				Overview:   r.Overview,
-				Language:   r.OriginalLanguage,
-				MediaType:  mapMediaType(mediaType),
-				TMDBID:     r.ID,
-				Popularity: scoreFallback(r.Popularity, r.VoteAverage),
-			}
-			if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
-				title.Year = year
-			}
-			if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
-				title.Poster = poster
-			}
-			if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
-				title.Backdrop = backdrop
-			}
-
-			// Fetch IMDB ID from external IDs endpoint
-			if imdbID, err := c.fetchExternalID(ctx, mediaType, r.ID); err == nil && imdbID != "" {
-				title.IMDBID = imdbID
-				log.Printf("[tmdb] fetched imdb id for %q: %s", title.Name, imdbID)
-			}
-
-			items[idx] = models.TrendingItem{Rank: idx + 1, Title: title}
-		}(idx, r)
+		items[idx] = models.TrendingItem{Rank: idx + 1, Title: title}
 	}
-
-	wg.Wait()
 
 	return items, nil
 }

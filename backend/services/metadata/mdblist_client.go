@@ -66,10 +66,14 @@ type mdblistMediaResponse struct {
 	} `json:"ratings"`
 }
 
-func newMDBListClient(apiKey string, enabledRatings []string, enabled bool) *mdblistClient {
+func newMDBListClient(apiKey string, enabledRatings []string, enabled bool, cacheTTLHours int) *mdblistClient {
 	enabledMap := make(map[string]bool)
 	for _, r := range enabledRatings {
 		enabledMap[r] = true
+	}
+
+	if cacheTTLHours <= 0 {
+		cacheTTLHours = 24
 	}
 
 	return &mdblistClient{
@@ -78,7 +82,7 @@ func newMDBListClient(apiKey string, enabledRatings []string, enabled bool) *mdb
 		httpClient:     &http.Client{Timeout: 10 * time.Second},
 		enabled:        enabled,
 		cache:          make(map[string]*mdblistCacheEntry),
-		cacheTTL:       24 * time.Hour, // Cache ratings for 24 hours to match metadata cache
+		cacheTTL:       time.Duration(cacheTTLHours) * time.Hour,
 		minInterval:    100 * time.Millisecond,
 	}
 }
