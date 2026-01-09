@@ -660,6 +660,11 @@ function IndexScreen() {
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
 
+  // Cache movie release data for displaying release status badges
+  const [movieReleases, setMovieReleases] = useState<
+    Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>
+  >(new Map());
+
   const watchlistCards = useMemo(() => {
     const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears));
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -863,6 +868,114 @@ function IndexScreen() {
     void fetchMissingYears();
   }, [watchlistItems, watchlistYears]);
 
+  // Fetch release data for movies when releaseStatus badge is enabled
+  useEffect(() => {
+    // Only fetch if releaseStatus badge is enabled
+    const badgeVisibility = userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [];
+    if (!badgeVisibility.includes('releaseStatus')) {
+      return;
+    }
+
+    // Collect all movies that need release data
+    const moviesToFetch: Array<{ id: string; tmdbId?: number; imdbId?: string }> = [];
+
+    // From trending movies
+    if (trendingMovies) {
+      for (const item of trendingMovies) {
+        if (
+          item.title.mediaType === 'movie' &&
+          (item.title.tmdbId || item.title.imdbId) &&
+          !movieReleases.has(item.title.id) &&
+          !item.title.theatricalRelease &&
+          !item.title.homeRelease
+        ) {
+          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+        }
+      }
+    }
+
+    // From custom lists
+    for (const items of Object.values(customListData)) {
+      for (const item of items) {
+        if (
+          item.title.mediaType === 'movie' &&
+          (item.title.tmdbId || item.title.imdbId) &&
+          !movieReleases.has(item.title.id) &&
+          !item.title.theatricalRelease &&
+          !item.title.homeRelease
+        ) {
+          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+        }
+      }
+    }
+
+    // From continue watching (movies only - no nextEpisode)
+    if (continueWatchingItems) {
+      for (const item of continueWatchingItems) {
+        const isMovie = !item.nextEpisode;
+        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+        if (
+          isMovie &&
+          tmdbId &&
+          !movieReleases.has(item.seriesId)
+        ) {
+          moviesToFetch.push({ id: item.seriesId, tmdbId });
+        }
+      }
+    }
+
+    // From watchlist (movies only)
+    if (watchlistItems) {
+      for (const item of watchlistItems) {
+        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+        if (
+          item.mediaType === 'movie' &&
+          tmdbId &&
+          !movieReleases.has(item.id)
+        ) {
+          moviesToFetch.push({ id: item.id, tmdbId });
+        }
+      }
+    }
+
+    if (moviesToFetch.length === 0) {
+      return;
+    }
+
+    const fetchReleases = async () => {
+      try {
+        const batchResponse = await apiService.batchMovieReleases(
+          moviesToFetch.map((m) => ({ titleId: m.id, tmdbId: m.tmdbId, imdbId: m.imdbId })),
+        );
+
+        const updates = new Map<
+          string,
+          { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }
+        >();
+
+        for (let i = 0; i < batchResponse.results.length; i++) {
+          const result = batchResponse.results[i];
+          const movie = moviesToFetch[i];
+
+          if (!result.error) {
+            updates.set(movie.id, {
+              theatricalRelease: result.theatricalRelease,
+              homeRelease: result.homeRelease,
+            });
+          }
+        }
+
+        if (updates.size > 0) {
+          setMovieReleases((prev) => new Map([...prev, ...updates]));
+        }
+      } catch (error) {
+        console.warn('Failed to batch fetch movie releases:', error);
+      }
+    };
+
+    void fetchReleases();
+  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
+
   const trendingMovieCards = useMemo(() => {
     const allCards = mapTrendingToCards(trendingMovies ?? undefined);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -903,10 +1016,16 @@ function IndexScreen() {
   const customListTitles = useMemo(() => {
     const result: Record<string, (Title & { uniqueKey: string; collagePosters?: string[] })[]> = {};
     for (const [shelfId, items] of Object.entries(customListData)) {
-      const allTitles = items.map((item) => ({
-        ...item.title,
-        uniqueKey: `custom:${shelfId}:${item.title.id}`,
-      }));
+      const allTitles = items.map((item) => {
+        // Merge cached release data for movies
+        const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
+        return {
+          ...item.title,
+          uniqueKey: `custom:${shelfId}:${item.title.id}`,
+          theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
+          homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
+        };
+      });
       const totalCount = customListTotals[shelfId] ?? allTitles.length;
       if (totalCount <= MAX_SHELF_ITEMS_ON_HOME) {
         result[shelfId] = allTitles;
@@ -935,10 +1054,24 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals]);
+  }, [customListData, customListTotals, movieReleases]);
 
   const watchlistTitles = useMemo(() => {
-    const allTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
+    const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
+    // Merge cached release data for movies
+    const allTitles = baseTitles.map((title) => {
+      if (title.mediaType === 'movie') {
+        const cachedReleases = movieReleases.get(title.id);
+        if (cachedReleases) {
+          return {
+            ...title,
+            theatricalRelease: title.theatricalRelease ?? cachedReleases.theatricalRelease,
+            homeRelease: title.homeRelease ?? cachedReleases.homeRelease,
+          };
+        }
+      }
+      return title;
+    });
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -963,9 +1096,23 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears]);
+  }, [watchlistItems, watchlistYears, movieReleases]);
   const continueWatchingTitles = useMemo(() => {
-    const allTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
+    const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
+    // Merge cached release data for movies
+    const allTitles = baseTitles.map((title) => {
+      if (title.mediaType === 'movie') {
+        const cachedReleases = movieReleases.get(title.id);
+        if (cachedReleases) {
+          return {
+            ...title,
+            theatricalRelease: title.theatricalRelease ?? cachedReleases.theatricalRelease,
+            homeRelease: title.homeRelease ?? cachedReleases.homeRelease,
+          };
+        }
+      }
+      return title;
+    });
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -990,13 +1137,19 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreTitle, ...limitedTitles];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems]);
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases]);
   const trendingMovieTitles = useMemo(() => {
     const allTitles =
-      trendingMovies?.map((item) => ({
-        ...item.title,
-        uniqueKey: `movie:${item.title.id}`,
-      })) ?? [];
+      trendingMovies?.map((item) => {
+        // Merge cached release data if available
+        const cachedReleases = movieReleases.get(item.title.id);
+        return {
+          ...item.title,
+          uniqueKey: `movie:${item.title.id}`,
+          theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
+          homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
+        };
+      }) ?? [];
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1021,7 +1174,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreTitle, ...limitedTitles];
-  }, [trendingMovies]);
+  }, [trendingMovies, movieReleases]);
 
   const trendingShowTitles = useMemo(() => {
     const allTitles =
@@ -1898,7 +2051,7 @@ function IndexScreen() {
                       loading={data.loading}
                       onItemPress={data.onItemPress}
                       onItemLongPress={data.onItemLongPress}
-                      badgeVisibility={userSettings?.display?.badgeVisibility}
+                      badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
                     />
                   </View>
                 );

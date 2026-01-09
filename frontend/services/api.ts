@@ -150,6 +150,27 @@ export interface BatchSeriesDetailsResponse {
   results: BatchSeriesDetailsItem[];
 }
 
+export interface BatchMovieReleasesQuery {
+  titleId?: string;
+  tmdbId?: number;
+  imdbId?: string;
+}
+
+export interface BatchMovieReleasesRequest {
+  queries: BatchMovieReleasesQuery[];
+}
+
+export interface BatchMovieReleasesItem {
+  query: BatchMovieReleasesQuery;
+  theatricalRelease?: ReleaseWindow;
+  homeRelease?: ReleaseWindow;
+  error?: string;
+}
+
+export interface BatchMovieReleasesResponse {
+  results: BatchMovieReleasesItem[];
+}
+
 export interface TrailerResponse {
   primaryTrailer?: Trailer;
   trailers: Trailer[];
@@ -957,6 +978,27 @@ class ApiService {
     };
 
     return this.request<BatchSeriesDetailsResponse>('/metadata/series/batch', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    });
+  }
+
+  async batchMovieReleases(
+    queries: Array<{
+      titleId?: string;
+      tmdbId?: string | number;
+      imdbId?: string;
+    }>,
+  ): Promise<BatchMovieReleasesResponse> {
+    const requestBody: BatchMovieReleasesRequest = {
+      queries: queries.map((q) => ({
+        titleId: q.titleId,
+        tmdbId: q.tmdbId ? Number(q.tmdbId) : undefined,
+        imdbId: q.imdbId,
+      })),
+    };
+
+    return this.request<BatchMovieReleasesResponse>('/metadata/movies/releases', {
       method: 'POST',
       body: JSON.stringify(requestBody),
     });

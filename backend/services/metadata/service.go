@@ -1842,6 +1842,103 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 	return results
 }
 
+// BatchMovieReleases fetches release data for multiple movies efficiently.
+// It checks the cache first for all queries and fetches uncached items concurrently.
+func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	if len(queries) == 0 {
+		return []models.BatchMovieReleasesItem{}
+	}
+
+	results := make([]models.BatchMovieReleasesItem, len(queries))
+
+	// Track which indices need fetching
+	type fetchTask struct {
+		index  int
+		tmdbID int64
+	}
+	var tasksToFetch []fetchTask
+
+	// First pass: check cache for all queries
+	for i, query := range queries {
+		results[i].Query = query
+
+		tmdbID := query.TMDBID
+		if tmdbID <= 0 {
+			// Try to extract TMDB ID from titleId if it's in format "tmdb:movie:123"
+			if strings.HasPrefix(query.TitleID, "tmdb:movie:") {
+				if id, err := strconv.ParseInt(strings.TrimPrefix(query.TitleID, "tmdb:movie:"), 10, 64); err == nil {
+					tmdbID = id
+				}
+			}
+		}
+
+		// If still no TMDB ID but we have IMDB ID, look up TMDB ID
+		if tmdbID <= 0 && query.IMDBID != "" {
+			if id, err := s.tmdb.findMovieByIMDBID(ctx, query.IMDBID); err == nil && id > 0 {
+				tmdbID = id
+				log.Printf("[metadata] resolved IMDB %s to TMDB %d", query.IMDBID, tmdbID)
+			}
+		}
+
+		if tmdbID <= 0 {
+			results[i].Error = "tmdb id required for release data (could not resolve from imdb)"
+			continue
+		}
+
+		// Check cache
+		cacheID := cacheKey("tmdb", "movie", "releases", "v1", strconv.FormatInt(tmdbID, 10))
+		var cached []models.Release
+		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+			// Build a temporary title to use ensureMovieReleasePointers
+			tempTitle := &models.Title{Releases: cached}
+			s.ensureMovieReleasePointers(tempTitle)
+			results[i].Theatrical = tempTitle.Theatrical
+			results[i].HomeRelease = tempTitle.HomeRelease
+			continue
+		}
+
+		// Need to fetch
+		tasksToFetch = append(tasksToFetch, fetchTask{index: i, tmdbID: tmdbID})
+	}
+
+	if len(tasksToFetch) == 0 {
+		log.Printf("[metadata] batch movie releases complete (all cached) total=%d", len(queries))
+		return results
+	}
+
+	// Fetch uncached items concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Limit concurrency to avoid overwhelming TMDB
+	sem := make(chan struct{}, 5)
+
+	for _, task := range tasksToFetch {
+		wg.Add(1)
+		go func(t fetchTask) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			tempTitle := &models.Title{TMDBID: t.tmdbID}
+			if s.enrichMovieReleases(ctx, tempTitle, t.tmdbID) {
+				mu.Lock()
+				results[t.index].Theatrical = tempTitle.Theatrical
+				results[t.index].HomeRelease = tempTitle.HomeRelease
+				mu.Unlock()
+			} else {
+				mu.Lock()
+				results[t.index].Error = "failed to fetch release data"
+				mu.Unlock()
+			}
+		}(task)
+	}
+
+	wg.Wait()
+	log.Printf("[metadata] batch movie releases complete total=%d fetched=%d", len(queries), len(tasksToFetch))
+	return results
+}
+
 // SeriesInfo fetches lightweight series metadata (poster, backdrop, external IDs) without episodes.
 // This is useful for continue watching where we only need series-level metadata.
 func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error) {
@@ -2833,6 +2930,11 @@ func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingIte
 		// Set IMDB ID from MDBList
 		if item.IMDBID != "" {
 			title.IMDBID = item.IMDBID
+		}
+
+		// Set TMDB ID from MDBList if available
+		if item.TMDBID != nil && *item.TMDBID > 0 {
+			title.TMDBID = *item.TMDBID
 		}
 
 		// Try to enrich with TVDB data

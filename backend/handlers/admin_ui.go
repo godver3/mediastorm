@@ -427,7 +427,7 @@ var SettingsSchema = map[string]interface{}{
 				"order":       0,
 				"options": []map[string]interface{}{
 					{"value": "watchProgress", "label": "Watch Progress"},
-					{"value": "releaseStatus", "label": "Release Status (Coming Soon)", "disabled": true},
+					{"value": "releaseStatus", "label": "Release Status"},
 					{"value": "watchState", "label": "Watch State (Coming Soon)", "disabled": true},
 					{"value": "unwatchedCount", "label": "Unwatched Episode Count (Coming Soon)", "disabled": true},
 				},
