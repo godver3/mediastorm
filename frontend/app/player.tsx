@@ -121,6 +121,7 @@ export default function PlayerScreen() {
     hdr10: hdr10FlagParam,
     forceAAC: forceAACParam,
     startOffset: startOffsetParam,
+    actualStartOffset: actualStartOffsetParam,
     titleId: titleIdParam,
     imdbId: imdbIdParam,
     tvdbId: tvdbIdParam,
@@ -206,6 +207,15 @@ export default function PlayerScreen() {
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }, [startOffsetParam]);
+  // Keyframe-aligned start offset for subtitle sync (passed from prequeue HLS session creation)
+  const initialActualStartOffset = useMemo(() => {
+    const raw = Array.isArray(actualStartOffsetParam) ? actualStartOffsetParam[0] : actualStartOffsetParam;
+    if (!raw) {
+      return undefined; // undefined means not provided - use initialStartOffset
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }, [actualStartOffsetParam]);
 
   // Parse pre-extracted subtitle sessions from route params
   const preExtractedSubtitles = useMemo((): SubtitleSessionInfo[] | null => {
@@ -693,7 +703,8 @@ export default function PlayerScreen() {
   const durationRef = useRef<number>(0);
   const nowPlayingLastUpdateRef = useRef<number>(0); // Throttle iOS Now Playing updates
   const playbackOffsetRef = useRef<number>(initialStartOffset);
-  const actualPlaybackOffsetRef = useRef<number>(initialStartOffset); // Keyframe-aligned start for subtitle sync
+  // Use initialActualStartOffset if provided (from prequeue HLS session), otherwise fall back to initialStartOffset
+  const actualPlaybackOffsetRef = useRef<number>(initialActualStartOffset ?? initialStartOffset); // Keyframe-aligned start for subtitle sync
   // Note: sessionBufferEndRef is now provided by useHlsSession hook
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1060,7 +1071,11 @@ export default function PlayerScreen() {
         // No seek needed since player time 0 = absolute time startOffset
         pendingSessionSeekRef.current = null;
         playbackOffsetRef.current = initialStartOffset;
-        console.log('🎬 [player] using existing HLS session at offset:', initialStartOffset);
+        // Use actualStartOffset from prequeue if provided (keyframe-aligned for subtitle sync)
+        if (typeof initialActualStartOffset === 'number') {
+          actualPlaybackOffsetRef.current = initialActualStartOffset;
+        }
+        console.log('🎬 [player] using existing HLS session at offset:', initialStartOffset, 'actualStartOffset:', actualPlaybackOffsetRef.current);
       } else {
         pendingSessionSeekRef.current = initialStartOffset;
         console.log('🎬 [player] Set pendingSessionSeekRef to:', initialStartOffset);
@@ -1111,7 +1126,7 @@ export default function PlayerScreen() {
         warmStartDebounceResolveRef.current = null;
       }
     };
-  }, [initialStartOffset, shouldWarmStartResume, isHlsStream, isExistingHlsSession]);
+  }, [initialStartOffset, initialActualStartOffset, shouldWarmStartResume, isHlsStream, isExistingHlsSession]);
 
   useEffect(() => {
     if (!shouldWarmStartResume || initialStartOffset <= 0 || !sourcePath) {
