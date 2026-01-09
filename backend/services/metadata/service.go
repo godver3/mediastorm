@@ -26,7 +26,12 @@ type Service struct {
 	tmdb    *tmdbClient
 	mdblist *mdblistClient
 	cache   *fileCache
+	// Separate cache for stable ID mappings (TMDB↔IMDB) with 7x longer TTL
+	idCache *fileCache
 	demo    bool
+
+	// Cache TTL in hours (stored for reuse when updating clients)
+	ttlHours int
 
 	// In-flight request deduplication for TVDB ID resolution
 	inflightMu       sync.Mutex
@@ -48,16 +53,22 @@ type MDBListConfig struct {
 	EnabledRatings []string
 }
 
+// stableIDCacheTTLMultiplier is used for ID mappings (TMDB↔IMDB) that rarely change
+const stableIDCacheTTLMultiplier = 7
+
 func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig) *Service {
 	// Use a dedicated subdirectory for metadata cache to avoid conflicts with
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
+	idCacheDir := filepath.Join(cacheDir, "metadata", "ids")
 	return &Service{
-		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}),
+		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}),
-		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled),
+		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled, ttlHours),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
+		idCache:          newFileCache(idCacheDir, ttlHours*stableIDCacheTTLMultiplier),
 		demo:             demo,
+		ttlHours:         ttlHours,
 		inflightRequests: make(map[string]*inflightRequest),
 	}
 }
@@ -65,7 +76,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 // UpdateAPIKeys updates the API keys for TVDB and TMDB clients
 // This allows hot reloading when settings change
 func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
-	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{})
+	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{}, s.ttlHours)
 	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{})
 
 	// Clear all cached metadata so fresh data is fetched with new API keys
@@ -73,6 +84,12 @@ func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
 		log.Printf("[metadata] warning: failed to clear cache: %v", err)
 	} else {
 		log.Printf("[metadata] cleared metadata cache due to API key change")
+	}
+	// Also clear ID mapping cache
+	if s.idCache != nil {
+		if err := s.idCache.clear(); err != nil {
+			log.Printf("[metadata] warning: failed to clear ID cache: %v", err)
+		}
 	}
 }
 
@@ -87,6 +104,69 @@ func (s *Service) UpdateMDBListSettings(cfg MDBListConfig) {
 // ClearCache removes all cached metadata files
 func (s *Service) ClearCache() error {
 	return s.cache.clear()
+}
+
+// getIMDBIDForTMDB returns the IMDB ID for a TMDB ID, using cache when available.
+// ID mappings are cached with a longer TTL since they rarely change.
+func (s *Service) getIMDBIDForTMDB(ctx context.Context, mediaType string, tmdbID int64) string {
+	if tmdbID <= 0 {
+		return ""
+	}
+
+	// Check ID cache first
+	cacheID := cacheKey("id", "tmdb-to-imdb", mediaType, fmt.Sprintf("%d", tmdbID))
+	var cached string
+	if ok, _ := s.idCache.get(cacheID, &cached); ok {
+		return cached
+	}
+
+	// Fetch from TMDB API
+	imdbID, err := s.tmdb.fetchExternalID(ctx, mediaType, tmdbID)
+	if err != nil {
+		log.Printf("[metadata] failed to fetch IMDB ID for TMDB %s/%d: %v", mediaType, tmdbID, err)
+		return ""
+	}
+
+	// Cache the result (even empty string to avoid repeated lookups)
+	if err := s.idCache.set(cacheID, imdbID); err != nil {
+		log.Printf("[metadata] failed to cache IMDB ID mapping: %v", err)
+	}
+
+	return imdbID
+}
+
+// getTMDBIDForIMDB returns the TMDB ID for an IMDB ID, using cache when available.
+// ID mappings are cached with a longer TTL since they rarely change.
+func (s *Service) getTMDBIDForIMDB(ctx context.Context, imdbID string) int64 {
+	if imdbID == "" {
+		return 0
+	}
+
+	// Normalize IMDB ID
+	if !strings.HasPrefix(imdbID, "tt") {
+		imdbID = "tt" + imdbID
+	}
+
+	// Check ID cache first
+	cacheID := cacheKey("id", "imdb-to-tmdb", "movie", imdbID)
+	var cached int64
+	if ok, _ := s.idCache.get(cacheID, &cached); ok {
+		return cached
+	}
+
+	// Fetch from TMDB API
+	tmdbID, err := s.tmdb.findMovieByIMDBID(ctx, imdbID)
+	if err != nil {
+		log.Printf("[metadata] failed to fetch TMDB ID for IMDB %s: %v", imdbID, err)
+		return 0
+	}
+
+	// Cache the result
+	if err := s.idCache.set(cacheID, tmdbID); err != nil {
+		log.Printf("[metadata] failed to cache TMDB ID mapping: %v", err)
+	}
+
+	return tmdbID
 }
 
 func cacheKey(parts ...string) string {
@@ -151,6 +231,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 
 		items, err := s.tmdb.trending(ctx, normalized)
 		if err == nil && len(items) > 0 {
+			// Enrich with IMDB IDs using cached lookups
+			s.enrichTrendingIMDBIDs(ctx, items, normalized)
 			_ = s.cache.set(key, items)
 			return items, nil
 		}
@@ -232,6 +314,26 @@ func (s *Service) enrichDemoArtwork(ctx context.Context, items []models.Trending
 		// Cache the artwork
 		_ = s.cache.set(cacheID, *title)
 	}
+}
+
+// enrichTrendingIMDBIDs adds IMDB IDs to trending items using cached lookups.
+// This runs concurrently for performance but uses the ID cache to minimize API calls.
+func (s *Service) enrichTrendingIMDBIDs(ctx context.Context, items []models.TrendingItem, mediaType string) {
+	var wg sync.WaitGroup
+	for idx := range items {
+		if items[idx].Title.IMDBID != "" || items[idx].Title.TMDBID <= 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			imdbID := s.getIMDBIDForTMDB(ctx, mediaType, items[i].Title.TMDBID)
+			if imdbID != "" {
+				items[i].Title.IMDBID = imdbID
+			}
+		}(idx)
+	}
+	wg.Wait()
 }
 
 // searchDemo searches the demo public domain content for matching titles
@@ -1872,11 +1974,11 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 			}
 		}
 
-		// If still no TMDB ID but we have IMDB ID, look up TMDB ID
+		// If still no TMDB ID but we have IMDB ID, look up TMDB ID (using cached lookup)
 		if tmdbID <= 0 && query.IMDBID != "" {
-			if id, err := s.tmdb.findMovieByIMDBID(ctx, query.IMDBID); err == nil && id > 0 {
+			if id := s.getTMDBIDForIMDB(ctx, query.IMDBID); id > 0 {
 				tmdbID = id
-				log.Printf("[metadata] resolved IMDB %s to TMDB %d", query.IMDBID, tmdbID)
+				log.Printf("[metadata] resolved IMDB %s to TMDB %d (cached lookup)", query.IMDBID, tmdbID)
 			}
 		}
 
@@ -2120,18 +2222,35 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		// Try search if we have a name
 		if tvdbID <= 0 && strings.TrimSpace(req.Name) != "" {
 			results, err := s.searchTVDBMovie(req.Name, req.Year, "")
+			if err != nil {
+				log.Printf("[metadata] movie tvdb search error name=%q year=%d err=%v", req.Name, req.Year, err)
+			} else if len(results) == 0 {
+				log.Printf("[metadata] movie tvdb search returned 0 results name=%q year=%d", req.Name, req.Year)
+				// Fallback: retry without year constraint
+				if req.Year > 0 {
+					log.Printf("[metadata] movie tvdb search retrying without year name=%q", req.Name)
+					results, err = s.searchTVDBMovie(req.Name, 0, "")
+					if err != nil {
+						log.Printf("[metadata] movie tvdb search (no year) error name=%q err=%v", req.Name, err)
+					} else if len(results) > 0 {
+						log.Printf("[metadata] movie tvdb search (no year) found %d results name=%q", len(results), req.Name)
+					}
+				}
+			}
+			// Process results if we have any
 			if err == nil && len(results) > 0 {
-				// Parse TVDB ID from search result
-				if results[0].TVDBID != "" {
-					if id, err := strconv.ParseInt(results[0].TVDBID, 10, 64); err == nil {
-						tvdbID = id
-						log.Printf("[metadata] movie search found tvdbId=%d name=%q year=%d", tvdbID, req.Name, req.Year)
+				if results[0].TVDBID == "" {
+					log.Printf("[metadata] movie tvdb search result has no tvdb_id name=%q year=%d firstResultName=%q", req.Name, req.Year, results[0].Name)
+				} else if id, err := strconv.ParseInt(results[0].TVDBID, 10, 64); err != nil {
+					log.Printf("[metadata] movie tvdb search result has invalid tvdb_id name=%q year=%d tvdbId=%q err=%v", req.Name, req.Year, results[0].TVDBID, err)
+				} else {
+					tvdbID = id
+					log.Printf("[metadata] movie search found tvdbId=%d name=%q year=%d", tvdbID, req.Name, req.Year)
 
-						// Cache the TMDB→TVDB ID mapping if we have a TMDB ID
-						if req.TMDBID > 0 {
-							cacheID := cacheKey("tvdb", "resolve", "movie", "tmdb", fmt.Sprintf("%d", req.TMDBID))
-							_ = s.cache.set(cacheID, id)
-						}
+					// Cache the TMDB→TVDB ID mapping if we have a TMDB ID
+					if req.TMDBID > 0 {
+						cacheID := cacheKey("tvdb", "resolve", "movie", "tmdb", fmt.Sprintf("%d", req.TMDBID))
+						_ = s.cache.set(cacheID, id)
 					}
 				}
 			}
@@ -2975,65 +3094,103 @@ func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingIte
 
 		// Fallback: search TVDB by title/year if no TVDB ID or direct lookup failed
 		if !found {
+			// Use IMDB ID as remote_id if available (TVDB recognizes IMDB IDs), otherwise empty
+			remoteID := item.IMDBID
 			if mediaType == "movie" {
 				// Try to search TVDB by title/year
-				remoteID := fmt.Sprintf("%d", item.ID)
-				if searchResults, err := s.searchTVDBMovie(item.Title, item.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
-					result := searchResults[0]
-					if result.TVDBID != "" {
-						if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err == nil {
-							title.TVDBID = tvdbID
-							title.ID = fmt.Sprintf("tvdb:movie:%d", tvdbID)
-
-							// Use image from search result
-							if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
-								title.Poster = img
-							}
-
-							// Get additional artwork
-							if ext, err := s.client.movieExtended(tvdbID, []string{"artwork"}); err == nil {
-								applyTVDBArtworks(&title, ext.Artworks)
-							}
-
-							if result.Overview != "" {
-								title.Overview = result.Overview
-							}
-							found = true
+				searchResults, err := s.searchTVDBMovie(item.Title, item.ReleaseYear, remoteID)
+				if err != nil {
+					log.Printf("[metadata] custom list movie tvdb search error title=%q year=%d imdbId=%q err=%v", item.Title, item.ReleaseYear, item.IMDBID, err)
+				} else if len(searchResults) == 0 {
+					log.Printf("[metadata] custom list movie tvdb search returned 0 results title=%q year=%d imdbId=%q", item.Title, item.ReleaseYear, item.IMDBID)
+					// Fallback: retry without year constraint
+					if item.ReleaseYear > 0 {
+						log.Printf("[metadata] custom list movie tvdb search retrying without year title=%q imdbId=%q", item.Title, item.IMDBID)
+						searchResults, err = s.searchTVDBMovie(item.Title, 0, remoteID)
+						if err != nil {
+							log.Printf("[metadata] custom list movie tvdb search (no year) error title=%q imdbId=%q err=%v", item.Title, item.IMDBID, err)
+						} else if len(searchResults) > 0 {
+							log.Printf("[metadata] custom list movie tvdb search (no year) found %d results title=%q imdbId=%q", len(searchResults), item.Title, item.IMDBID)
 						}
+					}
+				}
+				// Process results if we have any
+				if err == nil && len(searchResults) > 0 {
+					result := searchResults[0]
+					if result.TVDBID == "" {
+						log.Printf("[metadata] custom list movie tvdb search result has no tvdb_id title=%q year=%d imdbId=%q firstResultName=%q", item.Title, item.ReleaseYear, item.IMDBID, result.Name)
+					} else if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err != nil {
+						log.Printf("[metadata] custom list movie tvdb search result has invalid tvdb_id title=%q year=%d tvdbId=%q err=%v", item.Title, item.ReleaseYear, result.TVDBID, err)
+					} else {
+						title.TVDBID = tvdbID
+						title.ID = fmt.Sprintf("tvdb:movie:%d", tvdbID)
+
+						// Use image from search result
+						if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
+							title.Poster = img
+						}
+
+						// Get additional artwork
+						if ext, err := s.client.movieExtended(tvdbID, []string{"artwork"}); err == nil {
+							applyTVDBArtworks(&title, ext.Artworks)
+						}
+
+						if result.Overview != "" {
+							title.Overview = result.Overview
+						}
+						found = true
 					}
 				}
 			} else {
 				// Try to search TVDB by title/year for series
-				remoteID := fmt.Sprintf("%d", item.ID)
-				if searchResults, err := s.searchTVDBSeries(item.Title, item.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
-					result := searchResults[0]
-					if result.TVDBID != "" {
-						if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err == nil {
-							title.TVDBID = tvdbID
-							title.ID = fmt.Sprintf("tvdb:series:%d", tvdbID)
-
-							// Use image from search result
-							if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
-								title.Poster = img
-							}
-
-							// Get additional artwork
-							if ext, err := s.client.seriesExtended(tvdbID, []string{"artworks"}); err == nil {
-								applyTVDBArtworks(&title, ext.Artworks)
-							}
-
-							if result.Overview != "" {
-								title.Overview = result.Overview
-							}
-							found = true
+				searchResults, err := s.searchTVDBSeries(item.Title, item.ReleaseYear, remoteID)
+				if err != nil {
+					log.Printf("[metadata] custom list series tvdb search error title=%q year=%d imdbId=%q err=%v", item.Title, item.ReleaseYear, item.IMDBID, err)
+				} else if len(searchResults) == 0 {
+					log.Printf("[metadata] custom list series tvdb search returned 0 results title=%q year=%d imdbId=%q", item.Title, item.ReleaseYear, item.IMDBID)
+					// Fallback: retry without year constraint
+					if item.ReleaseYear > 0 {
+						log.Printf("[metadata] custom list series tvdb search retrying without year title=%q imdbId=%q", item.Title, item.IMDBID)
+						searchResults, err = s.searchTVDBSeries(item.Title, 0, remoteID)
+						if err != nil {
+							log.Printf("[metadata] custom list series tvdb search (no year) error title=%q imdbId=%q err=%v", item.Title, item.IMDBID, err)
+						} else if len(searchResults) > 0 {
+							log.Printf("[metadata] custom list series tvdb search (no year) found %d results title=%q imdbId=%q", len(searchResults), item.Title, item.IMDBID)
 						}
+					}
+				}
+				// Process results if we have any
+				if err == nil && len(searchResults) > 0 {
+					result := searchResults[0]
+					if result.TVDBID == "" {
+						log.Printf("[metadata] custom list series tvdb search result has no tvdb_id title=%q year=%d imdbId=%q firstResultName=%q", item.Title, item.ReleaseYear, item.IMDBID, result.Name)
+					} else if tvdbID, err := strconv.ParseInt(result.TVDBID, 10, 64); err != nil {
+						log.Printf("[metadata] custom list series tvdb search result has invalid tvdb_id title=%q year=%d tvdbId=%q err=%v", item.Title, item.ReleaseYear, result.TVDBID, err)
+					} else {
+						title.TVDBID = tvdbID
+						title.ID = fmt.Sprintf("tvdb:series:%d", tvdbID)
+
+						// Use image from search result
+						if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
+							title.Poster = img
+						}
+
+						// Get additional artwork
+						if ext, err := s.client.seriesExtended(tvdbID, []string{"artworks"}); err == nil {
+							applyTVDBArtworks(&title, ext.Artworks)
+						}
+
+						if result.Overview != "" {
+							title.Overview = result.Overview
+						}
+						found = true
 					}
 				}
 			}
 		}
 
 		if !found {
-			log.Printf("[metadata] no tvdb match for custom list item title=%q year=%d type=%s", item.Title, item.ReleaseYear, mediaType)
+			log.Printf("[metadata] no tvdb match for custom list item title=%q year=%d type=%s imdbId=%q", item.Title, item.ReleaseYear, mediaType, item.IMDBID)
 		}
 
 		items = append(items, models.TrendingItem{

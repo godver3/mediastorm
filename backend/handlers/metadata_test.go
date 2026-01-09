@@ -82,6 +82,18 @@ func (f *fakeMetadataService) BatchSeriesDetails(_ context.Context, queries []mo
 	return results
 }
 
+func (f *fakeMetadataService) BatchMovieReleases(_ context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
+	results := make([]models.BatchMovieReleasesItem, len(queries))
+	for i, query := range queries {
+		results[i].Query = query
+	}
+	return results
+}
+
+func (f *fakeMetadataService) GetCustomList(_ string, _ int) ([]models.TrendingItem, int, error) {
+	return nil, 0, nil
+}
+
 func testConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
 	tmpDir := t.TempDir()
