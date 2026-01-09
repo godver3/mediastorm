@@ -479,6 +479,7 @@ function LiveScreen() {
             headerImage: channel.logo ?? '',
             title: channel.name ?? 'Live Channel',
             mediaType: 'channel',
+            preferSystemPlayer: '1',
           },
         });
       } catch (error) {

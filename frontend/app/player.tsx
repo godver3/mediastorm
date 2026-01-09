@@ -2121,9 +2121,9 @@ export default function PlayerScreen() {
         updateDuration(meta.playable, 'progress.playable');
       }
 
-      // Report progress to the backend for tracking
+      // Report progress to the backend for tracking (skip for live TV)
       const currentDuration = durationRef.current;
-      if (currentDuration > 0 && absoluteTime >= 0) {
+      if (!isLiveTV && currentDuration > 0 && absoluteTime >= 0) {
         reportProgress(absoluteTime, currentDuration);
       }
 
@@ -2934,11 +2934,27 @@ export default function PlayerScreen() {
   };
 
   const handleEnterPip = useCallback(() => {
+    // Set the ref immediately before entering PiP to prevent race condition
+    // with AppState listener (which would pause on background before the
+    // onPictureInPictureStatusChanged callback fires)
+    isPipActiveRef.current = true;
+    setIsPipActive(true);
     videoRef.current?.enterPip?.();
   }, []);
 
   const handlePictureInPictureStatusChanged = useCallback((isActive: boolean) => {
-    setIsPipActive(isActive);
+    if (isActive) {
+      // Entering PiP - already handled in handleEnterPip, but update state to be safe
+      isPipActiveRef.current = true;
+      setIsPipActive(true);
+    } else {
+      // Exiting PiP - update state immediately (for Controls layout remount),
+      // but delay clearing the ref to prevent AppState transitions from pausing
+      setIsPipActive(false);
+      setTimeout(() => {
+        isPipActiveRef.current = false;
+      }, 500);
+    }
     console.log('[player] PiP status changed:', isActive);
   }, []);
 
@@ -4634,6 +4650,7 @@ export default function PlayerScreen() {
                         <View style={styles.overlayControls} pointerEvents="box-none">
                           <SpatialNavigationNode orientation="vertical">
                             <Controls
+                              key={`controls-tv-${isPipActive}`}
                               paused={paused}
                               onPlayPause={togglePausePlay}
                               currentTime={currentTime}
@@ -4659,7 +4676,7 @@ export default function PlayerScreen() {
                                   setExternalSubtitleUrl(null);
                                 }
                               }}
-                              onSearchSubtitles={handleOpenSubtitleSearch}
+                              onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                               onModalStateChange={handleModalStateChange}
                               onScrubStart={handleSeekBarScrubStart}
                               onScrubEnd={handleSeekBarScrubEnd}
@@ -4754,6 +4771,7 @@ export default function PlayerScreen() {
                     <View style={styles.overlayControls} pointerEvents="box-none">
                       <SpatialNavigationNode orientation="vertical">
                         <Controls
+                          key={`controls-mobile-${isPipActive}`}
                           paused={paused}
                           onPlayPause={togglePausePlay}
                           currentTime={currentTime}
@@ -4779,7 +4797,7 @@ export default function PlayerScreen() {
                               setExternalSubtitleUrl(null);
                             }
                           }}
-                          onSearchSubtitles={handleOpenSubtitleSearch}
+                          onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                           onModalStateChange={handleModalStateChange}
                           onScrubStart={handleSeekBarScrubStart}
                           onScrubEnd={handleSeekBarScrubEnd}

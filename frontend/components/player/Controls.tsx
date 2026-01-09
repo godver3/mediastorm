@@ -161,12 +161,12 @@ const Controls: React.FC<ControlsProps> = ({
     return `${sign}${subtitleOffset.toFixed(2)}s`;
   }, [subtitleOffset]);
 
-  const hasAudioSelection = allowTrackSelection && Boolean(onSelectAudioTrack) && audioTracks.length > 0;
-  // Always show subtitle button when onSelectSubtitleTrack is provided (for external subtitle search)
-  const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack);
+  // Hide all track selection for live TV
+  const hasAudioSelection = allowTrackSelection && Boolean(onSelectAudioTrack) && audioTracks.length > 0 && !isLiveTV;
+  const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack) && !isLiveTV;
   const showFullscreenButton = Boolean(onToggleFullscreen) && !isMobile && !isLiveTV && !isTvPlatform;
-  // PiP button: only show on iOS mobile (not TV, not live TV)
-  const showPipButton = Boolean(onEnterPip) && isMobile && Platform.OS === 'ios' && !isLiveTV;
+  // PiP button: show on iOS and Android mobile (not TV, not live TV)
+  const showPipButton = Boolean(onEnterPip) && isMobile && (Platform.OS === 'ios' || Platform.OS === 'android') && !isLiveTV;
 
   // Compute a key for the secondary row that changes when buttons change,
   // forcing the spatial navigation tree to be regenerated
