@@ -1,16 +1,18 @@
-import { Dimensions, useWindowDimensions } from 'react-native';
-import { isAndroidTV } from '@/theme/tokens/tvScale';
+import { Dimensions, Platform, useWindowDimensions } from 'react-native';
+
+const isAndroid = Platform.OS === 'android';
 
 /**
  * Returns screen dimensions, using the correct source for each platform.
  *
- * On Android TV, useWindowDimensions can return incorrect values (especially in emulators),
- * so we fall back to Dimensions.get('screen') which is more reliable.
+ * On Android (both TV and mobile), useWindowDimensions can return incorrect values
+ * (especially in emulators/simulators), so we fall back to Dimensions.get('screen')
+ * which is more reliable.
  */
 export function useTVDimensions() {
   const windowDimensions = useWindowDimensions();
 
-  if (isAndroidTV) {
+  if (isAndroid) {
     const screen = Dimensions.get('screen');
     return {
       width: screen.width,
