@@ -126,6 +126,7 @@ export default function PlayerScreen() {
     tvdbId: tvdbIdParam,
     shuffleMode: shuffleModeParam,
     preExtractedSubtitles: preExtractedSubtitlesParam,
+    subtitleDebug: subtitleDebugParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -488,6 +489,8 @@ export default function PlayerScreen() {
 
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hasStartedPlaying, setHasStartedPlaying] = useState<boolean>(false);
+  // Cache-busting counter for subtitle URLs - increments after seek to force refetch
+  const [subtitleCacheBust, setSubtitleCacheBust] = useState<number>(0);
   // Track HDR content type (Dolby Vision/HDR10) for proper player configuration
   const [hasDolbyVision, setHasDolbyVision] = useState<boolean>(routeHasDolbyVision);
   const [isFilenameDisplayed, setIsFilenameDisplayed] = useState<boolean>(false);
@@ -734,6 +737,18 @@ export default function PlayerScreen() {
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
   }, [debugLogsParam]);
 
+  // Subtitle sync debug overlay - TEMPORARILY ALWAYS ON for debugging
+  // TODO: Revert to URL param check: ?subtitleDebug=1
+  const subtitleDebugEnabled = true;
+  // const subtitleDebugEnabled = useMemo(() => {
+  //   const rawValue = Array.isArray(subtitleDebugParam) ? subtitleDebugParam[0] : subtitleDebugParam;
+  //   if (!rawValue) {
+  //     return false;
+  //   }
+  //   const normalized = rawValue.toString().trim().toLowerCase();
+  //   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+  // }, [subtitleDebugParam]);
+
   // Clear image memory cache on Android TV to free RAM for video decoder
   // This is critical for low-memory devices like Fire Stick playing 4K content
   useEffect(() => {
@@ -932,6 +947,23 @@ export default function PlayerScreen() {
       }
     };
   }, [showToast, router]);
+
+  // Sync actualPlaybackOffsetRef with hook's actualStartOffset for subtitle sync
+  // This ensures the keyframe-aligned offset is used even when session is created via hook
+  useEffect(() => {
+    if (
+      typeof hlsSessionState.actualStartOffset === 'number' &&
+      hlsSessionState.actualStartOffset >= 0 &&
+      hlsSessionState.actualStartOffset !== actualPlaybackOffsetRef.current
+    ) {
+      console.log('[player] syncing actualPlaybackOffsetRef from hook state', {
+        old: actualPlaybackOffsetRef.current,
+        new: hlsSessionState.actualStartOffset,
+        delta: hlsSessionState.actualStartOffset - playbackOffsetRef.current,
+      });
+      actualPlaybackOffsetRef.current = hlsSessionState.actualStartOffset;
+    }
+  }, [hlsSessionState.actualStartOffset]);
 
   // Send keepalive pings and poll for session status to detect stream errors
   // The backend kills FFmpeg after 30s of no segment requests, but players buffer aggressively
@@ -1921,6 +1953,8 @@ export default function PlayerScreen() {
         setCurrentMovieUrl(response.playlistUrl);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
+        // Increment cache bust to force subtitle refetch after seek
+        setSubtitleCacheBust((prev) => prev + 1);
         // Reset progress event counter for fresh debug logs after seek
         progressEventCountRef.current = 0;
         firstProgressValueRef.current = null;
@@ -3465,19 +3499,23 @@ export default function PlayerScreen() {
     if (selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0) {
       const separator = baseUrl.includes('?') ? '&' : '?';
       baseUrl = `${baseUrl}${separator}track=${selectedSubtitleTrackIndex}`;
-      console.log('[player] sidecarSubtitleUrl: adding track parameter', {
-        selectedSubtitleTrackIndex,
-        finalUrl: baseUrl,
-      });
-    } else {
-      console.log('[player] sidecarSubtitleUrl: no track selected', {
-        selectedSubtitleTrackIndex,
-        finalUrl: baseUrl,
-      });
     }
 
+    // Add cache-busting parameter to force refetch after seek
+    // Without this, the browser may serve a cached VTT from before the seek
+    if (subtitleCacheBust > 0) {
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      baseUrl = `${baseUrl}${separator}_cb=${subtitleCacheBust}`;
+    }
+
+    console.log('[player] sidecarSubtitleUrl: built URL', {
+      selectedSubtitleTrackIndex,
+      subtitleCacheBust,
+      finalUrl: baseUrl,
+    });
+
     return baseUrl;
-  }, [isHlsStream, effectiveMovie, selectedSubtitleTrackIndex]);
+  }, [isHlsStream, effectiveMovie, selectedSubtitleTrackIndex, subtitleCacheBust]);
 
   // Debug logging for sidecar subtitle URL changes
   useEffect(() => {
@@ -4643,12 +4681,13 @@ export default function PlayerScreen() {
           {/* currentTime = playbackOffset + playerRelativeTime, so we offset by -playbackOffset */}
           {/* to get adjustedTime = playerRelativeTime, which matches VTT time directly */}
           {/* User offset is also applied (negated: positive = later subtitles = decrease adjustedTime) */}
-          {isHlsStream && sidecarSubtitleUrl && (
+          {/* Gate with hasStartedPlaying to prevent subtitles appearing during initial buffering */}
+          {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-playbackOffsetRef.current - subtitleOffset}
+              timeOffset={-playbackOffsetRef.current - subtitleOffset + (actualPlaybackOffsetRef.current - playbackOffsetRef.current)}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
@@ -4662,7 +4701,7 @@ export default function PlayerScreen() {
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
           {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
           {/* timeOffset: -firstCueTime to align VTT cues with player position, -subtitleOffset for user adjustment */}
-          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && (
+          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasStartedPlaying && (
             <SubtitleOverlay
               vttUrl={extractedSubtitleUrl}
               currentTime={currentTime}
@@ -4680,7 +4719,7 @@ export default function PlayerScreen() {
 
           {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
           {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
-          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && (
+          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && (
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}
@@ -4978,6 +5017,66 @@ export default function PlayerScreen() {
               currentLanguage={subtitleSearchLanguage}
               mediaReleaseName={releaseName}
             />
+          )}
+
+          {/* Subtitle sync debug overlay - shows timing values for debugging sync issues */}
+          {subtitleDebugEnabled && (
+            <View
+              style={{
+                position: 'absolute',
+                top: 60,
+                left: 12,
+                backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                padding: 12,
+                borderRadius: 8,
+                minWidth: 320,
+                zIndex: 100,
+              }}
+              pointerEvents="none"
+            >
+              <Text style={{ color: '#00ff00', fontFamily: 'monospace', fontSize: 11, fontWeight: 'bold', marginBottom: 8 }}>
+                SUBTITLE SYNC DEBUG
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                currentTime: {currentTime.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                playbackOffset (requested): {playbackOffsetRef.current.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                actualPlaybackOffset (keyframe): {actualPlaybackOffsetRef.current.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                delta (actual - requested): {(actualPlaybackOffsetRef.current - playbackOffsetRef.current).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                playerRelativeTime: {(currentTime - playbackOffsetRef.current).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 8, borderTopWidth: 1, borderTopColor: '#444', paddingTop: 6, marginTop: 4 }}>
+                sdrFirstCueTime: {sdrFirstCueTimeRef.current.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                isHLS: {isHlsStream ? 'YES' : 'NO'}
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                sidecarSubtitleUrl: {sidecarSubtitleUrl ? 'set' : 'null'}
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                extractedSubtitleUrl: {extractedSubtitleUrl ? 'set' : 'null'}
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                HLS timeOffset (base): {(-playbackOffsetRef.current - subtitleOffset).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                HLS timeOffset (w/ delta): {(-playbackOffsetRef.current - subtitleOffset + (actualPlaybackOffsetRef.current - playbackOffsetRef.current)).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                SDR timeOffset: {(-sdrFirstCueTimeRef.current - subtitleOffset).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
+                subtitleOffset (user): {subtitleOffset.toFixed(3)}s
+              </Text>
+            </View>
           )}
 
           {debugOverlayEnabled && (

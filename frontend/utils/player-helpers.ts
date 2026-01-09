@@ -40,6 +40,7 @@ export interface PlayerParams extends Record<string, any> {
   imdbId?: string;
   tvdbId?: string;
   preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
+  subtitleDebug?: string; // Enable subtitle sync debug overlay
 }
 
 export const parseBooleanParam = (value?: string | string[]): boolean => {

@@ -2028,32 +2028,28 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs audioTrack=%d subtitleTrack=%d",
-		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, audioTrackIndex, subtitleTrackIndex)
+	// For warm start sessions, probe for the actual keyframe position FFmpeg will seek to BEFORE creating session
+	// This is critical because FFmpeg seeks to the nearest keyframe, not the exact requested time
+	// Both video and subtitles must start from the same keyframe position for sync
+	transcodingOffset := startSeconds
+	if startSeconds > 0 {
+		keyframePos := h.hlsManager.probeKeyframePosition(r.Context(), cleanPath, startSeconds)
+		transcodingOffset = keyframePos
+		log.Printf("[video] warm start: probed keyframe position %.3fs (requested %.3fs, delta %.3fs)",
+			keyframePos, startSeconds, keyframePos-startSeconds)
+	}
 
-	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r))
+	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs transcodingOffset=%.3fs audioTrack=%d subtitleTrack=%d",
+		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex)
+
+	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r))
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// For warm start fMP4 sessions, wait for first segment and parse actual start offset
-	// This is needed because FFmpeg seeks to the nearest keyframe, not the exact requested time
-	// The actual start offset is critical for VTT subtitle sync - without it, subtitles will be late
-	actualStartOffset := session.StartOffset
-	isTrackSwitch := r.URL.Query().Get("trackSwitch") == "true"
-	if (hasDV || hasHDR) && startSeconds > 0 {
-		// Use shorter timeout for track switches to reduce latency while still getting accurate timing
-		timeout := 15 * time.Second
-		if isTrackSwitch {
-			timeout = 5 * time.Second
-		}
-		actualStartOffset = h.hlsManager.WaitForActualStartOffset(session, timeout)
-		if isTrackSwitch {
-			log.Printf("[video] track switch: parsed actualStartOffset=%.3fs (requested=%.3fs)", actualStartOffset, startSeconds)
-		}
-	}
+	actualStartOffset := transcodingOffset
 
 	// Return session ID, playlist URL, and duration (if available)
 	w.Header().Set("Content-Type", "application/json")
@@ -2325,7 +2321,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		hasHDR = true // DV Profile 7 has HDR10 base layer
 	}
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}

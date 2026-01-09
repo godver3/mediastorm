@@ -911,3 +911,122 @@ func (m *HLSManager) probeColorMetadataFromURL(ctx context.Context, url string) 
 	log.Printf("[hls] probed color_transfer from URL: %q", colorTransfer)
 	return colorTransfer, nil
 }
+
+// probeKeyframePosition finds the actual keyframe position FFmpeg will seek to for a given time.
+// When FFmpeg uses input seeking (-ss before -i), it seeks to the nearest keyframe at or before
+// the requested time. This function determines that actual keyframe position so we can extract
+// subtitles from the same position for proper sync.
+// Returns the keyframe PTS in seconds, or the original seekTime if probing fails.
+func (m *HLSManager) probeKeyframePosition(ctx context.Context, path string, seekTime float64) float64 {
+	if m.ffprobePath == "" || seekTime <= 0 {
+		return seekTime
+	}
+
+	// For external URLs, probe directly
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return m.probeKeyframePositionFromURL(ctx, path, seekTime)
+	}
+
+	// Try to get a direct URL for probing
+	if m.streamer != nil {
+		if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
+			if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
+				log.Printf("[hls] probing keyframe position using direct URL for path: %s seekTime: %.3f", path, seekTime)
+				return m.probeKeyframePositionFromURL(ctx, directURL, seekTime)
+			}
+		}
+	}
+
+	// Try local WebDAV URL as fallback
+	if webdavURL, ok := m.buildLocalWebDAVURLFromPath(path); ok {
+		log.Printf("[hls] probing keyframe position using local WebDAV URL for path: %s seekTime: %.3f", path, seekTime)
+		return m.probeKeyframePositionFromURL(ctx, webdavURL, seekTime)
+	}
+
+	log.Printf("[hls] no direct URL available for keyframe probe, using requested time: %.3f", seekTime)
+	return seekTime
+}
+
+// probeKeyframePositionFromURL probes the actual keyframe position from a URL.
+// Uses ffprobe to find the nearest keyframe at or after the requested time.
+// This tells us where FFmpeg will actually start when using input seeking.
+func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url string, seekTime float64) float64 {
+	log.Printf("[hls] probing keyframe position from URL at %.3fs", seekTime)
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer probeCancel()
+
+	// Use ffprobe with -read_intervals to start reading from seekTime
+	// -skip_frame nokey skips non-keyframes so we only see keyframes
+	// -show_frames is required for frame-level queries
+	// Format: -read_intervals START%+#COUNT means "read COUNT frames starting from START seconds"
+	args := []string{
+		"-v", "error",
+		"-i", url,
+		"-select_streams", "v:0",
+		"-skip_frame", "nokey",
+		"-show_frames",
+		"-show_entries", "frame=pts_time",
+		"-read_intervals", fmt.Sprintf("%.3f%%+#1", seekTime),
+		"-of", "csv=p=0",
+	}
+
+	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		// Try alternative approach without -skip_frame (some formats like HEVC may not support it well)
+		log.Printf("[hls] keyframe probe with skip_frame failed: %v, trying without skip_frame", err)
+		args = []string{
+			"-v", "error",
+			"-i", url,
+			"-select_streams", "v:0",
+			"-show_frames",
+			"-show_entries", "frame=pts_time,key_frame",
+			"-read_intervals", fmt.Sprintf("%.3f%%+#5", seekTime),
+			"-of", "csv=p=0",
+		}
+		cmd = exec.CommandContext(probeCtx, m.ffprobePath, args...)
+		output, err = cmd.Output()
+		if err != nil {
+			log.Printf("[hls] keyframe probe failed: %v, using requested time: %.3f", err, seekTime)
+			return seekTime
+		}
+
+		// Parse output to find first keyframe (key_frame=1)
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, line := range lines {
+			parts := strings.Split(line, ",")
+			if len(parts) >= 2 && strings.TrimSpace(parts[1]) == "1" {
+				if pts, parseErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); parseErr == nil {
+					delta := pts - seekTime
+					log.Printf("[hls] keyframe probe (fallback): requested=%.3fs actual=%.3fs delta=%.3fs", seekTime, pts, delta)
+					return pts
+				}
+			}
+		}
+		log.Printf("[hls] keyframe probe fallback found no keyframes, using requested time: %.3f", seekTime)
+		return seekTime
+	}
+
+	ptsStr := strings.TrimSpace(string(output))
+	if ptsStr == "" {
+		log.Printf("[hls] keyframe probe returned empty PTS, using requested time: %.3f", seekTime)
+		return seekTime
+	}
+
+	// Handle output format: might include HDR metadata after the PTS
+	// e.g., "765.123" or "765.123,Mastering display metadata,..."
+	parts := strings.Split(ptsStr, ",")
+	ptsStr = strings.TrimSpace(parts[0])
+
+	keyframePTS, err := strconv.ParseFloat(ptsStr, 64)
+	if err != nil {
+		log.Printf("[hls] failed to parse keyframe PTS %q: %v, using requested time: %.3f", ptsStr, err, seekTime)
+		return seekTime
+	}
+
+	delta := keyframePTS - seekTime
+	log.Printf("[hls] keyframe probe: requested=%.3fs actual=%.3fs delta=%.3fs", seekTime, keyframePTS, delta)
+
+	return keyframePTS
+}

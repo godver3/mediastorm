@@ -667,7 +667,7 @@ func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
 }
 
 // CreateSession starts a new HLS transcoding session
-func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string) (*HLSSession, error) {
+func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -732,6 +732,13 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	}
 
 	now := time.Now()
+	// Use provided transcodingOffset if valid, otherwise default to startOffset
+	// transcodingOffset may differ from startOffset when probed keyframe position is used
+	actualTranscodingOffset := startOffset
+	if transcodingOffset > 0 {
+		actualTranscodingOffset = transcodingOffset
+	}
+
 	session := &HLSSession{
 		ID:                  sessionID,
 		Path:                path,
@@ -745,7 +752,8 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		HasHDR:              hasHDR,
 		Duration:            duration,
 		StartOffset:         startOffset,
-		TranscodingOffset:   startOffset, // Initially same as StartOffset, updated on recovery
+		TranscodingOffset:   actualTranscodingOffset, // May differ from StartOffset if keyframe-aligned
+		ActualStartOffset:   actualTranscodingOffset, // For subtitle sync
 		ProfileID:           profileID,
 		ProfileName:         profileName,
 		ClientIP:            clientIP,
@@ -2647,13 +2655,27 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 		log.Printf("[hls] session %s: warning: failed to clear segments for seek: %v", sessionID, err)
 	}
 
+	// Probe for the actual keyframe position FFmpeg will seek to BEFORE starting transcoding
+	// This is critical for VTT subtitle sync - both video and subtitles must start from the same position
+	session.mu.RLock()
+	sessionPath := session.Path
+	session.mu.RUnlock()
+
+	keyframePos := targetTime // Default to requested time
+	if targetTime > 0 {
+		keyframePos = m.probeKeyframePosition(r.Context(), sessionPath, targetTime)
+		log.Printf("[hls] session %s: seek keyframe probe: requested=%.3fs keyframe=%.3fs delta=%.3fs",
+			sessionID, targetTime, keyframePos, keyframePos-targetTime)
+	}
+
 	// Reset session state for the new seek position
 	session.mu.Lock()
 	session.FFmpegCmd = nil
 	session.FFmpegPID = 0
 	session.Completed = false
-	session.StartOffset = targetTime       // User's new position (for frontend display)
-	session.TranscodingOffset = targetTime // FFmpeg starts from same position
+	session.StartOffset = targetTime      // User's new position (for frontend display)
+	session.TranscodingOffset = keyframePos // FFmpeg starts from keyframe position
+	session.ActualStartOffset = keyframePos // For subtitle sync
 	session.CreatedAt = time.Now()
 	session.LastSegmentRequest = time.Now()
 	session.SegmentsCreated = 0
@@ -2713,45 +2735,13 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	// Build playlist URL (without /api/ prefix - frontend adds it)
 	playlistURL := fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID)
 
-	// For fMP4 sessions, parse actual start offset from tfdt box for subtitle sync
-	session.mu.RLock()
-	hasDV := session.HasDV
-	hasHDR := session.HasHDR
-	session.mu.RUnlock()
-
-	actualStartOffset := targetTime // Default to requested time
-	if (hasDV || hasHDR) && targetTime > 0 {
-		initPath := filepath.Join(outputDir, "init.mp4")
-		segment0Path := filepath.Join(outputDir, "segment0.m4s")
-
-		// Wait a bit for segment0 to be ready (it should already exist if playlist is ready)
-		for i := 0; i < 20; i++ { // 2 seconds max
-			if info, err := os.Stat(segment0Path); err == nil && info.Size() > 0 {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-
-		if actualStart, err := parseActualStartOffset(initPath, segment0Path); err != nil {
-			log.Printf("[hls] session %s: warning - could not parse actual start offset after seek: %v", sessionID, err)
-		} else {
-			delta := actualStart - targetTime
-			log.Printf("[hls] session %s: seek actual start offset: %.3fs (requested: %.3fs, delta: %.3fs)",
-				sessionID, actualStart, targetTime, delta)
-			actualStartOffset = actualStart
-		}
-	}
-
-	session.mu.Lock()
-	session.ActualStartOffset = actualStartOffset
-	session.mu.Unlock()
-
-	log.Printf("[hls] session %s: seek completed, new start offset: %.2fs", sessionID, targetTime)
+	log.Printf("[hls] session %s: seek completed, requested=%.2fs actual=%.2fs (delta=%.3fs)",
+		sessionID, targetTime, keyframePos, keyframePos-targetTime)
 
 	response := SeekResponse{
 		SessionID:         sessionID,
 		StartOffset:       targetTime,
-		ActualStartOffset: actualStartOffset,
+		ActualStartOffset: keyframePos,
 		Duration:          duration,
 		PlaylistURL:       playlistURL,
 	}
@@ -3341,16 +3331,22 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 	}
 
 	// Add input seeking if session has a start offset
-	if session.StartOffset > 0 {
-		args = append(args, "-ss", fmt.Sprintf("%.3f", session.StartOffset))
-		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs to match HLS start offset",
-			session.ID, session.StartOffset)
+	// Use ActualStartOffset (keyframe-aligned) for proper sync with video stream
+	// Video seeks to nearest keyframe, so subtitles must start from the same position
+	seekOffset := session.ActualStartOffset
+	if seekOffset <= 0 {
+		seekOffset = session.StartOffset // Fallback to requested offset if actual not set
+	}
+	if seekOffset > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", seekOffset))
+		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs (keyframe-aligned) for sync (requested was %.3fs)",
+			session.ID, seekOffset, session.StartOffset)
 	}
 
 	args = append(args, "-i", streamURL)
 
 	// Normalize output timestamps to start at 0 (matches main transcoding pipeline)
-	if session.StartOffset > 0 {
+	if seekOffset > 0 {
 		args = append(args, "-start_at_zero")
 	}
 
