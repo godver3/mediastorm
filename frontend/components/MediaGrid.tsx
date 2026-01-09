@@ -19,8 +19,20 @@ import { useTVDimensions } from '../hooks/useTVDimensions';
 import type { ColumnOverride } from '../hooks/useResponsiveColumns';
 import { useTheme } from '../theme';
 import type { NovaTheme } from '../theme';
-import MediaItem from './MediaItem';
+import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+// Helper to check if a badge should be shown
+const shouldShowBadge = (badgeType: string, visibility?: string[]): boolean => {
+  const implementedBadges = ['watchProgress', 'releaseStatus'];
+  if (!implementedBadges.includes(badgeType)) {
+    return false;
+  }
+  const DEFAULT_BADGE_VISIBILITY = ['watchProgress'];
+  const badges = visibility ?? DEFAULT_BADGE_VISIBILITY;
+  return badges.includes(badgeType);
+};
 
 type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
 
@@ -450,7 +462,18 @@ const MediaGrid = React.memo(
                         )}
                         {item.mediaType && item.mediaType !== 'explore' && (
                           <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
+                            {item.mediaType === 'movie' && shouldShowBadge('releaseStatus', badgeVisibility) && getMovieReleaseIcon(item) ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                                <MaterialCommunityIcons
+                                  name={getMovieReleaseIcon(item)!.name}
+                                  size={10}
+                                  color={getMovieReleaseIcon(item)!.color}
+                                />
+                                <Text style={styles.badgeText}>MOVIE</Text>
+                              </View>
+                            ) : (
+                              <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
+                            )}
                           </View>
                         )}
                         <View style={styles.cardTextContainer}>
@@ -483,6 +506,7 @@ const MediaGrid = React.memo(
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={[styles.carouselContent, styles.carouselContentCompact]}
             data={items}
+            extraData={badgeVisibility}
             keyExtractor={keyExtractor}
             initialNumToRender={5}
             maxToRenderPerBatch={5}

@@ -3,6 +3,7 @@ import { memo, useMemo } from 'react';
 import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import { Image } from './Image';
 import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Title } from '../services/api';
 import type { NovaTheme } from '../theme';
@@ -33,26 +34,38 @@ const DEFAULT_BADGE_VISIBILITY = ['watchProgress'];
 
 // Check if a specific badge type should be shown
 const shouldShowBadge = (badgeType: string, visibility?: string[]): boolean => {
-  // Force disable badges that aren't implemented yet
-  if (badgeType !== 'watchProgress') {
+  // Only allow implemented badge types
+  const implementedBadges = ['watchProgress', 'releaseStatus'];
+  if (!implementedBadges.includes(badgeType)) {
     return false;
   }
   const badges = visibility ?? DEFAULT_BADGE_VISIBILITY;
   return badges.includes(badgeType);
 };
 
+// Release status icon info for movies
+export type ReleaseIconInfo = {
+  name: keyof typeof MaterialCommunityIcons.glyphMap;
+  color: string;
+  label: string;
+} | null;
+
 // Get release status icon for movies
-const getMovieReleaseIcon = (title: Title): string | null => {
-  if (!title.homeRelease?.released && !title.theatricalRelease?.released) {
-    return '\u23F3'; // Hourglass - unreleased
+export const getMovieReleaseIcon = (title: Title): ReleaseIconInfo => {
+  // No release data available - don't show any icon
+  if (!title.homeRelease && !title.theatricalRelease) {
+    return null;
   }
+  // Home release available (digital/physical/streaming)
   if (title.homeRelease?.released) {
-    return '\uD83D\uDCFA'; // TV - digital release
+    return { name: 'home', color: '#4ade80', label: 'HOME' }; // Green - available at home
   }
+  // In theaters only
   if (title.theatricalRelease?.released) {
-    return '\uD83C\uDFAC'; // Clapper - in theaters
+    return { name: 'filmstrip', color: '#facc15', label: 'THEATER' }; // Yellow - in theaters
   }
-  return null;
+  // Has release data but not yet released
+  return { name: 'clock-outline', color: '#9ca3af', label: 'SOON' }; // Gray - coming soon
 };
 
 // Get status icon for series
@@ -437,7 +450,11 @@ const MediaItem = memo(function MediaItem({
             shouldShowBadge('releaseStatus', badgeVisibility) &&
             releaseIcon && (
               <View style={styles.releaseStatusBadge}>
-                <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
+                <MaterialCommunityIcons
+                  name={releaseIcon.name}
+                  size={styles.releaseStatusIcon.fontSize}
+                  color={releaseIcon.color}
+                />
               </View>
             )}
           {/* Progress badge - hide if less than 5% */}
@@ -539,7 +556,11 @@ const MediaItem = memo(function MediaItem({
         shouldShowBadge('releaseStatus', badgeVisibility) &&
         releaseIcon && (
           <View style={styles.releaseStatusBadge}>
-            <Text style={styles.releaseStatusIcon}>{releaseIcon}</Text>
+            <MaterialCommunityIcons
+              name={releaseIcon.name}
+              size={styles.releaseStatusIcon.fontSize}
+              color={releaseIcon.color}
+            />
           </View>
         )}
       {/* Media type badge - hide for special card types */}
