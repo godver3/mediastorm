@@ -232,8 +232,9 @@ export const findSubtitleTrackByPreference = (
       return anyMatch[0].index;
     }
 
-    // Last resort: first available stream
-    return streams[0].index;
+    // No matching language found - return null to trigger auto-search
+    // Don't fall back to a random language the user didn't ask for
+    return null;
   }
 
   return null;

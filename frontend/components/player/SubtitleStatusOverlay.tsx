@@ -44,7 +44,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   spinner: {
-    marginRight: 8,
+    marginRight: 12,
   },
   text: {
     color: '#fff',

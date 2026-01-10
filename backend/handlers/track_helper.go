@@ -213,17 +213,7 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 		}
 	}
 
-	// If mode is "on" and no language match, return the first (default) track
-	if mode == "on" && len(candidateStreams) > 0 {
-		// Prefer default track if set
-		for _, stream := range candidateStreams {
-			if stream.IsDefault {
-				return stream.Index
-			}
-		}
-		// Otherwise return first track
-		return candidateStreams[0].Index
-	}
-
+	// If mode is "on" and no language match, return -1 to trigger auto-search
+	// We don't want to fall back to a random language the user didn't ask for
 	return -1
 }
