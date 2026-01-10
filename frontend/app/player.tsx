@@ -74,6 +74,7 @@ import type {
   SeriesEpisode,
   PrequeueStatusResponse,
   SubtitleSessionInfo,
+  ContentPreference,
 } from '@/services/api';
 import apiService from '@/services/api';
 import { playbackNavigation } from '@/services/playback-navigation';
@@ -391,6 +392,11 @@ export default function PlayerScreen() {
     codec: string;
     forced: boolean;
   }> | null>(null);
+  // Raw audio/subtitle stream metadata (for per-content language preference saving)
+  const [audioStreamMetadata, setAudioStreamMetadata] = useState<AudioStreamMetadata[] | null>(null);
+  const [subtitleStreamMetadata, setSubtitleStreamMetadata] = useState<SubtitleStreamMetadata[] | null>(null);
+  // Per-content language preference (loaded from backend, overrides user settings)
+  const [contentPreference, setContentPreference] = useState<ContentPreference | null>(null);
   const [debugEntries, setDebugEntries] = useState<DebugLogEntry[]>([]);
   // Auto-subtitle search state (automatic subtitle search when no embedded tracks match preference)
   const [autoSubtitleStatus, setAutoSubtitleStatus] = useState<AutoSubtitleStatus>('idle');
@@ -885,6 +891,37 @@ export default function PlayerScreen() {
   // Setup playback progress tracking
   const { activeUserId, activeUser } = useUserProfiles();
 
+  // Fetch per-content language preference (if exists) to override user settings
+  useEffect(() => {
+    if (!titleId || !activeUserId) {
+      setContentPreference(null);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchContentPreference = async () => {
+      try {
+        const pref = await apiService.getContentPreference(activeUserId, titleId);
+        if (isMounted) {
+          setContentPreference(pref);
+          if (pref) {
+            console.log('[player] loaded per-content language preference', pref);
+          }
+        }
+      } catch (error) {
+        console.warn('[player] failed to fetch content preference', error);
+        if (isMounted) {
+          setContentPreference(null);
+        }
+      }
+    };
+
+    fetchContentPreference();
+    return () => {
+      isMounted = false;
+    };
+  }, [titleId, activeUserId]);
+
   // Refs for HLS session callbacks (populated later, accessed by callbacks)
   const playbackOffsetCallbackRef = useRef<((offset: number) => void) | null>(null);
   const fatalErrorCallbackRef = useRef<((error: string) => void) | null>(null);
@@ -973,6 +1010,113 @@ export default function PlayerScreen() {
       restoreSession();
     }
   }, [paused, pauseTeardownActive, initialSourcePath, showToast, hlsSessionActions, hlsSessionRefs]);
+
+  // Save per-content language preference when user manually changes audio or subtitle track
+  // If the user selects their global default language, clear the content preference instead
+  const saveContentLanguagePreference = useCallback(
+    async (options: {
+      audioTrackId?: string;
+      subtitleTrackId?: string;
+    }) => {
+      // Skip if we don't have required info
+      if (!titleId || !activeUserId) {
+        console.log('[player] skipping content preference save - missing titleId or userId');
+        return;
+      }
+
+      // Get user's global preferred languages
+      const globalAudioLanguage =
+        userSettings?.playback?.preferredAudioLanguage || settings?.playback?.preferredAudioLanguage;
+      const globalSubtitleLanguage =
+        userSettings?.playback?.preferredSubtitleLanguage || settings?.playback?.preferredSubtitleLanguage;
+      const globalSubtitleMode =
+        userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
+
+      // Determine content type based on mediaType
+      const isSeries = mediaType === 'episode' || mediaType === 'series' || mediaType === 'tv' || mediaType === 'show';
+      const contentType: 'series' | 'movie' = isSeries ? 'series' : 'movie';
+
+      // Build preference object with current values
+      let audioLanguage: string | undefined;
+      let subtitleLanguage: string | undefined;
+      let subtitleMode: 'off' | 'on' | 'forced-only' | undefined;
+
+      // Get audio language from the track selection
+      if (options.audioTrackId && audioStreamMetadata) {
+        const trackIndex = parseInt(options.audioTrackId, 10);
+        const audioStream = audioStreamMetadata.find((s) => s.index === trackIndex);
+        if (audioStream?.language) {
+          audioLanguage = audioStream.language;
+        }
+      }
+
+      // Get subtitle language/mode from the track selection
+      if (options.subtitleTrackId !== undefined) {
+        if (options.subtitleTrackId === 'off' || options.subtitleTrackId === SUBTITLE_OFF_OPTION.id) {
+          subtitleMode = 'off';
+          subtitleLanguage = undefined;
+        } else if (options.subtitleTrackId === 'external') {
+          // External subtitles - don't save as preference
+          return;
+        } else if (subtitleStreamMetadata) {
+          const trackIndex = parseInt(options.subtitleTrackId, 10);
+          const subtitleStream = subtitleStreamMetadata.find((s) => s.index === trackIndex);
+          if (subtitleStream) {
+            subtitleLanguage = subtitleStream.language || undefined;
+            // Check if it's a forced subtitle
+            subtitleMode = subtitleStream.isForced ? 'forced-only' : 'on';
+          }
+        }
+      }
+
+      // Don't save if no language info available
+      if (!audioLanguage && !subtitleLanguage && subtitleMode !== 'off') {
+        console.log('[player] skipping content preference save - no language info');
+        return;
+      }
+
+      try {
+        // Get existing preference to preserve settings not being changed
+        const existingPref = await apiService.getContentPreference(activeUserId, titleId);
+
+        // Determine final values (new values or preserve existing)
+        const finalAudioLanguage = audioLanguage ?? existingPref?.audioLanguage;
+        const finalSubtitleLanguage = subtitleLanguage ?? existingPref?.subtitleLanguage;
+        const finalSubtitleMode = subtitleMode ?? existingPref?.subtitleMode;
+
+        // Only save values that DIFFER from global settings
+        // If a value matches global, it should be undefined (no override needed)
+        const audioOverride = finalAudioLanguage && finalAudioLanguage !== globalAudioLanguage ? finalAudioLanguage : undefined;
+        const subtitleLangOverride = finalSubtitleLanguage && finalSubtitleLanguage !== globalSubtitleLanguage ? finalSubtitleLanguage : undefined;
+        const subtitleModeOverride = finalSubtitleMode && finalSubtitleMode !== globalSubtitleMode ? finalSubtitleMode : undefined;
+
+        // If no actual overrides remain, delete the preference entirely
+        if (!audioOverride && !subtitleLangOverride && !subtitleModeOverride) {
+          if (existingPref) {
+            console.log('[player] clearing content preference - all values match global settings');
+            await apiService.deleteContentPreference(activeUserId, titleId);
+            setContentPreference(null);
+          }
+          return;
+        }
+
+        const preference: ContentPreference = {
+          contentId: titleId,
+          contentType,
+          audioLanguage: audioOverride,
+          subtitleLanguage: subtitleLangOverride,
+          subtitleMode: subtitleModeOverride,
+        };
+
+        console.log('[player] saving content language preference', preference);
+        await apiService.setContentPreference(activeUserId, preference);
+        setContentPreference(preference);
+      } catch (error) {
+        console.error('[player] failed to save content language preference', error);
+      }
+    },
+    [titleId, activeUserId, mediaType, audioStreamMetadata, subtitleStreamMetadata, userSettings, settings],
+  );
 
   // Build media item ID based on type using stable identifiers
   const mediaItemId = useMemo(() => {
@@ -4424,6 +4568,9 @@ export default function PlayerScreen() {
           // Still build and set audio options so the track menu shows correctly
           const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
           setAudioTrackOptions(audioOptions);
+          // Store raw metadata for per-content preference saving
+          setAudioStreamMetadata(metadata.audioStreams ?? null);
+          setSubtitleStreamMetadata(metadata.subtitleStreams ?? null);
           // Also set subtitle options for the menu
           const subtitleOptions = buildSubtitleTrackOptions(
             metadata.subtitleStreams ?? [],
@@ -4442,17 +4589,24 @@ export default function PlayerScreen() {
           audioOptions,
         });
         setAudioTrackOptions(audioOptions);
+        // Store raw metadata for per-content preference saving
+        setAudioStreamMetadata(metadata.audioStreams ?? null);
+        setSubtitleStreamMetadata(metadata.subtitleStreams ?? null);
 
-        // Check for user preference first, then fall back to metadata selection
+        // Check for per-content preference first, then user preference, then fall back to metadata selection
         let selectedAudioIndex = metadata.selectedAudioIndex;
+        // Priority: per-content preference > user settings > global settings
         const preferredAudioLanguage =
-          userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage;
+          contentPreference?.audioLanguage ||
+          userSettings?.playback?.preferredAudioLanguage ||
+          settings?.playback?.preferredAudioLanguage;
         if (preferredAudioLanguage) {
           const preferredAudioIndex = findAudioTrackByLanguage(metadata.audioStreams ?? [], preferredAudioLanguage);
           if (preferredAudioIndex !== null) {
             selectedAudioIndex = preferredAudioIndex;
             console.log('[player] using preferred audio language', {
               preferredLanguage: preferredAudioLanguage,
+              source: contentPreference?.audioLanguage ? 'content-preference' : 'user-settings',
               selectedAudioIndex,
             });
           }
@@ -4487,12 +4641,16 @@ export default function PlayerScreen() {
           });
           setSubtitleTrackOptions(subtitleOptions);
 
-          // Check for user preference first, then fall back to metadata selection
+          // Check for content preference first, then user preference, then fall back to metadata selection
           let selectedSubtitleIndex = metadata.selectedSubtitleIndex;
           const preferredSubtitleLanguage =
-            userSettings?.playback?.preferredSubtitleLanguage ?? settings?.playback?.preferredSubtitleLanguage;
+            contentPreference?.subtitleLanguage ||
+            userSettings?.playback?.preferredSubtitleLanguage ||
+            settings?.playback?.preferredSubtitleLanguage;
           const preferredSubtitleModeRaw =
-            userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode;
+            contentPreference?.subtitleMode ||
+            userSettings?.playback?.preferredSubtitleMode ||
+            settings?.playback?.preferredSubtitleMode;
           const preferredSubtitleMode =
             preferredSubtitleModeRaw === 'on' ||
             preferredSubtitleModeRaw === 'off' ||
@@ -4540,7 +4698,7 @@ export default function PlayerScreen() {
     return () => {
       isMounted = false;
     };
-  }, [resolvedMovie, updateDuration, sourcePath, settings, userSettings, isHlsStream, routeHasAnyHDR, triggerAutoSubtitleSearchIfNeeded]);
+  }, [resolvedMovie, updateDuration, sourcePath, settings, userSettings, isHlsStream, routeHasAnyHDR, triggerAutoSubtitleSearchIfNeeded, contentPreference]);
 
   // Fetch series details for episode navigation (only for series content)
   useEffect(() => {
@@ -4983,6 +5141,8 @@ export default function PlayerScreen() {
                               onSelectAudioTrack={(id) => {
                                 console.log('[player] user selected audio track', { id, audioTrackOptions });
                                 setSelectedAudioTrackId(id);
+                                // Save per-content language preference
+                                saveContentLanguagePreference({ audioTrackId: id });
                               }}
                               subtitleTracks={subtitleTrackOptions}
                               selectedSubtitleTrackId={selectedSubtitleTrackId}
@@ -4993,6 +5153,8 @@ export default function PlayerScreen() {
                                 if (id !== 'external') {
                                   setExternalSubtitleUrl(null);
                                 }
+                                // Save per-content language preference
+                                saveContentLanguagePreference({ subtitleTrackId: id });
                               }}
                               onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                               onModalStateChange={handleModalStateChange}
@@ -5106,6 +5268,8 @@ export default function PlayerScreen() {
                           onSelectAudioTrack={(id) => {
                             console.log('[player] user selected audio track', { id, audioTrackOptions });
                             setSelectedAudioTrackId(id);
+                            // Save per-content language preference
+                            saveContentLanguagePreference({ audioTrackId: id });
                           }}
                           subtitleTracks={subtitleTrackOptions}
                           selectedSubtitleTrackId={selectedSubtitleTrackId}
@@ -5116,6 +5280,8 @@ export default function PlayerScreen() {
                             if (id !== 'external') {
                               setExternalSubtitleUrl(null);
                             }
+                            // Save per-content language preference
+                            saveContentLanguagePreference({ subtitleTrackId: id });
                           }}
                           onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                           onModalStateChange={handleModalStateChange}

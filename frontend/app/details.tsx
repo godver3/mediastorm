@@ -13,6 +13,7 @@ import EpisodeCard from '@/components/EpisodeCard';
 import TVEpisodeStrip from '@/components/TVEpisodeStrip';
 import {
   apiService,
+  type ContentPreference,
   type EpisodeWatchPayload,
   type NZBResult,
   type PrequeueStatusResponse,
@@ -722,6 +723,7 @@ export default function DetailsScreen() {
   } | null>(null);
   const [displayProgress, setDisplayProgress] = useState<number | null>(null);
   const [progressRefreshKey, setProgressRefreshKey] = useState(0);
+  const [contentPreference, setContentPreference] = useState<ContentPreference | null>(null);
 
   const _overlayOpen =
     manualVisible ||
@@ -925,6 +927,36 @@ export default function DetailsScreen() {
       cancelled = true;
     };
   }, [isSeries, seriesIdentifier, activeUserId, allEpisodes]);
+
+  // Fetch content preference for language override indicator
+  useEffect(() => {
+    // Use series identifier for series, or titleId for movies
+    const contentId = isSeries ? seriesIdentifier : titleId;
+    if (!activeUserId || !contentId) {
+      setContentPreference(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    apiService
+      .getContentPreference(activeUserId, contentId)
+      .then((pref) => {
+        if (!cancelled) {
+          setContentPreference(pref);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.log('Unable to fetch content preference:', error);
+          setContentPreference(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUserId, isSeries, seriesIdentifier, titleId]);
 
   // Prequeue playback when details page loads
   useEffect(() => {
@@ -3638,6 +3670,77 @@ export default function DetailsScreen() {
                 />
               );
             })}
+          </View>
+        )}
+        {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: 8 * tvScale,
+              marginTop: 8 * tvScale,
+            }}>
+            {contentPreference.audioLanguage && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.background.elevated,
+                  paddingHorizontal: 10 * tvScale,
+                  paddingVertical: 4 * tvScale,
+                  borderRadius: 4 * tvScale,
+                }}>
+                <Ionicons
+                  name="volume-high"
+                  size={14 * tvScale}
+                  color={theme.colors.text.secondary}
+                  style={{ marginRight: 4 * tvScale }}
+                />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>
+                  {contentPreference.audioLanguage.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            {contentPreference.subtitleLanguage && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.background.elevated,
+                  paddingHorizontal: 10 * tvScale,
+                  paddingVertical: 4 * tvScale,
+                  borderRadius: 4 * tvScale,
+                }}>
+                <Ionicons
+                  name="text"
+                  size={14 * tvScale}
+                  color={theme.colors.text.secondary}
+                  style={{ marginRight: 4 * tvScale }}
+                />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>
+                  {contentPreference.subtitleLanguage.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            {contentPreference.subtitleMode === 'off' && !contentPreference.subtitleLanguage && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.background.elevated,
+                  paddingHorizontal: 10 * tvScale,
+                  paddingVertical: 4 * tvScale,
+                  borderRadius: 4 * tvScale,
+                }}>
+                <Ionicons
+                  name="text"
+                  size={14 * tvScale}
+                  color={theme.colors.text.secondary}
+                  style={{ marginRight: 4 * tvScale }}
+                />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>OFF</Text>
+              </View>
+            )}
           </View>
         )}
         {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (

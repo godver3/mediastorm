@@ -630,6 +630,16 @@ export interface UserSettings {
   network: UserNetworkSettings;
 }
 
+// Per-content language preferences (overrides user settings for specific content)
+export interface ContentPreference {
+  contentId: string; // e.g., "tmdb:tv:12345" for series, "tmdb:movie:67890" for movies
+  contentType: 'series' | 'movie';
+  audioLanguage?: string; // ISO 639-2 code (eng, jpn, spa, etc.)
+  subtitleLanguage?: string; // ISO 639-2 code or empty
+  subtitleMode?: 'off' | 'on' | 'forced-only';
+  updatedAt?: string;
+}
+
 // Prequeue types for pre-loading playback streams
 export interface PrequeueRequest {
   titleId: string;
@@ -1103,6 +1113,42 @@ class ApiService {
     return this.request<UserSettings>(`/users/${safeUserId}/settings`, {
       method: 'PUT',
       body: JSON.stringify(settings),
+    });
+  }
+
+  // Get per-content language preference
+  async getContentPreference(userId: string, contentId: string): Promise<ContentPreference | null> {
+    const safeUserId = this.normaliseUserId(userId);
+    const encodedContentId = encodeURIComponent(contentId);
+    try {
+      const result = await this.request<ContentPreference | Record<string, never>>(
+        `/users/${safeUserId}/preferences/content/${encodedContentId}`,
+      );
+      // Backend returns empty object if no preference exists
+      if (!result || !('contentId' in result)) {
+        return null;
+      }
+      return result as ContentPreference;
+    } catch {
+      return null;
+    }
+  }
+
+  // Set per-content language preference
+  async setContentPreference(userId: string, preference: ContentPreference): Promise<ContentPreference> {
+    const safeUserId = this.normaliseUserId(userId);
+    return this.request<ContentPreference>(`/users/${safeUserId}/preferences/content`, {
+      method: 'PUT',
+      body: JSON.stringify(preference),
+    });
+  }
+
+  // Delete per-content language preference
+  async deleteContentPreference(userId: string, contentId: string): Promise<void> {
+    const safeUserId = this.normaliseUserId(userId);
+    const encodedContentId = encodeURIComponent(contentId);
+    await this.request<void>(`/users/${safeUserId}/preferences/content/${encodedContentId}`, {
+      method: 'DELETE',
     });
   }
 
