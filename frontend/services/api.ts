@@ -342,6 +342,7 @@ export interface HlsSessionStartResponse {
   duration?: number;
   startOffset?: number;
   actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
+  keyframeDelta?: number; // Delta between actual keyframe and requested position (negative = earlier)
   remainingDuration?: number;
 }
 
@@ -362,6 +363,7 @@ export interface HlsSeekResponse {
   sessionId: string;
   startOffset: number;
   actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
+  keyframeDelta?: number; // Delta between actual keyframe and requested position (negative = earlier)
   duration?: number;
   playlistUrl: string;
 }
@@ -370,6 +372,7 @@ export interface HlsKeepaliveResponse {
   status: string;
   startOffset: number;
   actualStartOffset?: number; // Keyframe-aligned start time for subtitle sync
+  keyframeDelta?: number; // Delta between actual keyframe and requested position (negative = earlier)
   segmentDuration: number;
   duration?: number;
 }

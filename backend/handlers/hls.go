@@ -2563,6 +2563,7 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 	// Capture timing info while we have the lock
 	startOffset := session.StartOffset
 	actualStartOffset := session.ActualStartOffset
+	keyframeDelta := actualStartOffset - startOffset
 	duration := session.Duration
 	session.mu.Unlock()
 
@@ -2571,17 +2572,19 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 	// Return segment timing info for accurate subtitle sync
 	// The frontend can use this to calculate precise media time:
 	// mediaTime = startOffset + (segmentIndex * segmentDuration) + positionInSegment
-	// actualStartOffset is the keyframe-aligned start time for subtitle sync
+	// keyframeDelta is the offset between actual keyframe and requested position for subtitle sync
 	response := struct {
 		Status            string  `json:"status"`
 		StartOffset       float64 `json:"startOffset"`
 		ActualStartOffset float64 `json:"actualStartOffset"`
+		KeyframeDelta     float64 `json:"keyframeDelta"`
 		SegmentDuration   float64 `json:"segmentDuration"`
 		Duration          float64 `json:"duration,omitempty"`
 	}{
 		Status:            "ok",
 		StartOffset:       startOffset,
 		ActualStartOffset: actualStartOffset,
+		KeyframeDelta:     keyframeDelta,
 		SegmentDuration:   hlsSegmentDuration,
 		Duration:          duration,
 	}
@@ -2597,6 +2600,7 @@ type SeekResponse struct {
 	SessionID         string  `json:"sessionId"`
 	StartOffset       float64 `json:"startOffset"`
 	ActualStartOffset float64 `json:"actualStartOffset"`
+	KeyframeDelta     float64 `json:"keyframeDelta"` // Delta between actual keyframe and requested position (negative = earlier)
 	Duration          float64 `json:"duration,omitempty"`
 	PlaylistURL       string  `json:"playlistUrl"`
 }
@@ -2742,6 +2746,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 		SessionID:         sessionID,
 		StartOffset:       targetTime,
 		ActualStartOffset: keyframePos,
+		KeyframeDelta:     keyframePos - targetTime,
 		Duration:          duration,
 		PlaylistURL:       playlistURL,
 	}

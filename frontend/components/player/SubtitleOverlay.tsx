@@ -241,12 +241,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
   const [cues, setCues] = useState<VTTCue[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [syncTick, setSyncTick] = useState(0);
   const lastFetchedLengthRef = useRef<number>(0);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastUrlRef = useRef<string | null>(null);
-  const lastSyncTimeRef = useRef<number>(currentTime);
 
   // High-frequency time polling via requestAnimationFrame
   // When externalTimeRef is provided, poll it frequently for smoother subtitle sync
@@ -458,76 +455,13 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     };
   }, [vttUrl, enabled, fetchVTT]);
 
-  // Keep refs updated for use in sync interval
-  const internalTimeRef = useRef(effectiveTime);
-  const timeOffsetRef = useRef(timeOffset);
-  useEffect(() => {
-    internalTimeRef.current = effectiveTime;
-  }, [effectiveTime]);
-  useEffect(() => {
-    timeOffsetRef.current = timeOffset;
-  }, [timeOffset]);
-
-  // Periodic sync to detect and correct drift
-  // This helps keep subtitles in sync especially after seeking
-  const hasInitializedSyncRef = useRef(false);
-  useEffect(() => {
-    if (!enabled || !vttUrl) {
-      if (syncIntervalRef.current) {
-        clearInterval(syncIntervalRef.current);
-        syncIntervalRef.current = null;
-      }
-      // Reset initialization flag when disabled
-      hasInitializedSyncRef.current = false;
-      return;
-    }
-
-    // Check for drift every 3 seconds
-    syncIntervalRef.current = setInterval(() => {
-      const now = internalTimeRef.current;
-
-      // Skip drift detection on first tick - just establish baseline
-      // This prevents false positives when resuming playback at a non-zero position
-      if (!hasInitializedSyncRef.current) {
-        hasInitializedSyncRef.current = true;
-        lastSyncTimeRef.current = now;
-        return;
-      }
-
-      const timeDelta = Math.abs(now - lastSyncTimeRef.current);
-
-      // If time drifted more than expected (allowing ~0.5s for normal 3s interval variance),
-      // trigger a re-sync. This catches buffering stalls and frame drops, not just seeks.
-      // Expected delta is ~3s (our interval), so anything outside 2.5-3.5s range indicates drift.
-      const expectedDelta = 3; // seconds (matches our interval)
-      const driftTolerance = 0.5;
-      const hasDrift = timeDelta < expectedDelta - driftTolerance || timeDelta > expectedDelta + driftTolerance;
-      if (hasDrift) {
-        setSyncTick((prev) => prev + 1);
-        // Also re-fetch VTT in case new cues are available
-        fetchVTT();
-      }
-
-      lastSyncTimeRef.current = now;
-    }, 3000);
-
-    return () => {
-      if (syncIntervalRef.current) {
-        clearInterval(syncIntervalRef.current);
-        syncIntervalRef.current = null;
-      }
-    };
-  }, [vttUrl, enabled, fetchVTT]);
-
   // Find active cues for current time
-  // syncTick is included to force re-evaluation on drift detection
-  // SUBTITLE_DELAY_SECONDS: positive = subtitles appear later (fixes ahead-of-audio)
-  const SUBTITLE_DELAY_SECONDS = 0;
+  // timeOffset is the keyframe-aligned offset from playback start
   const activeCues = useMemo(() => {
     if (!enabled || cues.length === 0) return [];
-    const adjustedTime = effectiveTime + timeOffset - SUBTITLE_DELAY_SECONDS;
+    const adjustedTime = effectiveTime + timeOffset;
     return findActiveCues(cues, adjustedTime);
-  }, [cues, effectiveTime, timeOffset, enabled, syncTick]);
+  }, [cues, effectiveTime, timeOffset, enabled]);
 
   // Render subtitle text with outline effect by layering
   // Multiple offset black text layers create the outline, white text on top
