@@ -67,6 +67,8 @@ export interface HlsSessionState {
   requestedStartOffset: number;
   /** Actual start offset from session (keyframe-aligned) */
   actualStartOffset: number;
+  /** Delta between actual keyframe and requested position (negative = keyframe is earlier) */
+  keyframeDelta: number;
   /** Session duration */
   duration: number | null;
   /** Whether we're currently recreating the session (track change, seek) */
@@ -157,6 +159,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
     error: null,
     requestedStartOffset: initialStartOffset,
     actualStartOffset: initialStartOffset,
+    keyframeDelta: 0,
     duration: null,
     isRecreating: false,
   });
@@ -254,6 +257,11 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
             ? response.actualStartOffset
             : sessionStart;
+        // keyframeDelta: negative = keyframe is earlier than requested
+        const keyframeDelta =
+          typeof response.keyframeDelta === 'number'
+            ? response.keyframeDelta
+            : actualSessionStart - sessionStart;
 
         // Update buffer end to match session start
         sessionBufferEndRef.current = sessionStart;
@@ -277,6 +285,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           error: null,
           requestedStartOffset: safeTarget,
           actualStartOffset: actualSessionStart,
+          keyframeDelta,
           duration: response.duration || null,
           isRecreating: isRecreatingRef.current,
         });
@@ -286,6 +295,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           sessionId: response.sessionId,
           startOffset: sessionStart,
           actualStartOffset: actualSessionStart,
+          keyframeDelta,
           pendingSeek: pendingSeekRef.current,
           duration: response.duration,
         });
@@ -343,6 +353,11 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
               typeof seekResponse.actualStartOffset === 'number' && seekResponse.actualStartOffset >= 0
                 ? seekResponse.actualStartOffset
                 : sessionStart;
+            // keyframeDelta: negative = keyframe is earlier than requested
+            const keyframeDelta =
+              typeof seekResponse.keyframeDelta === 'number'
+                ? seekResponse.keyframeDelta
+                : actualSessionStart - sessionStart;
 
             sessionBufferEndRef.current = sessionStart;
             const pendingSeek = Math.max(0, safeTarget - sessionStart);
@@ -356,7 +371,20 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
               actualStartOffset: actualSessionStart,
             };
 
-            console.log('[useHlsSession] Seek completed', { response });
+            // Update state with keyframeDelta
+            setState({
+              playlistUrl,
+              sessionId: existingSessionId,
+              status: 'ready',
+              error: null,
+              requestedStartOffset: safeTarget,
+              actualStartOffset: actualSessionStart,
+              keyframeDelta,
+              duration: seekResponse.duration || null,
+              isRecreating: isRecreatingRef.current,
+            });
+
+            console.log('[useHlsSession] Seek completed', { response, keyframeDelta });
           } catch (seekError) {
             console.warn('[useHlsSession] Seek endpoint failed, falling back to new session:', seekError);
           }
@@ -368,16 +396,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           return createSession(safeTarget);
         }
 
-        setState({
-          playlistUrl: response.playlistUrl,
-          sessionId: response.sessionId,
-          status: 'ready',
-          error: null,
-          requestedStartOffset: safeTarget,
-          actualStartOffset: response.actualStartOffset || safeTarget,
-          duration: response.duration || null,
-          isRecreating: isRecreatingRef.current,
-        });
+        // State already set in the try block above for seek success
 
         isSeekingRef.current = false;
         onSessionCreated?.(response);
@@ -427,6 +446,8 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
   const keepalive = useCallback(
     async (currentTime?: number, bufferStart?: number): Promise<{
       startOffset?: number;
+      actualStartOffset?: number;
+      keyframeDelta?: number;
       segmentDuration?: number;
     } | null> => {
       const sessionId = sessionIdRef.current;
@@ -435,12 +456,23 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
       try {
         const response = await apiService.keepaliveHlsSession(sessionId, currentTime, bufferStart);
 
+        // Update state with keyframeDelta from backend (for subtitle sync)
+        if (typeof response.keyframeDelta === 'number') {
+          setState((prev) => ({
+            ...prev,
+            actualStartOffset: response.actualStartOffset ?? prev.actualStartOffset,
+            keyframeDelta: response.keyframeDelta,
+          }));
+        }
+
         // Validate playback offset matches server's startOffset
         if (response.startOffset !== undefined && onOffsetCorrection) {
           const offsetDelta = Math.abs(response.startOffset - sessionBufferEndRef.current);
           if (offsetDelta > 0.5) {
             console.warn('[useHlsSession] Keepalive: playback offset mismatch, correcting', {
               serverStartOffset: response.startOffset,
+              serverActualStartOffset: response.actualStartOffset,
+              serverKeyframeDelta: response.keyframeDelta,
               clientBufferEnd: sessionBufferEndRef.current,
               delta: offsetDelta,
             });
@@ -450,6 +482,8 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
 
         return {
           startOffset: response.startOffset,
+          actualStartOffset: response.actualStartOffset,
+          keyframeDelta: response.keyframeDelta,
           segmentDuration: response.segmentDuration,
         };
       } catch (error) {
@@ -501,6 +535,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
       error: null,
       requestedStartOffset: 0,
       actualStartOffset: 0,
+      keyframeDelta: 0,
       duration: null,
       isRecreating: false,
     });

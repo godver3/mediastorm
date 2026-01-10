@@ -2050,6 +2050,8 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actualStartOffset := transcodingOffset
+	// Delta between actual keyframe position and requested position (negative = keyframe is earlier)
+	keyframeDelta := actualStartOffset - startSeconds
 
 	// Return session ID, playlist URL, and duration (if available)
 	w.Header().Set("Content-Type", "application/json")
@@ -2060,6 +2062,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		"playlistUrl":       fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID),
 		"startOffset":       session.StartOffset,
 		"actualStartOffset": actualStartOffset,
+		"keyframeDelta":     keyframeDelta,
 	}
 
 	// Include duration if it was successfully probed
