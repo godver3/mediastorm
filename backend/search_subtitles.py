@@ -61,6 +61,7 @@ def main():
         'ko': 'kor', 'zh': 'zho', 'ar': 'ara', 'he': 'heb', 'sv': 'swe',
         'no': 'nor', 'da': 'dan', 'fi': 'fin', 'tr': 'tur', 'el': 'ell',
         'hu': 'hun', 'cs': 'ces', 'ro': 'ron', 'th': 'tha', 'vi': 'vie',
+        'hr': 'hrv', 'sr': 'srp', 'bs': 'bos',
     }
     lang_code = lang_map.get(language, language)
     try:

@@ -9,6 +9,7 @@ import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
 import SubtitleOverlay, { SubtitleCuesRange } from '@/components/player/SubtitleOverlay';
 import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
+import { SubtitleStatusOverlay, type AutoSubtitleStatus } from '@/components/player/SubtitleStatusOverlay';
 import type { SubtitleSearchResult } from '@/services/api';
 import VideoPlayer, {
   VideoPlayerHandle,
@@ -95,6 +96,7 @@ import {
   buildSubtitleTrackOptions,
   resolveSelectedTrackId,
 } from '@/utils/player-helpers';
+import { selectBestSubtitle } from '@/utils/subtitle-helpers';
 
 export default function PlayerScreen() {
   const { settings, userSettings, refreshSettings } = useBackendSettings();
@@ -390,6 +392,10 @@ export default function PlayerScreen() {
     forced: boolean;
   }> | null>(null);
   const [debugEntries, setDebugEntries] = useState<DebugLogEntry[]>([]);
+  // Auto-subtitle search state (automatic subtitle search when no embedded tracks match preference)
+  const [autoSubtitleStatus, setAutoSubtitleStatus] = useState<AutoSubtitleStatus>('idle');
+  const [autoSubtitleMessage, setAutoSubtitleMessage] = useState<string | null>(null);
+  const autoSubtitleTriggeredRef = useRef(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const isModalOpenRef = useRef(isModalOpen);
   const handleModalStateChange = useCallback((open: boolean) => {
@@ -470,6 +476,99 @@ export default function PlayerScreen() {
     },
     [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, subtitleSearchLanguage, handleCloseSubtitleSearch],
   );
+
+  // Auto-subtitle search: automatically search for subtitles when no embedded tracks match preference
+  const performAutoSubtitleSearch = useCallback(async (language: string) => {
+    console.log('[player] starting auto-subtitle search for language:', language);
+    setAutoSubtitleStatus('searching');
+    setAutoSubtitleMessage('Searching for subtitles...');
+
+    try {
+      const results = await apiService.searchSubtitles({
+        imdbId: imdbId || undefined,
+        title: title || seriesTitle || undefined,
+        year: year || undefined,
+        season: seasonNumber,
+        episode: episodeNumber,
+        language,
+      });
+
+      console.log('[player] auto-subtitle search returned', results.length, 'results');
+
+      if (results.length === 0) {
+        setAutoSubtitleStatus('no-results');
+        setAutoSubtitleMessage('No subtitles found');
+        setTimeout(() => setAutoSubtitleMessage(null), 3000);
+        return;
+      }
+
+      setAutoSubtitleStatus('downloading');
+      setAutoSubtitleMessage('Downloading subtitles...');
+
+      const bestMatch = selectBestSubtitle(results, releaseName);
+      console.log('[player] auto-subtitle selected best match:', bestMatch.release);
+
+      const url = apiService.getSubtitleDownloadUrl({
+        subtitleId: bestMatch.id,
+        provider: bestMatch.provider,
+        imdbId: imdbId || undefined,
+        title: title || seriesTitle || undefined,
+        year: year || undefined,
+        season: seasonNumber,
+        episode: episodeNumber,
+        language,
+      });
+
+      setExternalSubtitleUrl(url);
+      setSelectedSubtitleTrackId('external');
+      setAutoSubtitleStatus('ready');
+      setAutoSubtitleMessage('Subtitles ready');
+      setTimeout(() => setAutoSubtitleMessage(null), 2000);
+
+    } catch (error) {
+      console.error('[player] auto-subtitle search error:', error);
+      setAutoSubtitleStatus('failed');
+      setAutoSubtitleMessage('Subtitle search failed');
+      setTimeout(() => setAutoSubtitleMessage(null), 3000);
+    }
+  }, [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, releaseName]);
+
+  // Check conditions and trigger auto-subtitle search if needed
+  const triggerAutoSubtitleSearchIfNeeded = useCallback(() => {
+    if (autoSubtitleTriggeredRef.current) {
+      console.log('[player] auto-subtitle search already triggered, skipping');
+      return;
+    }
+
+    const subtitleMode = userSettings?.playback?.preferredSubtitleMode
+      ?? settings?.playback?.preferredSubtitleMode;
+    const subtitleLang = userSettings?.playback?.preferredSubtitleLanguage
+      ?? settings?.playback?.preferredSubtitleLanguage;
+
+    // Don't auto-search if user has subtitles disabled
+    if (subtitleMode === 'off') {
+      console.log('[player] auto-subtitle search skipped: subtitle mode is off');
+      return;
+    }
+
+    // Don't auto-search if no preferred language is set
+    if (!subtitleLang) {
+      console.log('[player] auto-subtitle search skipped: no preferred language set');
+      return;
+    }
+
+    // Check if OpenSubtitles credentials are configured
+    const hasCredentials = settings?.subtitles?.openSubtitlesUsername
+      && settings?.subtitles?.openSubtitlesPassword;
+    if (!hasCredentials) {
+      console.log('[player] auto-subtitle search skipped: no OpenSubtitles credentials configured');
+      return;
+    }
+
+    console.log('[player] triggering auto-subtitle search for language:', subtitleLang);
+    autoSubtitleTriggeredRef.current = true;
+    performAutoSubtitleSearch(subtitleLang);
+  }, [settings, userSettings, performAutoSubtitleSearch]);
 
   // Subtitle timing adjustment handlers (0.25s increments)
   // Uses refs to access extendControlsVisibility which is defined later in the component
@@ -3657,6 +3756,8 @@ export default function PlayerScreen() {
         setSelectedSubtitleTrackId(String(selectedIndex));
       } else {
         setSelectedSubtitleTrackId('off');
+        // No matching embedded track - trigger auto-search
+        triggerAutoSubtitleSearchIfNeeded();
       }
       return;
     }
@@ -3749,6 +3850,8 @@ export default function PlayerScreen() {
           console.log('[player] no text-based subtitle tracks found, clearing player-reported tracks');
           setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
           setSelectedSubtitleTrackId('off');
+          // No embedded tracks available - trigger auto-search
+          triggerAutoSubtitleSearchIfNeeded();
         }
       })
       .catch((error) => {
@@ -4420,6 +4523,11 @@ export default function PlayerScreen() {
               selectedSubtitleIndex !== metadata.selectedSubtitleIndex ? selectedSubtitleIndex : undefined,
           });
           setSelectedSubtitleTrackId(resolvedSubtitleSelection);
+
+          // Trigger auto-search if no suitable embedded track was found
+          if (resolvedSubtitleSelection === 'off' && preferredSubtitleMode !== 'off') {
+            triggerAutoSubtitleSearchIfNeeded();
+          }
         } else {
           console.log('[player] skipping subtitle options from metadata - backend probe will set correct indices');
         }
@@ -4432,7 +4540,7 @@ export default function PlayerScreen() {
     return () => {
       isMounted = false;
     };
-  }, [resolvedMovie, updateDuration, sourcePath, settings, isHlsStream, routeHasAnyHDR]);
+  }, [resolvedMovie, updateDuration, sourcePath, settings, userSettings, isHlsStream, routeHasAnyHDR, triggerAutoSubtitleSearchIfNeeded]);
 
   // Fetch series details for episode navigation (only for series content)
   useEffect(() => {
@@ -4537,6 +4645,11 @@ export default function PlayerScreen() {
         shuffleMode,
         usePrequeue,
       });
+
+      // Reset auto-subtitle state for the new episode
+      autoSubtitleTriggeredRef.current = false;
+      setAutoSubtitleStatus('idle');
+      setAutoSubtitleMessage(null);
 
       // Check if we have prequeue data for this episode
       const prequeueData = nextEpisodePrequeueRef.current;
@@ -4764,6 +4877,14 @@ export default function PlayerScreen() {
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
+            />
+          )}
+
+          {/* Auto-subtitle search status overlay */}
+          {autoSubtitleMessage && !isPipActive && (
+            <SubtitleStatusOverlay
+              status={autoSubtitleStatus}
+              message={autoSubtitleMessage}
             />
           )}
 

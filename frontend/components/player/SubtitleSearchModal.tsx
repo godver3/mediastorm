@@ -14,58 +14,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import type { SubtitleSearchResult } from '@/services/api';
-
-/**
- * Calculate similarity score between two release names.
- * Higher score = better match.
- */
-function calculateReleaseSimilarity(mediaRelease: string, subtitleRelease: string): number {
-  if (!mediaRelease || !subtitleRelease) return 0;
-
-  // Normalize: lowercase, remove extension, split by common delimiters
-  const normalize = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/\.(mkv|mp4|avi|srt|sub)$/i, '')
-      .replace(/[._-]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 1);
-
-  const mediaTokens = new Set(normalize(mediaRelease));
-  const subTokens = new Set(normalize(subtitleRelease));
-
-  if (mediaTokens.size === 0 || subTokens.size === 0) return 0;
-
-  // Count matching tokens
-  let matches = 0;
-  for (const token of mediaTokens) {
-    if (subTokens.has(token)) matches++;
-  }
-
-  // Weight important tokens more heavily
-  const importantPatterns = [
-    /^\d{3,4}p$/, // Resolution: 720p, 1080p, 2160p
-    /^(bluray|bdrip|brrip|webrip|web-dl|webdl|hdtv|hdrip|dvdrip)$/i, // Source
-    /^(x264|x265|h264|h265|hevc|avc|xvid)$/i, // Codec
-    /^(dts|ac3|aac|truehd|atmos|dd5|ddp5|eac3)$/i, // Audio
-    /^(hdr|hdr10|dv|dolby|vision)$/i, // HDR
-  ];
-
-  let bonusScore = 0;
-  for (const token of mediaTokens) {
-    if (subTokens.has(token)) {
-      for (const pattern of importantPatterns) {
-        if (pattern.test(token)) {
-          bonusScore += 2;
-          break;
-        }
-      }
-    }
-  }
-
-  // Score: percentage of media tokens matched + bonus for important matches
-  return (matches / mediaTokens.size) * 100 + bonusScore;
-}
+import { calculateReleaseSimilarity } from '@/utils/subtitle-helpers';
 
 interface SubtitleSearchModalProps {
   visible: boolean;
@@ -99,6 +48,9 @@ const LANGUAGES = [
   { code: 'no', name: 'Norwegian' },
   { code: 'da', name: 'Danish' },
   { code: 'fi', name: 'Finnish' },
+  { code: 'hr', name: 'Croatian' },
+  { code: 'sr', name: 'Serbian' },
+  { code: 'bs', name: 'Bosnian' },
 ];
 
 export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({

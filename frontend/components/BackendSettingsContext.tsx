@@ -134,6 +134,11 @@ export interface BackendFilterSettings {
   filterOutTerms?: string[];
 }
 
+export interface BackendSubtitleSettings {
+  openSubtitlesUsername?: string;
+  openSubtitlesPassword?: string;
+}
+
 export interface BackendDisplaySettings {
   badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 }
@@ -160,6 +165,7 @@ export interface BackendSettings {
   filtering: BackendFilterSettings;
   display?: BackendDisplaySettings;
   network?: BackendNetworkSettings;
+  subtitles?: BackendSubtitleSettings;
   demoMode?: boolean;
 }
 
