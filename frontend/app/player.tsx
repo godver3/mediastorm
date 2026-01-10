@@ -4703,7 +4703,7 @@ export default function PlayerScreen() {
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * 2}
+              timeOffset={-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * (hdrInfo?.isDolbyVision || hdrInfo?.isHDR10 ? 3 : 2)}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
@@ -5063,7 +5063,7 @@ export default function PlayerScreen() {
                 Manual User Offset: {subtitleOffset.toFixed(3)}s
               </Text>
               <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Total Offset: {(isHlsStream ? (-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * 2) : (-sdrFirstCueTimeRef.current - subtitleOffset)).toFixed(3)}s
+                Total Offset: {(isHlsStream ? (-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * (hdrInfo?.isDolbyVision || hdrInfo?.isHDR10 ? 3 : 2)) : (-sdrFirstCueTimeRef.current - subtitleOffset)).toFixed(3)}s
               </Text>
               <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
                 Actual Start Offset: {actualPlaybackOffsetRef.current.toFixed(3)}s
