@@ -37,6 +37,7 @@ import (
 	"novastream/services/users"
 	"novastream/services/clients"
 	client_settings "novastream/services/client_settings"
+	content_preferences "novastream/services/content_preferences"
 	"novastream/services/scheduler"
 	"novastream/services/watchlist"
 	"novastream/utils"
@@ -265,6 +266,13 @@ func main() {
 	}
 	userSettingsHandler := handlers.NewUserSettingsHandler(userSettingsService, userService, cfgManager)
 
+	// Initialize content preferences service for per-content language preferences
+	contentPreferencesService, err := content_preferences.NewService(settings.Cache.Directory)
+	if err != nil {
+		log.Fatalf("failed to initialise content preferences: %v", err)
+	}
+	contentPreferencesHandler := handlers.NewContentPreferencesHandler(contentPreferencesService, userService)
+
 	// Initialize clients service for device tracking
 	clientsService, err := clients.NewService(settings.Cache.Directory)
 	if err != nil {
@@ -338,6 +346,7 @@ func main() {
 		prequeueHandler.SetMetadataProber(videoHandler)
 		prequeueHandler.SetFullProber(videoHandler) // Combined prober for single ffprobe call
 		prequeueHandler.SetUserSettingsService(userSettingsService)
+		prequeueHandler.SetContentPreferencesService(contentPreferencesService)
 		prequeueHandler.SetClientSettingsService(clientSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
 		prequeueHandler.SetMetadataService(metadataService) // For episode counting in pack size filtering
@@ -381,6 +390,7 @@ func main() {
 		userSettingsHandler,
 		subtitlesHandler,
 		clientsHandler,
+		contentPreferencesHandler,
 		accountsService,
 		sessionsService,
 		userService,

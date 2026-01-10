@@ -16,6 +16,7 @@ import (
 	"novastream/services/indexer"
 	"novastream/services/playback"
 	user_settings "novastream/services/user_settings"
+	content_preferences "novastream/services/content_preferences"
 	"novastream/utils/filter"
 
 	"github.com/gorilla/mux"
@@ -36,9 +37,10 @@ type PrequeueHandler struct {
 	hlsCreator         HLSCreator
 	metadataProber     VideoMetadataProber
 	fullProber         VideoFullProber // Combined prober for single ffprobe call
-	userSettingsSvc    *user_settings.Service
-	clientSettingsSvc  ClientSettingsProvider
-	configManager      *config.Manager
+	userSettingsSvc         *user_settings.Service
+	contentPreferencesSvc   *content_preferences.Service
+	clientSettingsSvc       ClientSettingsProvider
+	configManager           *config.Manager
 	metadataSvc        SeriesDetailsProvider // For episode counting
 	subtitleExtractor  SubtitlePreExtractor  // For pre-extracting subtitles
 	demoMode           bool
@@ -155,6 +157,11 @@ func (h *PrequeueHandler) SetFullProber(prober VideoFullProber) {
 // SetUserSettingsService sets the user settings service for track preferences
 func (h *PrequeueHandler) SetUserSettingsService(svc *user_settings.Service) {
 	h.userSettingsSvc = svc
+}
+
+// SetContentPreferencesService sets the content preferences service for per-content language preferences
+func (h *PrequeueHandler) SetContentPreferencesService(svc *content_preferences.Service) {
+	h.contentPreferencesSvc = svc
 }
 
 // SetConfigManager sets the config manager for global settings fallback
@@ -656,6 +663,28 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		userSettings, err := h.userSettingsSvc.GetWithDefaults(userID, defaults)
 		if err != nil {
 			log.Printf("[prequeue] Failed to get user settings (non-fatal): %v", err)
+		}
+
+		// Check for per-content language preferences (overrides user settings)
+		if h.contentPreferencesSvc != nil {
+			// Get the title ID from the prequeue entry
+			if entry, ok := h.store.Get(prequeueID); ok && entry != nil {
+				contentID := entry.TitleID
+				if contentPref, err := h.contentPreferencesSvc.Get(userID, contentID); err == nil && contentPref != nil {
+					log.Printf("[prequeue] Found per-content preference for %s: audioLang=%q, subLang=%q, subMode=%q",
+						contentID, contentPref.AudioLanguage, contentPref.SubtitleLanguage, contentPref.SubtitleMode)
+					// Override user settings with content-specific preferences
+					if contentPref.AudioLanguage != "" {
+						userSettings.Playback.PreferredAudioLanguage = contentPref.AudioLanguage
+					}
+					if contentPref.SubtitleLanguage != "" {
+						userSettings.Playback.PreferredSubtitleLanguage = contentPref.SubtitleLanguage
+					}
+					if contentPref.SubtitleMode != "" {
+						userSettings.Playback.PreferredSubtitleMode = contentPref.SubtitleMode
+					}
+				}
+			}
 		}
 
 		// Use combined prober if available (single ffprobe call), otherwise fall back to separate probes

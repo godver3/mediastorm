@@ -82,6 +82,7 @@ func Register(
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
 	clientsHandler *handlers.ClientsHandler,
+	contentPreferencesHandler *handlers.ContentPreferencesHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -386,6 +387,16 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.DeletePlaybackProgress).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
+
+	// Content Preferences endpoints (per-content audio/subtitle preferences)
+	if contentPreferencesHandler != nil {
+		profileProtected.HandleFunc("/{userID}/preferences/content", contentPreferencesHandler.ListPreferences).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/preferences/content", contentPreferencesHandler.SetPreference).Methods(http.MethodPut)
+		profileProtected.HandleFunc("/{userID}/preferences/content", contentPreferencesHandler.Options).Methods(http.MethodOptions)
+		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.GetPreference).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.DeletePreference).Methods(http.MethodDelete)
+		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.Options).Methods(http.MethodOptions)
+	}
 }
 
 // RegisterTraktRoutes registers Trakt account management API endpoints.
