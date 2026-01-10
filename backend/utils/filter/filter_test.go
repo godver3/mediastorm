@@ -431,3 +431,235 @@ func TestEstimatePackEpisodeCount(t *testing.T) {
 		})
 	}
 }
+
+func TestResults_AnimeVolumeReleases(t *testing.T) {
+	// Test that anime DVD/BD volume releases are accepted for TV show searches
+	t.Run("TV search accepts volume releases", func(t *testing.T) {
+		// Use titles where PTT won't misinterpret numbers as years
+		results := []models.NZBResult{
+			{Title: "Cowboy.Bebop.Vol.01.DVD.Remux"},        // Volume release - should match
+			{Title: "Cowboy.Bebop.Vol.1-6.Complete"},        // Multi-volume - should match
+			{Title: "Cowboy.Bebop.S01E01.1080p.WEB-DL"},     // Standard TV - should match
+		}
+
+		opts := Options{
+			ExpectedTitle: "Cowboy Bebop",
+			ExpectedYear:  0,
+			IsMovie:       false,
+		}
+
+		filtered := Results(results, opts)
+
+		// All 3 should pass - volumes and standard TV patterns
+		if len(filtered) != 3 {
+			t.Errorf("Expected 3 results (volumes + standard TV), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+
+	t.Run("movie search rejects volume releases", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Anime.Movie.2020.1080p.BluRay.x264"},        // Movie pattern - should match
+			{Title: "Anime.Movie.Vol.01.DVD.Remux"},              // Volume release - should be rejected
+			{Title: "Anime.Movie.S01E01.1080p.WEB-DL"},           // TV pattern - should be rejected
+		}
+
+		opts := Options{
+			ExpectedTitle: "Anime Movie",
+			ExpectedYear:  2020,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+
+		// Only the movie result should pass
+		if len(filtered) != 1 {
+			t.Errorf("Expected 1 result (movie only), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		if len(filtered) > 0 && filtered[0].Title != "Anime.Movie.2020.1080p.BluRay.x264" {
+			t.Errorf("Expected movie result, got: %s", filtered[0].Title)
+		}
+	})
+
+	t.Run("movie with Vol in title is not rejected", func(t *testing.T) {
+		// Movies like "Kill Bill Vol. 2" should NOT be treated as volume releases
+		results := []models.NZBResult{
+			{Title: "Kill.Bill.Vol.2.2004.1080p.BluRay.x264"},
+			{Title: "Guardians.of.the.Galaxy.Vol.2.2017.4K.UHD"},
+		}
+
+		opts := Options{
+			ExpectedTitle: "Kill Bill Vol 2",
+			ExpectedYear:  2004,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+
+		// Kill Bill Vol 2 should match (PTT keeps "Vol 2" in title, doesn't parse as volume)
+		if len(filtered) != 1 {
+			t.Errorf("Expected 1 result for Kill Bill Vol 2, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+}
+
+func TestResults_EpisodeResolverBypass(t *testing.T) {
+	// Test that batch releases without S##E## markers pass when EpisodeResolver is available
+	t.Run("batch release passes with EpisodeResolver", func(t *testing.T) {
+		// This simulates a fansub batch release like "[Nienn] Bubblegum Crisis TOKYO 2040"
+		// which has no season/episode markers but is a valid TV release
+		results := []models.NZBResult{
+			{Title: "[Nienn].Bubblegum.Crisis.TOKYO.2040.1080p.WEB-DL"},
+		}
+
+		resolver := NewSeriesEpisodeResolver(map[int]int{
+			1: 26, // 26 episodes in season 1
+		})
+
+		opts := Options{
+			ExpectedTitle:   "Bubblegum Crisis TOKYO",
+			ExpectedYear:    0,
+			IsMovie:         false,
+			EpisodeResolver: resolver,
+		}
+
+		filtered := Results(results, opts)
+
+		// Should pass because we have an EpisodeResolver to map files to episodes
+		if len(filtered) != 1 {
+			t.Errorf("Expected batch release to pass with EpisodeResolver, got %d results", len(filtered))
+		}
+	})
+
+	t.Run("batch release rejected without EpisodeResolver", func(t *testing.T) {
+		// Same batch release but without an EpisodeResolver
+		results := []models.NZBResult{
+			{Title: "[Nienn].Bubblegum.Crisis.TOKYO.2040.1080p.WEB-DL"},
+		}
+
+		opts := Options{
+			ExpectedTitle:   "Bubblegum Crisis TOKYO",
+			ExpectedYear:    0,
+			IsMovie:         false,
+			EpisodeResolver: nil, // No resolver
+		}
+
+		filtered := Results(results, opts)
+
+		// Should be rejected - no TV pattern and no resolver
+		if len(filtered) != 0 {
+			t.Errorf("Expected batch release to be rejected without EpisodeResolver, got %d results", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+
+	t.Run("EpisodeResolver does not affect movie searches", func(t *testing.T) {
+		// EpisodeResolver should not cause random results to pass movie searches
+		results := []models.NZBResult{
+			{Title: "Random.Movie.2020.1080p.BluRay.x264"},
+			{Title: "[Fansub].Some.Anime.1080p.WEB-DL"}, // No year, no TV pattern
+		}
+
+		resolver := NewSeriesEpisodeResolver(map[int]int{
+			1: 12,
+		})
+
+		opts := Options{
+			ExpectedTitle:   "Random Movie",
+			ExpectedYear:    2020,
+			IsMovie:         true, // Movie search
+			EpisodeResolver: resolver,
+		}
+
+		filtered := Results(results, opts)
+
+		// Only the actual movie should pass, not the anime batch
+		if len(filtered) != 1 {
+			t.Errorf("Expected only movie to pass, got %d results", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		if len(filtered) > 0 && filtered[0].Title != "Random.Movie.2020.1080p.BluRay.x264" {
+			t.Errorf("Expected movie result, got: %s", filtered[0].Title)
+		}
+	})
+}
+
+func TestResults_RegressionMovieVsTVPatterns(t *testing.T) {
+	// Regression tests to ensure movie searches don't accidentally accept TV content
+
+	t.Run("movie search rejects all TV patterns including volumes", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Test.Movie.2020.1080p.BluRay.x264"},     // Movie - should match
+			{Title: "Test.Movie.S01E01.1080p.WEB-DL"},        // Season/episode - reject
+			{Title: "Test.Movie.Vol.01.DVD.Remux"},           // Volume - reject
+		}
+
+		opts := Options{
+			ExpectedTitle: "Test Movie",
+			ExpectedYear:  2020,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 1 {
+			t.Errorf("Expected only 1 movie result, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify the movie result is the correct one
+		if len(filtered) > 0 && filtered[0].Title != "Test.Movie.2020.1080p.BluRay.x264" {
+			t.Errorf("Expected movie result, got: %s", filtered[0].Title)
+		}
+	})
+
+	t.Run("TV search still requires some TV indicator without resolver", func(t *testing.T) {
+		// Without an EpisodeResolver, we should still require some TV indicator
+		results := []models.NZBResult{
+			{Title: "Show.Name.S01E01.1080p.WEB-DL"},        // Has S##E## - pass
+			{Title: "Show.Name.Vol.01.DVD"},                 // Has volume - pass
+			{Title: "Show.Name.COMPLETE.1080p"},             // Has complete flag - pass
+			{Title: "Show.Name.2020.1080p.BluRay"},          // Looks like movie - reject
+		}
+
+		opts := Options{
+			ExpectedTitle:   "Show Name",
+			ExpectedYear:    0,
+			IsMovie:         false,
+			EpisodeResolver: nil,
+		}
+
+		filtered := Results(results, opts)
+
+		// First 3 should pass (S##E##, volume, complete), last one rejected
+		if len(filtered) != 3 {
+			t.Errorf("Expected 3 TV results, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify the movie-looking one was rejected
+		for _, r := range filtered {
+			if r.Title == "Show.Name.2020.1080p.BluRay" {
+				t.Error("Movie-pattern result should have been rejected from TV search")
+			}
+		}
+	})
+}

@@ -55,6 +55,7 @@ type ParsedTitle struct {
 	Proper     bool     `json:"proper,omitempty"`
 	Repack     bool     `json:"repack,omitempty"`
 	Complete   bool     `json:"complete,omitempty"`   // Complete series/season pack
+	Volumes    []int    `json:"volumes,omitempty"`    // DVD/BD volume numbers (common in anime releases)
 	Site       string   `json:"site,omitempty"`
 	BitDepth   string   `json:"bit_depth,omitempty"`  // e.g., "10bit"
 	HDR        []string `json:"hdr,omitempty"`        // HDR formats like DV, HDR, HDR10+

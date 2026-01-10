@@ -254,20 +254,23 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			continue
 		}
 
-		// Filter by media type using season/episode detection
-		// TV shows have seasons/episodes or are marked as complete packs, movies don't
-		hasTVPattern := len(parsed.Seasons) > 0 || len(parsed.Episodes) > 0
+		// Filter by media type using season/episode/volume detection
+		// TV shows have seasons/episodes/volumes or are marked as complete packs, movies don't
+		// Volumes are common in anime DVD/BD releases (e.g., "Vol 01", "Vol.1-6")
+		hasTVPattern := len(parsed.Seasons) > 0 || len(parsed.Episodes) > 0 || len(parsed.Volumes) > 0
 		isCompletePack := parsed.Complete
+		hasEpisodeResolver := opts.EpisodeResolver != nil
 
 		if opts.IsMovie && hasTVPattern {
-			// Searching for a movie but result has TV show pattern (S01E01 etc)
-			log.Printf("[filter] Rejecting %q: searching for movie but result has TV pattern (seasons=%v, episodes=%v)",
-				result.Title, parsed.Seasons, parsed.Episodes)
+			// Searching for a movie but result has TV show pattern (S01E01, volumes, etc)
+			log.Printf("[filter] Rejecting %q: searching for movie but result has TV pattern (seasons=%v, episodes=%v, volumes=%v)",
+				result.Title, parsed.Seasons, parsed.Episodes, parsed.Volumes)
 			continue
 		}
 
-		if !opts.IsMovie && !hasTVPattern && !isCompletePack {
-			// Searching for a TV show but result has no TV indicators and isn't a complete pack
+		if !opts.IsMovie && !hasTVPattern && !isCompletePack && !hasEpisodeResolver {
+			// Searching for a TV show but result has no TV indicators, isn't a complete pack,
+			// and we don't have an episode resolver to map files to episodes
 			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
 				result.Title)
 			continue
