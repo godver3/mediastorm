@@ -304,14 +304,23 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 				}
 			} else if !opts.IsMovie && opts.MaxSizeEpisodeGB > 0 {
 				// For TV shows, check if this is a pack and calculate per-episode size
-				// A pack is: complete flag OR has seasons but NO specific episodes
+				// A pack is: complete flag OR has seasons but NO specific episodes OR has multiple episodes
 				// (S01E01 has both seasons=[1] and episodes=[1], so it's NOT a pack)
-				isPack := isCompletePack || (len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0)
+				// Anime batches like "01-26" have episodes=[1,2,3...26] with no seasons
+				isMultiEpisodePack := len(parsed.Episodes) > 1
+				isPack := isCompletePack || (len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0) || isMultiEpisodePack
 				effectiveSizeGB := sizeGB
 
 				if isPack {
-					// This is a pack - get episode count from metadata or estimate
-					episodeCount := getPackEpisodeCount(parsed.Seasons, isCompletePack, opts.EpisodeResolver, opts.TotalSeriesEpisodes)
+					var episodeCount int
+					if isMultiEpisodePack {
+						// Use the actual episode count from parsed title (e.g., anime "01-26" = 26 episodes)
+						episodeCount = len(parsed.Episodes)
+						log.Printf("[filter] Multi-episode pack detected from title: %d episodes", episodeCount)
+					} else {
+						// Get episode count from metadata or estimate for season packs
+						episodeCount = getPackEpisodeCount(parsed.Seasons, isCompletePack, opts.EpisodeResolver, opts.TotalSeriesEpisodes)
+					}
 					if episodeCount > 0 {
 						effectiveSizeGB = sizeGB / float64(episodeCount)
 						result.EpisodeCount = episodeCount // Pass to frontend for display

@@ -356,12 +356,14 @@ var SettingsSchema = map[string]interface{}{
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams"}, "description": "Scraper type", "order": 1},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa"}, "description": "Scraper type", "order": 1},
 			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "Torrentio URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
 			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams: full Stremio addon URL)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}}}, "order": 3},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
 			"config.passthroughFormat": map[string]interface{}{"type": "boolean", "label": "Passthrough Format", "description": "Show raw AIOStreams format in manual selection (emoji-formatted details)", "showWhen": map[string]interface{}{"field": "type", "value": "aiostreams"}, "order": 5},
-			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 6},
+			"config.category": map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
+			"config.filter": map[string]interface{}{"type": "select", "label": "Filter", "options": []string{"0", "1", "2"}, "description": "Nyaa filter (0=All, 1=No remakes, 2=Trusted only)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 7},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 8},
 		},
 	},
 	"playback": map[string]interface{}{
@@ -1701,6 +1703,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		h.testZileanScraper(w, req)
 	case "aiostreams":
 		h.testAIOStreamsScraper(w, req)
+	case "nyaa":
+		h.testNyaaScraper(w)
 	case "torrentio":
 		fallthrough
 	default:
@@ -2005,6 +2009,47 @@ func (h *AdminUIHandler) testAIOStreamsScraper(w http.ResponseWriter, req TestSc
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("AIOStreams is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
+	})
+}
+
+// testNyaaScraper tests Nyaa by querying its RSS feed
+func (h *AdminUIHandler) testNyaaScraper(w http.ResponseWriter) {
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	// Test by making a simple RSS query to Nyaa
+	testURL := "https://nyaa.si/?page=rss&f=0&c=1_0&q=test"
+	testReq, err := http.NewRequest(http.MethodGet, testURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	testReq.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
+	testReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+
+	resp, err := client.Do(testReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Nyaa connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Nyaa returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Nyaa is reachable",
 	})
 }
 

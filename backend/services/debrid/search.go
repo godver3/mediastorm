@@ -111,6 +111,21 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			passthroughFormat := scraperCfg.Config["passthroughFormat"] == "true"
 			log.Printf("[debrid] Initializing AIOStreams scraper: %s at %s (passthrough=%v)", scraperCfg.Name, scraperCfg.URL, passthroughFormat)
 			scrapers = append(scrapers, NewAIOStreamsScraper(scraperCfg.URL, scraperCfg.Name, passthroughFormat, nil))
+		case "nyaa":
+			baseURL := scraperCfg.URL
+			if baseURL == "" {
+				baseURL = "https://nyaa.si" // Default URL
+			}
+			category := scraperCfg.Config["category"]
+			if category == "" {
+				category = "1_2" // Default: Anime - English-translated
+			}
+			filter := scraperCfg.Config["filter"]
+			if filter == "" {
+				filter = "0" // Default: No filter
+			}
+			log.Printf("[debrid] Initializing Nyaa scraper: %s at %s (category: %s, filter: %s)", scraperCfg.Name, baseURL, category, filter)
+			scrapers = append(scrapers, NewNyaaScraper(baseURL, scraperCfg.Name, category, filter, nil))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
