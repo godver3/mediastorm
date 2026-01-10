@@ -459,8 +459,8 @@ const MediaGrid = React.memo(
                             <Text style={styles.placeholderImageText}>No Image</Text>
                           </View>
                         )}
-                        {/* Release status badge (top-left) for movies */}
-                        {item.mediaType === 'movie' && (() => {
+                        {/* Release status badge (top-left) for movies - check badgeVisibility */}
+                        {item.mediaType === 'movie' && badgeVisibility?.includes('releaseStatus') && (() => {
                           const releaseIcon = getMovieReleaseIcon(item);
                           return releaseIcon ? (
                             <View style={styles.releaseStatusBadge}>

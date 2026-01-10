@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { useBackendSettings } from '@/components/BackendSettingsContext';
 import FocusablePressable from '@/components/FocusablePressable';
 import {
   QUALITY_OPTIONS,
@@ -31,7 +32,8 @@ export default function TVShowsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId } = useUserProfiles();
+  const { pendingPinUserId, userSettings } = useUserProfiles();
+  const { settings } = useBackendSettings();
   const isFocused = useIsFocused();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
   const focusedIndex = 0;
@@ -132,6 +134,7 @@ export default function TVShowsScreen() {
           loading={loading}
           error={error}
           onItemPress={handleTVShowPress}
+          badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
         />
       </View>
     </SpatialNavigationRoot>

@@ -3,6 +3,8 @@ import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
+import { getMovieReleaseIcon } from '@/components/MediaItem';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
 import { TvModal } from '@/components/TvModal';
@@ -75,6 +77,8 @@ type CardData = {
   percentWatched?: number;
   seriesOverview?: string; // For series, store the show overview separately from episode description
   collagePosters?: string[]; // For explore cards: array of 4 poster URLs to display in a grid
+  theatricalRelease?: { released: boolean; date?: string }; // Movie theatrical release status
+  homeRelease?: { released: boolean; date?: string }; // Movie home release status
 };
 
 type HeroContent = {
@@ -666,7 +670,7 @@ function IndexScreen() {
   >(new Map());
 
   const watchlistCards = useMemo(() => {
-    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears));
+    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears), movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
@@ -674,16 +678,16 @@ function IndexScreen() {
     const exploreCard = createExploreCard('watchlist', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears]);
+  }, [watchlistItems, watchlistYears, movieReleases]);
   const continueWatchingCards = useMemo(() => {
-    const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems);
+    const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
     const exploreCard = createExploreCard('continue-watching', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return [exploreCard, ...limitedCards];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems]);
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases]);
 
   useEffect(() => {
     if (!continueWatchingItems || continueWatchingItems.length === 0) {
@@ -977,13 +981,13 @@ function IndexScreen() {
   }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
 
   const trendingMovieCards = useMemo(() => {
-    const allCards = mapTrendingToCards(trendingMovies ?? undefined);
+    const allCards = mapTrendingToCards(trendingMovies ?? undefined, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
     const exploreCard = createExploreCard('trending-movies', allCards);
     return [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
-  }, [trendingMovies]);
+  }, [trendingMovies, movieReleases]);
 
   const trendingShowCards = useMemo(() => {
     const allCards = mapTrendingToCards(trendingTVShows ?? undefined);
@@ -998,7 +1002,7 @@ function IndexScreen() {
   const customListCards = useMemo(() => {
     const result: Record<string, CardData[]> = {};
     for (const [shelfId, items] of Object.entries(customListData)) {
-      const allCards = mapTrendingToCards(items);
+      const allCards = mapTrendingToCards(items, movieReleases);
       const totalCount = customListTotals[shelfId] ?? allCards.length;
       if (totalCount <= MAX_SHELF_ITEMS_ON_HOME) {
         result[shelfId] = allCards;
@@ -1010,7 +1014,7 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals]);
+  }, [customListData, customListTotals, movieReleases]);
 
   // Generate titles for each custom list shelf (mobile)
   const customListTitles = useMemo(() => {
@@ -2288,6 +2292,7 @@ function IndexScreen() {
                   shelfKey={shelf.key}
                   registerShelfRef={registerShelfRef}
                   isInitialLoad={isInitialLoadRef.current}
+                  badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
                 />
               ))}
             </View>
@@ -2395,6 +2400,7 @@ type VirtualizedShelfProps = {
   cardWidth: number;
   cardHeight: number;
   cardSpacing: number;
+  badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
 };
 
 // Alias for backwards compatibility
@@ -2415,6 +2421,7 @@ function VirtualizedShelf({
   cardWidth,
   cardHeight,
   cardSpacing,
+  badgeVisibility,
 }: VirtualizedShelfProps) {
   const containerRef = React.useRef<RNView | null>(null);
   const isEmpty = cards.length === 0;
@@ -2499,6 +2506,17 @@ function VirtualizedShelf({
                   </Pressable>
                 );
               }
+              // Compute release icon for movies
+              const releaseIcon = card.mediaType === 'movie' ? getMovieReleaseIcon({
+                id: String(card.id),
+                name: card.title,
+                overview: card.description,
+                year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
+                language: 'en',
+                homeRelease: card.homeRelease,
+                theatricalRelease: card.theatricalRelease,
+              }) : null;
+              const showReleaseStatus = badgeVisibility?.includes('releaseStatus') && releaseIcon;
               return (
                 <Pressable
                   style={[styles.card, isFocused && styles.cardFocused]}
@@ -2506,6 +2524,15 @@ function VirtualizedShelf({
                   tvParallaxProperties={{ enabled: false }}
                 >
                   <Image source={card.cardImage} style={styles.cardImage} contentFit="cover" transition={0} />
+                  {showReleaseStatus && (
+                    <View style={styles.releaseStatusBadgeAndroidTV}>
+                      <MaterialCommunityIcons
+                        name={releaseIcon.name}
+                        size={styles.releaseStatusIconAndroidTV.fontSize}
+                        color={releaseIcon.color}
+                      />
+                    </View>
+                  )}
                   {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
                     <View style={styles.progressBadgeAndroidTV}>
                       <Text style={styles.progressBadgeTextAndroidTV}>{Math.round(card.percentWatched)}%</Text>
@@ -2564,6 +2591,17 @@ function VirtualizedShelf({
                 </Pressable>
               );
             }
+            // Compute release icon for movies (non-Android TV platforms)
+            const releaseIconRegular = card.mediaType === 'movie' ? getMovieReleaseIcon({
+              id: String(card.id),
+              name: card.title,
+              overview: card.description,
+              year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
+              language: 'en',
+              homeRelease: card.homeRelease,
+              theatricalRelease: card.theatricalRelease,
+            }) : null;
+            const showReleaseStatusRegular = badgeVisibility?.includes('releaseStatus') && releaseIconRegular;
             return (
               <Pressable
                 style={[styles.card, isFocused && styles.cardFocused]}
@@ -2578,6 +2616,15 @@ function VirtualizedShelf({
                   cachePolicy={Platform.isTV ? 'disk' : 'memory'}
                   recyclingKey={cardKey}
                 />
+                {showReleaseStatusRegular && (
+                  <View style={styles.releaseStatusBadge}>
+                    <MaterialCommunityIcons
+                      name={releaseIconRegular.name}
+                      size={styles.releaseStatusIcon.fontSize}
+                      color={releaseIconRegular.color}
+                    />
+                  </View>
+                )}
                 {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
                   <View style={styles.progressBadge}>
                     <Text style={styles.progressBadgeText}>{Math.round(card.percentWatched)}%</Text>
@@ -2603,7 +2650,7 @@ function VirtualizedShelf({
         </SpatialNavigationFocusableView>
       );
     },
-    [onCardFocus, onCardSelect, onRowFocus, shelfKey, styles],
+    [onCardFocus, onCardSelect, onRowFocus, shelfKey, styles, badgeVisibility],
   );
 
   if (shouldCollapse) {
@@ -2680,7 +2727,8 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.isInitialLoad === next.isInitialLoad &&
     prev.cardWidth === next.cardWidth &&
     prev.cardHeight === next.cardHeight &&
-    prev.cardSpacing === next.cardSpacing
+    prev.cardSpacing === next.cardSpacing &&
+    prev.badgeVisibility === next.badgeVisibility
   );
 }
 
@@ -3037,6 +3085,34 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
+    // Release status badge (top-left) - matches MediaItem.tsx styling
+    releaseStatusBadge: {
+      position: 'absolute',
+      top: theme.spacing.md,
+      left: theme.spacing.md,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: badgePaddingH,
+      paddingVertical: badgePaddingV,
+      borderRadius: badgeRadius,
+      zIndex: 2,
+    },
+    releaseStatusIcon: {
+      fontSize: Math.round(14 * badgeScale),
+    },
+    // Android TV release status badge (scaled up)
+    releaseStatusBadgeAndroidTV: {
+      position: 'absolute',
+      top: theme.spacing.md,
+      left: theme.spacing.md,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: androidTVBadgePaddingH,
+      paddingVertical: androidTVBadgePaddingV,
+      borderRadius: androidTVBadgeRadius,
+      zIndex: 2,
+    },
+    releaseStatusIconAndroidTV: {
+      fontSize: Math.round(14 * androidTVBadgeScale),
+    },
     // TV Modal styles
     tvModalContainer: {
       backgroundColor: theme.colors.background.elevated,
@@ -3254,29 +3330,38 @@ function shuffleArray<T>(input: T[]): T[] {
   return array;
 }
 
-function mapTrendingToCards(items?: TrendingItem[]): CardData[] {
+function mapTrendingToCards(
+  items?: TrendingItem[],
+  cachedReleases?: Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>,
+): CardData[] {
   if (!items) {
     return [];
   }
 
-  return items.map((item) => ({
-    id: item.title.id,
-    title: item.title.name,
-    description: item.title.overview || 'No description available',
-    headerImage:
-      item.title.backdrop?.url ||
-      item.title.poster?.url ||
-      'https://via.placeholder.com/1920x1080/333/fff?text=No+Image',
-    cardImage:
-      item.title.poster?.url || item.title.backdrop?.url || 'https://via.placeholder.com/600x900/333/fff?text=No+Image',
-    mediaType: item.title.mediaType,
-    posterUrl: item.title.poster?.url,
-    backdropUrl: item.title.backdrop?.url,
-    tmdbId: item.title.tmdbId,
-    imdbId: item.title.imdbId,
-    tvdbId: item.title.tvdbId,
-    year: item.title.year,
-  }));
+  return items.map((item) => {
+    // Merge cached release data for movies
+    const cached = item.title.mediaType === 'movie' && cachedReleases ? cachedReleases.get(item.title.id) : undefined;
+    return {
+      id: item.title.id,
+      title: item.title.name,
+      description: item.title.overview || 'No description available',
+      headerImage:
+        item.title.backdrop?.url ||
+        item.title.poster?.url ||
+        'https://via.placeholder.com/1920x1080/333/fff?text=No+Image',
+      cardImage:
+        item.title.poster?.url || item.title.backdrop?.url || 'https://via.placeholder.com/600x900/333/fff?text=No+Image',
+      mediaType: item.title.mediaType,
+      posterUrl: item.title.poster?.url,
+      backdropUrl: item.title.backdrop?.url,
+      tmdbId: item.title.tmdbId,
+      imdbId: item.title.imdbId,
+      tvdbId: item.title.tvdbId,
+      year: item.title.year,
+      theatricalRelease: item.title.theatricalRelease ?? cached?.theatricalRelease,
+      homeRelease: item.title.homeRelease ?? cached?.homeRelease,
+    };
+  });
 }
 
 function mapWatchlistToTrendingItems(items?: WatchlistItem[], cachedYears?: Map<string, number>) {
@@ -3338,6 +3423,7 @@ function mapContinueWatchingToCards(
   items?: SeriesWatchState[],
   seriesOverviews?: Map<string, string>,
   watchlistItems?: WatchlistItem[],
+  cachedReleases?: Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>,
 ): CardData[] {
   if (!items) {
     return [];
@@ -3377,6 +3463,8 @@ function mapContinueWatchingToCards(
       if (isMovie) {
         // Movie resume - use overview from API response, falling back to lastWatched.overview
         const movieOverview = item.overview || item.lastWatched?.overview || '';
+        // Get cached release data for movie
+        const cached = cachedReleases?.get(item.seriesId);
         return {
           id: item.seriesId,
           title: item.seriesTitle,
@@ -3392,6 +3480,8 @@ function mapContinueWatchingToCards(
           year: item.year,
           percentWatched: displayPercent,
           seriesOverview: movieOverview, // Store for details page
+          theatricalRelease: cached?.theatricalRelease,
+          homeRelease: cached?.homeRelease,
         };
       }
 

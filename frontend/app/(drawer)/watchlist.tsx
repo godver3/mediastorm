@@ -595,7 +595,7 @@ export default function WatchlistScreen() {
               layout="grid"
               numColumns={6}
               defaultFocusFirstItem={false}
-              badgeVisibility={userSettings?.display?.badgeVisibility}
+              badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
               emptyMessage={emptyMessage}
               useNativeFocus={true}
               useMinimalCards={true}
@@ -657,7 +657,7 @@ export default function WatchlistScreen() {
               layout="grid"
               numColumns={6}
               defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
-              badgeVisibility={userSettings?.display?.badgeVisibility}
+              badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
               emptyMessage={emptyMessage}
             />
           </SpatialNavigationNode>
