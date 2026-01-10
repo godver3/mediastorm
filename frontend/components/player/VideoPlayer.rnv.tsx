@@ -377,6 +377,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }
         },
         enterPip: () => {
+          console.log('[RNVideoPlayer] enterPip called, videoRef:', !!videoRef.current);
           videoRef.current?.enterPictureInPicture();
         },
       }),

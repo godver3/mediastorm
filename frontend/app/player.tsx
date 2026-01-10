@@ -597,6 +597,13 @@ export default function PlayerScreen() {
           console.log('[player] Skipping auto-pause: PiP mode active');
           return;
         }
+        // On iOS mobile, auto-enter PiP when backgrounding during playback
+        if (Platform.OS === 'ios' && !Platform.isTV && !paused) {
+          console.log('[player] Auto-entering PiP on background');
+          isPipActiveRef.current = true;
+          videoRef.current?.enterPip?.();
+          return;
+        }
         // App is being minimized - pause if currently playing
         if (!paused) {
           wasPlayingBeforeBackgroundRef.current = true;
@@ -2199,6 +2206,13 @@ export default function PlayerScreen() {
           setPaused(false);
         }
 
+        // Prep iOS PiP controller by calling enterPip once - this initializes the
+        // AVPictureInPictureController so future PiP requests work on first try
+        if (Platform.OS === 'ios' && !Platform.isTV) {
+          console.log('[player] Prepping PiP controller on playback start');
+          videoRef.current?.enterPip?.();
+        }
+
         // Hide loading screen with a small delay to ensure player screen is fully visible
         setTimeout(() => {
           hideLoadingScreen();
@@ -3042,12 +3056,15 @@ export default function PlayerScreen() {
   };
 
   const handleEnterPip = useCallback(() => {
-    // Set the ref immediately before entering PiP to prevent race condition
+    // Call enterPip FIRST, then update state. If we update state before calling
+    // enterPip, the re-render can interfere with the button press handling,
+    // causing the first tap to silently fail.
+    videoRef.current?.enterPip?.();
+    // Set the ref immediately after to prevent race condition
     // with AppState listener (which would pause on background before the
     // onPictureInPictureStatusChanged callback fires)
     isPipActiveRef.current = true;
     setIsPipActive(true);
-    videoRef.current?.enterPip?.();
   }, []);
 
   const handlePictureInPictureStatusChanged = useCallback((isActive: boolean) => {
@@ -4698,7 +4715,7 @@ export default function PlayerScreen() {
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
           {/* currentTime = playbackOffset + relativeTime, VTT timestamps are relative to extraction start */}
           {/* Formula: -actualPlaybackOffset + keyframeDelta = -playbackOffset (corrects for keyframe seek) */}
-          {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && (
+          {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && !isPipActive && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
@@ -4717,7 +4734,7 @@ export default function PlayerScreen() {
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
           {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
           {/* timeOffset: -firstCueTime to align VTT cues with player position, -subtitleOffset for user adjustment */}
-          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasStartedPlaying && (
+          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasStartedPlaying && !isPipActive && (
             <SubtitleOverlay
               vttUrl={extractedSubtitleUrl}
               currentTime={currentTime}
@@ -4735,7 +4752,7 @@ export default function PlayerScreen() {
 
           {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
           {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
-          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && (
+          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && !isPipActive && (
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}
@@ -4764,6 +4781,7 @@ export default function PlayerScreen() {
             const isTVSeeking = isTvPlatform && seekIndicatorAmount !== 0;
             const shouldRenderControls =
               !usesSystemManagedControls &&
+              !isPipActive &&
               (controlsVisible || isModalOpen || isTVSeeking) &&
               (hasPlaybackContext || Platform.isTV);
 

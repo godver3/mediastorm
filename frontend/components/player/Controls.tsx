@@ -6,7 +6,7 @@ import { StreamInfoModal, type StreamInfoData } from '@/components/player/Stream
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
@@ -464,7 +464,7 @@ const Controls: React.FC<ControlsProps> = ({
                     )}
                     {showPipButton && (
                       <Pressable onPress={onEnterPip} style={styles.mobileTrackButton}>
-                        <Ionicons name="browsers-outline" size={18} color={theme.colors.text.primary} />
+                        <MaterialCommunityIcons name="picture-in-picture-bottom-right" size={18} color={theme.colors.text.primary} />
                         <Text style={styles.mobileTrackLabel}>PiP</Text>
                       </Pressable>
                     )}
@@ -585,7 +585,7 @@ const Controls: React.FC<ControlsProps> = ({
                     <Pressable
                       onPress={onEnterPip}
                       style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
-                      <Ionicons name="browsers-outline" size={24} color={theme.colors.text.primary} />
+                      <MaterialCommunityIcons name="picture-in-picture-bottom-right" size={24} color={theme.colors.text.primary} />
                     </Pressable>
                     <Text style={styles.trackLabel}>PiP</Text>
                   </View>
