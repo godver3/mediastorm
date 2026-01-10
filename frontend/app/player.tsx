@@ -597,8 +597,8 @@ export default function PlayerScreen() {
           console.log('[player] Skipping auto-pause: PiP mode active');
           return;
         }
-        // On iOS mobile, auto-enter PiP when backgrounding during playback
-        if (Platform.OS === 'ios' && !Platform.isTV && !paused) {
+        // On iOS/Android mobile, auto-enter PiP when backgrounding during playback
+        if ((Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !paused) {
           console.log('[player] Auto-entering PiP on background');
           isPipActiveRef.current = true;
           videoRef.current?.enterPip?.();
