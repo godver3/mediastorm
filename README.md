@@ -19,7 +19,11 @@ Scraping supports:
 
 Discord: https://discord.gg/kT74mwf4bu
 
-## Backend Deployment
+## Setup
+
+strmr requires both a backend server and a frontend app. The frontend app on its own does nothing - it needs a running backend to connect to.
+
+### Backend Deployment
 
 Deploy the backend using Docker Compose (or use the example in the repo):
 
@@ -49,6 +53,25 @@ docker-compose up -d
 
 The backend will be available at `http://localhost:7777`. The default login is `admin`/`admin` for both the frontend app and the admin web UI.
 
+### Frontend Apps
+
+The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV.
+
+#### iOS / tvOS
+
+Available on TestFlight:
+
+- iOS: [Join TestFlight](https://testflight.apple.com/join/8vCQ5gmH)
+- tvOS: [Join TestFlight](https://testflight.apple.com/join/X9bE3dq6)
+
+**Updates:** Incremental updates are delivered automatically via OTA. Larger updates require updating through TestFlight.
+
+#### Android / Android TV
+
+Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
+
+**Updates:** Incremental updates are delivered automatically via OTA. Larger updates require manually downloading the new APK from [GitHub Releases](https://github.com/godver3/strmr/releases) or using Downloader (code listed with each release).
+
 ## Configuration
 
 Access the admin panel at `http://localhost:7777/admin` to configure all settings. Required settings are indicated in the web UI settings page.
@@ -58,7 +81,6 @@ Access the admin panel at `http://localhost:7777/admin` to configure all setting
 See Discord for more planning details.
 
 - Non-M3U IPTV support
-- Custom shelf content
 - Mediafusion support
 
 ## What to test?
@@ -68,21 +90,6 @@ Please test:
 - General searching/streaming/media matching
 - Test DV/HDR playback
 - Android TV performance
-
-## Frontend Apps
-
-The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV. Updates will be pushed through Expo OTA and auto update testing apps (1.0.x). New builds will be submitted periodically as major increments (1.x.0). Update details will be shared in the Discord. 
-
-### iOS / tvOS
-
-Available on TestFlight
-
-- iOS: [Join TestFlight](https://testflight.apple.com/join/8vCQ5gmH)
-- tvOS: [Join TestFlight](https://testflight.apple.com/join/X9bE3dq6)
-
-### Android / Android TV
-
-Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
 
 ## Acknowledgments
 
