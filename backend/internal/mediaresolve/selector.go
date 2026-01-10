@@ -49,7 +49,7 @@ var (
 	}
 	episodeCodePattern    = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
 	episodeAltPattern     = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
-	episodeNumberPattern  = regexp.MustCompile(`(?i)[-\s](\d{1,2})[-\s]`)          // Matches " - 01 - " or similar
+	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s](\d{1,2})[-_\s\[\.]`)   // Matches " - 01 - ", "_01_", "_01[", "_01." for anime
 )
 
 // SelectBestCandidate applies SXXEXX matching and fuzzy title similarity against a list of candidates.
