@@ -1449,9 +1449,37 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}
 
-	args = append(args,
-		"-c:v", "copy", // Copy video codec
-	)
+	// Check if video codec is compatible with iOS (H.264/HEVC only)
+	// Legacy codecs like MPEG-4 Part 2 (XviD/DivX), MPEG-2, etc. need transcoding
+	needsVideoTranscode := false
+	videoCodec := ""
+	if session.ProbeData != nil {
+		videoCodec = session.ProbeData.VideoCodec
+		needsVideoTranscode = IsIncompatibleVideoCodec(videoCodec)
+	}
+
+	if needsVideoTranscode {
+		// Transcode incompatible video codec to H.264
+		// Use veryfast preset for real-time transcoding, CRF 23 for reasonable quality
+		log.Printf("[hls] session %s: incompatible video codec %q detected, transcoding to H.264", session.ID, videoCodec)
+		args = append(args,
+			"-c:v", "libx264",
+			"-preset", "veryfast",
+			"-crf", "23",
+			"-profile:v", "high",
+			"-level", "4.1",
+		)
+		// When transcoding video for fMP4, also check if audio needs transcoding
+		// MP3 audio doesn't work well in fMP4 containers on iOS - must use AAC
+		if len(audioStreams) > 0 && audioStreams[0].Codec == "mp3" {
+			log.Printf("[hls] session %s: MP3 audio detected with video transcode (fMP4), forcing AAC transcoding", session.ID)
+			forceAAC = true
+		}
+	} else {
+		args = append(args,
+			"-c:v", "copy", // Copy video codec (H.264/HEVC compatible)
+		)
+	}
 
 	// For Dolby Vision and HDR10, we MUST use fMP4 segments (not MPEG-TS)
 	// - DV: preserves Dolby Vision metadata

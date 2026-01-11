@@ -2596,9 +2596,12 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		}
 	}
 
-	// Extract HDR info from primary video stream
+	// Extract HDR info and video codec from primary video stream
 	stream := selectPrimaryVideoStream(meta)
 	if stream != nil {
+		// Extract video codec for compatibility detection
+		result.VideoCodec = strings.ToLower(strings.TrimSpace(stream.CodecName))
+
 		// Detect Dolby Vision
 		hasDV, dvProfile, _ := detectDolbyVision(stream)
 		result.HasDolbyVision = hasDV
@@ -2674,10 +2677,10 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		}
 	}
 
-	log.Printf("[video] ProbeVideoFull: DV=%v HDR10=%v dvProfile=%q TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d",
+	log.Printf("[video] ProbeVideoFull: DV=%v HDR10=%v dvProfile=%q TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d videoCodec=%s",
 		result.HasDolbyVision, result.HasHDR10, result.DolbyVisionProfile,
 		result.HasTrueHD, result.HasCompatibleAudio,
-		len(result.AudioStreams), len(result.SubtitleStreams))
+		len(result.AudioStreams), len(result.SubtitleStreams), result.VideoCodec)
 
 	// Cache the result for shared use between prequeue and HLS
 	if h.hlsManager != nil {
@@ -2691,6 +2694,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *VideoFullResult {
 	result := &VideoFullResult{
 		Duration:           cached.Duration,
+		VideoCodec:         cached.VideoCodec,
 		HasDolbyVision:     cached.HasDolbyVision,
 		HasHDR10:           cached.HasHDR10,
 		DolbyVisionProfile: cached.DolbyVisionProfile,
@@ -2729,6 +2733,7 @@ func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *Vide
 func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *UnifiedProbeResult {
 	cached := &UnifiedProbeResult{
 		Duration:           result.Duration,
+		VideoCodec:         result.VideoCodec,
 		HasDolbyVision:     result.HasDolbyVision,
 		HasHDR10:           result.HasHDR10,
 		DolbyVisionProfile: result.DolbyVisionProfile,

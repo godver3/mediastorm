@@ -80,6 +80,8 @@ type VideoFullResult struct {
 	HasDolbyVision     bool
 	HasHDR10           bool
 	DolbyVisionProfile string
+	// Video codec detection
+	VideoCodec string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
 	// Audio codec detection
 	HasTrueHD          bool // Audio requires transcoding (TrueHD, DTS-HD, etc.)
 	HasCompatibleAudio bool // Audio can be copied without transcoding

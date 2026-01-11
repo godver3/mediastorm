@@ -59,6 +59,7 @@ func isHLSCommentaryTrack(title string) bool {
 type UnifiedProbeResult struct {
 	Duration           float64
 	ColorTransfer      string // e.g., "smpte2084" for HDR, "bt709" for SDR
+	VideoCodec         string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
 	AudioStreams       []audioStreamInfo
 	SubtitleStreams    []subtitleStreamInfo
 	HasTrueHD          bool
@@ -304,7 +305,10 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 
 		switch stream.CodecType {
 		case "video":
-			// Get color transfer from first video stream
+			// Get video codec and color transfer from first video stream
+			if result.VideoCodec == "" {
+				result.VideoCodec = codec
+			}
 			if result.ColorTransfer == "" {
 				result.ColorTransfer = stream.ColorTransfer
 			}
@@ -355,8 +359,8 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 		}
 	}
 
-	log.Printf("[hls] unified probe: duration=%.2f colorTransfer=%s audio=%d subtitle=%d hasTrueHD=%v hasCompatible=%v",
-		result.Duration, result.ColorTransfer, len(result.AudioStreams), len(result.SubtitleStreams),
+	log.Printf("[hls] unified probe: duration=%.2f videoCodec=%s colorTransfer=%s audio=%d subtitle=%d hasTrueHD=%v hasCompatible=%v",
+		result.Duration, result.VideoCodec, result.ColorTransfer, len(result.AudioStreams), len(result.SubtitleStreams),
 		result.HasTrueHD, result.HasCompatibleAudio)
 
 	return result, nil

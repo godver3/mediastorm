@@ -42,6 +42,24 @@ func IsTrueHDCodec(codec string) bool {
 	return c == "truehd" || c == "mlp"
 }
 
+// IsIncompatibleVideoCodec returns true for video codecs that iOS/tvOS cannot play natively.
+// iOS only supports H.264 (AVC) and HEVC (H.265). Legacy codecs like MPEG-4 Part 2 (XviD/DivX),
+// MPEG-2, VC-1, VP8/VP9, etc. require transcoding to H.264.
+func IsIncompatibleVideoCodec(codec string) bool {
+	c := strings.ToLower(strings.TrimSpace(codec))
+	// Compatible codecs (iOS native support)
+	compatibleVideoCodecs := map[string]bool{
+		"h264": true, "avc": true, "avc1": true,
+		"hevc": true, "h265": true, "hvc1": true, "hev1": true,
+	}
+	// If empty or compatible, no transcoding needed
+	if c == "" || compatibleVideoCodecs[c] {
+		return false
+	}
+	// Any other codec is incompatible and needs transcoding
+	return true
+}
+
 // IsCommentaryTrack checks if an audio track is a commentary track based on its title
 func IsCommentaryTrack(title string) bool {
 	lowerTitle := strings.ToLower(strings.TrimSpace(title))
