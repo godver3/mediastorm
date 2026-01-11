@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +81,14 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 		return nil
 	}
 
+	// Create HTTP client with configured timeout (default 5s)
+	timeout := settings.Streaming.IndexerTimeoutSec
+	if timeout <= 0 {
+		timeout = 5 // Default to 5 seconds
+	}
+	httpClient := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+	log.Printf("[debrid] Using indexer timeout: %ds", timeout)
+
 	var scrapers []Scraper
 	for _, scraperCfg := range settings.TorrentScrapers {
 		if !scraperCfg.Enabled {
@@ -88,21 +97,21 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 		switch strings.ToLower(scraperCfg.Type) {
 		case "torrentio":
 			log.Printf("[debrid] Initializing Torrentio scraper: %s (options: %s)", scraperCfg.Name, scraperCfg.Options)
-			scrapers = append(scrapers, NewTorrentioScraper(nil, scraperCfg.Options, scraperCfg.Name))
+			scrapers = append(scrapers, NewTorrentioScraper(httpClient, scraperCfg.Options, scraperCfg.Name))
 		case "jackett":
 			if scraperCfg.URL == "" || scraperCfg.APIKey == "" {
 				log.Printf("[debrid] Skipping Jackett scraper %s: missing URL or API key", scraperCfg.Name)
 				continue
 			}
 			log.Printf("[debrid] Initializing Jackett scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
-			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, scraperCfg.Name, nil))
+			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, scraperCfg.Name, httpClient))
 		case "zilean":
 			if scraperCfg.URL == "" {
 				log.Printf("[debrid] Skipping Zilean scraper %s: missing URL", scraperCfg.Name)
 				continue
 			}
 			log.Printf("[debrid] Initializing Zilean scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
-			scrapers = append(scrapers, NewZileanScraper(scraperCfg.URL, scraperCfg.Name, nil))
+			scrapers = append(scrapers, NewZileanScraper(scraperCfg.URL, scraperCfg.Name, httpClient))
 		case "aiostreams":
 			if scraperCfg.URL == "" {
 				log.Printf("[debrid] Skipping AIOStreams scraper %s: missing URL", scraperCfg.Name)
@@ -110,7 +119,7 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			}
 			passthroughFormat := scraperCfg.Config["passthroughFormat"] == "true"
 			log.Printf("[debrid] Initializing AIOStreams scraper: %s at %s (passthrough=%v)", scraperCfg.Name, scraperCfg.URL, passthroughFormat)
-			scrapers = append(scrapers, NewAIOStreamsScraper(scraperCfg.URL, scraperCfg.Name, passthroughFormat, nil))
+			scrapers = append(scrapers, NewAIOStreamsScraper(scraperCfg.URL, scraperCfg.Name, passthroughFormat, httpClient))
 		case "nyaa":
 			baseURL := scraperCfg.URL
 			if baseURL == "" {
@@ -125,7 +134,7 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 				filter = "0" // Default: No filter
 			}
 			log.Printf("[debrid] Initializing Nyaa scraper: %s at %s (category: %s, filter: %s)", scraperCfg.Name, baseURL, category, filter)
-			scrapers = append(scrapers, NewNyaaScraper(baseURL, scraperCfg.Name, category, filter, nil))
+			scrapers = append(scrapers, NewNyaaScraper(baseURL, scraperCfg.Name, category, filter, httpClient))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}

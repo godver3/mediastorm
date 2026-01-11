@@ -254,6 +254,11 @@ var SettingsSchema = map[string]interface{}{
 				"label":       "Usenet Resolution Timeout (seconds)",
 				"description": "Maximum time to wait for usenet content resolution (0 = no limit)",
 			},
+			"indexerTimeoutSec": map[string]interface{}{
+				"type":        "number",
+				"label":       "Indexer Timeout (seconds)",
+				"description": "Maximum time to wait for indexer/scraper searches (default: 5)",
+			},
 		},
 	},
 	"debridProviders": map[string]interface{}{
