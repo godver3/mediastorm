@@ -1312,17 +1312,21 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// NOTE: -strict unofficial is added AFTER -i as an output option (see below)
 	// Placing it before -i doesn't enable writing dvcC boxes to the output
 
-	// Seeking strategy - hybrid approach:
-	// - Small seeks (< 30s): OUTPUT seeking (-ss after -i) - faster startup, no HTTP Range delays
+	// Seeking strategy:
+	// - Small seeks (< 30s): OUTPUT seeking (-ss after -i) - accurate but reads from start
 	// - Large seeks (>= 30s): INPUT seeking (-ss before -i) - uses HTTP Range to skip data
 	const outputSeekThreshold = 30.0 // seconds
 
 	useOutputSeeking := session.TranscodingOffset > 0 && session.TranscodingOffset < outputSeekThreshold
 
 	// For INPUT seeking, add -ss before -i
+	// IMPORTANT: Use -noaccurate_seek when copying video but transcoding audio.
+	// By default, accurate_seek causes transcoded streams to discard frames between
+	// the seek point and exact position, while copied streams preserve them.
+	// This causes A/V desync. With -noaccurate_seek, both streams preserve the same frames.
 	if session.TranscodingOffset >= outputSeekThreshold {
-		args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
-		log.Printf("[hls] session %s: using INPUT seeking to %.3fs (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
+		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
+		log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
 	}
 
 	// Add input source - use proxy URL if available, otherwise use pipe
@@ -1337,7 +1341,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// For OUTPUT seeking, add -ss after -i
 	if useOutputSeeking {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
-		log.Printf("[hls] session %s: using OUTPUT seeking to %.3fs (faster startup, reads from start)", session.ID, session.TranscodingOffset)
+		log.Printf("[hls] session %s: using OUTPUT seeking to %.3fs (reads from start)", session.ID, session.TranscodingOffset)
 	}
 
 	// If we're seeking and know the total duration, tell FFmpeg how much content to expect
