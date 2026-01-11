@@ -25,6 +25,16 @@ export interface SubtitleCuesRange {
   maxTime: number;
 }
 
+/** Debug info for subtitle sync troubleshooting */
+export interface SubtitleDebugInfo {
+  adjustedTime: number;
+  activeCueStart: number | null;
+  activeCueEnd: number | null;
+  activeCueText: string | null;
+  totalCues: number;
+  firstCueStart: number | null;
+}
+
 interface SubtitleOverlayProps {
   /** URL to fetch the VTT file from */
   vttUrl: string | null;
@@ -51,6 +61,8 @@ interface SubtitleOverlayProps {
   onCuesRangeChange?: (range: SubtitleCuesRange | null) => void;
   /** Whether content is HDR/Dolby Vision - uses grey text for better visibility */
   isHDRContent?: boolean;
+  /** Callback for debug info (adjusted time, active cue, etc) */
+  onDebugInfo?: (info: SubtitleDebugInfo) => void;
 }
 
 /**
@@ -235,6 +247,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   videoHeight,
   onCuesRangeChange,
   isHDRContent = false,
+  onDebugInfo,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -457,11 +470,27 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
   // Find active cues for current time
   // timeOffset is the keyframe-aligned offset from playback start
+  const adjustedTime = effectiveTime + timeOffset;
   const activeCues = useMemo(() => {
     if (!enabled || cues.length === 0) return [];
-    const adjustedTime = effectiveTime + timeOffset;
     return findActiveCues(cues, adjustedTime);
-  }, [cues, effectiveTime, timeOffset, enabled]);
+  }, [cues, adjustedTime, enabled]);
+
+  // Report debug info to parent for troubleshooting
+  useEffect(() => {
+    if (onDebugInfo) {
+      const firstCue = cues.length > 0 ? cues[0] : null;
+      const activeCue = activeCues.length > 0 ? activeCues[0] : null;
+      onDebugInfo({
+        adjustedTime,
+        activeCueStart: activeCue?.startTime ?? null,
+        activeCueEnd: activeCue?.endTime ?? null,
+        activeCueText: activeCue?.text?.substring(0, 30) ?? null,
+        totalCues: cues.length,
+        firstCueStart: firstCue?.startTime ?? null,
+      });
+    }
+  }, [onDebugInfo, adjustedTime, activeCues, cues]);
 
   // Render subtitle text with outline effect by layering
   // Multiple offset black text layers create the outline, white text on top
