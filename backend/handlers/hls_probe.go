@@ -321,7 +321,7 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				Language: lang,
 				Title:    title,
 			})
-			if codec == "truehd" || codec == "mlp" {
+			if IsIncompatibleAudioCodec(codec) {
 				result.HasTrueHD = true
 			}
 			if compatibleCodecs[codec] {
@@ -469,7 +469,7 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
 		streams = append(streams, audioStreamInfo{Index: stream.Index, Codec: codec})
-		if codec == "truehd" || codec == "mlp" {
+		if IsIncompatibleAudioCodec(codec) {
 			hasTrueHD = true
 		}
 		if compatibleCodecs[codec] {
@@ -477,7 +477,7 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 		}
 	}
 
-	log.Printf("[hls] audio probe results: hasTrueHD=%v hasCompatibleAudio=%v codecs=%d",
+	log.Printf("[hls] audio probe results: hasIncompatibleAudio=%v hasCompatibleAudio=%v codecs=%d",
 		hasTrueHD, hasCompatibleAudio, len(result.Streams))
 
 	return streams, hasTrueHD, hasCompatibleAudio, nil
@@ -528,7 +528,7 @@ func (m *HLSManager) probeAudioStreamsFromURL(ctx context.Context, url string) (
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
 		streams = append(streams, audioStreamInfo{Index: stream.Index, Codec: codec})
-		if codec == "truehd" || codec == "mlp" {
+		if IsIncompatibleAudioCodec(codec) {
 			hasTrueHD = true
 		}
 		if compatibleCodecs[codec] {
@@ -536,7 +536,7 @@ func (m *HLSManager) probeAudioStreamsFromURL(ctx context.Context, url string) (
 		}
 	}
 
-	log.Printf("[hls] audio probe from URL results: hasTrueHD=%v hasCompatibleAudio=%v codecs=%d",
+	log.Printf("[hls] audio probe from URL results: hasIncompatibleAudio=%v hasCompatibleAudio=%v codecs=%d",
 		hasTrueHD, hasCompatibleAudio, len(result.Streams))
 
 	return streams, hasTrueHD, hasCompatibleAudio, nil

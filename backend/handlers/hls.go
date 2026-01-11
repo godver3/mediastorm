@@ -1373,12 +1373,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 
 		if selectedStream != nil {
-			// Check if this is a TrueHD track
-			isTrueHD := selectedStream.Codec == "truehd" || selectedStream.Codec == "mlp"
+			// Check if this is an incompatible audio codec (TrueHD, DTS, etc.)
+			needsTranscode := IsIncompatibleAudioCodec(selectedStream.Codec)
 
-			if isTrueHD {
-				// TrueHD selected - we need to transcode it
-				log.Printf("[hls] session %s: requested audio track %d is TrueHD; will transcode to AAC", session.ID, session.AudioTrackIndex)
+			if needsTranscode {
+				// Incompatible codec selected - we need to transcode it
+				log.Printf("[hls] session %s: requested audio track %d is %s (incompatible); will transcode to AAC", session.ID, session.AudioTrackIndex, selectedStream.Codec)
 				// Map by absolute stream index and transcode
 				audioMap := fmt.Sprintf("0:%d", selectedStream.Index)
 				args = append(args, "-map", audioMap)
@@ -1500,18 +1500,18 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// Audio handling
 	audioCodecHandled := false
 
-	// Check if a specific TrueHD track was selected
+	// Check if a specific incompatible audio track was selected (TrueHD, DTS, etc.)
 	if mappedSpecificAudio && session.AudioTrackIndex >= 0 {
 		for i := range audioStreams {
 			if audioStreams[i].Index == session.AudioTrackIndex {
-				isTrueHD := audioStreams[i].Codec == "truehd" || audioStreams[i].Codec == "mlp"
-				if isTrueHD {
-					// Transcode the selected TrueHD track to AAC
+				needsTranscode := IsIncompatibleAudioCodec(audioStreams[i].Codec)
+				if needsTranscode {
+					// Transcode the selected incompatible track to AAC
 					// Must specify channel_layout for iOS AVPlayer compatibility (otherwise shows "media may be damaged")
-					// TrueHD has variable timing - use aresample filter with async to maintain A/V sync
+					// TrueHD/DTS have variable timing - use aresample filter with async to maintain A/V sync
 					// async=1000 allows up to 1000 samples of drift correction per second
 					// Note: -start_at_zero (set earlier) normalizes all stream timestamps for proper A/V sync
-					log.Printf("[hls] session %s: transcoding selected TrueHD track to AAC", session.ID)
+					log.Printf("[hls] session %s: transcoding selected %s track to AAC", session.ID, audioStreams[i].Codec)
 					args = append(args,
 						"-af", "aresample=async=1000",
 						"-c:a", "aac", "-ac", "6", "-ar", "48000", "-channel_layout", "5.1", "-b:a", "192k")
