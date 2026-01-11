@@ -7,7 +7,7 @@ import TVControlsModal from '@/components/player/TVControlsModal';
 import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
-import SubtitleOverlay, { SubtitleCuesRange } from '@/components/player/SubtitleOverlay';
+import SubtitleOverlay, { SubtitleCuesRange, SubtitleDebugInfo } from '@/components/player/SubtitleOverlay';
 import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
 import { SubtitleStatusOverlay, type AutoSubtitleStatus } from '@/components/player/SubtitleStatusOverlay';
 import type { SubtitleSearchResult } from '@/services/api';
@@ -384,6 +384,8 @@ export default function PlayerScreen() {
   const sdrFirstCueTimeRef = useRef<number>(0);
   // Track available subtitle cue range for seek detection (re-extract if seeking outside range)
   const subtitleCuesRangeRef = useRef<SubtitleCuesRange | null>(null);
+  // Debug info from SubtitleOverlay for troubleshooting sync issues
+  const [subtitleDebugInfo, setSubtitleDebugInfo] = useState<SubtitleDebugInfo | null>(null);
   // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
   const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<Array<{
     index: number;
@@ -819,6 +821,9 @@ export default function PlayerScreen() {
   const actualPlaybackOffsetRef = useRef<number>(initialActualStartOffset ?? initialStartOffset); // Keyframe-aligned start for subtitle sync
   // Keyframe delta: difference between actual keyframe and requested position (negative = keyframe earlier)
   const keyframeDeltaRef = useRef<number>(0);
+  // Track if we've done a warm seek (session recreation) since initial load
+  // Initial warm start doesn't need delta, but subsequent warm seeks do
+  const hasWarmSeekedRef = useRef<boolean>(false);
   // Note: sessionBufferEndRef is now provided by useHlsSession hook
   const warmStartTokenRef = useRef(0);
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -994,6 +999,8 @@ export default function PlayerScreen() {
                 ? response.actualStartOffset
                 : response.startOffset;
           }
+          // Mark that we've done a warm seek (restoration is like a seek)
+          hasWarmSeekedRef.current = true;
 
           // Restore the video URL - this will trigger the video to load
           setCurrentMovieUrl(response.playlistUrl);
@@ -1367,6 +1374,8 @@ export default function PlayerScreen() {
     pendingSeekAttemptRef.current.attempts = 0;
     pendingSeekAttemptRef.current.lastAttemptMs = 0;
     hasReceivedPlayerLoadRef.current = false;
+    // Reset warm seek flag - initial playback doesn't need keyframeDelta
+    hasWarmSeekedRef.current = false;
 
     // Clear any pending retry timeouts
     if (seekRetryTimeoutRef.current) {
@@ -2207,6 +2216,8 @@ export default function PlayerScreen() {
         // Reset pending seek attempt tracking
         pendingSeekAttemptRef.current.attempts = 0;
         pendingSeekAttemptRef.current.lastAttemptMs = 0;
+        // Mark that we've done a warm seek - subsequent seeks need keyframeDelta for subtitle sync
+        hasWarmSeekedRef.current = true;
 
         console.log('[player] warmStartHLS offsets set', {
           playbackOffset: playbackOffsetRef.current,
@@ -3163,10 +3174,11 @@ export default function PlayerScreen() {
           } else {
             try {
               const relative = Math.max(0, relativeTime);
-              console.log('[player] calling videoRef.seek', {
+              console.log('[player] calling videoRef.seek (in-session)', {
                 time: relative,
                 hasVideoRef: !!videoRef.current,
                 offset: sessionStart,
+                keyframeDelta: keyframeDeltaRef.current,
               });
               videoRef.current?.seek(relative);
               performed = true;
@@ -3550,6 +3562,8 @@ export default function PlayerScreen() {
                 ? response.actualStartOffset
                 : response.startOffset;
           }
+          // Mark that we've done a warm seek (retry is like a seek)
+          hasWarmSeekedRef.current = true;
           return; // Successfully created retry session
         } catch (retryError) {
           console.error('[player] failed to create retry HLS session:', retryError);
@@ -4124,6 +4138,11 @@ export default function PlayerScreen() {
     subtitleCuesRangeRef.current = range;
   }, []);
 
+  // Callback to handle subtitle debug info for troubleshooting
+  const handleSubtitleDebugInfo = useCallback((info: SubtitleDebugInfo) => {
+    setSubtitleDebugInfo(info);
+  }, []);
+
   // Re-extract subtitles when seeking outside the available cue range
   const triggerSubtitleReExtraction = useCallback(
     (seekPosition: number) => {
@@ -4336,6 +4355,8 @@ export default function PlayerScreen() {
         actualPlaybackOffsetRef.current = actualSessionStart; // For subtitle sync
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
+        // Mark that we've done a warm seek (track switch recreates session)
+        hasWarmSeekedRef.current = true;
         // Mark that we're recreating HLS session to preserve track selections
         hlsSessionActions.setRecreating(true);
         hlsSessionActions.setSkipTrackPreferences(true);
@@ -4984,20 +5005,21 @@ export default function PlayerScreen() {
 
           {/* Sidecar subtitle overlay for HLS/fMP4 streams (HDR/DV content) */}
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
-          {/* currentTime = playbackOffset + relativeTime, VTT timestamps are relative to extraction start */}
-          {/* Formula: -actualPlaybackOffset + keyframeDelta = -playbackOffset (corrects for keyframe seek) */}
+          {/* VTT is extracted with -start_at_zero, player time is relative to playbackOffset */}
+          {/* Use -playbackOffset to convert currentTime to VTT-relative time */}
           {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && !isPipActive && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * (hdrInfo?.isDolbyVision || hdrInfo?.isHDR10 ? 3 : 2)}
+              timeOffset={-playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
+              onDebugInfo={subtitleDebugEnabled ? handleSubtitleDebugInfo : undefined}
             />
           )}
 
@@ -5345,36 +5367,94 @@ export default function PlayerScreen() {
             <View
               style={{
                 position: 'absolute',
-                top: 60,
-                left: 12,
+                top: Platform.isTV ? 120 : 60,
+                left: Platform.isTV ? 24 : 12,
                 backgroundColor: 'rgba(0, 0, 0, 0.85)',
-                padding: 12,
-                borderRadius: 8,
-                minWidth: 280,
+                padding: Platform.isTV ? 24 : 12,
+                borderRadius: Platform.isTV ? 16 : 8,
+                minWidth: Platform.isTV ? 560 : 280,
                 zIndex: 100,
               }}
               pointerEvents="none"
             >
-              <Text style={{ color: '#00ff00', fontFamily: 'monospace', fontSize: 11, fontWeight: 'bold', marginBottom: 8 }}>
+              <Text style={{ color: '#00ff00', fontFamily: 'monospace', fontSize: Platform.isTV ? 22 : 11, fontWeight: 'bold', marginBottom: Platform.isTV ? 16 : 8 }}>
                 SUBTITLE SYNC DEBUG
               </Text>
-              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Current Video Time: {currentTime.toFixed(3)}s
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+                Current Time (abs): {currentTime.toFixed(3)}s
               </Text>
-              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Keyframe Delta: {keyframeDeltaRef.current.toFixed(3)}s
+              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+                Player Relative: {(currentTime - playbackOffsetRef.current).toFixed(3)}s
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Manual User Offset: {subtitleOffset.toFixed(3)}s
+              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+                VTT Lookup Time: {(currentTime - playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
               </Text>
-              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Total Offset: {(isHlsStream ? (-actualPlaybackOffsetRef.current - subtitleOffset + keyframeDeltaRef.current * (hdrInfo?.isDolbyVision || hdrInfo?.isHDR10 ? 3 : 2)) : (-sdrFirstCueTimeRef.current - subtitleOffset)).toFixed(3)}s
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 12 : 6 }}>
+                Manual Offset: {subtitleOffset.toFixed(3)}s {subtitleOffset !== 0 ? '(USER ADJUSTED)' : ''}
               </Text>
-              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: 10, marginBottom: 4 }}>
-                Actual Start Offset: {actualPlaybackOffsetRef.current.toFixed(3)}s
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+                --- OFFSETS ---
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: 10, marginBottom: 2 }}>
-                Playback Offset: {playbackOffsetRef.current.toFixed(3)}s
+              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                playbackOffset: {playbackOffsetRef.current.toFixed(3)}s (requested)
+              </Text>
+              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                actualPlaybackOffset: {actualPlaybackOffsetRef.current.toFixed(3)}s (keyframe)
+              </Text>
+              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                keyframeDelta: {keyframeDeltaRef.current.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+                --- FORMULA ---
+              </Text>
+              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                timeOffset = -{playbackOffsetRef.current.toFixed(1)} + {keyframeDeltaRef.current.toFixed(1)} - {subtitleOffset.toFixed(1)}
+              </Text>
+              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+                = {(-playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+                --- STATE ---
+              </Text>
+              <Text style={{ color: hasWarmSeekedRef.current ? '#9f9' : '#f90', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                hasWarmSeeked: {hasWarmSeekedRef.current ? 'TRUE' : 'FALSE'}
+              </Text>
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                sessionBufferEnd: {sessionBufferEndRef.current.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                initialStartOffset: {initialStartOffset.toFixed(3)}s
+              </Text>
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+                --- VTT CUES ---
+              </Text>
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                Total Cues: {subtitleDebugInfo?.totalCues ?? 'N/A'}
+              </Text>
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                First Cue Start: {subtitleDebugInfo?.firstCueStart?.toFixed(3) ?? 'N/A'}s
+              </Text>
+              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                VTT Adjusted Time: {subtitleDebugInfo?.adjustedTime?.toFixed(3) ?? 'N/A'}s
+              </Text>
+              <Text style={{ color: subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null ? '#0f0' : '#f00', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                Active Cue: {subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null
+                  ? `${subtitleDebugInfo.activeCueStart.toFixed(3)}-${subtitleDebugInfo.activeCueEnd?.toFixed(3)}s`
+                  : 'NONE'}
+              </Text>
+              {subtitleDebugInfo?.activeCueText && (
+                <Text style={{ color: '#9f9', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+                  "{subtitleDebugInfo.activeCueText}"
+                </Text>
+              )}
+              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+                --- SYNC CHECK ---
+              </Text>
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                If subs late: decrease manual offset
+              </Text>
+              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+                If subs early: increase manual offset
               </Text>
             </View>
           )}
