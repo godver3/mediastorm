@@ -763,6 +763,10 @@ func (m *Manager) Load() (Settings, error) {
 	if s.Streaming.MultiProviderMode == "" {
 		s.Streaming.MultiProviderMode = MultiProviderModeFastest
 	}
+	// Backfill IndexerTimeoutSec if not set (0 means use default of 5 seconds)
+	if s.Streaming.IndexerTimeoutSec <= 0 {
+		s.Streaming.IndexerTimeoutSec = 5
+	}
 
 	// Backfill Import settings
 	if s.Import.QueueProcessingIntervalSeconds == 0 {
