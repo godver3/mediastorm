@@ -67,8 +67,10 @@ import { ManualSelection, useManualHealthChecks } from './details/manual-selecti
 import {
   buildExternalPlayerTargets,
   getHealthFailureReason,
+  getTimeoutMessage,
   initiatePlayback,
   isHealthFailureError,
+  isTimeoutError,
 } from './details/playback';
 import { ResumePlaybackModal } from './details/resume-modal';
 import { SeriesEpisodes } from './details/series-episodes';
@@ -2611,6 +2613,14 @@ export default function DetailsScreen() {
           return;
         }
 
+        // Check for timeout errors and show a helpful message
+        if (isTimeoutError(err)) {
+          console.error(`⚠️ Search timed out for ${friendlyLabel}:`, err);
+          setSelectionError(getTimeoutMessage(err));
+          setSelectionInfo(null);
+          return;
+        }
+
         const message = err instanceof Error ? err.message : `Failed to resolve search result for ${friendlyLabel}.`;
         console.error(`⚠️ Search result resolve failed for ${friendlyLabel}:`, err);
         setSelectionError(message);
@@ -3257,9 +3267,15 @@ export default function DetailsScreen() {
         setManualError('No results available yet for manual selection.');
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load results.';
-      console.error('⚠️ Manual fetch failed:', err);
-      setManualError(message);
+      // Check for timeout errors and show a helpful message
+      if (isTimeoutError(err)) {
+        console.error('⚠️ Manual fetch timed out:', err);
+        setManualError(getTimeoutMessage(err));
+      } else {
+        const message = err instanceof Error ? err.message : 'Failed to load results.';
+        console.error('⚠️ Manual fetch failed:', err);
+        setManualError(message);
+      }
     } finally {
       setManualLoading(false);
     }
@@ -3299,9 +3315,15 @@ export default function DetailsScreen() {
           setManualError('No results available yet for manual selection.');
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to load results.';
-        console.error('⚠️ Manual fetch failed:', err);
-        setManualError(message);
+        // Check for timeout errors and show a helpful message
+        if (isTimeoutError(err)) {
+          console.error('⚠️ Manual fetch timed out:', err);
+          setManualError(getTimeoutMessage(err));
+        } else {
+          const message = err instanceof Error ? err.message : 'Failed to load results.';
+          console.error('⚠️ Manual fetch failed:', err);
+          setManualError(message);
+        }
       } finally {
         setManualLoading(false);
       }

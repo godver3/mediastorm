@@ -858,21 +858,46 @@ class ApiService {
     if (!response.ok) {
       const errorText = await response.text();
       const isAuthFailure = response.status === 401;
-      // Use console.warn for handled errors (400/404 client errors, health check failures, auth issues) that surface via UI
+      const isTimeout = response.status === 504;
+      // Use console.warn for handled errors (400/404 client errors, health check failures, auth issues, timeouts) that surface via UI
       const isHandledError =
-        response.status === 400 || response.status === 404 || response.status === 502 || isAuthFailure;
+        response.status === 400 || response.status === 404 || response.status === 502 || response.status === 504 || isAuthFailure;
       const logLevel = isHandledError ? console.warn : console.error;
       logLevel('API request failed:', response.status, response.statusText, errorText);
+
+      // Try to parse structured error response from backend
+      let errorCode: string | undefined;
+      let errorMessage: string | undefined;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.code) {
+          errorCode = parsed.code;
+        }
+        if (parsed.message) {
+          errorMessage = parsed.message;
+        }
+      } catch {
+        // Not JSON or invalid, use raw error text
+      }
+
+      // Use friendly message for user-facing errors, fall back to raw error text
+      const displayMessage = errorMessage || errorText;
       const apiError: ApiError = new Error(
-        `API request failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `API request failed: ${response.status} ${response.statusText} - ${displayMessage}`,
       );
       apiError.status = response.status;
       apiError.statusText = response.statusText;
       apiError.body = errorText;
       apiError.url = url;
+
       if (isAuthFailure) {
         apiError.code = 'AUTH_INVALID_PIN';
+      } else if (isTimeout || errorCode === 'GATEWAY_TIMEOUT') {
+        apiError.code = 'GATEWAY_TIMEOUT';
+      } else if (errorCode) {
+        apiError.code = errorCode;
       }
+
       throw apiError;
     }
 

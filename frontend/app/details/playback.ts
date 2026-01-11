@@ -1053,8 +1053,47 @@ export const getHealthFailureReason = (error: unknown): string | null => {
   return null;
 };
 
+export const getTimeoutMessage = (_error: unknown): string => {
+  // Return a user-friendly message for timeout errors
+  // The backend already provides a helpful message, but this provides a fallback
+  return 'Search timed out. If using Aiostreams, consider increasing the indexer timeout in Settings.';
+};
+
+export const isTimeoutError = (error: unknown): boolean => {
+  if (!error) {
+    return false;
+  }
+
+  const maybeApiError = error as ApiError | undefined;
+  if (maybeApiError?.code === 'GATEWAY_TIMEOUT') {
+    return true;
+  }
+  if (typeof maybeApiError?.status === 'number' && maybeApiError.status === 504) {
+    return true;
+  }
+
+  const message = extractErrorMessage(error).toLowerCase();
+  if (!message) {
+    return false;
+  }
+
+  const timeoutKeywords = [
+    'timeout',
+    'timed out',
+    'gateway timeout',
+    'context deadline exceeded',
+    '504',
+  ];
+  return timeoutKeywords.some((keyword) => message.includes(keyword));
+};
+
 export const isHealthFailureError = (error: unknown): boolean => {
   if (!error) {
+    return false;
+  }
+
+  // Timeouts are NOT health failures - they're a separate error type
+  if (isTimeoutError(error)) {
     return false;
   }
 

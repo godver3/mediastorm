@@ -3,8 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -85,8 +87,9 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	results, err := h.Service.Search(r.Context(), opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		statusCode, errResponse := classifySearchError(err)
+		w.WriteHeader(statusCode)
+		json.NewEncoder(w).Encode(errResponse)
 		return
 	}
 
@@ -130,6 +133,41 @@ func buildMaskedTitle(query string, year int, mediaType string) string {
 
 func (h *IndexerHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// classifySearchError determines the appropriate HTTP status code and response
+// for search errors, distinguishing timeouts (504) from other gateway errors (502)
+func classifySearchError(err error) (int, map[string]interface{}) {
+	errMsg := err.Error()
+	isTimeout := false
+
+	// Check for net.Error timeout
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		isTimeout = true
+	}
+
+	// Also check error message for common timeout patterns
+	// (catches wrapped errors where the net.Error is buried)
+	if !isTimeout {
+		isTimeout = strings.Contains(errMsg, "timeout") ||
+			strings.Contains(errMsg, "context deadline exceeded") ||
+			strings.Contains(errMsg, "Timeout exceeded")
+	}
+
+	if isTimeout {
+		return http.StatusGatewayTimeout, map[string]interface{}{
+			"error":   errMsg,
+			"code":    "GATEWAY_TIMEOUT",
+			"message": "Search timed out. If using Aiostreams, consider increasing the indexer timeout in Settings.",
+		}
+	}
+
+	return http.StatusBadGateway, map[string]interface{}{
+		"error":   errMsg,
+		"code":    "BAD_GATEWAY",
+		"message": "Search failed due to an upstream error.",
+	}
 }
 
 // createEpisodeResolver fetches series metadata and creates an episode resolver

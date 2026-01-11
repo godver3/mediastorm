@@ -257,7 +257,7 @@ var SettingsSchema = map[string]interface{}{
 			"indexerTimeoutSec": map[string]interface{}{
 				"type":        "number",
 				"label":       "Indexer Timeout (seconds)",
-				"description": "Maximum time to wait for indexer/scraper searches (default: 5)",
+				"description": "Maximum time to wait for indexer/scraper searches (default: 5). Increase if using Aiostreams, which may need more time to respond.",
 			},
 		},
 	},
