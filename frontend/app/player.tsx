@@ -2634,16 +2634,20 @@ export default function PlayerScreen() {
     let isShuffleEpisode = false;
 
     if (shuffleMode && allEpisodes.length > 1) {
-      // Shuffle mode: pick a random episode (different from current)
-      let randomIndex: number;
-      do {
-        randomIndex = Math.floor(Math.random() * allEpisodes.length);
-      } while (
-        allEpisodes[randomIndex].seasonNumber === seasonNumber &&
-        allEpisodes[randomIndex].episodeNumber === episodeNumber
-      );
-      nextEpisode = allEpisodes[randomIndex];
-      isShuffleEpisode = true;
+      // Shuffle mode: pick a random episode (different from current, excludes season 0/specials)
+      const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
+      if (shuffleableEpisodes.length > 0) {
+        let randomIndex: number;
+        do {
+          randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
+        } while (
+          shuffleableEpisodes.length > 1 &&
+          shuffleableEpisodes[randomIndex].seasonNumber === seasonNumber &&
+          shuffleableEpisodes[randomIndex].episodeNumber === episodeNumber
+        );
+        nextEpisode = shuffleableEpisodes[randomIndex];
+        isShuffleEpisode = true;
+      }
     } else if (currentIndex >= 0 && currentIndex < allEpisodes.length - 1) {
       // Sequential mode: get next episode
       nextEpisode = allEpisodes[currentIndex + 1];
@@ -4888,16 +4892,23 @@ export default function PlayerScreen() {
     }
 
     // No prequeue - fall back to existing logic
-    // Shuffle mode: pick a random episode (different from current)
+    // Shuffle mode: pick a random episode (different from current, excludes season 0/specials)
     if (shuffleMode && allEpisodes.length > 1) {
-      let randomIndex: number;
-      let nextEpisode: SeriesEpisode;
-      do {
-        randomIndex = Math.floor(Math.random() * allEpisodes.length);
-        nextEpisode = allEpisodes[randomIndex];
-      } while (nextEpisode.seasonNumber === seasonNumber && nextEpisode.episodeNumber === episodeNumber);
-      navigateToEpisode(nextEpisode);
-      return;
+      const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
+      if (shuffleableEpisodes.length > 0) {
+        let randomIndex: number;
+        let nextEpisode: SeriesEpisode;
+        do {
+          randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
+          nextEpisode = shuffleableEpisodes[randomIndex];
+        } while (
+          shuffleableEpisodes.length > 1 &&
+          nextEpisode.seasonNumber === seasonNumber &&
+          nextEpisode.episodeNumber === episodeNumber
+        );
+        navigateToEpisode(nextEpisode);
+        return;
+      }
     }
     // Sequential mode
     if (!hasNextEpisode) return;

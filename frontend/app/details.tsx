@@ -568,6 +568,8 @@ export default function DetailsScreen() {
   const allEpisodesRef = useRef<SeriesEpisode[]>([]);
   const handleEpisodeSelectRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
   const handlePlayEpisodeRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
+  // Ref to pass shuffle mode synchronously to playback (state updates are async)
+  const pendingShuffleModeRef = useRef<boolean>(false);
 
   // Check for next episode when screen comes into focus
   useFocusEffect(
@@ -581,8 +583,9 @@ export default function DetailsScreen() {
             prequeueStatusReady: nextEp.prequeueStatus ? apiService.isPrequeueReady(nextEp.prequeueStatus.status) : false,
           });
           setNextEpisodeFromPlayback(nextEp);
-          // Restore shuffle mode from playback navigation
+          // Restore shuffle mode from playback navigation (set both state and ref for synchronous access)
           setIsShuffleMode(nextEp.shuffleMode);
+          pendingShuffleModeRef.current = nextEp.shuffleMode;
 
           // Store prequeue data from navigation if present
           if (nextEp.prequeueId) {
@@ -758,6 +761,10 @@ export default function DetailsScreen() {
   const [nextUpEpisode, setNextUpEpisode] = useState<SeriesEpisode | null>(null);
   const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
   const [isShuffleMode, setIsShuffleMode] = useState(false);
+  // Keep pendingShuffleModeRef in sync with state for subsequent playbacks
+  useEffect(() => {
+    pendingShuffleModeRef.current = isShuffleMode;
+  }, [isShuffleMode]);
   const [isEpisodeStripFocused, setIsEpisodeStripFocused] = useState(false);
   const [seasons, setSeasons] = useState<SeriesSeason[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<SeriesSeason | null>(null);
@@ -1755,8 +1762,8 @@ export default function DetailsScreen() {
           // Profile info for stream tracking
           profileId: activeUserId ?? undefined,
           profileName: activeUser?.name,
-          // Shuffle mode for random episode playback
-          shuffleMode: isShuffleMode,
+          // Shuffle mode for random episode playback (use ref for synchronous access)
+          shuffleMode: pendingShuffleModeRef.current || isShuffleMode,
         },
       );
     },
@@ -2141,6 +2148,8 @@ export default function DetailsScreen() {
           ...(prequeueStatus.subtitleSessions && Object.keys(prequeueStatus.subtitleSessions).length > 0
             ? { preExtractedSubtitles: JSON.stringify(Object.values(prequeueStatus.subtitleSessions)) }
             : {}),
+          // Shuffle mode for random episode playback (use ref for synchronous access)
+          ...(pendingShuffleModeRef.current || isShuffleMode ? { shuffleMode: '1' } : {}),
         },
       });
     },
@@ -2160,6 +2169,7 @@ export default function DetailsScreen() {
       isIosWeb,
       hideLoadingScreen,
       setSelectionError,
+      isShuffleMode,
     ],
   );
 
@@ -2909,8 +2919,11 @@ export default function DetailsScreen() {
         });
       };
 
+      // Skip resume check for shuffle mode - always start from beginning
+      const isShuffling = pendingShuffleModeRef.current;
+
       // Check for resume progress directly using the episode's itemId
-      if (activeUserId && seriesIdentifier) {
+      if (!isShuffling && activeUserId && seriesIdentifier) {
         const episodeItemId = `${seriesIdentifier}:S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`;
         try {
           const progress = await apiService.getPlaybackProgress(activeUserId, 'episode', episodeItemId);
@@ -2931,7 +2944,7 @@ export default function DetailsScreen() {
         }
       }
 
-      // No resume needed, play directly
+      // No resume needed (or shuffle mode), play directly
       await showLoadingScreenIfEnabled();
       await playAction();
     },
@@ -2943,14 +2956,37 @@ export default function DetailsScreen() {
     handlePlayEpisodeRef.current = handlePlayEpisode;
   }, [handlePlayEpisode]);
 
-  // Shuffle play - pick a random episode and play it
+  // Shuffle play - pick a random episode and play it (excludes season 0/specials)
   const handleShufflePlay = useCallback(() => {
-    if (allEpisodes.length === 0) return;
-    const randomIndex = Math.floor(Math.random() * allEpisodes.length);
-    const randomEpisode = allEpisodes[randomIndex];
+    // Filter out season 0 (specials) from shuffle
+    const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
+    if (shuffleableEpisodes.length === 0) return;
+    const randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
+    const randomEpisode = shuffleableEpisodes[randomIndex];
+    // Set both state (for persistence) and ref (for synchronous access)
     setIsShuffleMode(true);
+    pendingShuffleModeRef.current = true;
+    // Select the season containing the random episode
+    const matchingSeason = seasons.find((s) => s.number === randomEpisode.seasonNumber);
+    if (matchingSeason) {
+      setSelectedSeason(matchingSeason);
+    }
+    setActiveEpisode(randomEpisode);
     handlePlayEpisode(randomEpisode);
-  }, [allEpisodes, handlePlayEpisode]);
+  }, [allEpisodes, seasons, handlePlayEpisode]);
+
+  // Shuffle play current season only - pick a random episode from selected season
+  const handleShuffleSeasonPlay = useCallback(() => {
+    const seasonEpisodes = selectedSeason?.episodes ?? [];
+    if (seasonEpisodes.length === 0) return;
+    const randomIndex = Math.floor(Math.random() * seasonEpisodes.length);
+    const randomEpisode = seasonEpisodes[randomIndex];
+    // Set both state (for persistence) and ref (for synchronous access)
+    setIsShuffleMode(true);
+    pendingShuffleModeRef.current = true;
+    setActiveEpisode(randomEpisode);
+    handlePlayEpisode(randomEpisode);
+  }, [selectedSeason?.episodes, handlePlayEpisode]);
 
   const getItemIdForProgress = useCallback((): string | null => {
     // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
@@ -4024,6 +4060,7 @@ export default function DetailsScreen() {
                   icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
                   accessibilityLabel="Shuffle play random episode"
                   onSelect={handleShufflePlay}
+                  onLongPress={handleShuffleSeasonPlay}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   disabled={episodesLoading || allEpisodes.length === 0}
                 />
@@ -4270,6 +4307,17 @@ export default function DetailsScreen() {
             icon="checkmark-done"
             onSelect={() => setBulkWatchModalVisible(true)}
             style={styles.iconActionButton}
+          />
+        )}
+        {isSeries && (
+          <FocusablePressable
+            focusKey="shuffle-play-mobile"
+            icon="shuffle"
+            accessibilityLabel="Shuffle play random episode"
+            onSelect={handleShufflePlay}
+            onLongPress={handleShuffleSeasonPlay}
+            style={styles.iconActionButton}
+            disabled={episodesLoading || allEpisodes.length === 0}
           />
         )}
         <FocusablePressable

@@ -29,6 +29,8 @@ interface CustomPressableProps extends PressableProps {
   invisibleIcon?: boolean;
   onSelect: () => void;
   onFocus?: () => void;
+  /** Long press handler (mobile only, TV uses remote buttons) */
+  onLongPress?: () => void;
   style?: StyleProp<ViewStyle>;
   focusedStyle?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
