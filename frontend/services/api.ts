@@ -32,6 +32,7 @@ export interface Trailer {
   resolution?: number;
   source?: string;
   durationSeconds?: number;
+  seasonNumber?: number; // 0 = show-level trailer, >0 = season-specific
 }
 
 export interface ReleaseWindow {
@@ -198,6 +199,7 @@ export interface TrailerQuery {
   imdbId?: string;
   tmdbId?: number;
   tvdbId?: number;
+  season?: number; // Season number for season-specific trailers (0 or undefined = show-level)
 }
 
 export interface NZBResult {
@@ -1112,6 +1114,9 @@ class ApiService {
     if (typeof params.tvdbId === 'number' && Number.isFinite(params.tvdbId) && params.tvdbId > 0) {
       searchParams.set('tvdbId', String(Math.trunc(params.tvdbId)));
     }
+    if (typeof params.season === 'number' && Number.isFinite(params.season) && params.season > 0) {
+      searchParams.set('season', String(Math.trunc(params.season)));
+    }
 
     const query = searchParams.toString();
     const endpoint = `/metadata/trailers${query ? `?${query}` : ''}`;
@@ -1120,6 +1125,18 @@ class ApiService {
       primaryTrailer: response.primaryTrailer,
       trailers: Array.isArray(response.trailers) ? response.trailers : [],
     };
+  }
+
+  // Get proxy URL for a YouTube trailer (streams through backend to bypass iOS restrictions)
+  getTrailerProxyUrl(videoUrl: string): string {
+    const searchParams = new URLSearchParams();
+    searchParams.set('url', videoUrl);
+    // Include auth token in URL for the proxy endpoint
+    const token = this.authToken;
+    if (token) {
+      searchParams.set('token', token);
+    }
+    return `${this.baseUrl}/metadata/trailers/proxy?${searchParams.toString()}`;
   }
 
   // Get settings

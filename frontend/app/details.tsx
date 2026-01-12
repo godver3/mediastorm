@@ -720,6 +720,8 @@ export default function DetailsScreen() {
   const [trailersError, setTrailersError] = useState<string | null>(null);
   const [trailerModalVisible, setTrailerModalVisible] = useState(false);
   const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
+  // Pre-loaded trailer stream URL (proxy URL for YouTube trailers on mobile)
+  const [trailerStreamUrl, setTrailerStreamUrl] = useState<string | null>(null);
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
@@ -1362,6 +1364,9 @@ export default function DetailsScreen() {
     setTrailersLoading(true);
     setTrailersError(null);
 
+    // For series, pass the selected season number to get season-specific trailers
+    const seasonNumber = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
+
     apiService
       .getTrailers({
         mediaType,
@@ -1371,6 +1376,7 @@ export default function DetailsScreen() {
         tmdbId: tmdbIdNumber,
         tvdbId: tvdbIdNumber,
         imdbId: imdbId || undefined,
+        season: seasonNumber,
       })
       .then((response) => {
         if (cancelled) {
@@ -1398,7 +1404,34 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [imdbId, mediaType, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber]);
+  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber]);
+
+  // Generate proxy URL for YouTube trailers on mobile (streams through backend)
+  useEffect(() => {
+    // Only needed on mobile platforms
+    if (Platform.OS === 'web') {
+      setTrailerStreamUrl(null);
+      return;
+    }
+
+    const trailerUrl = primaryTrailer?.url;
+    if (!trailerUrl) {
+      setTrailerStreamUrl(null);
+      return;
+    }
+
+    // Only proxy YouTube URLs (direct media URLs can be played directly)
+    const isYouTube = trailerUrl.includes('youtube.com') || trailerUrl.includes('youtu.be');
+    if (!isYouTube) {
+      // Use direct URL for non-YouTube trailers
+      setTrailerStreamUrl(trailerUrl);
+      return;
+    }
+
+    // Generate proxy URL (synchronous - no loading state needed)
+    const proxyUrl = apiService.getTrailerProxyUrl(trailerUrl);
+    setTrailerStreamUrl(proxyUrl);
+  }, [primaryTrailer?.url]);
 
   const findPreviousEpisode = useCallback(
     (episode: SeriesEpisode): SeriesEpisode | null => {
@@ -4327,6 +4360,17 @@ export default function DetailsScreen() {
           loading={watchlistBusy}
           style={[styles.iconActionButton, isWatchlisted && styles.watchlistActionButtonActive]}
         />
+        {(trailersLoading || hasAvailableTrailer) && (
+          <FocusablePressable
+            focusKey="watch-trailer-mobile"
+            icon="videocam"
+            accessibilityLabel={trailerButtonLabel}
+            onSelect={handleWatchTrailer}
+            loading={trailersLoading}
+            style={styles.iconActionButton}
+            disabled={trailerButtonDisabled}
+          />
+        )}
       </View>
 
       {/* Episode carousel for series */}
@@ -4550,7 +4594,13 @@ export default function DetailsScreen() {
         </SafeAreaWrapper>
         <MobileTabBar />
       </SpatialNavigationRoot>
-      <TrailerModal visible={trailerModalVisible} trailer={activeTrailer} onClose={handleCloseTrailer} theme={theme} />
+      <TrailerModal
+        visible={trailerModalVisible}
+        trailer={activeTrailer}
+        onClose={handleCloseTrailer}
+        theme={theme}
+        preloadedStreamUrl={trailerStreamUrl}
+      />
       <ResumePlaybackModal
         visible={resumeModalVisible}
         onClose={handleCloseResumeModal}
