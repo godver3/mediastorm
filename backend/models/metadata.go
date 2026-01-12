@@ -24,6 +24,7 @@ type Trailer struct {
 	Resolution      int    `json:"resolution,omitempty"`
 	Source          string `json:"source,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	SeasonNumber    int    `json:"seasonNumber,omitempty"` // 0 = series-level trailer
 }
 
 // Rating represents a single rating from a source
@@ -107,13 +108,14 @@ type SeriesDetailsQuery struct {
 }
 
 type TrailerQuery struct {
-	MediaType string
-	TitleID   string
-	Name      string
-	Year      int
-	IMDBID    string
-	TMDBID    int64
-	TVDBID    int64
+	MediaType    string
+	TitleID      string
+	Name         string
+	Year         int
+	IMDBID       string
+	TMDBID       int64
+	TVDBID       int64
+	SeasonNumber int // 0 = show-level trailers, >0 = season-specific trailers
 }
 
 type TrailerResponse struct {
