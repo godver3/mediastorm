@@ -634,6 +634,14 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 		log.Printf("[metadata] movie release windows set via TMDB tmdbId=%d releases=%d", movieTitle.TMDBID, len(movieTitle.Releases))
 	}
 
+	// Fetch cast credits from TMDB
+	if credits, err := s.tmdb.fetchCredits(ctx, "movie", req.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
+		movieTitle.Credits = credits
+		log.Printf("[metadata] fetched %d cast members for movie (TMDB) tmdbId=%d", len(credits.Cast), req.TMDBID)
+	} else if err != nil {
+		log.Printf("[metadata] failed to fetch credits for movie (TMDB) tmdbId=%d: %v", req.TMDBID, err)
+	}
+
 	// Cache the result
 	_ = s.cache.set(cacheID, movieTitle)
 
@@ -1541,6 +1549,19 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		}
 
+		// If cached data doesn't have credits, fetch them from TMDB
+		if cached.Title.Credits == nil && cached.Title.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			log.Printf("[metadata] cached series missing credits, fetching from TMDB tvdbId=%d tmdbId=%d", tvdbID, cached.Title.TMDBID)
+			if credits, err := s.tmdb.fetchCredits(ctx, "series", cached.Title.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
+				cached.Title.Credits = credits
+				log.Printf("[metadata] credits added to cached series: %d cast members", len(credits.Cast))
+				// Update cache with enriched data
+				_ = s.cache.set(cacheID, cached)
+			} else if err != nil {
+				log.Printf("[metadata] failed to fetch credits for cached series tmdbId=%d err=%v", cached.Title.TMDBID, err)
+			}
+		}
+
 		// In demo mode, clamp to season 1 only (skip season 0/specials if present)
 		if s.demo && len(cached.Seasons) > 0 {
 			var season1 *models.SeriesSeason
@@ -1852,6 +1873,17 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			seriesTitle.Ratings = ratings
 			details.Title = seriesTitle // Update the details with ratings
 			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
+		}
+	}
+
+	// Fetch cast credits from TMDB if configured
+	if seriesTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if credits, err := s.tmdb.fetchCredits(ctx, "series", seriesTitle.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
+			seriesTitle.Credits = credits
+			details.Title = seriesTitle // Update the details with credits
+			log.Printf("[metadata] fetched %d cast members for series tmdbId=%d", len(credits.Cast), seriesTitle.TMDBID)
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch credits for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
 		}
 	}
 
@@ -2285,6 +2317,19 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			s.ensureMovieReleasePointers(&cached)
 		}
 
+		// Enrich with credits if missing
+		tmdbIDForCredits := cached.TMDBID
+		if tmdbIDForCredits == 0 {
+			tmdbIDForCredits = req.TMDBID
+		}
+		if cached.Credits == nil && tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
+				cached.Credits = credits
+				log.Printf("[metadata] credits added to cached movie: %d cast members tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
+				_ = s.cache.set(cacheID, cached)
+			}
+		}
+
 		return &cached, nil
 	}
 
@@ -2412,6 +2457,20 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 				movieTitle.Ratings = ratings
 				log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
 			}
+		}
+	}
+
+	// Fetch cast credits from TMDB if configured
+	tmdbIDForCredits := movieTitle.TMDBID
+	if tmdbIDForCredits == 0 {
+		tmdbIDForCredits = req.TMDBID
+	}
+	if tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
+			movieTitle.Credits = credits
+			log.Printf("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch credits for movie tmdbId=%d: %v", tmdbIDForCredits, err)
 		}
 	}
 

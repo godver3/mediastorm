@@ -56,6 +56,7 @@ type Title struct {
 	Theatrical      *Release  `json:"theatricalRelease,omitempty"`
 	HomeRelease     *Release  `json:"homeRelease,omitempty"`
 	Ratings         []Rating  `json:"ratings,omitempty"` // Aggregated ratings from MDBList
+	Credits         *Credits  `json:"credits,omitempty"` // Top billed cast
 }
 
 type TrendingItem struct {
@@ -137,6 +138,21 @@ type Release struct {
 	Source   string `json:"source"`             // tmdb
 	Primary  bool   `json:"primary,omitempty"`  // best pick within type bucket
 	Released bool   `json:"released,omitempty"` // true when date <= today
+}
+
+// CastMember represents an actor in a movie or series
+type CastMember struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Character   string `json:"character"`
+	Order       int    `json:"order"`
+	ProfilePath string `json:"profilePath,omitempty"`
+	ProfileURL  string `json:"profileUrl,omitempty"`
+}
+
+// Credits contains cast information for a title
+type Credits struct {
+	Cast []CastMember `json:"cast"`
 }
 
 // BatchSeriesDetailsRequest represents a batch request for multiple series

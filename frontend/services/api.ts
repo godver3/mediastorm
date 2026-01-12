@@ -50,6 +50,19 @@ export interface Rating {
   max: number;
 }
 
+export interface CastMember {
+  id: number;
+  name: string;
+  character: string;
+  order: number;
+  profilePath?: string;
+  profileUrl?: string;
+}
+
+export interface Credits {
+  cast: CastMember[];
+}
+
 export interface Title {
   id: string;
   name: string;
@@ -73,6 +86,7 @@ export interface Title {
   theatricalRelease?: ReleaseWindow;
   homeRelease?: ReleaseWindow;
   ratings?: Rating[];
+  credits?: Credits;
 }
 
 export interface TrendingItem {
