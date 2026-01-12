@@ -30,6 +30,35 @@ import (
 // Characters like !, ?, :, &, etc. are often interpreted as search operators or cause empty results.
 var newznabQuerySanitizer = regexp.MustCompile(`[!?:&'"()[\]{}]+`)
 
+// xmlEntityPattern matches valid XML entity references: &name; &#NNN; &#xHHH;
+var xmlEntityPattern = regexp.MustCompile(`^([a-zA-Z]+;|#[0-9]+;|#x[0-9a-fA-F]+;)`)
+
+// sanitizeXMLAmpersands escapes unescaped ampersands in XML that aren't part of valid entity references.
+// This fixes malformed XML from indexers that don't properly escape titles like "Tom & Jerry".
+func sanitizeXMLAmpersands(data []byte) ([]byte, int) {
+	var result []byte
+	fixCount := 0
+	i := 0
+	for i < len(data) {
+		if data[i] == '&' {
+			// Check if this is a valid entity reference
+			remaining := data[i+1:]
+			if xmlEntityPattern.Match(remaining) {
+				// Valid entity, keep as-is
+				result = append(result, '&')
+			} else {
+				// Bare ampersand, escape it
+				result = append(result, []byte("&amp;")...)
+				fixCount++
+			}
+		} else {
+			result = append(result, data[i])
+		}
+		i++
+	}
+	return result, fixCount
+}
+
 // sanitizeNewznabQuery cleans up a search query for newznab/torznab APIs.
 func sanitizeNewznabQuery(query string) string {
 	// Remove problematic special characters
@@ -947,8 +976,21 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 		return nil, err
 	}
 
+	// Sanitize malformed XML: escape unescaped ampersands that break strict XML parsers.
+	// Some indexers (especially via NZBHydra2) return titles like "Tom & Jerry" instead of "Tom &amp; Jerry".
+	sanitized, fixCount := sanitizeXMLAmpersands(buf)
+	if fixCount > 0 {
+		log.Printf("[indexer/torznab] sanitized %d unescaped ampersand(s) in XML response from %s", fixCount, idx.Name)
+	}
+
 	var feed rssFeed
-	if err := xml.Unmarshal(buf, &feed); err != nil {
+	if err := xml.Unmarshal(sanitized, &feed); err != nil {
+		// Log a snippet of the problematic XML for debugging
+		snippet := sanitized
+		if len(snippet) > 500 {
+			snippet = snippet[:500]
+		}
+		log.Printf("[indexer/torznab] XML parse error from %s: %v\nXML snippet: %s", idx.Name, err, string(snippet))
 		return nil, fmt.Errorf("decode torznab feed: %w", err)
 	}
 
