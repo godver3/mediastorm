@@ -419,6 +419,89 @@ func (c *tmdbClient) fetchTrailers(ctx context.Context, mediaType string, tmdbID
 	return trailers, nil
 }
 
+// fetchSeasonTrailers fetches trailers for a specific season of a TV show from TMDB
+func (c *tmdbClient) fetchSeasonTrailers(ctx context.Context, tmdbID int64, seasonNumber int) ([]models.Trailer, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	// TMDB API: /tv/{series_id}/season/{season_number}/videos
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID), "season", fmt.Sprintf("%d", seasonNumber), "videos")
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	q := req.URL.Query()
+	q.Set("api_key", c.apiKey)
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		q.Set("language", normalizeLanguage(lang))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("tmdb season videos tv/%d/season/%d failed: %s", tmdbID, seasonNumber, resp.Status)
+	}
+
+	var payload tmdbVideosResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	trailers := make([]models.Trailer, 0, len(payload.Results))
+	for _, video := range payload.Results {
+		url := strings.TrimSpace(video.Key)
+		if url == "" {
+			continue
+		}
+		site := strings.TrimSpace(video.Site)
+		videoType := strings.TrimSpace(video.Type)
+		trailer := models.Trailer{
+			Name:         strings.TrimSpace(video.Name),
+			Site:         site,
+			Type:         videoType,
+			Key:          strings.TrimSpace(video.Key),
+			Official:     video.Official,
+			PublishedAt:  strings.TrimSpace(video.PublishedAt),
+			Resolution:   video.Size,
+			Language:     strings.TrimSpace(video.ISO6391),
+			Country:      strings.TrimSpace(video.ISO31661),
+			Source:       "tmdb",
+			SeasonNumber: seasonNumber,
+		}
+
+		switch strings.ToLower(site) {
+		case "youtube":
+			trailer.URL = fmt.Sprintf("https://www.youtube.com/watch?v=%s", trailer.Key)
+			trailer.EmbedURL = fmt.Sprintf("https://www.youtube.com/embed/%s", trailer.Key)
+			trailer.ThumbnailURL = fmt.Sprintf("https://img.youtube.com/vi/%s/hqdefault.jpg", trailer.Key)
+		case "vimeo":
+			trailer.URL = fmt.Sprintf("https://vimeo.com/%s", trailer.Key)
+			trailer.EmbedURL = fmt.Sprintf("https://player.vimeo.com/video/%s", trailer.Key)
+		default:
+			trailer.URL = trailer.Key
+		}
+
+		if trailer.URL == "" {
+			continue
+		}
+
+		trailers = append(trailers, trailer)
+	}
+
+	return trailers, nil
+}
+
 // fetchExternalID retrieves the IMDB ID for a TMDB movie or TV show
 // movieDetails fetches movie details from TMDB including poster and backdrop
 func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Title, error) {

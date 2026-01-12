@@ -1,15 +1,18 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -2673,11 +2676,22 @@ func (s *Service) Trailers(ctx context.Context, req models.TrailerQuery) (*model
 		tvdbID = parseTVDBIDFromTitleID(req.TitleID)
 	}
 
-	log.Printf("[metadata] trailers request mediaType=%s tmdbId=%d tvdbId=%d imdbId=%s titleId=%q name=%q year=%d",
-		mediaType, tmdbID, tvdbID, strings.TrimSpace(req.IMDBID), strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year)
+	log.Printf("[metadata] trailers request mediaType=%s tmdbId=%d tvdbId=%d imdbId=%s titleId=%q name=%q year=%d season=%d",
+		mediaType, tmdbID, tvdbID, strings.TrimSpace(req.IMDBID), strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.SeasonNumber)
 
 	var combined []models.Trailer
 
+	// For TV series with a specific season requested, try season-specific trailers first
+	if mediaType != "movie" && req.SeasonNumber > 0 && tmdbID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if seasonTrailers, err := s.fetchTMDBSeasonTrailers(ctx, tmdbID, req.SeasonNumber); err != nil {
+			log.Printf("[metadata] WARN: tmdb season trailers fetch failed tmdbId=%d season=%d err=%v", tmdbID, req.SeasonNumber, err)
+		} else if len(seasonTrailers) > 0 {
+			log.Printf("[metadata] found %d season-specific trailers for tmdbId=%d season=%d", len(seasonTrailers), tmdbID, req.SeasonNumber)
+			combined = append(combined, seasonTrailers...)
+		}
+	}
+
+	// Fetch show-level trailers (always, as fallback or to supplement season trailers)
 	if tmdbID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 		if trailers, err := s.fetchTMDBTrailers(ctx, mediaType, tmdbID); err != nil {
 			log.Printf("[metadata] WARN: tmdb trailers fetch failed mediaType=%s tmdbId=%d err=%v", mediaType, tmdbID, err)
@@ -2705,7 +2719,22 @@ func (s *Service) Trailers(ctx context.Context, req models.TrailerQuery) (*model
 	}
 
 	trailers := dedupeTrailers(combined)
-	primary := selectPrimaryTrailer(trailers)
+
+	// Log trailer details for debugging
+	for i, t := range trailers {
+		score := scoreTrailerCandidate(&t)
+		log.Printf("[metadata] trailer[%d]: name=%q type=%q official=%v season=%d lang=%q res=%d source=%q score=%d",
+			i, t.Name, t.Type, t.Official, t.SeasonNumber, t.Language, t.Resolution, t.Source, score)
+	}
+
+	// For season requests, prefer season-specific trailers as primary
+	var primary *models.Trailer
+	if req.SeasonNumber > 0 {
+		primary = selectPrimaryTrailerForSeason(trailers, req.SeasonNumber)
+	}
+	if primary == nil {
+		primary = selectPrimaryTrailer(trailers)
+	}
 
 	if len(trailers) == 0 {
 		trailers = []models.Trailer{}
@@ -2742,6 +2771,27 @@ func (s *Service) fetchTMDBTrailers(ctx context.Context, mediaType string, tmdbI
 	}
 
 	trailers, err := s.tmdb.fetchTrailers(ctx, mediaType, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	if trailers == nil {
+		trailers = []models.Trailer{}
+	}
+	_ = s.cache.set(cacheKeyID, trailers)
+	return trailers, nil
+}
+
+func (s *Service) fetchTMDBSeasonTrailers(ctx context.Context, tmdbID int64, seasonNumber int) ([]models.Trailer, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, fmt.Errorf("tmdb client not configured")
+	}
+	cacheKeyID := cacheKey("tmdb", "trailers", "season", strconv.FormatInt(tmdbID, 10), strconv.Itoa(seasonNumber), strings.TrimSpace(s.tmdb.language))
+	var cached []models.Trailer
+	if ok, _ := s.cache.get(cacheKeyID, &cached); ok {
+		return cached, nil
+	}
+
+	trailers, err := s.tmdb.fetchSeasonTrailers(ctx, tmdbID, seasonNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -2862,6 +2912,34 @@ func selectPrimaryTrailer(trailers []models.Trailer) *models.Trailer {
 	return &trailers[bestIndex]
 }
 
+// selectPrimaryTrailerForSeason selects the best trailer for a specific season.
+// It considers trailers with matching SeasonNumber, and for season 1 also considers
+// season 0 (show-level) trailers since they typically represent the first season.
+func selectPrimaryTrailerForSeason(trailers []models.Trailer, seasonNumber int) *models.Trailer {
+	if len(trailers) == 0 || seasonNumber <= 0 {
+		return nil
+	}
+	bestIndex := -1
+	bestScore := -1
+	for idx := range trailers {
+		trailerSeason := trailers[idx].SeasonNumber
+		// Consider trailers for this specific season
+		// For season 1, also consider season 0 (show-level) trailers
+		if trailerSeason != seasonNumber && !(seasonNumber == 1 && trailerSeason == 0) {
+			continue
+		}
+		score := scoreTrailerCandidate(&trailers[idx])
+		if score > bestScore {
+			bestScore = score
+			bestIndex = idx
+		}
+	}
+	if bestIndex < 0 {
+		return nil
+	}
+	return &trailers[bestIndex]
+}
+
 func scoreTrailerCandidate(t *models.Trailer) int {
 	if t == nil {
 		return 0
@@ -2895,6 +2973,34 @@ func scoreTrailerCandidate(t *models.Trailer) int {
 	if strings.EqualFold(t.Source, "tmdb") {
 		score += 3
 	}
+
+	// Name-based scoring adjustments
+	nameLower := strings.ToLower(t.Name)
+
+	// Bonus for "Official Trailer" in name - these are the main trailers
+	if strings.Contains(nameLower, "official trailer") {
+		score += 20
+	}
+
+	// Bonus for "Final Trailer" in name - often the best/most complete trailer
+	if strings.Contains(nameLower, "final trailer") {
+		score += 18
+	}
+
+	// Bonus for "Series Trailer" in name
+	if strings.Contains(nameLower, "series trailer") {
+		score += 15
+	}
+
+	// Penalize promotional/non-trailer content
+	promoKeywords := []string{"best reviewed", "pre-order", "recap", "behind the scenes", "making of", "featurette"}
+	for _, keyword := range promoKeywords {
+		if strings.Contains(nameLower, keyword) {
+			score -= 50
+			break
+		}
+	}
+
 	return score
 }
 
@@ -3266,4 +3372,156 @@ func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingIte
 	}
 
 	return items, totalCount, nil
+}
+
+// ExtractTrailerStreamURL uses yt-dlp to extract a direct stream URL from a YouTube video.
+// The extracted URL is an MP4 that can be played directly by video players.
+func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) (string, error) {
+	// Check cache first (URLs are temporary but cache uses standard TTL)
+	// v2: Use format 18 (combined H.264+AAC MP4) instead of HLS
+	cacheID := cacheKey("trailer-stream-v2", videoURL)
+	var cached string
+	if ok, _ := s.cache.get(cacheID, &cached); ok && cached != "" {
+		log.Printf("[metadata] trailer stream cache hit for %s", videoURL)
+		return cached, nil
+	}
+
+	// Try to find yt-dlp binary
+	ytdlpPath := "/usr/local/bin/yt-dlp"
+	if _, err := exec.LookPath(ytdlpPath); err != nil {
+		// Fall back to PATH lookup
+		ytdlpPath = "yt-dlp"
+		if _, err := exec.LookPath(ytdlpPath); err != nil {
+			return "", fmt.Errorf("yt-dlp not found in system")
+		}
+	}
+
+	// Build yt-dlp command to extract stream URL
+	// -g: Get URL only (don't download)
+	// --format: Prefer format 18 (360p combined H.264+AAC MP4) for best iOS compatibility
+	// Format 18 is a self-contained MP4 that doesn't need merging and works natively on iOS
+	args := []string{
+		"-g",
+		"--format", "18/22/best[ext=mp4][height<=720]/best[height<=720]/best",
+		"--no-warnings",
+		"--no-playlist",
+		videoURL,
+	}
+
+	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	log.Printf("[metadata] extracting trailer stream URL: %s %v", ytdlpPath, args)
+
+	if err := cmd.Run(); err != nil {
+		stderrStr := strings.TrimSpace(stderr.String())
+		log.Printf("[metadata] yt-dlp failed: %v, stderr: %s", err, stderrStr)
+		return "", fmt.Errorf("failed to extract stream URL: %s", stderrStr)
+	}
+
+	streamURL := strings.TrimSpace(stdout.String())
+	if streamURL == "" {
+		return "", fmt.Errorf("no stream URL extracted")
+	}
+
+	// If multiple URLs returned (video + audio), take the first one
+	lines := strings.Split(streamURL, "\n")
+	streamURL = strings.TrimSpace(lines[0])
+
+	log.Printf("[metadata] extracted trailer stream URL for %s", videoURL)
+
+	// Cache the result
+	_ = s.cache.set(cacheID, streamURL)
+
+	return streamURL, nil
+}
+
+// StreamTrailer proxies a YouTube video to the provided writer (without range support).
+func (s *Service) StreamTrailer(ctx context.Context, videoURL string, w io.Writer) error {
+	return s.StreamTrailerWithRange(ctx, videoURL, "", w)
+}
+
+// StreamTrailerWithRange proxies a YouTube video to the provided writer with range request support.
+// It first extracts the direct stream URL (using cached value if available),
+// then proxies the MP4 content directly to iOS (format 18 is already iOS-compatible).
+func (s *Service) StreamTrailerWithRange(ctx context.Context, videoURL string, rangeHeader string, w io.Writer) error {
+	// First, extract the direct stream URL (this uses cache if available)
+	// Use a separate context with timeout for URL extraction
+	extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer extractCancel()
+
+	streamURL, err := s.ExtractTrailerStreamURL(extractCtx, videoURL)
+	if err != nil {
+		return fmt.Errorf("failed to get stream URL: %v", err)
+	}
+
+	log.Printf("[metadata] proxying trailer from extracted URL: %s (range: %s)", videoURL, rangeHeader)
+
+	// Create HTTP request to fetch the stream
+	req, err := http.NewRequestWithContext(ctx, "GET", streamURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Set headers that YouTube expects
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Connection", "keep-alive")
+
+	// Forward Range header if present
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	// Use a client with longer timeout
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for valid response (200 OK or 206 Partial Content)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("stream returned status %d", resp.StatusCode)
+	}
+
+	// Set response headers
+	if rw, ok := w.(http.ResponseWriter); ok {
+		rw.Header().Set("Content-Type", "video/mp4")
+		rw.Header().Set("Accept-Ranges", "bytes")
+
+		// Forward content length
+		if resp.ContentLength > 0 {
+			rw.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+		}
+
+		// Forward Content-Range for partial responses
+		if contentRange := resp.Header.Get("Content-Range"); contentRange != "" {
+			rw.Header().Set("Content-Range", contentRange)
+		}
+
+		// Set the status code (206 for partial content, 200 otherwise)
+		if resp.StatusCode == http.StatusPartialContent {
+			rw.WriteHeader(http.StatusPartialContent)
+		}
+	}
+
+	// Stream the content directly to the client
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		// Don't log broken pipe errors (client disconnected)
+		if !strings.Contains(err.Error(), "broken pipe") {
+			log.Printf("[metadata] stream copy error: %v", err)
+		}
+		return err
+	}
+
+	return nil
 }

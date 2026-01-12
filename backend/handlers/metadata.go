@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +22,9 @@ type metadataService interface {
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
+	ExtractTrailerStreamURL(context.Context, string) (string, error)
+	StreamTrailer(context.Context, string, io.Writer) error
+	StreamTrailerWithRange(context.Context, string, string, io.Writer) error
 	GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error)
 }
 
@@ -259,13 +264,14 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := models.TrailerQuery{
-		MediaType: strings.TrimSpace(query.Get("type")),
-		TitleID:   strings.TrimSpace(query.Get("titleId")),
-		Name:      strings.TrimSpace(query.Get("name")),
-		Year:      trimAndParseInt(query.Get("year")),
-		IMDBID:    strings.TrimSpace(query.Get("imdbId")),
-		TMDBID:    trimAndParseInt64(query.Get("tmdbId")),
-		TVDBID:    trimAndParseInt64(query.Get("tvdbId")),
+		MediaType:    strings.TrimSpace(query.Get("type")),
+		TitleID:      strings.TrimSpace(query.Get("titleId")),
+		Name:         strings.TrimSpace(query.Get("name")),
+		Year:         trimAndParseInt(query.Get("year")),
+		IMDBID:       strings.TrimSpace(query.Get("imdbId")),
+		TMDBID:       trimAndParseInt64(query.Get("tmdbId")),
+		TVDBID:       trimAndParseInt64(query.Get("tvdbId")),
+		SeasonNumber: trimAndParseInt(query.Get("season")),
 	}
 
 	response, err := h.Service.Trailers(r.Context(), req)
@@ -284,6 +290,76 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// TrailerStreamResponse contains the extracted stream URL
+type TrailerStreamResponse struct {
+	StreamURL string `json:"streamUrl"`
+	Title     string `json:"title,omitempty"`
+	Duration  int    `json:"duration,omitempty"`
+}
+
+// TrailerStream extracts a direct stream URL from YouTube using yt-dlp
+func (h *MetadataHandler) TrailerStream(w http.ResponseWriter, r *http.Request) {
+	videoURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if videoURL == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
+		return
+	}
+
+	// Validate it's a YouTube URL
+	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "only YouTube URLs are supported"})
+		return
+	}
+
+	streamURL, err := h.Service.ExtractTrailerStreamURL(r.Context(), videoURL)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(TrailerStreamResponse{StreamURL: streamURL})
+}
+
+// TrailerProxy streams a YouTube video through the backend using yt-dlp
+// This bypasses iOS restrictions on accessing googlevideo.com URLs directly
+func (h *MetadataHandler) TrailerProxy(w http.ResponseWriter, r *http.Request) {
+	videoURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	rangeHeader := r.Header.Get("Range")
+	log.Printf("[trailer-proxy] request for URL: %s, Range: %s", videoURL, rangeHeader)
+
+	if videoURL == "" {
+		http.Error(w, "url parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate it's a YouTube URL
+	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+		http.Error(w, "only YouTube URLs are supported", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[trailer-proxy] starting stream for: %s", videoURL)
+
+	// Use yt-dlp to stream the video directly to the response
+	err := h.Service.StreamTrailerWithRange(r.Context(), videoURL, rangeHeader, w)
+	if err != nil {
+		log.Printf("[trailer-proxy] stream error: %v", err)
+		// Only write error if we haven't started writing the response yet
+		if w.Header().Get("Content-Type") == "" {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+		}
+	} else {
+		log.Printf("[trailer-proxy] stream completed successfully for: %s", videoURL)
+	}
 }
 
 // CustomListResponse wraps custom list items with total count for pagination
