@@ -160,6 +160,17 @@ export const SeriesEpisodes = ({
     onSeasonsLoaded(orderedSeasons);
   }, [orderedSeasons, onSeasonsLoaded]);
 
+  // Notify parent of initial season selection when seasons are first loaded
+  const hasNotifiedInitialSeasonRef = useRef(false);
+  useEffect(() => {
+    if (hasNotifiedInitialSeasonRef.current || !selectedSeason) {
+      return;
+    }
+    // Only notify once when we first have a selected season
+    hasNotifiedInitialSeasonRef.current = true;
+    onSeasonSelect(selectedSeason, false);
+  }, [selectedSeason, onSeasonSelect]);
+
   // Manual focus scrolling for episodes (TV only, vertical)
   const scrollToEpisode = useCallback((episodeKey: string) => {
     if (!Platform.isTV || !episodeScrollViewRef.current) {

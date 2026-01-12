@@ -395,5 +395,20 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       fontSize: Math.round(theme.typography.label.md.fontSize * tvTextScale),
       lineHeight: Math.round(theme.typography.label.md.lineHeight * tvTextScale),
     },
+    // Mobile episode overview styles
+    episodeOverviewTitle: {
+      ...theme.typography.body.md,
+      fontWeight: '600',
+      marginBottom: theme.spacing.xs,
+    },
+    episodeOverviewMeta: {
+      ...theme.typography.caption.xs,
+      marginTop: theme.spacing.sm,
+      opacity: 0.7,
+    },
+    episodeOverviewText: {
+      ...theme.typography.body.md,
+      lineHeight: theme.typography.body.md.fontSize * 1.5,
+    },
   });
 };

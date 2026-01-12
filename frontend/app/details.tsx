@@ -78,6 +78,9 @@ import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
 import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, padNumber, toStringParam } from './details/utils';
+import MobileParallaxContainer from './details/mobile-parallax-container';
+import MobileEpisodeCarousel from './details/mobile-episode-carousel';
+import CastSection from '@/components/CastSection';
 
 const SELECTION_TOAST_ID = 'details-nzb-status';
 
@@ -726,6 +729,7 @@ export default function DetailsScreen() {
   const [displayProgress, setDisplayProgress] = useState<number | null>(null);
   const [progressRefreshKey, setProgressRefreshKey] = useState(0);
   const [contentPreference, setContentPreference] = useState<ContentPreference | null>(null);
+  const [episodeProgressMap, setEpisodeProgressMap] = useState<Map<string, number>>(new Map());
 
   const _overlayOpen =
     manualVisible ||
@@ -1155,6 +1159,68 @@ export default function DetailsScreen() {
       cancelled = true;
     };
   }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, seriesIdentifier, titleId, watchStatusItems, progressRefreshKey]);
+
+  // Fetch progress for all episodes when series loads
+  useEffect(() => {
+    if (!activeUserId || !isSeries || !seriesIdentifier) {
+      setEpisodeProgressMap(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchAllProgress = async () => {
+      try {
+        const progressList = await apiService.listPlaybackProgress(activeUserId);
+        if (cancelled) return;
+
+        const progressMap = new Map<string, number>();
+        // Match progress by seriesId OR by itemId prefix (more reliable)
+        const itemIdPrefix = `${seriesIdentifier}:`;
+        for (const progress of progressList) {
+          if (progress.mediaType !== 'episode') continue;
+
+          // Check if this progress belongs to this series
+          const matchesSeriesId = progress.seriesId === seriesIdentifier;
+          const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
+
+          if (matchesSeriesId || matchesItemIdPrefix) {
+            // Get season/episode from progress fields or parse from itemId
+            let seasonNum = progress.seasonNumber;
+            let episodeNum = progress.episodeNumber;
+
+            if ((!seasonNum || !episodeNum) && progress.itemId) {
+              // Parse from itemId format: "seriesId:S01E02"
+              const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
+              if (match) {
+                seasonNum = parseInt(match[1], 10);
+                episodeNum = parseInt(match[2], 10);
+              }
+            }
+
+            if (seasonNum && episodeNum) {
+              const key = `${seasonNum}-${episodeNum}`;
+              // Only include meaningful progress (between 5% and 95%)
+              if (progress.percentWatched > 5 && progress.percentWatched < 95) {
+                progressMap.set(key, Math.round(progress.percentWatched));
+              }
+            }
+          }
+        }
+        setEpisodeProgressMap(progressMap);
+      } catch (error) {
+        if (!cancelled) {
+          console.log('Unable to fetch episode progress:', error);
+        }
+      }
+    };
+
+    void fetchAllProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey]);
 
   useEffect(() => {
     if (!selectionError) {
@@ -2731,7 +2797,15 @@ export default function DetailsScreen() {
     setSelectionInfo(null);
     // Clear any resume position from previous episode
     setCurrentProgress(null);
-  }, []);
+    // Update selected season if episode is from a different season
+    setSelectedSeason((currentSeason) => {
+      if (currentSeason?.number !== episode.seasonNumber) {
+        const matchingSeason = seasons.find((s) => s.number === episode.seasonNumber);
+        return matchingSeason ?? currentSeason;
+      }
+      return currentSeason;
+    });
+  }, [seasons]);
 
   const handlePreviousEpisode = useCallback(() => {
     if (!activeEpisode) return;
@@ -2814,29 +2888,54 @@ export default function DetailsScreen() {
   const handlePlayEpisode = useCallback(
     async (episode: SeriesEpisode) => {
       setActiveEpisode(episode);
-      // Clear any resume position from previous episode
-      setCurrentProgress(null);
-      const baseTitle = title.trim() || title;
-      const query = buildEpisodeQuery(baseTitle, episode.seasonNumber, episode.episodeNumber);
-      if (!query) {
-        setSelectionError('Unable to build an episode search query.');
-        return;
+
+      const playAction = async () => {
+        const baseTitle = title.trim() || title;
+        const query = buildEpisodeQuery(baseTitle, episode.seasonNumber, episode.episodeNumber);
+        if (!query) {
+          setSelectionError('Unable to build an episode search query.');
+          return;
+        }
+
+        const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
+        const friendlyLabel = `${baseTitle} ${episodeCode}${episode.name ? ` – "${episode.name}"` : ''}`;
+        const selectionMessage = `${baseTitle} • ${episodeCode}`;
+        await resolveAndPlay({
+          query,
+          friendlyLabel,
+          limit: 50,
+          selectionMessage,
+          targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber },
+        });
+      };
+
+      // Check for resume progress directly using the episode's itemId
+      if (activeUserId && seriesIdentifier) {
+        const episodeItemId = `${seriesIdentifier}:S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`;
+        try {
+          const progress = await apiService.getPlaybackProgress(activeUserId, 'episode', episodeItemId);
+          if (progress && progress.percentWatched > 5 && progress.percentWatched < 95) {
+            // Show resume modal
+            setCurrentProgress(progress);
+            setPendingPlaybackAction(() => async (startOffset?: number) => {
+              if (startOffset !== undefined) {
+                pendingStartOffsetRef.current = startOffset;
+              }
+              await playAction();
+            });
+            setResumeModalVisible(true);
+            return;
+          }
+        } catch (error) {
+          console.warn('Failed to check playback progress:', error);
+        }
       }
 
-      const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
-      const friendlyLabel = `${baseTitle} ${episodeCode}${episode.name ? ` – "${episode.name}"` : ''}`;
-      const selectionMessage = `${baseTitle} • ${episodeCode}`;
-      await resolveAndPlay({
-        query,
-        friendlyLabel,
-        limit: 50,
-        selectionMessage,
-        targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber },
-      });
-      // Don't automatically record episode playback - let progress tracking handle it
-      // recordEpisodePlayback(episode);
+      // No resume needed, play directly
+      await showLoadingScreenIfEnabled();
+      await playAction();
     },
-    [recordEpisodePlayback, resolveAndPlay, title],
+    [resolveAndPlay, title, activeUserId, seriesIdentifier, showLoadingScreenIfEnabled],
   );
 
   // Keep the play episode ref in sync with the callback
@@ -3660,6 +3759,12 @@ export default function DetailsScreen() {
     setEpisodeSelectorVisible(true);
   }, []);
 
+  // Mobile-specific season select: just update the season without opening episode modal
+  const handleMobileSeasonSelect = useCallback((season: SeriesSeason) => {
+    setSelectedSeason(season);
+    setSeasonSelectorVisible(false);
+  }, []);
+
   const handleEpisodeSelectorSelect = useCallback((episode: SeriesEpisode) => {
     setActiveEpisode(episode);
     setEpisodeSelectorVisible(false);
@@ -4052,6 +4157,216 @@ export default function DetailsScreen() {
     </>
   );
 
+  // Get credits for cast section
+  const credits = useMemo(() => {
+    if (isSeries) {
+      return seriesDetailsData?.title?.credits ?? null;
+    }
+    return movieDetails?.credits ?? null;
+  }, [isSeries, seriesDetailsData, movieDetails]);
+
+  // Mobile content rendering with parallax and new components
+  const renderMobileContent = () => (
+    <MobileParallaxContainer
+      posterUrl={posterUrl}
+      backdropUrl={backdropUrl}
+      theme={theme}
+    >
+      {/* Title and metadata section */}
+      <View style={styles.topContent}>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>{title}</Text>
+        </View>
+        {ratings.length > 0 && (
+          <View style={styles.ratingsRow}>
+            {ratings.map((rating) => {
+              const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+              const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
+              const iconSize = 14;
+              return (
+                <RatingBadge
+                  key={rating.source}
+                  rating={rating}
+                  config={config}
+                  iconSize={iconSize}
+                  styles={styles}
+                />
+              );
+            })}
+          </View>
+        )}
+        {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            {contentPreference.audioLanguage && (
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: theme.colors.background.elevated,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 4,
+              }}>
+                <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
+                  {contentPreference.audioLanguage.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            {contentPreference.subtitleLanguage && (
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: theme.colors.background.elevated,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 4,
+              }}>
+                <Ionicons name="text" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
+                  {contentPreference.subtitleLanguage.toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
+          <View style={styles.releaseInfoRow}>
+            {releaseRows.map((row) => (
+              <View key={row.key} style={styles.releaseInfoItem}>
+                <Text style={styles.releaseInfoLabel}>{row.label}</Text>
+                <Text style={styles.releaseInfoValue}>{row.value}</Text>
+              </View>
+            ))}
+            {shouldShowReleaseSkeleton && <Text style={styles.releaseInfoLoading}>Fetching release dates…</Text>}
+            {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
+          </View>
+        )}
+        <Text style={[styles.description, { maxWidth: '100%' }]} numberOfLines={8}>
+          {displayDescription}
+        </Text>
+      </View>
+
+      {/* Action buttons - icon only for mobile */}
+      <View style={[styles.actionRow, styles.compactActionRow, { marginTop: theme.spacing.lg }]}>
+        <FocusablePressable
+          focusKey="watch-now-mobile"
+          icon="play"
+          onSelect={handleWatchNow}
+          style={styles.iconActionButton}
+          loading={isResolving || (isSeries && episodesLoading)}
+          disabled={isResolving || (isSeries && episodesLoading)}
+          showReadyPip={prequeueReady}
+        />
+        <FocusablePressable
+          focusKey="manual-selection-mobile"
+          icon="search"
+          onSelect={handleManualSelect}
+          style={styles.iconActionButton}
+          disabled={isResolving || (isSeries && episodesLoading)}
+        />
+        {isSeries && (
+          <FocusablePressable
+            focusKey="watch-management-mobile"
+            icon="checkmark-done"
+            onSelect={() => setBulkWatchModalVisible(true)}
+            style={styles.iconActionButton}
+          />
+        )}
+        <FocusablePressable
+          focusKey="watchlist-toggle-mobile"
+          icon={isWatchlisted ? 'bookmark' : 'bookmark-outline'}
+          onSelect={handleToggleWatchlist}
+          loading={watchlistBusy}
+          style={[styles.iconActionButton, isWatchlisted && styles.watchlistActionButtonActive]}
+        />
+      </View>
+
+      {/* Episode carousel for series */}
+      {isSeries && seasons.length > 0 && (
+        <MobileEpisodeCarousel
+          seasons={seasons}
+          selectedSeason={selectedSeason}
+          episodes={selectedSeason?.episodes ?? []}
+          activeEpisode={activeEpisode}
+          isLoading={seriesDetailsLoading}
+          onSeasonSelect={(season) => handleSeasonSelect(season, false)}
+          onEpisodeSelect={handleEpisodeSelect}
+          onEpisodePlay={handlePlayEpisode}
+          onEpisodeLongPress={handleToggleEpisodeWatched}
+          isEpisodeWatched={isEpisodeWatched}
+          getEpisodeProgress={(episode) => {
+            const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
+            return episodeProgressMap.get(key) ?? 0;
+          }}
+          theme={theme}
+        />
+      )}
+
+      {/* Episode overview when episode is selected */}
+      {isSeries && activeEpisode && (
+        <View style={{ marginTop: theme.spacing.lg }}>
+          <Text style={[styles.episodeOverviewTitle, { color: theme.colors.text.primary }]}>
+            {`S${activeEpisode.seasonNumber}:E${activeEpisode.episodeNumber} - ${activeEpisode.name || `Episode ${activeEpisode.episodeNumber}`}`}
+          </Text>
+          {activeEpisode.overview ? (
+            <Text style={[styles.episodeOverviewText, { color: theme.colors.text.secondary }]}>
+              {activeEpisode.overview}
+            </Text>
+          ) : null}
+          {activeEpisode.airedDate && (
+            <Text style={[styles.episodeOverviewMeta, { color: theme.colors.text.muted }]}>
+              {formatPublishDate(activeEpisode.airedDate)}
+              {activeEpisode.runtimeMinutes ? ` • ${activeEpisode.runtimeMinutes} min` : ''}
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* Cast section */}
+      <CastSection
+        credits={credits}
+        isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+        theme={theme}
+      />
+
+      {/* Hidden SeriesEpisodes component to load data (same as in renderDetailsContent) */}
+      {isSeries && (
+        <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
+          <SeriesEpisodes
+            isSeries={isSeries}
+            title={title}
+            tvdbId={tvdbId}
+            titleId={titleId}
+            yearNumber={yearNumber}
+            seriesDetails={seriesDetailsData}
+            seriesDetailsLoading={seriesDetailsLoading}
+            initialSeasonNumber={initialSeasonNumber}
+            initialEpisodeNumber={initialEpisodeNumber}
+            isTouchSeasonLayout={isTouchSeasonLayout}
+            shouldUseSeasonModal={shouldUseSeasonModal}
+            shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
+            onSeasonSelect={handleSeasonSelect}
+            onEpisodeSelect={handleEpisodeSelect}
+            onEpisodeFocus={handleEpisodeFocus}
+            onPlaySeason={handlePlaySeason}
+            onPlayEpisode={handlePlayEpisode}
+            onEpisodeLongPress={handleEpisodeLongPress}
+            onToggleEpisodeWatched={handleToggleEpisodeWatched}
+            isEpisodeWatched={isEpisodeWatched}
+            renderContent={false}
+            activeEpisode={activeEpisode}
+            isResolving={isResolving}
+            theme={theme}
+            onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
+            onRequestFocusShift={handleRequestFocusShift}
+            onEpisodesLoaded={handleEpisodesLoaded}
+            onSeasonsLoaded={handleSeasonsLoaded}
+          />
+        </View>
+      )}
+    </MobileParallaxContainer>
+  );
+
   const SafeAreaWrapper = isTV ? View : FixedSafeAreaView;
   const safeAreaProps = isTV ? {} : { edges: ['top'] as ('top' | 'bottom' | 'left' | 'right')[] };
 
@@ -4110,62 +4425,69 @@ export default function DetailsScreen() {
         <Stack.Screen options={{ headerShown: false }} />
         <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
           <View style={styles.container}>
-            {headerImage && !shouldHideUntilMetadataReady ? (
-              <Animated.View
-                style={[
-                  styles.backgroundImageContainer,
-                  shouldAnchorHeroToTop && styles.backgroundImageContainerTop,
-                  (isTV || isMobile) && backgroundAnimatedStyle,
-                ]}
-                pointerEvents="none">
-                {shouldShowBlurredFill && (
-                  <Image
-                    source={{ uri: headerImage }}
-                    style={styles.backgroundImageBackdrop}
-                    resizeMode="cover"
-                    blurRadius={20}
-                  />
-                )}
-                <Image
-                  source={{ uri: headerImage }}
-                  style={[
-                    styles.backgroundImage,
-                    shouldUseAdaptiveHeroSizing && styles.backgroundImageSharp,
-                    backgroundImageSizingStyle,
-                  ]}
-                  resizeMode={backgroundImageResizeMode}
-                />
+            {/* Mobile uses the new parallax scrollable container */}
+            {isMobile ? (
+              renderMobileContent()
+            ) : (
+              <>
+                {headerImage && !shouldHideUntilMetadataReady ? (
+                  <Animated.View
+                    style={[
+                      styles.backgroundImageContainer,
+                      shouldAnchorHeroToTop && styles.backgroundImageContainerTop,
+                      isTV && backgroundAnimatedStyle,
+                    ]}
+                    pointerEvents="none">
+                    {shouldShowBlurredFill && (
+                      <Image
+                        source={{ uri: headerImage }}
+                        style={styles.backgroundImageBackdrop}
+                        resizeMode="cover"
+                        blurRadius={20}
+                      />
+                    )}
+                    <Image
+                      source={{ uri: headerImage }}
+                      style={[
+                        styles.backgroundImage,
+                        shouldUseAdaptiveHeroSizing && styles.backgroundImageSharp,
+                        backgroundImageSizingStyle,
+                      ]}
+                      resizeMode={backgroundImageResizeMode}
+                    />
+                    <LinearGradient
+                      pointerEvents="none"
+                      colors={
+                        Platform.isTV
+                          ? ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.9)']
+                          : ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.8)', '#000']
+                      }
+                      locations={Platform.isTV ? [0, 0.5, 1] : [0, 0.7, 1]}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={styles.heroFadeOverlay}
+                    />
+                  </Animated.View>
+                ) : null}
                 <LinearGradient
                   pointerEvents="none"
-                  colors={
-                    Platform.isTV
-                      ? ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.9)']
-                      : ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.8)', '#000']
-                  }
-                  locations={Platform.isTV ? [0, 0.5, 1] : [0, 0.7, 1]}
+                  colors={overlayGradientColors}
+                  locations={overlayGradientLocations}
                   start={{ x: 0.5, y: 0 }}
                   end={{ x: 0.5, y: 1 }}
-                  style={styles.heroFadeOverlay}
+                  style={styles.gradientOverlay}
                 />
-              </Animated.View>
-            ) : null}
-            <LinearGradient
-              pointerEvents="none"
-              colors={overlayGradientColors}
-              locations={overlayGradientLocations}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={styles.gradientOverlay}
-            />
-            <View style={styles.contentOverlay}>
-              <View style={[styles.contentBox, contentBoxStyle]}>
-                <View style={styles.contentBoxInner}>
-                  <View style={[styles.contentContainer, isMobile && styles.mobileContentContainer]}>
-                    {renderDetailsContent()}
+                <View style={styles.contentOverlay}>
+                  <View style={[styles.contentBox, contentBoxStyle]}>
+                    <View style={styles.contentBoxInner}>
+                      <View style={styles.contentContainer}>
+                        {renderDetailsContent()}
+                      </View>
+                    </View>
                   </View>
                 </View>
-              </View>
-            </View>
+              </>
+            )}
             {Platform.isTV && posterUrl && (
               <View style={styles.posterContainerTV}>
                 <Image source={{ uri: posterUrl }} style={styles.posterImageTV} resizeMode="cover" />
@@ -4223,7 +4545,7 @@ export default function DetailsScreen() {
         visible={seasonSelectorVisible}
         onClose={() => setSeasonSelectorVisible(false)}
         seasons={seasons}
-        onSeasonSelect={handleSeasonSelectorSelect}
+        onSeasonSelect={isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect}
         theme={theme}
       />
       <EpisodeSelector

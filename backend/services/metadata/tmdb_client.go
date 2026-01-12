@@ -23,8 +23,10 @@ const (
 	// Use optimized image sizes instead of "original" to reduce memory usage
 	// Posters: w500 = 500px wide (plenty for TV cards ~200-300px)
 	// Backdrops: w1280 = 1280px wide (good for 1080p backgrounds)
+	// Profiles: w185 = 185px wide (good for cast member photos)
 	tmdbPosterSize   = "w500"
 	tmdbBackdropSize = "w1280"
+	tmdbProfileSize  = "w185"
 )
 
 type tmdbClient struct {
@@ -152,6 +154,30 @@ type tmdbVideo struct {
 
 type tmdbReleaseDatesResponse struct {
 	Results []tmdbReleaseCountry `json:"results"`
+}
+
+type tmdbCreditsResponse struct {
+	Cast []struct {
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Character   string `json:"character"`
+		Order       int    `json:"order"`
+		ProfilePath string `json:"profile_path"`
+	} `json:"cast"`
+}
+
+// tmdbAggregateCreditsResponse is for TV shows using /aggregate_credits endpoint
+type tmdbAggregateCreditsResponse struct {
+	Cast []struct {
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Order       int    `json:"order"`
+		ProfilePath string `json:"profile_path"`
+		Roles       []struct {
+			Character    string `json:"character"`
+			EpisodeCount int    `json:"episode_count"`
+		} `json:"roles"`
+	} `json:"cast"`
 }
 
 type tmdbReleaseCountry struct {
@@ -462,6 +488,112 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 	}
 
 	return title, nil
+}
+
+// fetchCredits retrieves cast information from TMDB for movies or TV shows
+// Returns top 8 billed cast members with profile images
+func (c *tmdbClient) fetchCredits(ctx context.Context, mediaType string, tmdbID int64) (*models.Credits, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	// Map "series" to "tv" for TMDB API
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	// For TV shows, use aggregate_credits to get all appearances across seasons
+	// For movies, use regular credits
+	if apiMediaType == "tv" {
+		return c.fetchTVCredits(ctx, tmdbID)
+	}
+	return c.fetchMovieCredits(ctx, tmdbID)
+}
+
+func (c *tmdbClient) fetchMovieCredits(ctx context.Context, tmdbID int64) (*models.Credits, error) {
+	endpoint, err := url.JoinPath(tmdbBaseURL, "movie", fmt.Sprintf("%d", tmdbID), "credits")
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload tmdbCreditsResponse
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb credits for movie/%d failed: %w", tmdbID, err)
+	}
+
+	// Limit to top 8 cast members by order
+	maxCast := 8
+	if len(payload.Cast) < maxCast {
+		maxCast = len(payload.Cast)
+	}
+
+	cast := make([]models.CastMember, 0, maxCast)
+	for i := 0; i < maxCast; i++ {
+		cm := payload.Cast[i]
+		member := models.CastMember{
+			ID:        cm.ID,
+			Name:      strings.TrimSpace(cm.Name),
+			Character: strings.TrimSpace(cm.Character),
+			Order:     cm.Order,
+		}
+		if cm.ProfilePath != "" {
+			member.ProfilePath = cm.ProfilePath
+			member.ProfileURL = fmt.Sprintf("%s/%s%s", tmdbImageBaseURL, tmdbProfileSize, cm.ProfilePath)
+		}
+		cast = append(cast, member)
+	}
+
+	return &models.Credits{Cast: cast}, nil
+}
+
+func (c *tmdbClient) fetchTVCredits(ctx context.Context, tmdbID int64) (*models.Credits, error) {
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID), "aggregate_credits")
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload tmdbAggregateCreditsResponse
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb aggregate_credits for tv/%d failed: %w", tmdbID, err)
+	}
+
+	// Limit to top 8 cast members by order
+	maxCast := 8
+	if len(payload.Cast) < maxCast {
+		maxCast = len(payload.Cast)
+	}
+
+	cast := make([]models.CastMember, 0, maxCast)
+	for i := 0; i < maxCast; i++ {
+		cm := payload.Cast[i]
+		// Get primary character from roles (first one with most episodes)
+		character := ""
+		if len(cm.Roles) > 0 {
+			character = strings.TrimSpace(cm.Roles[0].Character)
+		}
+		member := models.CastMember{
+			ID:        cm.ID,
+			Name:      strings.TrimSpace(cm.Name),
+			Character: character,
+			Order:     cm.Order,
+		}
+		if cm.ProfilePath != "" {
+			member.ProfilePath = cm.ProfilePath
+			member.ProfileURL = fmt.Sprintf("%s/%s%s", tmdbImageBaseURL, tmdbProfileSize, cm.ProfilePath)
+		}
+		cast = append(cast, member)
+	}
+
+	return &models.Credits{Cast: cast}, nil
 }
 
 func (c *tmdbClient) movieReleaseDates(ctx context.Context, tmdbID int64) ([]models.Release, error) {
