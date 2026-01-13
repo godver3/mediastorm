@@ -99,6 +99,8 @@ Inspired by [plex_debrid](https://github.com/itsToggle/plex_debrid) and [Riven](
 
 Special thanks to [Parsett (PTT)](https://github.com/dreulavelle/PTT) for media title parsing.
 
+Powered by [FFmpeg](https://ffmpeg.org/) for media processing and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for trailer fetching.
+
 ## License
 
 MIT
