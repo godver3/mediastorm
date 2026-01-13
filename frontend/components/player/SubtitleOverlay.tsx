@@ -531,8 +531,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // HDR content uses grey text for better visibility against bright HDR highlights
   const hdrTextColor = useMemo(() => {
     if (!isHDRContent) return undefined;
-    // Use a light grey that's visible against HDR content but not as harsh as pure white
-    return { color: '#CCCCCC' };
+    // Use a darker grey on TV (larger screen, brighter HDR) vs phones
+    const greyColor = Platform.isTV ? '#888888' : '#CCCCCC';
+    return { color: greyColor };
   }, [isHDRContent]);
 
   // Always render container to capture dimensions via onLayout
@@ -562,11 +563,13 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
                 </Text>
               ))}
               {/* White text on top (or grey for HDR content) */}
+              {/* Note: hdrTextColor is applied to both outer and inner Text elements because
+                  TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
               <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
                 {cue.segments.map((segment, segIndex) => (
                   <Text
                     key={`seg-${segIndex}`}
-                    style={segment.italic ? styles.italicText : undefined}>
+                    style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
                     {segment.text}
                   </Text>
                 ))}
