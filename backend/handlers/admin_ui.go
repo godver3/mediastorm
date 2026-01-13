@@ -393,7 +393,8 @@ var SettingsSchema = map[string]interface{}{
 		"group": "experience",
 		"order": 1,
 		"fields": map[string]interface{}{
-			"trendingMovieSource": map[string]interface{}{"type": "select", "label": "Trending Source", "options": []string{"all", "released"}, "description": "Trending movies source"},
+			"trendingMovieSource":   map[string]interface{}{"type": "select", "label": "Trending Source", "options": []string{"all", "released"}, "description": "Trending movies source", "order": 0},
+			"exploreCardPosition": map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
 		},
 	},
 	"homeShelves.shelves": map[string]interface{}{
