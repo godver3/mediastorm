@@ -451,15 +451,15 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             automaticallyWaitsToMinimizeStalling={true}
             preferredForwardBufferDuration={600} // Buffer up to 10 minutes ahead (iOS only)
             // Android ExoPlayer buffer configuration
-            // Android TV devices have limited RAM (1.7GB total, often <200MB available)
-            // Use minimal buffers to reduce memory pressure and swap thrashing
+            // Increased buffers to prevent immediate rebuffering on Android TV
+            // Back buffer still disabled to conserve memory on RAM-constrained devices
             bufferConfig={
               Platform.OS === 'android'
                 ? ({
-                    minBufferMs: isAndroidTV ? 3000 : 10000, // 3s TV, 10s mobile
-                    maxBufferMs: isAndroidTV ? 8000 : 20000, // 8s TV, 20s mobile
-                    bufferForPlaybackMs: isAndroidTV ? 1500 : 2500, // 1.5s TV, 2.5s mobile
-                    bufferForPlaybackAfterRebufferMs: isAndroidTV ? 3000 : 5000, // 3s TV, 5s mobile (must be <= minBufferMs)
+                    minBufferMs: isAndroidTV ? 10000 : 10000, // 10s TV, 10s mobile
+                    maxBufferMs: isAndroidTV ? 30000 : 20000, // 30s TV, 20s mobile
+                    bufferForPlaybackMs: isAndroidTV ? 5000 : 2500, // 5s TV, 2.5s mobile
+                    bufferForPlaybackAfterRebufferMs: isAndroidTV ? 10000 : 5000, // 10s TV, 5s mobile (must be <= minBufferMs)
                     // CRITICAL: Disable back buffer on Android TV to prevent OOM
                     // With 2s HLS segments at 4K, back buffer can consume 50MB+
                     backBufferDurationMs: isAndroidTV ? 0 : 10000,
