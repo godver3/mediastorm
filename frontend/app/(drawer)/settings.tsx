@@ -62,6 +62,8 @@ import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { APP_VERSION } from '@/version';
 import { router, Stack } from 'expo-router';
+import { useKonamiCode, KONAMI_SEQUENCE } from '@/hooks/useKonamiCode';
+import { SpaceShooterGame } from '@/components/SpaceShooterGame';
 
 // expo-updates may not be available in all builds (e.g., development builds without it)
 // Use a getter to lazily load the module only when actually accessed
@@ -827,6 +829,13 @@ function SettingsScreen() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
+
+  // Easter egg: Konami code activates space shooter game
+  const [showSpaceShooter, setShowSpaceShooter] = useState(false);
+  const KONAMI_DEBUG = false; // Set to true to show debug overlay
+  const { onTouchStart, onTouchEnd, debugInfo } = useKonamiCode(() => {
+    setShowSpaceShooter(true);
+  }, KONAMI_DEBUG);
 
   // Fetch backend version and client ID on mount
   useEffect(() => {
@@ -1804,7 +1813,11 @@ function SettingsScreen() {
           )}
           {/* Mobile Layout: ScrollView with all content */}
           {!Platform.isTV && (
-            <View style={styles.mobileContainer}>
+            <View
+              style={styles.mobileContainer}
+              onTouchStart={onTouchStart}
+              onTouchEnd={onTouchEnd}
+            >
               <SpatialNavigationScrollView
                 style={styles.container}
                 contentContainerStyle={styles.contentContainer}
@@ -2055,6 +2068,58 @@ function SettingsScreen() {
           </View>
         </SpatialNavigationRoot>
       )}
+
+
+      {/* Easter egg: Debug overlay for Konami code */}
+      {!Platform.isTV && KONAMI_DEBUG && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 100,
+            left: 16,
+            right: 16,
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            padding: 12,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: '#00ff00',
+            zIndex: 9999,
+          }}
+          pointerEvents="none"
+        >
+          <Text style={{ color: '#00ff00', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 12, marginBottom: 8 }}>
+            KONAMI CODE DEBUG
+          </Text>
+          <Text style={{ color: '#ffffff', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+            Progress: {debugInfo.currentIndex}/{KONAMI_SEQUENCE.length}
+          </Text>
+          <Text style={{ color: '#ffffff', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+            Sequence: {KONAMI_SEQUENCE.map((d, i) => (
+              i < debugInfo.currentIndex ? '\u2713' : (i === debugInfo.currentIndex ? `[${d.toUpperCase()}]` : d)
+            )).join(' ')}
+          </Text>
+          <Text style={{ color: '#ffff00', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+            Next: {debugInfo.expectedNext.toUpperCase()}
+          </Text>
+          <Text style={{ color: debugInfo.lastInput === debugInfo.expectedNext || (debugInfo.currentIndex > 0 && KONAMI_SEQUENCE[debugInfo.currentIndex - 1] === debugInfo.lastInput) ? '#00ff00' : '#ff6666', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+            Last input: {debugInfo.lastInput?.toUpperCase() ?? 'none'}
+          </Text>
+          {debugInfo.lastDelta && (
+            <Text style={{ color: '#888888', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 10 }}>
+              Delta: x={debugInfo.lastDelta.x.toFixed(0)}, y={debugInfo.lastDelta.y.toFixed(0)}
+            </Text>
+          )}
+          <Text style={{ color: '#666666', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 9, marginTop: 8 }}>
+            Swipe: min 30px | Tap: max 10px movement
+          </Text>
+        </View>
+      )}
+
+      {/* Easter egg: Space Shooter Game */}
+      <SpaceShooterGame
+        visible={showSpaceShooter}
+        onClose={() => setShowSpaceShooter(false)}
+      />
     </>
   );
 }
