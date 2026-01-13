@@ -322,7 +322,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) =>
     seasonChip: {
       width: SEASON_CHIP_MIN_WIDTH,
       paddingVertical: theme.spacing.sm,
-      borderRadius: theme.radius.full,
+      borderRadius: theme.radius.pill,
       backgroundColor: theme.colors.background.surface,
       borderWidth: 1,
       borderColor: 'transparent',
@@ -454,7 +454,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) =>
       borderRadius: theme.radius.md,
     },
     episodeTitle: {
-      ...theme.typography.caption.md,
+      ...theme.typography.caption.sm,
       color: theme.colors.text.secondary,
       marginTop: theme.spacing.xs,
     },

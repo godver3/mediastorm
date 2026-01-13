@@ -771,16 +771,17 @@ export default function PlayerScreen() {
         setCurrentMovieUrl(null);
         setPauseTeardownActive(true);
       }, PAUSE_TEARDOWN_DELAY);
-    } else if (!paused && pauseTeardownTimerRef.current) {
+    } else if (!paused && pauseTeardownTimerRef.current !== null) {
       // Clear timer if we unpause before teardown
       console.log('[player] pause teardown: clearing timer (unpaused)');
-      clearTimeout(pauseTeardownTimerRef.current);
+      clearTimeout(pauseTeardownTimerRef.current!);
       pauseTeardownTimerRef.current = null;
     }
 
     return () => {
-      if (pauseTeardownTimerRef.current) {
-        clearTimeout(pauseTeardownTimerRef.current);
+      const timerId = pauseTeardownTimerRef.current;
+      if (timerId !== null) {
+        clearTimeout(timerId);
         pauseTeardownTimerRef.current = null;
       }
     };

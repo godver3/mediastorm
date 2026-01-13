@@ -470,7 +470,7 @@ function LiveScreen() {
       try {
         const hlsSession = await apiService.startLiveHlsSession(channel.url);
         const authToken = apiService.getAuthToken();
-        const hlsPlaylistUrl = `${apiService.baseUrl}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+        const hlsPlaylistUrl = `${apiService.getBaseUrl()}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
 
         router.push({
           pathname: '/player',
@@ -498,7 +498,7 @@ function LiveScreen() {
         const hlsChannels = await Promise.all(
           channels.map(async (channel) => {
             const hlsSession = await apiService.startLiveHlsSession(channel.url);
-            const hlsPlaylistUrl = `${apiService.baseUrl}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+            const hlsPlaylistUrl = `${apiService.getBaseUrl()}${hlsSession.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
             return { ...channel, streamUrl: hlsPlaylistUrl };
           }),
         );

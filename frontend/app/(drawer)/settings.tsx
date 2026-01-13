@@ -2241,7 +2241,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     linkText: {
       ...theme.typography.body.md,
-      color: theme.colors.accent,
+      color: theme.colors.accent.primary,
       textDecorationLine: 'underline' as const,
     },
     debugButton: {

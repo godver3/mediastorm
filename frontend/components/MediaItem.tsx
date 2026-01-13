@@ -448,7 +448,8 @@ const MediaItem = memo(function MediaItem({
           {title.mediaType !== 'more' &&
             title.mediaType !== 'explore' &&
             shouldShowBadge('releaseStatus', badgeVisibility) &&
-            releaseIcon && (
+            releaseIcon &&
+            typeof releaseIcon === 'object' && (
               <View style={styles.releaseStatusBadge}>
                 <MaterialCommunityIcons
                   name={releaseIcon.name}
@@ -554,7 +555,8 @@ const MediaItem = memo(function MediaItem({
       {title.mediaType !== 'more' &&
         title.mediaType !== 'explore' &&
         shouldShowBadge('releaseStatus', badgeVisibility) &&
-        releaseIcon && (
+        releaseIcon &&
+        typeof releaseIcon === 'object' && (
           <View style={styles.releaseStatusBadge}>
             <MaterialCommunityIcons
               name={releaseIcon.name}

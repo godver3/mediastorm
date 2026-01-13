@@ -13,7 +13,7 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
 import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
-import { apiService, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
+import { apiService, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
@@ -77,8 +77,8 @@ type CardData = {
   percentWatched?: number;
   seriesOverview?: string; // For series, store the show overview separately from episode description
   collagePosters?: string[]; // For explore cards: array of 4 poster URLs to display in a grid
-  theatricalRelease?: { released: boolean; date?: string }; // Movie theatrical release status
-  homeRelease?: { released: boolean; date?: string }; // Movie home release status
+  theatricalRelease?: ReleaseWindow; // Movie theatrical release status
+  homeRelease?: ReleaseWindow; // Movie home release status
 };
 
 type HeroContent = {
@@ -2513,6 +2513,7 @@ function VirtualizedShelf({
                 overview: card.description,
                 year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
                 language: 'en',
+                mediaType: 'movie',
                 homeRelease: card.homeRelease,
                 theatricalRelease: card.theatricalRelease,
               }) : null;
@@ -2598,6 +2599,7 @@ function VirtualizedShelf({
               overview: card.description,
               year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
               language: 'en',
+              mediaType: 'movie',
               homeRelease: card.homeRelease,
               theatricalRelease: card.theatricalRelease,
             }) : null;

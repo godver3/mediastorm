@@ -458,10 +458,11 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
 
         // Update state with keyframeDelta from backend (for subtitle sync)
         if (typeof response.keyframeDelta === 'number') {
+          const newKeyframeDelta = response.keyframeDelta;
           setState((prev) => ({
             ...prev,
             actualStartOffset: response.actualStartOffset ?? prev.actualStartOffset,
-            keyframeDelta: response.keyframeDelta,
+            keyframeDelta: newKeyframeDelta,
           }));
         }
 

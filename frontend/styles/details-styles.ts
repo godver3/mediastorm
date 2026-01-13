@@ -402,7 +402,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginBottom: theme.spacing.xs,
     },
     episodeOverviewMeta: {
-      ...theme.typography.caption.xs,
+      ...theme.typography.caption.sm,
       marginTop: theme.spacing.sm,
       opacity: 0.7,
     },

@@ -99,8 +99,6 @@ function AuthGate() {
                               animation: Platform.isTV ? 'none' : 'default',
                               // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
                               freezeOnBlur: true,
-                              // Detach native views of inactive screens to reduce memory on Android TV
-                              detachInactiveScreens: Platform.isTV,
                             }}>
                             {/* Drawer as the main screen - uses file-based routing */}
                             <Stack.Screen name="(drawer)" options={{ headerShown: false }} />

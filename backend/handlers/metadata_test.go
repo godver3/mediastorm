@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,6 +93,18 @@ func (f *fakeMetadataService) BatchMovieReleases(_ context.Context, queries []mo
 
 func (f *fakeMetadataService) GetCustomList(_ string, _ int) ([]models.TrendingItem, int, error) {
 	return nil, 0, nil
+}
+
+func (f *fakeMetadataService) ExtractTrailerStreamURL(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeMetadataService) StreamTrailer(_ context.Context, _ string, _ io.Writer) error {
+	return nil
+}
+
+func (f *fakeMetadataService) StreamTrailerWithRange(_ context.Context, _ string, _ string, _ io.Writer) error {
+	return nil
 }
 
 func testConfigManager(t *testing.T) *config.Manager {

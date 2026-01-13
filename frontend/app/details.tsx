@@ -2928,6 +2928,17 @@ export default function DetailsScreen() {
     }
   }, [nextEpisodeFromPlayback, allEpisodes, handleEpisodeSelect]);
 
+  // Helper to show loading screen immediately when playback starts
+  const showLoadingScreenIfEnabled = useCallback(async () => {
+    const isLoadingScreenEnabled =
+      userSettings?.playback?.useLoadingScreen ?? settings?.playback?.useLoadingScreen ?? false;
+    if (isLoadingScreenEnabled) {
+      setShowBlackOverlay(true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      showLoadingScreen();
+    }
+  }, [userSettings?.playback?.useLoadingScreen, settings?.playback?.useLoadingScreen, showLoadingScreen]);
+
   const handlePlayEpisode = useCallback(
     async (episode: SeriesEpisode) => {
       setActiveEpisode(episode);
@@ -3037,17 +3048,6 @@ export default function DetailsScreen() {
 
     return null;
   }, [nextUpEpisode, activeEpisode, seriesIdentifier, isSeries, titleId]);
-
-  // Helper to show loading screen immediately when playback starts
-  const showLoadingScreenIfEnabled = useCallback(async () => {
-    const isLoadingScreenEnabled =
-      userSettings?.playback?.useLoadingScreen ?? settings?.playback?.useLoadingScreen ?? false;
-    if (isLoadingScreenEnabled) {
-      setShowBlackOverlay(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      showLoadingScreen();
-    }
-  }, [userSettings?.playback?.useLoadingScreen, settings?.playback?.useLoadingScreen, showLoadingScreen]);
 
   const checkAndShowResumeModal = useCallback(
     async (action: () => Promise<void>) => {

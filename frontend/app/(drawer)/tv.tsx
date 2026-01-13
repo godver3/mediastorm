@@ -32,8 +32,8 @@ export default function TVShowsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId, userSettings } = useUserProfiles();
-  const { settings } = useBackendSettings();
+  const { pendingPinUserId } = useUserProfiles();
+  const { settings, userSettings } = useBackendSettings();
   const isFocused = useIsFocused();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
   const focusedIndex = 0;
