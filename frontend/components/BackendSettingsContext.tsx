@@ -120,10 +120,12 @@ export interface BackendShelfConfig {
 }
 
 export type TrendingMovieSource = 'all' | 'released';
+export type ExploreCardPosition = 'front' | 'end';
 
 export interface BackendHomeShelvesSettings {
   shelves: BackendShelfConfig[];
   trendingMovieSource?: TrendingMovieSource;
+  exploreCardPosition?: ExploreCardPosition;
 }
 
 export interface BackendFilterSettings {

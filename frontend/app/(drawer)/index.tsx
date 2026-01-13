@@ -293,6 +293,11 @@ function IndexScreen() {
     return allShelves.filter((shelf) => shelf.type === 'mdblist' && shelf.listUrl && shelf.enabled);
   }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
 
+  // Get explore card position setting (front or end)
+  const exploreCardPosition = useMemo(() => {
+    return userSettings?.homeShelves?.exploreCardPosition ?? settings?.homeShelves?.exploreCardPosition ?? 'front';
+  }, [userSettings?.homeShelves?.exploreCardPosition, settings?.homeShelves?.exploreCardPosition]);
+
   // Fetch custom list data when custom shelves change
   useEffect(() => {
     if (customShelves.length === 0) return;
@@ -674,11 +679,10 @@ function IndexScreen() {
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
-    // Create explore card and put it at the front
     const exploreCard = createExploreCard('watchlist', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears, movieReleases]);
+    return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
   const continueWatchingCards = useMemo(() => {
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -686,8 +690,8 @@ function IndexScreen() {
     }
     const exploreCard = createExploreCard('continue-watching', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreCard, ...limitedCards];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases]);
+    return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition]);
 
   useEffect(() => {
     if (!continueWatchingItems || continueWatchingItems.length === 0) {
@@ -986,8 +990,9 @@ function IndexScreen() {
       return allCards;
     }
     const exploreCard = createExploreCard('trending-movies', allCards);
-    return [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
-  }, [trendingMovies, movieReleases]);
+    const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
+  }, [trendingMovies, movieReleases, exploreCardPosition]);
 
   const trendingShowCards = useMemo(() => {
     const allCards = mapTrendingToCards(trendingTVShows ?? undefined);
@@ -995,8 +1000,9 @@ function IndexScreen() {
       return allCards;
     }
     const exploreCard = createExploreCard('trending-shows', allCards);
-    return [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
-  }, [trendingTVShows]);
+    const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+    return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
+  }, [trendingTVShows, exploreCardPosition]);
 
   // Generate cards for each custom list shelf
   const customListCards = useMemo(() => {
@@ -1010,11 +1016,12 @@ function IndexScreen() {
         // Create explore card showing remaining count based on total
         const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
         const exploreCard = createExploreCard(shelfId, allCards, remainingCount);
-        result[shelfId] = [exploreCard, ...allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME)];
+        const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
+        result[shelfId] = exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
       }
     }
     return result;
-  }, [customListData, customListTotals, movieReleases]);
+  }, [customListData, customListTotals, movieReleases, exploreCardPosition]);
 
   // Generate titles for each custom list shelf (mobile)
   const customListTitles = useMemo(() => {
@@ -1054,11 +1061,11 @@ function IndexScreen() {
           collagePosters,
         };
         const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-        result[shelfId] = [exploreTitle, ...limitedTitles];
+        result[shelfId] = exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
       }
     }
     return result;
-  }, [customListData, customListTotals, movieReleases]);
+  }, [customListData, customListTotals, movieReleases, exploreCardPosition]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
@@ -1099,8 +1106,8 @@ function IndexScreen() {
       collagePosters,
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears, movieReleases]);
+    return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
   const continueWatchingTitles = useMemo(() => {
     const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
     // Merge cached release data for movies
@@ -1140,8 +1147,8 @@ function IndexScreen() {
       collagePosters,
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreTitle, ...limitedTitles];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases]);
+    return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition]);
   const trendingMovieTitles = useMemo(() => {
     const allTitles =
       trendingMovies?.map((item) => {
@@ -1177,8 +1184,8 @@ function IndexScreen() {
       collagePosters,
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreTitle, ...limitedTitles];
-  }, [trendingMovies, movieReleases]);
+    return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
+  }, [trendingMovies, movieReleases, exploreCardPosition]);
 
   const trendingShowTitles = useMemo(() => {
     const allTitles =
@@ -1209,8 +1216,8 @@ function IndexScreen() {
       collagePosters,
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-    return [exploreTitle, ...limitedTitles];
-  }, [trendingTVShows]);
+    return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
+  }, [trendingTVShows, exploreCardPosition]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
   const [mobileHeroIndex, setMobileHeroIndex] = useState(0);

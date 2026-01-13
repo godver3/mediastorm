@@ -597,6 +597,7 @@ export interface UserShelfConfig {
 export interface UserHomeShelvesSettings {
   shelves: UserShelfConfig[];
   trendingMovieSource?: string;
+  exploreCardPosition?: 'front' | 'end';
 }
 
 export interface UserFilterSettings {
