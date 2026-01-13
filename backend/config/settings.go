@@ -226,10 +226,19 @@ const (
 	TrendingMovieSourceReleased TrendingMovieSource = "released" // MDBList top movies of the week (released only)
 )
 
+// ExploreCardPosition determines where the explore card is placed on shelves.
+type ExploreCardPosition string
+
+const (
+	ExploreCardPositionFront ExploreCardPosition = "front" // Explore card at the beginning of the shelf (default)
+	ExploreCardPositionEnd   ExploreCardPosition = "end"   // Explore card at the end of the shelf
+)
+
 // HomeShelvesSettings controls which shelves appear on the home screen and their order.
 type HomeShelvesSettings struct {
 	Shelves             []ShelfConfig       `json:"shelves"`
 	TrendingMovieSource TrendingMovieSource `json:"trendingMovieSource,omitempty"` // "all" (TMDB) or "released" (MDBList)
+	ExploreCardPosition ExploreCardPosition `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
 }
 
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
@@ -821,6 +830,11 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill TrendingMovieSource if empty (default to released-only)
 	if s.HomeShelves.TrendingMovieSource == "" {
 		s.HomeShelves.TrendingMovieSource = TrendingMovieSourceReleased
+	}
+
+	// Backfill ExploreCardPosition if empty (default to front)
+	if s.HomeShelves.ExploreCardPosition == "" {
+		s.HomeShelves.ExploreCardPosition = ExploreCardPositionFront
 	}
 
 	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults
