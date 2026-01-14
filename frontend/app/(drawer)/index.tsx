@@ -4,6 +4,7 @@ import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
 import { getMovieReleaseIcon } from '@/components/MediaItem';
+import { useMovieReleases } from '@/components/MovieReleasesContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
@@ -207,16 +208,28 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
+// Debug logging for index page render/load analysis
+const DEBUG_INDEX_RENDERS = __DEV__ && true; // Set to false to disable
+let indexRenderCount = 0;
+
 function IndexScreen() {
   // Memory monitoring disabled - was causing lag due to native bridge calls
   // Uncomment to debug memory issues:
   // useMemoryMonitor('HomePage', 60000, isAndroidTV);
 
+  // Track render count
+  const renderCountRef = useRef(0);
+  renderCountRef.current += 1;
+  if (DEBUG_INDEX_RENDERS) {
+    indexRenderCount += 1;
+    console.log(`[IndexPage] Render #${indexRenderCount} (component instance: ${renderCountRef.current})`);
+  }
+
   const { height: screenHeight, width: screenWidth } = useTVDimensions();
   const theme = useTheme();
   const router = useRouter();
   const focused = useIsFocused();
-  const { isOpen: isMenuOpen, openMenu, closeMenu } = useMenuContext();
+  const { isOpen: isMenuOpen, openMenu, closeMenu, setFirstContentFocusableTag } = useMenuContext();
   const {
     items: watchlistItems,
     loading: watchlistLoading,
@@ -288,6 +301,37 @@ function IndexScreen() {
   const [customListTotals, setCustomListTotals] = useState<Record<string, number>>({});
   const [customListLoading, setCustomListLoading] = useState<Record<string, boolean>>({});
   const fetchedListUrlsRef = React.useRef<Set<string>>(new Set());
+
+  // Debug: Log data source changes
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Data changed - watchlist: ${watchlistItems?.length ?? 0} items, loading: ${watchlistLoading}`);
+  }, [watchlistItems, watchlistLoading]);
+
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Data changed - continueWatching: ${continueWatchingItems?.length ?? 0} items, loading: ${continueWatchingLoading}`);
+  }, [continueWatchingItems, continueWatchingLoading]);
+
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Data changed - trendingMovies: ${trendingMovies?.length ?? 0} items`);
+  }, [trendingMovies]);
+
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Data changed - trendingTVShows: ${trendingTVShows?.length ?? 0} items`);
+  }, [trendingTVShows]);
+
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Settings changed - loading: ${settingsLoading}, reachable: ${isBackendReachable}, lastLoaded: ${settingsLastLoadedAt}`);
+  }, [settingsLoading, isBackendReachable, settingsLastLoadedAt]);
+
+  useEffect(() => {
+    if (!DEBUG_INDEX_RENDERS) return;
+    console.log(`[IndexPage] Focus changed - focused: ${focused}, menuOpen: ${isMenuOpen}`);
+  }, [focused, isMenuOpen]);
 
   // Get custom shelves from settings
   const customShelves = useMemo(() => {
@@ -669,13 +713,16 @@ function IndexScreen() {
 
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
+  // Track which IDs we've already queued for year fetching (prevents re-fetch cascade)
+  const fetchedYearIdsRef = useRef<Set<string>>(new Set());
 
-  // Cache movie release data for displaying release status badges
-  const [movieReleases, setMovieReleases] = useState<
-    Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>
-  >(new Map());
+  // Movie release data from context (persists across navigation)
+  const { releases: movieReleases, hasRelease: hasMovieRelease, queueReleaseFetch } = useMovieReleases();
 
   const watchlistCards = useMemo(() => {
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`);
+    }
     const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears), movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
@@ -685,6 +732,9 @@ function IndexScreen() {
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
   }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
   const continueWatchingCards = useMemo(() => {
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] useMemo: continueWatchingCards recomputing (${continueWatchingItems?.length ?? 0} items, ${seriesOverviews.size} overviews)`);
+    }
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
@@ -781,6 +831,7 @@ function IndexScreen() {
   }, [continueWatchingItems, watchlistItems]);
 
   // Fetch missing year data for watchlist items
+  // Uses ref to track already-fetched IDs to prevent re-fetch cascade
   useEffect(() => {
     if (!watchlistItems || watchlistItems.length === 0) {
       return;
@@ -806,7 +857,8 @@ function IndexScreen() {
         if (item.year && item.year > 0) {
           continue;
         }
-        if (watchlistYears.has(item.id)) {
+        // Use ref to check (not state) to prevent re-fetch cascade
+        if (fetchedYearIdsRef.current.has(item.id)) {
           continue;
         }
 
@@ -827,6 +879,22 @@ function IndexScreen() {
             name: item.name,
           });
         }
+      }
+
+      // Mark all IDs as queued BEFORE fetching to prevent duplicate fetches
+      for (const series of seriesToFetch) {
+        fetchedYearIdsRef.current.add(series.id);
+      }
+      for (const movie of moviesToFetch) {
+        fetchedYearIdsRef.current.add(movie.id);
+      }
+
+      if (seriesToFetch.length === 0 && moviesToFetch.length === 0) {
+        return;
+      }
+
+      if (DEBUG_INDEX_RENDERS) {
+        console.log(`[IndexPage] Fetching years for ${seriesToFetch.length} series, ${moviesToFetch.length} movies`);
       }
 
       // Batch fetch series details
@@ -875,9 +943,10 @@ function IndexScreen() {
     };
 
     void fetchMissingYears();
-  }, [watchlistItems, watchlistYears]);
+  }, [watchlistItems]);
 
-  // Fetch release data for movies when releaseStatus badge is enabled
+  // Queue release data fetches for movies when releaseStatus badge is enabled
+  // Uses MovieReleasesContext which handles batching, deduplication, and persistence
   useEffect(() => {
     // Only fetch if releaseStatus badge is enabled
     const badgeVisibility = userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [];
@@ -894,7 +963,7 @@ function IndexScreen() {
         if (
           item.title.mediaType === 'movie' &&
           (item.title.tmdbId || item.title.imdbId) &&
-          !movieReleases.has(item.title.id) &&
+          !hasMovieRelease(item.title.id) &&
           !item.title.theatricalRelease &&
           !item.title.homeRelease
         ) {
@@ -909,7 +978,7 @@ function IndexScreen() {
         if (
           item.title.mediaType === 'movie' &&
           (item.title.tmdbId || item.title.imdbId) &&
-          !movieReleases.has(item.title.id) &&
+          !hasMovieRelease(item.title.id) &&
           !item.title.theatricalRelease &&
           !item.title.homeRelease
         ) {
@@ -923,11 +992,7 @@ function IndexScreen() {
       for (const item of continueWatchingItems) {
         const isMovie = !item.nextEpisode;
         const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
-        if (
-          isMovie &&
-          tmdbId &&
-          !movieReleases.has(item.seriesId)
-        ) {
+        if (isMovie && tmdbId && !hasMovieRelease(item.seriesId)) {
           moviesToFetch.push({ id: item.seriesId, tmdbId });
         }
       }
@@ -937,11 +1002,7 @@ function IndexScreen() {
     if (watchlistItems) {
       for (const item of watchlistItems) {
         const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
-        if (
-          item.mediaType === 'movie' &&
-          tmdbId &&
-          !movieReleases.has(item.id)
-        ) {
+        if (item.mediaType === 'movie' && tmdbId && !hasMovieRelease(item.id)) {
           moviesToFetch.push({ id: item.id, tmdbId });
         }
       }
@@ -951,41 +1012,18 @@ function IndexScreen() {
       return;
     }
 
-    const fetchReleases = async () => {
-      try {
-        const batchResponse = await apiService.batchMovieReleases(
-          moviesToFetch.map((m) => ({ titleId: m.id, tmdbId: m.tmdbId, imdbId: m.imdbId })),
-        );
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] Queueing release fetch for ${moviesToFetch.length} movies`);
+    }
 
-        const updates = new Map<
-          string,
-          { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }
-        >();
-
-        for (let i = 0; i < batchResponse.results.length; i++) {
-          const result = batchResponse.results[i];
-          const movie = moviesToFetch[i];
-
-          if (!result.error) {
-            updates.set(movie.id, {
-              theatricalRelease: result.theatricalRelease,
-              homeRelease: result.homeRelease,
-            });
-          }
-        }
-
-        if (updates.size > 0) {
-          setMovieReleases((prev) => new Map([...prev, ...updates]));
-        }
-      } catch (error) {
-        console.warn('Failed to batch fetch movie releases:', error);
-      }
-    };
-
-    void fetchReleases();
-  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
+    // Queue for fetching - context handles batching and deduplication
+    queueReleaseFetch(moviesToFetch);
+  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, hasMovieRelease, queueReleaseFetch]);
 
   const trendingMovieCards = useMemo(() => {
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] useMemo: trendingMovieCards recomputing (${trendingMovies?.length ?? 0} items)`);
+    }
     const allCards = mapTrendingToCards(trendingMovies ?? undefined, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
@@ -996,6 +1034,9 @@ function IndexScreen() {
   }, [trendingMovies, movieReleases, exploreCardPosition]);
 
   const trendingShowCards = useMemo(() => {
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] useMemo: trendingShowCards recomputing (${trendingTVShows?.length ?? 0} items)`);
+    }
     const allCards = mapTrendingToCards(trendingTVShows ?? undefined);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
@@ -1782,6 +1823,9 @@ function IndexScreen() {
   const desktopShelves = useMemo(() => {
     // Skip computation for mobile layout
     if (shouldUseMobileLayout) return [];
+    if (DEBUG_INDEX_RENDERS) {
+      console.log(`[IndexPage] useMemo: desktopShelves recomputing - CW:${continueWatchingCards.length} WL:${watchlistCards.length} TM:${trendingMovieCards.length} TS:${trendingShowCards.length}`);
+    }
 
     // Get shelf configuration from user settings, fall back to global settings, then default order
     const shelfConfig = userSettings?.homeShelves?.shelves ??
@@ -2322,6 +2366,7 @@ function IndexScreen() {
                   registerShelfFlatListRef={registerShelfFlatListRef}
                   isInitialLoad={isInitialLoadRef.current}
                   badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+                  onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
                 />
               ))}
             </View>
@@ -2423,6 +2468,7 @@ type VirtualizedShelfProps = {
   cardSpacing: number;
   shelfPadding: number;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
+  onFirstItemTagChange?: (tag: number | null) => void; // Report first card's native tag (for drawer focus)
 };
 
 // Alias for backwards compatibility
@@ -2447,7 +2493,11 @@ function VirtualizedShelf({
   cardSpacing,
   shelfPadding,
   badgeVisibility,
+  onFirstItemTagChange,
 }: VirtualizedShelfProps) {
+  if (DEBUG_INDEX_RENDERS) {
+    console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
+  }
   const containerRef = React.useRef<RNView | null>(null);
   const flatListRef = React.useRef<FlatList>(null);
   const isEmpty = cards.length === 0;
@@ -2582,11 +2632,13 @@ function VirtualizedShelf({
           ref={(ref) => {
             cardRefsMap.current.set(index, ref);
             // Track native tags for first/last items to enable focus containment
-            if (ref && isAndroidTV) {
+            if (ref && Platform.isTV) {
               const tag = findNodeHandle(ref);
               if (tag) {
                 if (isFirstItem && tag !== firstItemTag) {
                   setFirstItemTag(tag);
+                  // Report first item tag to parent for drawer focus navigation
+                  onFirstItemTagChange?.(tag);
                 }
                 if (isLastItem && tag !== lastItemTag) {
                   setLastItemTag(tag);
@@ -2680,7 +2732,7 @@ function VirtualizedShelf({
         </Pressable>
       );
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, firstItemTag, lastItemTag],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, firstItemTag, lastItemTag, onFirstItemTagChange],
   );
 
   if (shouldCollapse) {
@@ -2755,7 +2807,8 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.cardHeight === next.cardHeight &&
     prev.cardSpacing === next.cardSpacing &&
     prev.shelfPadding === next.shelfPadding &&
-    prev.badgeVisibility === next.badgeVisibility
+    prev.badgeVisibility === next.badgeVisibility &&
+    prev.onFirstItemTagChange === next.onFirstItemTagChange
   );
 }
 
@@ -3126,19 +3179,19 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     releaseStatusIcon: {
       fontSize: Math.round(14 * badgeScale),
     },
-    // Android TV release status badge (scaled up)
+    // Android TV release status badge (matches MediaItem.tsx sizing)
     releaseStatusBadgeAndroidTV: {
       position: 'absolute',
       top: theme.spacing.md,
       left: theme.spacing.md,
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: androidTVBadgePaddingH,
-      paddingVertical: androidTVBadgePaddingV,
-      borderRadius: androidTVBadgeRadius,
+      paddingHorizontal: badgePaddingH,
+      paddingVertical: badgePaddingV,
+      borderRadius: badgeRadius,
       zIndex: 2,
     },
     releaseStatusIconAndroidTV: {
-      fontSize: Math.round(14 * androidTVBadgeScale),
+      fontSize: Math.round(14 * badgeScale),
     },
     // TV Modal styles
     tvModalContainer: {

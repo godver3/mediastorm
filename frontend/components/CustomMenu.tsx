@@ -16,6 +16,7 @@ import {
   findNodeHandle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useMenuContext } from './MenuContext';
 
 // Routes that should remain accessible when backend is unreachable
 const ALWAYS_ACCESSIBLE_ROUTES = ['/', '/settings'];
@@ -36,6 +37,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const insets = useSafeAreaInsets();
   const { activeUser } = useUserProfiles();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
+  const { firstContentFocusableTag } = useMenuContext();
   const slideAnim = useRef(new Animated.Value(isVisible ? 0 : -MENU_WIDTH)).current;
   const [isAnimatedHidden, setIsAnimatedHidden] = useState(!isVisible);
 
@@ -66,8 +68,8 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   ];
 
   const menuItems = Platform.isTV
-    ? baseMenuItems
-    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
+    ? [...baseMenuItems, { name: '/tv-perf-debug', label: 'Nav Performance' }]
+    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }, { name: '/debug', label: 'Nav Performance' }];
 
   // Calculate which menu item corresponds to the current route
   const currentRouteIndex = React.useMemo(() => {
@@ -193,6 +195,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                   disabled={disabled}
                   focusable={!disabled}
                   nextFocusLeft={selfTag ?? undefined}
+                  nextFocusRight={firstContentFocusableTag ?? undefined}
                   nextFocusUp={isFirstEnabled ? (firstEnabledTag ?? undefined) : undefined}
                   nextFocusDown={isLastEnabled ? (lastEnabledTag ?? undefined) : undefined}
                   tvParallaxProperties={{ enabled: false }}
@@ -363,6 +366,7 @@ function getMenuIconName(routeName: string): React.ComponentProps<typeof Materia
     case '/modal-test':
       return 'application-brackets-outline';
     case '/debug':
+    case '/tv-perf-debug':
       return 'bug-outline';
     default:
       return 'dots-horizontal';
