@@ -4,18 +4,21 @@ import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import MediaGrid from '@/components/MediaGrid';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
-import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
 import { apiService, type Title, type TrendingItem } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
+
+// Number of items to load per batch for progressive loading
+const INITIAL_LOAD_COUNT = 30;
+const LOAD_MORE_COUNT = 30;
 
 // Native filter button for all TV platforms - uses Pressable with style function (no re-renders)
 // Uses responsiveSize() for unified scaling across tvOS and Android TV
@@ -113,22 +116,14 @@ export default function WatchlistScreen() {
   // Continue watching data
   const { items: continueWatchingItems, loading: continueWatchingLoading } = useContinueWatching();
 
-  // Trending data
-  const {
-    data: trendingMovies,
-    error: trendingMoviesError,
-    loading: trendingMoviesLoading,
-  } = useTrendingMovies(activeUserId ?? undefined);
-  const {
-    data: trendingTVShows,
-    error: trendingTVShowsError,
-    loading: trendingTVShowsLoading,
-  } = useTrendingTVShows(activeUserId ?? undefined);
-
-  // Custom list data
-  const [customListItems, setCustomListItems] = useState<TrendingItem[]>([]);
-  const [customListLoading, setCustomListLoading] = useState(false);
-  const [customListError, setCustomListError] = useState<string | null>(null);
+  // Progressive loading state for Explore mode (trending movies, trending TV, custom lists)
+  const [exploreItems, setExploreItems] = useState<TrendingItem[]>([]);
+  const [exploreTotal, setExploreTotal] = useState(0);
+  const [exploreLoading, setExploreLoading] = useState(false);
+  const [exploreLoadingMore, setExploreLoadingMore] = useState(false);
+  const [exploreError, setExploreError] = useState<string | null>(null);
+  const loadedOffsetRef = useRef(0);
+  const isLoadingMoreRef = useRef(false);
 
   // Cache for movie release data
   const [movieReleases, setMovieReleases] = useState<
@@ -136,57 +131,118 @@ export default function WatchlistScreen() {
   >(new Map());
 
   const isCustomList = shelfConfig?.type === 'mdblist' && !!shelfConfig?.listUrl;
+  const isTrendingMovies = shelfId === 'trending-movies';
+  const isTrendingTV = shelfId === 'trending-tv' || shelfId === 'trending-shows';
+  const needsProgressiveLoading = isTrendingMovies || isTrendingTV || isCustomList;
 
-  // Fetch custom list data when needed
+  // Fetch explore data with progressive loading
+  const fetchExploreData = useCallback(
+    async (offset: number, limit: number, isInitial: boolean) => {
+      if (!needsProgressiveLoading) return;
+
+      if (isInitial) {
+        setExploreLoading(true);
+        setExploreError(null);
+        setExploreItems([]);
+        loadedOffsetRef.current = 0;
+      } else {
+        setExploreLoadingMore(true);
+      }
+
+      try {
+        let items: TrendingItem[] = [];
+        let total = 0;
+
+        if (isTrendingMovies) {
+          const response = await apiService.getTrendingMovies(
+            activeUserId ?? undefined,
+            limit,
+            offset,
+          );
+          if ('items' in response) {
+            items = response.items;
+            total = response.total;
+          }
+        } else if (isTrendingTV) {
+          const response = await apiService.getTrendingTVShows(
+            activeUserId ?? undefined,
+            limit,
+            offset,
+          );
+          if ('items' in response) {
+            items = response.items;
+            total = response.total;
+          }
+        } else if (isCustomList && shelfConfig?.listUrl) {
+          const response = await apiService.getCustomList(shelfConfig.listUrl, limit, offset);
+          items = response.items;
+          total = response.total;
+        }
+
+        if (isInitial) {
+          setExploreItems(items);
+        } else {
+          setExploreItems((prev) => [...prev, ...items]);
+        }
+        setExploreTotal(total);
+        loadedOffsetRef.current = offset + items.length;
+      } catch (err) {
+        setExploreError(err instanceof Error ? err.message : 'Failed to load items');
+      } finally {
+        setExploreLoading(false);
+        setExploreLoadingMore(false);
+        isLoadingMoreRef.current = false;
+      }
+    },
+    [needsProgressiveLoading, isTrendingMovies, isTrendingTV, isCustomList, shelfConfig?.listUrl, activeUserId],
+  );
+
+  // Initial fetch when explore mode changes
   useEffect(() => {
-    if (!isCustomList || !shelfConfig?.listUrl) {
+    if (!needsProgressiveLoading) {
+      setExploreItems([]);
+      setExploreTotal(0);
       return;
     }
 
-    const fetchCustomList = async () => {
-      setCustomListLoading(true);
-      setCustomListError(null);
-      try {
-        // Fetch all items (no limit) for the explore page
-        const { items: fetchedItems } = await apiService.getCustomList(shelfConfig.listUrl!);
-        setCustomListItems(fetchedItems);
-      } catch (err) {
-        setCustomListError(err instanceof Error ? err.message : 'Failed to load list');
-      } finally {
-        setCustomListLoading(false);
-      }
-    };
+    void fetchExploreData(0, INITIAL_LOAD_COUNT, true);
+  }, [needsProgressiveLoading, shelfId, shelfConfig?.listUrl, activeUserId, fetchExploreData]);
 
-    void fetchCustomList();
-  }, [isCustomList, shelfConfig?.listUrl]);
+  // Load more items when user scrolls near the end
+  const handleLoadMore = useCallback(() => {
+    if (!needsProgressiveLoading) return;
+    if (isLoadingMoreRef.current) return;
+    if (exploreLoading || exploreLoadingMore) return;
+    if (loadedOffsetRef.current >= exploreTotal) return; // All items loaded
 
-  // Determine current loading state
+    isLoadingMoreRef.current = true;
+    void fetchExploreData(loadedOffsetRef.current, LOAD_MORE_COUNT, false);
+  }, [needsProgressiveLoading, exploreLoading, exploreLoadingMore, exploreTotal, fetchExploreData]);
+
+  // Check if there are more items to load
+  const hasMoreItems = needsProgressiveLoading && loadedOffsetRef.current < exploreTotal;
+
+  // Determine current loading state (initial loading only, not load more)
   const loading = useMemo(() => {
     if (!isExploreMode) return watchlistLoading;
     if (shelfId === 'continue-watching') return continueWatchingLoading;
-    if (shelfId === 'trending-movies') return trendingMoviesLoading;
-    if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return trendingTVShowsLoading;
-    if (isCustomList) return customListLoading;
+    if (needsProgressiveLoading) return exploreLoading;
     return false;
   }, [
     isExploreMode,
     shelfId,
     watchlistLoading,
     continueWatchingLoading,
-    trendingMoviesLoading,
-    trendingTVShowsLoading,
-    isCustomList,
-    customListLoading,
+    needsProgressiveLoading,
+    exploreLoading,
   ]);
 
   // Determine current error state
   const error = useMemo(() => {
     if (!isExploreMode) return watchlistError;
-    if (shelfId === 'trending-movies') return trendingMoviesError ?? null;
-    if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return trendingTVShowsError ?? null;
-    if (isCustomList) return customListError;
+    if (needsProgressiveLoading) return exploreError;
     return null;
-  }, [isExploreMode, shelfId, watchlistError, trendingMoviesError, trendingTVShowsError, isCustomList, customListError]);
+  }, [isExploreMode, watchlistError, needsProgressiveLoading, exploreError]);
 
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
@@ -321,23 +377,8 @@ export default function WatchlistScreen() {
       }
     }
 
-    // From trending movies
-    if (trendingMovies) {
-      for (const item of trendingMovies) {
-        if (
-          item.title.mediaType === 'movie' &&
-          (item.title.tmdbId || item.title.imdbId) &&
-          !movieReleases.has(item.title.id) &&
-          !item.title.theatricalRelease &&
-          !item.title.homeRelease
-        ) {
-          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
-        }
-      }
-    }
-
-    // From custom list
-    for (const item of customListItems) {
+    // From explore items (trending movies, trending TV, custom lists)
+    for (const item of exploreItems) {
       if (
         item.title.mediaType === 'movie' &&
         (item.title.tmdbId || item.title.imdbId) &&
@@ -385,7 +426,7 @@ export default function WatchlistScreen() {
     };
 
     void fetchReleases();
-  }, [items, continueWatchingItems, trendingMovies, customListItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
+  }, [items, continueWatchingItems, exploreItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(items, watchlistYears);
@@ -428,58 +469,37 @@ export default function WatchlistScreen() {
     });
   }, [continueWatchingItems, movieReleases]);
 
-  // Map trending items to titles
-  const trendingMovieTitles = useMemo((): WatchlistTitle[] => {
-    if (!trendingMovies) return [];
-    return trendingMovies.map((item) => {
-      const cachedReleases = movieReleases.get(item.title.id);
-      return {
-        ...item.title,
-        uniqueKey: `tm:${item.title.id}`,
-        theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
-        homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
-      };
-    });
-  }, [trendingMovies, movieReleases]);
+  // Map explore items (trending movies, trending TV, custom lists) to titles
+  const exploreTitles = useMemo((): WatchlistTitle[] => {
+    if (!needsProgressiveLoading || exploreItems.length === 0) return [];
 
-  const trendingTVTitles = useMemo((): WatchlistTitle[] => {
-    if (!trendingTVShows) return [];
-    return trendingTVShows.map((item) => ({
-      ...item.title,
-      uniqueKey: `ttv:${item.title.id}`,
-    }));
-  }, [trendingTVShows]);
+    // Determine prefix based on shelf type
+    const prefix = isTrendingMovies ? 'tm' : isTrendingTV ? 'ttv' : 'cl';
 
-  // Map custom list items to titles
-  const customListTitles = useMemo((): WatchlistTitle[] => {
-    return customListItems.map((item, index) => {
+    return exploreItems.map((item, index) => {
       const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
       return {
         ...item.title,
-        uniqueKey: `cl:${item.title.id}-${index}`,
+        uniqueKey: `${prefix}:${item.title.id}-${index}`,
         theatricalRelease: item.title.theatricalRelease ?? cachedReleases?.theatricalRelease,
         homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
       };
     });
-  }, [customListItems, movieReleases]);
+  }, [needsProgressiveLoading, exploreItems, isTrendingMovies, isTrendingTV, movieReleases]);
 
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
     if (!isExploreMode) return watchlistTitles;
     if (shelfId === 'continue-watching') return continueWatchingTitles;
-    if (shelfId === 'trending-movies') return trendingMovieTitles;
-    if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return trendingTVTitles;
-    if (isCustomList) return customListTitles;
+    if (needsProgressiveLoading) return exploreTitles;
     return [];
   }, [
     isExploreMode,
     shelfId,
     watchlistTitles,
     continueWatchingTitles,
-    trendingMovieTitles,
-    trendingTVTitles,
-    isCustomList,
-    customListTitles,
+    needsProgressiveLoading,
+    exploreTitles,
   ]);
 
   // Page title based on mode
@@ -591,6 +611,9 @@ export default function WatchlistScreen() {
             badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
             emptyMessage={emptyMessage}
             useNativeFocus={true}
+            onEndReached={handleLoadMore}
+            loadingMore={exploreLoadingMore}
+            hasMoreItems={hasMoreItems}
           />
         </View>
       </FixedSafeAreaView>

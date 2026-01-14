@@ -208,6 +208,8 @@ export default function DrawerLayout() {
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base },
+            // Keep screens mounted when navigating away to preserve state
+            freezeOnBlur: true,
           }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="search" />

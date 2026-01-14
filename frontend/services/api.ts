@@ -939,21 +939,63 @@ class ApiService {
   }
 
   // Discover trending movies
-  async getTrendingMovies(userId?: string): Promise<TrendingItem[]> {
+  // If limit is provided, returns paginated results with total count
+  // If no limit, returns all items for backward compatibility
+  async getTrendingMovies(
+    userId?: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number }> {
     const params = new URLSearchParams({ type: 'movie' });
     if (userId) {
       params.set('userId', userId);
     }
-    return this.request<TrendingItem[]>(`/discover/new?${params.toString()}`);
+    if (limit && limit > 0) {
+      params.set('limit', limit.toString());
+    }
+    if (offset && offset > 0) {
+      params.set('offset', offset.toString());
+    }
+    // New API returns { items, total }, but we need backward compatibility
+    const response = await this.request<{ items: TrendingItem[]; total: number }>(
+      `/discover/new?${params.toString()}`,
+    );
+    // If limit was specified, return full response for pagination
+    if (limit && limit > 0) {
+      return response;
+    }
+    // Otherwise return just items for backward compatibility
+    return response.items;
   }
 
   // Discover trending TV shows
-  async getTrendingTVShows(userId?: string): Promise<TrendingItem[]> {
+  // If limit is provided, returns paginated results with total count
+  // If no limit, returns all items for backward compatibility
+  async getTrendingTVShows(
+    userId?: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number }> {
     const params = new URLSearchParams({ type: 'series' });
     if (userId) {
       params.set('userId', userId);
     }
-    return this.request<TrendingItem[]>(`/discover/new?${params.toString()}`);
+    if (limit && limit > 0) {
+      params.set('limit', limit.toString());
+    }
+    if (offset && offset > 0) {
+      params.set('offset', offset.toString());
+    }
+    // New API returns { items, total }, but we need backward compatibility
+    const response = await this.request<{ items: TrendingItem[]; total: number }>(
+      `/discover/new?${params.toString()}`,
+    );
+    // If limit was specified, return full response for pagination
+    if (limit && limit > 0) {
+      return response;
+    }
+    // Otherwise return just items for backward compatibility
+    return response.items;
   }
 
   // Get custom MDBList items
@@ -962,10 +1004,14 @@ class ApiService {
   async getCustomList(
     listUrl: string,
     limit?: number,
+    offset?: number,
   ): Promise<{ items: TrendingItem[]; total: number }> {
     const params = new URLSearchParams({ url: listUrl });
     if (limit && limit > 0) {
       params.set('limit', limit.toString());
+    }
+    if (offset && offset > 0) {
+      params.set('offset', offset.toString());
     }
     return this.request<{ items: TrendingItem[]; total: number }>(
       `/lists/custom?${params.toString()}`,

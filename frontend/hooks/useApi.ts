@@ -26,14 +26,14 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 // Hook for trending movies
-export function useTrendingMovies(userId?: string | null): UseApiState<TrendingItem[]> {
+export function useTrendingMovies(userId?: string | null, enabled = true): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!isReady) {
+    if (!isReady || !enabled) {
       return;
     }
     try {
@@ -46,27 +46,28 @@ export function useTrendingMovies(userId?: string | null): UseApiState<TrendingI
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId]);
+  }, [isReady, userId, enabled]);
 
   useEffect(() => {
-    if (!isReady) {
+    if (!isReady || !enabled) {
+      setLoading(false);
       return;
     }
     fetchData();
-  }, [isReady, backendUrl, fetchData]);
+  }, [isReady, backendUrl, fetchData, enabled]);
 
   return { data, loading, error, refetch: fetchData };
 }
 
 // Hook for trending TV shows
-export function useTrendingTVShows(userId?: string | null): UseApiState<TrendingItem[]> {
+export function useTrendingTVShows(userId?: string | null, enabled = true): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!isReady) {
+    if (!isReady || !enabled) {
       return;
     }
     try {
@@ -79,14 +80,15 @@ export function useTrendingTVShows(userId?: string | null): UseApiState<Trending
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId]);
+  }, [isReady, userId, enabled]);
 
   useEffect(() => {
-    if (!isReady) {
+    if (!isReady || !enabled) {
+      setLoading(false);
       return;
     }
     fetchData();
-  }, [isReady, backendUrl, fetchData]);
+  }, [isReady, backendUrl, fetchData, enabled]);
 
   return { data, loading, error, refetch: fetchData };
 }

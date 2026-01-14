@@ -50,9 +50,29 @@ func (h *MetadataHandler) SetUserSettingsProvider(provider userSettingsProvider)
 	h.UserSettings = provider
 }
 
+// DiscoverNewResponse wraps trending items with total count for pagination
+type DiscoverNewResponse struct {
+	Items []models.TrendingItem `json:"items"`
+	Total int                   `json:"total"`
+}
+
 func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+
+	// Parse optional pagination parameters
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
 
 	// Get trending movie source - prefer user settings, fall back to global settings
 	var trendingMovieSource config.TrendingMovieSource
@@ -85,8 +105,22 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Apply pagination
+	total := len(items)
+	if offset > 0 {
+		if offset >= total {
+			items = []models.TrendingItem{}
+		} else {
+			items = items[offset:]
+		}
+	}
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
 }
 
 func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -378,11 +412,17 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional limit parameter (0 = no limit)
+	// Parse optional pagination parameters (0 = no limit/offset)
 	limit := 0
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
 			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
 		}
 	}
 
@@ -400,12 +440,35 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		listURL = listURL + "/json"
 	}
 
-	items, total, err := h.Service.GetCustomList(listURL, limit)
+	// Fetch all items (service handles caching), then apply offset
+	// We need limit+offset items to apply pagination correctly
+	fetchLimit := 0 // fetch all for pagination
+	if limit > 0 && offset > 0 {
+		fetchLimit = limit + offset
+	} else if limit > 0 {
+		fetchLimit = limit
+	}
+
+	items, total, err := h.Service.GetCustomList(listURL, fetchLimit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Apply offset
+	if offset > 0 {
+		if offset >= len(items) {
+			items = []models.TrendingItem{}
+		} else {
+			items = items[offset:]
+		}
+	}
+
+	// Apply limit after offset
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
 	}
 
 	w.Header().Set("Content-Type", "application/json")

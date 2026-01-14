@@ -31,6 +31,7 @@ import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
 import { WatchStatusProvider } from '../components/WatchStatusContext';
+import { MovieReleasesProvider } from '../components/MovieReleasesContext';
 import { NovaThemeProvider } from '../theme';
 import { GoBackConfiguration } from '@/services/remote-control/GoBackConfiguration';
 import { SpatialNavigationDeviceTypeProvider } from '@/services/tv-navigation';
@@ -79,6 +80,7 @@ function AuthGate() {
       <PinEntryModal />
       <LiveProvider>
         <MultiscreenProvider>
+          <MovieReleasesProvider>
           <WatchlistProvider>
             <WatchStatusProvider>
               <ContinueWatchingProvider>
@@ -133,6 +135,7 @@ function AuthGate() {
             </ContinueWatchingProvider>
             </WatchStatusProvider>
           </WatchlistProvider>
+          </MovieReleasesProvider>
         </MultiscreenProvider>
       </LiveProvider>
     </UserProfilesProvider>

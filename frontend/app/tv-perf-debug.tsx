@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FlatList,
+  findNodeHandle,
   Platform,
   Pressable,
   ScrollView,
@@ -9,26 +9,12 @@ import {
   View,
 } from 'react-native';
 import { Stack } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  Easing,
-} from 'react-native-reanimated';
 import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
   SpatialNavigationNode,
   SpatialNavigationRoot,
-  SpatialNavigationVirtualizedList,
-  SpatialNavigationVirtualizedGrid,
 } from '@/services/tv-navigation';
-import { useTheme } from '@/theme';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import FocusablePressable from '@/components/FocusablePressable';
-
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 type TestItem = {
   id: string;
@@ -44,234 +30,18 @@ const generateItems = (count: number): TestItem[] =>
     color: `hsl(${(i * 37) % 360}, 70%, 50%)`,
   }));
 
-const ITEM_COUNT = 50;
-const COLUMNS = 7;
-const CARD_WIDTH = 180;
-const CARD_HEIGHT = 270;
+const ITEM_COUNT = 100;
+const COLUMNS = 10;
 const GAP = 16;
 
-type TestMode =
-  | 'ultra'
-  | 'ultra-hscroll'
-  | 'ultra-more-items'
-  | 'manual-rows'
-  | 'virtualized-grid';
+// Poster ratio cards (2:3 aspect ratio)
+const CARD_WIDTH = 120;
+const CARD_HEIGHT = 180;
 
-type CardProps = {
-  item: TestItem;
-  showGradient?: boolean;
-  useScale?: boolean;
-  onSelect?: () => void;
-  onFocus?: () => void;
-};
+type TestMode = 'native' | 'hybrid';
 
-// Basic card without SpatialNavigationFocusableView (for wrapping externally)
-const BasicCard = React.memo(function BasicCard({
-  item,
-  isFocused,
-  showGradient = true,
-  useScale = true,
-}: {
-  item: TestItem;
-  isFocused: boolean;
-  showGradient?: boolean;
-  useScale?: boolean;
-}) {
-  const focusedStyle = useScale ? styles.cardFocused : styles.cardFocusedNoScale;
-  return (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: item.color },
-        isFocused && focusedStyle,
-      ]}
-      renderToHardwareTextureAndroid={isAndroidTV}
-    >
-      {showGradient && (
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.8)']}
-          style={styles.cardGradient}
-        />
-      )}
-      <Text style={styles.cardTitle}>{item.title}</Text>
-      {isFocused && <Text style={styles.focusedLabel}>FOCUSED</Text>}
-    </View>
-  );
-});
-
-// Card with built-in SpatialNavigationFocusableView
-const FocusableCard = React.memo(function FocusableCard({
-  item,
-  showGradient = true,
-  useScale = true,
-  onSelect,
-  onFocus,
-}: CardProps) {
-  return (
-    <SpatialNavigationFocusableView onSelect={onSelect} onFocus={onFocus}>
-      {({ isFocused }: { isFocused: boolean }) => (
-        <BasicCard item={item} isFocused={isFocused} showGradient={showGradient} useScale={useScale} />
-      )}
-    </SpatialNavigationFocusableView>
-  );
-});
-
-// Simple focusable - minimal overhead
-const SimpleFocusable = React.memo(function SimpleFocusable({
-  item,
-  onSelect,
-  onFocus,
-}: CardProps) {
-  return (
-    <SpatialNavigationFocusableView onSelect={onSelect} onFocus={onFocus}>
-      {({ isFocused }: { isFocused: boolean }) => (
-        <View
-          style={[
-            styles.simpleCard,
-            { backgroundColor: item.color },
-            isFocused && styles.simpleCardFocused,
-          ]}
-        >
-          <Text style={styles.simpleCardTitle}>{item.title}</Text>
-        </View>
-      )}
-    </SpatialNavigationFocusableView>
-  );
-});
-
-// Animated card using Reanimated for smooth focus transitions
-const AnimatedFocusableCard = React.memo(function AnimatedFocusableCard({
-  item,
-  onSelect,
-  onFocus,
-}: CardProps) {
-  const scale = useSharedValue(1);
-  const borderOpacity = useSharedValue(0);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    borderColor: `rgba(255, 255, 255, ${borderOpacity.value})`,
-  }));
-
-  return (
-    <SpatialNavigationFocusableView onSelect={onSelect} onFocus={onFocus}>
-      {({ isFocused }: { isFocused: boolean }) => {
-        // Update animations based on focus state
-        scale.value = withTiming(isFocused ? 1.05 : 1, {
-          duration: 150,
-          easing: Easing.out(Easing.ease),
-        });
-        borderOpacity.value = withTiming(isFocused ? 1 : 0, {
-          duration: 150,
-          easing: Easing.out(Easing.ease),
-        });
-
-        return (
-          <Animated.View
-            style={[
-              styles.card,
-              { backgroundColor: item.color, borderWidth: 3 },
-              animatedStyle,
-            ]}
-          >
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.8)']}
-              style={styles.cardGradient}
-            />
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            {isFocused && <Text style={styles.focusedLabel}>FOCUSED</Text>}
-          </Animated.View>
-        );
-      }}
-    </SpatialNavigationFocusableView>
-  );
-});
-
-// Native focus card using Pressable with Android TV/tvOS native focus
-const NativeFocusCard = React.memo(function NativeFocusCard({
-  item,
-  onSelect,
-  onFocus,
-  autoFocus,
-}: CardProps & { autoFocus?: boolean }) {
-  const [isFocused, setIsFocused] = useState(false);
-
-  return (
-    <Pressable
-      onPress={onSelect}
-      onFocus={() => {
-        setIsFocused(true);
-        onFocus?.();
-      }}
-      onBlur={() => setIsFocused(false)}
-      // @ts-ignore - TV-specific props
-      hasTVPreferredFocus={autoFocus}
-      style={[
-        styles.card,
-        { backgroundColor: item.color },
-        isFocused && styles.cardFocused,
-      ]}
-    >
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.8)']}
-        style={styles.cardGradient}
-      />
-      <Text style={styles.cardTitle}>{item.title}</Text>
-      {isFocused && <Text style={styles.focusedLabel}>NATIVE</Text>}
-    </Pressable>
-  );
-});
-
-// Native focus card using Pressable's style function - no setState re-renders
-const NativeFocusCardNoState = React.memo(function NativeFocusCardNoState({
-  item,
-  onSelect,
-  onFocus,
-  autoFocus,
-}: CardProps & { autoFocus?: boolean }) {
-  return (
-    <Pressable
-      onPress={onSelect}
-      onFocus={onFocus}
-      // @ts-ignore - TV-specific props
-      hasTVPreferredFocus={autoFocus}
-      style={({ focused }) => [
-        styles.card,
-        { backgroundColor: item.color },
-        focused && styles.cardFocusedNoScale,
-      ]}
-    >
-      <Text style={styles.cardTitle}>{item.title}</Text>
-    </Pressable>
-  );
-});
-
-// Absolute minimal native card - no gradient, no scale, uses Pressable's native focused prop
-const NativeMinimalCard = React.memo(function NativeMinimalCard({
-  item,
-  onSelect,
-  onFocus,
-  autoFocus,
-}: CardProps & { autoFocus?: boolean }) {
-  return (
-    <Pressable
-      onPress={onSelect}
-      onFocus={onFocus}
-      // @ts-ignore - TV-specific props
-      hasTVPreferredFocus={autoFocus}
-      style={({ focused }) => [
-        styles.simpleCard,
-        { backgroundColor: item.color },
-        focused && styles.simpleCardFocused,
-      ]}
-    >
-      <Text style={styles.simpleCardTitle}>{item.title}</Text>
-    </Pressable>
-  );
-});
-
-// Ultra minimal - NO JS callbacks at all, pure native focus
-const NativeUltraMinimalCard = React.memo(function NativeUltraMinimalCard({
+// Native card - pure native focus, no spatial nav overhead
+const NativeCard = React.memo(function NativeCard({
   item,
   autoFocus,
 }: { item: TestItem; autoFocus?: boolean }) {
@@ -280,25 +50,89 @@ const NativeUltraMinimalCard = React.memo(function NativeUltraMinimalCard({
       // @ts-ignore - TV-specific props
       hasTVPreferredFocus={autoFocus}
       style={({ focused }) => [
-        styles.simpleCard,
+        styles.card,
         { backgroundColor: item.color },
-        focused && styles.simpleCardFocused,
+        focused && styles.cardFocused,
       ]}
     >
-      <Text style={styles.simpleCardTitle}>{item.title}</Text>
+      <Text style={styles.cardTitle}>{item.title}</Text>
+    </Pressable>
+  );
+});
+
+// Hybrid approach: Pure native focus with nextFocus* props to maintain column position
+// and trap horizontal focus within rows
+type HybridCardProps = {
+  item: TestItem;
+  rowIndex: number;
+  colIndex: number;
+  autoFocus?: boolean;
+  onFocus?: () => void;
+  onSelect?: () => void;
+  // Native focus linking for navigation
+  nextFocusUp?: number;
+  nextFocusDown?: number;
+  nextFocusLeft?: number;
+  nextFocusRight?: number;
+  // Stable callback for registering tags
+  registerTag: (rowIndex: number, colIndex: number, tag: number | null) => void;
+};
+
+const HybridCard = React.memo(function HybridCard({
+  item,
+  rowIndex,
+  colIndex,
+  autoFocus,
+  onFocus,
+  onSelect,
+  nextFocusUp,
+  nextFocusDown,
+  nextFocusLeft,
+  nextFocusRight,
+  registerTag,
+}: HybridCardProps) {
+  const ref = useRef<View>(null);
+
+  useEffect(() => {
+    if (ref.current) {
+      const tag = findNodeHandle(ref.current);
+      registerTag(rowIndex, colIndex, tag);
+    }
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <Pressable
+      ref={ref}
+      onPress={onSelect}
+      onFocus={onFocus}
+      // @ts-ignore - TV-specific props
+      hasTVPreferredFocus={autoFocus}
+      nextFocusUp={nextFocusUp}
+      nextFocusDown={nextFocusDown}
+      nextFocusLeft={nextFocusLeft}
+      nextFocusRight={nextFocusRight}
+      style={({ focused }) => [
+        styles.card,
+        { backgroundColor: item.color },
+        focused && styles.cardFocused,
+      ]}
+    >
+      <Text style={styles.cardTitle}>{item.title}</Text>
     </Pressable>
   );
 });
 
 export default function TVPerfDebugScreen() {
-  const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useTVDimensions();
-  const [mode, setMode] = useState<TestMode>('ultra');
+  const [mode, setMode] = useState<TestMode>('native');
   const [lastAction, setLastAction] = useState<string>('None');
   const [actionTime, setActionTime] = useState<number>(0);
   const [focusRate, setFocusRate] = useState<number>(0);
   const lastPressTime = useRef<number>(0);
   const focusCountRef = useRef<number>(0);
+  const currentRowRef = useRef<number>(0); // Track current row to avoid unnecessary scrolls
   const scrollViewRef = useRef<ScrollView>(null);
   const rowRefs = useRef<{ [key: string]: View | null }>({});
 
@@ -337,396 +171,39 @@ export default function TVPerfDebugScreen() {
     setActionTime(delta);
   }, []);
 
-  const scrollToRow = useCallback((rowKey: string) => {
-    const rowRef = rowRefs.current[rowKey];
-    if (!rowRef || !scrollViewRef.current) return;
+  // Row height: label (~26px) + marginBottom (8) + card (180) + container marginBottom (24) = ~238px
+  const ROW_HEIGHT = CARD_HEIGHT + 58;
+  const SCROLL_OFFSET = 20; // smaller offset = more scrolling
 
-    rowRef.measureLayout(
-      scrollViewRef.current as any,
-      (_left, top) => {
-        scrollViewRef.current?.scrollTo({ y: Math.max(0, top - 100), animated: true });
-      },
-      () => {}
-    );
+  const scrollToRow = useCallback((rowIndex: number) => {
+    if (!scrollViewRef.current) return;
+    // Calculate position directly for immediate, predictable scrolling
+    const targetY = Math.max(0, rowIndex * ROW_HEIGHT - SCROLL_OFFSET);
+    scrollViewRef.current.scrollTo({ y: targetY, animated: false });
   }, []);
 
   const modes: { key: TestMode; label: string }[] = [
-    { key: 'ultra', label: 'Ultra (7 cols)' },
-    { key: 'ultra-hscroll', label: 'Ultra + HScroll' },
-    { key: 'ultra-more-items', label: 'Ultra (15/row)' },
-    { key: 'manual-rows', label: 'Spatial Nav' },
-    { key: 'virtualized-grid', label: 'VGrid' },
+    { key: 'native', label: 'Native' },
+    { key: 'hybrid', label: 'Hybrid' },
   ];
 
-  const renderVirtualizedGrid = () => (
-    <View style={styles.gridContainer}>
-      <SpatialNavigationVirtualizedGrid
-        data={items}
-        itemHeight={CARD_HEIGHT + GAP}
-        numberOfColumns={COLUMNS}
-        renderItem={({ item }: { item: TestItem }) => (
-          <View style={styles.gridItemWrapper}>
-            <FocusableCard
-              item={item}
-              onSelect={() => handleSelect(item)}
-              onFocus={() => handleFocus(item)}
-            />
-          </View>
-        )}
-      />
-    </View>
-  );
-
-  const renderVirtualizedListHorizontal = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
-      <SpatialNavigationNode orientation="vertical">
-        {rows.map((row, rowIndex) => (
-          <View key={`row-${rowIndex}`} style={styles.rowContainer}>
-            <Text style={styles.rowLabel}>Row {rowIndex + 1}</Text>
-            <SpatialNavigationNode orientation="horizontal">
-              {rowIndex === 0 ? (
-                <DefaultFocus>
-                  <SpatialNavigationVirtualizedList
-                    data={row}
-                    itemSize={CARD_WIDTH + GAP}
-                    orientation="horizontal"
-                    numberOfRenderedItems={isAndroidTV ? 7 : 9}
-                    numberOfItemsVisibleOnScreen={isAndroidTV ? 5 : 7}
-                    renderItem={({ item }: { item: TestItem }) => (
-                      <View style={{ width: CARD_WIDTH, marginRight: GAP }}>
-                        <FocusableCard
-                          item={item}
-                          onSelect={() => handleSelect(item)}
-                          onFocus={() => handleFocus(item)}
-                        />
-                      </View>
-                    )}
-                  />
-                </DefaultFocus>
-              ) : (
-                <SpatialNavigationVirtualizedList
-                  data={row}
-                  itemSize={CARD_WIDTH + GAP}
-                  orientation="horizontal"
-                  numberOfRenderedItems={isAndroidTV ? 7 : 9}
-                  numberOfItemsVisibleOnScreen={isAndroidTV ? 5 : 7}
-                  renderItem={({ item }: { item: TestItem }) => (
-                    <View style={{ width: CARD_WIDTH, marginRight: GAP }}>
-                      <FocusableCard
-                        item={item}
-                        onSelect={() => handleSelect(item)}
-                        onFocus={() => handleFocus(item)}
-                      />
-                    </View>
-                  )}
-                />
-              )}
-            </SpatialNavigationNode>
-          </View>
-        ))}
-      </SpatialNavigationNode>
-    </ScrollView>
-  );
-
-  const renderManualRows = (showGradient: boolean, useScale: boolean = true) => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-      removeClippedSubviews={isAndroidTV}
-    >
-      <SpatialNavigationNode orientation="vertical" alignInGrid>
-        {rows.map((row, rowIndex) => {
-          const rowKey = `row-${rowIndex}`;
-          return (
-            <View
-              key={rowKey}
-              ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-              style={styles.rowContainer}
-            >
-              <Text style={styles.rowLabel}>Row {rowIndex + 1}</Text>
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.rowInner}>
-                  {row.map((item, colIndex) => {
-                    const isFirst = rowIndex === 0 && colIndex === 0;
-                    const card = (
-                      <FocusableCard
-                        key={item.id}
-                        item={item}
-                        showGradient={showGradient}
-                        useScale={useScale}
-                        onSelect={() => handleSelect(item)}
-                        onFocus={() => {
-                          handleFocus(item);
-                          scrollToRow(rowKey);
-                        }}
-                      />
-                    );
-                    return (
-                      <View key={item.id} style={styles.manualCardWrapper}>
-                        {isFirst ? <DefaultFocus>{card}</DefaultFocus> : card}
-                      </View>
-                    );
-                  })}
-                </View>
-              </SpatialNavigationNode>
-            </View>
-          );
-        })}
-      </SpatialNavigationNode>
-    </ScrollView>
-  );
-
-  const renderSimpleFocusable = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-      removeClippedSubviews={isAndroidTV}
-    >
-      <SpatialNavigationNode orientation="vertical" alignInGrid>
-        {rows.map((row, rowIndex) => {
-          const rowKey = `row-${rowIndex}`;
-          return (
-            <View
-              key={rowKey}
-              ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-              style={styles.rowContainer}
-            >
-              <Text style={styles.rowLabel}>Row {rowIndex + 1}</Text>
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.rowInner}>
-                  {row.map((item, colIndex) => {
-                    const isFirst = rowIndex === 0 && colIndex === 0;
-                    const card = (
-                      <SimpleFocusable
-                        key={item.id}
-                        item={item}
-                        onSelect={() => handleSelect(item)}
-                        onFocus={() => {
-                          handleFocus(item);
-                          scrollToRow(rowKey);
-                        }}
-                      />
-                    );
-                    return (
-                      <View key={item.id} style={styles.simpleCardWrapper}>
-                        {isFirst ? <DefaultFocus>{card}</DefaultFocus> : card}
-                      </View>
-                    );
-                  })}
-                </View>
-              </SpatialNavigationNode>
-            </View>
-          );
-        })}
-      </SpatialNavigationNode>
-    </ScrollView>
-  );
-
-  const renderAnimatedRows = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-      removeClippedSubviews={isAndroidTV}
-    >
-      <SpatialNavigationNode orientation="vertical" alignInGrid>
-        {rows.map((row, rowIndex) => {
-          const rowKey = `row-${rowIndex}`;
-          return (
-            <View
-              key={rowKey}
-              ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-              style={styles.rowContainer}
-            >
-              <Text style={styles.rowLabel}>Row {rowIndex + 1}</Text>
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.rowInner}>
-                  {row.map((item, colIndex) => {
-                    const isFirst = rowIndex === 0 && colIndex === 0;
-                    const card = (
-                      <AnimatedFocusableCard
-                        key={item.id}
-                        item={item}
-                        onSelect={() => handleSelect(item)}
-                        onFocus={() => {
-                          handleFocus(item);
-                          scrollToRow(rowKey);
-                        }}
-                      />
-                    );
-                    return (
-                      <View key={item.id} style={styles.manualCardWrapper}>
-                        {isFirst ? <DefaultFocus>{card}</DefaultFocus> : card}
-                      </View>
-                    );
-                  })}
-                </View>
-              </SpatialNavigationNode>
-            </View>
-          );
-        })}
-      </SpatialNavigationNode>
-    </ScrollView>
-  );
-
-  // Native focus - uses Android TV / tvOS native focus system without spatial navigation library
-  const renderNativeFocus = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
-      {rows.map((row, rowIndex) => {
-        const rowKey = `row-${rowIndex}`;
-        return (
-          <View
-            key={rowKey}
-            ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-            style={styles.rowContainer}
-          >
-            <Text style={styles.rowLabel}>Row {rowIndex + 1} (Native + setState)</Text>
-            <View style={styles.rowInner}>
-              {row.map((item, colIndex) => (
-                <View key={item.id} style={styles.manualCardWrapper}>
-                  <NativeFocusCard
-                    item={item}
-                    autoFocus={rowIndex === 0 && colIndex === 0}
-                    onSelect={() => handleSelect(item)}
-                    onFocus={() => {
-                      handleFocus(item);
-                      scrollToRow(rowKey);
-                    }}
-                  />
-                </View>
-              ))}
-            </View>
-          </View>
-        );
-      })}
-    </ScrollView>
-  );
-
-  // Native focus without setState - uses Pressable's style function
-  const renderNativeNoState = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
-      {rows.map((row, rowIndex) => {
-        const rowKey = `row-${rowIndex}`;
-        return (
-          <View
-            key={rowKey}
-            ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-            style={styles.rowContainer}
-          >
-            <Text style={styles.rowLabel}>Row {rowIndex + 1} (No setState)</Text>
-            <View style={styles.rowInner}>
-              {row.map((item, colIndex) => (
-                <View key={item.id} style={styles.manualCardWrapper}>
-                  <NativeFocusCardNoState
-                    item={item}
-                    autoFocus={rowIndex === 0 && colIndex === 0}
-                    onSelect={() => handleSelect(item)}
-                    onFocus={() => {
-                      handleFocus(item);
-                      scrollToRow(rowKey);
-                    }}
-                  />
-                </View>
-              ))}
-            </View>
-          </View>
-        );
-      })}
-    </ScrollView>
-  );
-
-  // Native minimal - absolute minimum overhead
-  const renderNativeMinimal = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
-      {rows.map((row, rowIndex) => {
-        const rowKey = `row-${rowIndex}`;
-        return (
-          <View
-            key={rowKey}
-            ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-            style={styles.rowContainer}
-          >
-            <Text style={styles.rowLabel}>Row {rowIndex + 1} (Minimal)</Text>
-            <View style={styles.rowInner}>
-              {row.map((item, colIndex) => (
-                <View key={item.id} style={styles.simpleCardWrapper}>
-                  <NativeMinimalCard
-                    item={item}
-                    autoFocus={rowIndex === 0 && colIndex === 0}
-                    onSelect={() => handleSelect(item)}
-                    onFocus={() => {
-                      handleFocus(item);
-                      scrollToRow(rowKey);
-                    }}
-                  />
-                </View>
-              ))}
-            </View>
-          </View>
-        );
-      })}
-    </ScrollView>
-  );
-
-  // Ultra - NO JS callbacks, pure native focus
-  const renderUltra = () => (
+  // Native - pure native focus, no spatial nav
+  const renderNative = () => (
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.scrollContent}
     >
       {rows.map((row, rowIndex) => (
         <View key={`row-${rowIndex}`} style={styles.rowContainer}>
-          <Text style={styles.rowLabel}>Row {rowIndex + 1}</Text>
-          <View style={styles.rowInner}>
-            {row.map((item, colIndex) => (
-              <View key={item.id} style={styles.simpleCardWrapper}>
-                <NativeUltraMinimalCard
-                  item={item}
-                  autoFocus={rowIndex === 0 && colIndex === 0}
-                />
-              </View>
-            ))}
-          </View>
-        </View>
-      ))}
-    </ScrollView>
-  );
-
-  // Ultra with horizontal ScrollView per row
-  const renderUltraHScroll = () => (
-    <ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
-      {rows.map((row, rowIndex) => (
-        <View key={`row-${rowIndex}`} style={styles.rowContainer}>
-          <Text style={styles.rowLabel}>Row {rowIndex + 1} (HScroll)</Text>
+          <Text style={styles.rowLabel}>Row {rowIndex + 1} (Native)</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.rowInner}
           >
             {row.map((item, colIndex) => (
-              <View key={item.id} style={styles.simpleCardWrapper}>
-                <NativeUltraMinimalCard
+              <View key={item.id} style={styles.cardWrapper}>
+                <NativeCard
                   item={item}
                   autoFocus={rowIndex === 0 && colIndex === 0}
                 />
@@ -738,86 +215,117 @@ export default function TVPerfDebugScreen() {
     </ScrollView>
   );
 
-  // Ultra with more items per row (15) to force horizontal scrolling
-  const moreItemsPerRow = 15;
-  const moreRows = useMemo(() => {
-    const result: TestItem[][] = [];
-    for (let i = 0; i < items.length; i += moreItemsPerRow) {
-      result.push(items.slice(i, i + moreItemsPerRow));
-    }
-    // If we don't have enough items, pad with more
-    if (result.length < 4) {
-      const extraItems = generateItems(60);
-      for (let i = 0; i < extraItems.length; i += moreItemsPerRow) {
-        result.push(extraItems.slice(i, i + moreItemsPerRow));
+  // Hybrid mode - pure native focus with nextFocusUp/Down for column alignment
+  // Store card tags in a 2D grid: cardTags[rowIndex][colIndex] = native tag
+  const cardTagsRef = useRef<(number | null)[][]>([]);
+  const [cardTagsVersion, setCardTagsVersion] = useState(0);
+  const pendingUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Initialize the 2D array structure
+  if (cardTagsRef.current.length !== rows.length) {
+    cardTagsRef.current = rows.map((row) => row.map(() => null));
+  }
+
+  // Debounced tag registration - batch all updates into single re-render
+  const registerTag = useCallback((rowIndex: number, colIndex: number, tag: number | null) => {
+    if (cardTagsRef.current[rowIndex]?.[colIndex] !== tag) {
+      cardTagsRef.current[rowIndex][colIndex] = tag;
+
+      // Debounce: only trigger one re-render after all cards register
+      if (pendingUpdateRef.current) {
+        clearTimeout(pendingUpdateRef.current);
       }
+      pendingUpdateRef.current = setTimeout(() => {
+        setCardTagsVersion((v) => v + 1);
+        pendingUpdateRef.current = null;
+      }, 50);
     }
-    return result;
-  }, [items]);
+  }, []);
 
-  const renderUltraMoreItems = () => (
+  const getNextFocusUp = useCallback((rowIndex: number, colIndex: number) => {
+    if (rowIndex === 0) return undefined;
+    return cardTagsRef.current[rowIndex - 1]?.[colIndex] ?? undefined;
+  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const getNextFocusDown = useCallback((rowIndex: number, colIndex: number) => {
+    if (rowIndex >= rows.length - 1) return undefined;
+    return cardTagsRef.current[rowIndex + 1]?.[colIndex] ?? undefined;
+  }, [cardTagsVersion, rows.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // For trapping focus at row edges - first item points left to itself, last item points right to itself
+  const getNextFocusLeft = useCallback((rowIndex: number, colIndex: number) => {
+    if (colIndex === 0) {
+      // First item in row - trap focus by pointing to self
+      return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
+    }
+    return undefined; // Let native handle normal left navigation
+  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const getNextFocusRight = useCallback((rowIndex: number, colIndex: number, rowLength: number) => {
+    if (colIndex === rowLength - 1) {
+      // Last item in row - trap focus by pointing to self
+      return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
+    }
+    return undefined; // Let native handle normal right navigation
+  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const renderHybrid = () => (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.scrollView}
       contentContainerStyle={styles.scrollContent}
     >
-      {moreRows.map((row, rowIndex) => (
-        <View key={`row-${rowIndex}`} style={styles.rowContainer}>
-          <Text style={styles.rowLabel}>Row {rowIndex + 1} ({row.length} items)</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.rowInner}
+      {rows.map((row, rowIndex) => {
+        const rowKey = `row-${rowIndex}`;
+        return (
+          <View
+            key={rowKey}
+            ref={(ref) => { rowRefs.current[rowKey] = ref; }}
+            style={styles.rowContainer}
           >
-            {row.map((item, colIndex) => (
-              <View key={item.id} style={styles.simpleCardWrapper}>
-                <NativeUltraMinimalCard
-                  item={item}
-                  autoFocus={rowIndex === 0 && colIndex === 0}
-                />
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      ))}
+            <Text style={styles.rowLabel}>Row {rowIndex + 1} (Hybrid)</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.rowInner}
+            >
+              {row.map((item, colIndex) => (
+                <View key={item.id} style={styles.cardWrapper}>
+                  <HybridCard
+                    item={item}
+                    rowIndex={rowIndex}
+                    colIndex={colIndex}
+                    autoFocus={rowIndex === 0 && colIndex === 0}
+                    onFocus={() => {
+                      handleFocus(item);
+                      // Only scroll when row changes (vertical navigation)
+                      if (currentRowRef.current !== rowIndex) {
+                        currentRowRef.current = rowIndex;
+                        scrollToRow(rowIndex);
+                      }
+                    }}
+                    onSelect={() => handleSelect(item)}
+                    nextFocusUp={getNextFocusUp(rowIndex, colIndex)}
+                    nextFocusDown={getNextFocusDown(rowIndex, colIndex)}
+                    nextFocusLeft={getNextFocusLeft(rowIndex, colIndex)}
+                    nextFocusRight={getNextFocusRight(rowIndex, colIndex, row.length)}
+                    registerTag={registerTag}
+                  />
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        );
+      })}
     </ScrollView>
-  );
-
-  // Native FlatList - uses RN FlatList with native focus
-  const renderNativeFlatList = () => (
-    <FlatList<TestItem>
-      data={items}
-      numColumns={COLUMNS}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={styles.scrollContent}
-      removeClippedSubviews={isAndroidTV}
-      initialNumToRender={14}
-      maxToRenderPerBatch={7}
-      windowSize={5}
-      renderItem={({ item, index }) => (
-        <View style={styles.flatListItem}>
-          <NativeFocusCard
-            item={item}
-            autoFocus={index === 0}
-            onSelect={() => handleSelect(item)}
-            onFocus={() => handleFocus(item)}
-          />
-        </View>
-      )}
-    />
   );
 
   const renderContent = () => {
     switch (mode) {
-      case 'ultra':
-        return renderUltra();
-      case 'ultra-hscroll':
-        return renderUltraHScroll();
-      case 'ultra-more-items':
-        return renderUltraMoreItems();
-      case 'manual-rows':
-        return renderManualRows(true, true);
-      case 'virtualized-grid':
-        return renderVirtualizedGrid();
+      case 'native':
+        return renderNative();
+      case 'hybrid':
+        return renderHybrid();
     }
   };
 
@@ -829,7 +337,6 @@ export default function TVPerfDebugScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>TV Performance Debug</Text>
           <View style={styles.stats}>
-            <Text style={styles.statText}>Mode: {mode}</Text>
             <Text style={styles.statText}>Last: {lastAction}</Text>
             <Text style={styles.statText}>
               Delta: {actionTime > 0 ? `${actionTime.toFixed(0)}ms` : '-'}
@@ -924,15 +431,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 100,
   },
-  gridContainer: {
-    flex: 1,
-  },
-  gridItemWrapper: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
-    marginRight: GAP,
-    marginBottom: GAP,
-  },
   rowContainer: {
     marginBottom: 24,
   },
@@ -945,68 +443,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: GAP,
   },
-  manualCardWrapper: {
+  cardWrapper: {
     width: CARD_WIDTH,
-  },
-  simpleCardWrapper: {
-    width: CARD_WIDTH,
-  },
-  flatListItem: {
-    width: CARD_WIDTH,
-    marginRight: GAP,
-    marginBottom: GAP,
   },
   card: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: 12,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-    borderWidth: 3,
-    borderColor: 'transparent',
-  },
-  cardFocused: {
-    borderColor: '#fff',
-    transform: [{ scale: 1.05 }],
-  },
-  cardFocusedNoScale: {
-    borderColor: '#fff',
-  },
-  cardGradient: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    padding: 12,
-  },
-  focusedLabel: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#fff',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  simpleCard: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
-    borderRadius: 12,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
     borderColor: 'transparent',
   },
-  simpleCardFocused: {
+  cardFocused: {
     borderColor: '#fff',
   },
-  simpleCardTitle: {
-    fontSize: 20,
+  cardTitle: {
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#fff',
   },

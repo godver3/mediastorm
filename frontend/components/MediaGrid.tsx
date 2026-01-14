@@ -49,6 +49,9 @@ interface MediaGridProps {
   useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigation (faster on Android TV)
   useMinimalCards?: boolean; // Use ultra-simple cards for performance testing
   minimalCardLevel?: number; // 0=minimal, 1=+image, 2=+gradient, 3=+text overlay
+  onEndReached?: () => void; // Called when user scrolls near the end (for infinite scroll)
+  loadingMore?: boolean; // Show loading indicator at the bottom for progressive loading
+  hasMoreItems?: boolean; // Whether there are more items to load
 }
 
 // Static styles for MinimalCard - avoids object creation per render
@@ -368,6 +371,9 @@ const MediaGrid = React.memo(
     useNativeFocus = false,
     useMinimalCards = false,
     minimalCardLevel = 0,
+    onEndReached,
+    loadingMore = false,
+    hasMoreItems = false,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth } = useTVDimensions();
@@ -481,6 +487,14 @@ const MediaGrid = React.memo(
     const scrollToRowNativeRef = useRef(scrollToRowNative);
     scrollToRowNativeRef.current = scrollToRowNative;
 
+    // Ref for onEndReached to use in gridHandlers without causing rerender
+    const onEndReachedRef = useRef(onEndReached);
+    onEndReachedRef.current = onEndReached;
+    const hasMoreItemsRef = useRef(hasMoreItems);
+    hasMoreItemsRef.current = hasMoreItems;
+    const loadingMoreRef = useRef(loadingMore);
+    loadingMoreRef.current = loadingMore;
+
     // Stable handlers via context
     const gridHandlers = useMemo<MediaGridHandlers>(() => ({
       onItemPress: (itemId: string) => {
@@ -497,8 +511,39 @@ const MediaGrid = React.memo(
         if (rowIndex >= renderedRowCount - 2) {
           setRenderedRowCount(prev => prev + LOAD_MORE_ROWS);
         }
+        // Trigger onEndReached for progressive loading when near the end (5 rows early)
+        if (rowIndex >= renderedRowCount - 5 && hasMoreItemsRef.current && !loadingMoreRef.current) {
+          onEndReachedRef.current?.();
+        }
       },
     }), [itemMap, onItemPress, onItemLongPress, renderedRowCount]);
+
+    // Handle scroll to detect when user is near the end (defined at component level to follow hooks rules)
+    const handleScroll = useCallback((event: any) => {
+      if (!onEndReached || loadingMore || !hasMoreItems) return;
+
+      const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+      const paddingToBottom = 600; // Trigger when 600px from bottom (about 2 rows early)
+      const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+
+      if (isNearBottom) {
+        onEndReached();
+      }
+    }, [onEndReached, loadingMore, hasMoreItems]);
+
+    // Loading more indicator component
+    const LoadingMoreIndicator = useMemo(() => (
+      loadingMore ? (
+        <View style={{ paddingVertical: theme.spacing.xl, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+          <Text style={[styles.loadingText, { marginTop: theme.spacing.sm }]}>Loading more...</Text>
+        </View>
+      ) : hasMoreItems ? (
+        <View style={{ paddingVertical: theme.spacing.lg, alignItems: 'center' }}>
+          <Text style={styles.emptyText}>Scroll for more</Text>
+        </View>
+      ) : null
+    ), [loadingMore, hasMoreItems, theme.spacing.xl, theme.spacing.lg, theme.spacing.sm, theme.colors.accent.primary, styles.loadingText, styles.emptyText]);
 
     const renderContent = () => {
       if (loading) {
@@ -534,6 +579,8 @@ const MediaGrid = React.memo(
               style={styles.scrollView}
               contentContainerStyle={styles.grid}
               showsVerticalScrollIndicator={false}
+              onScroll={handleScroll}
+              scrollEventThrottle={100}
             >
               <View style={styles.mobileGridContainer}>
                 {items.map((item, index) => {
@@ -604,6 +651,7 @@ const MediaGrid = React.memo(
                   );
                 })}
               </View>
+              {LoadingMoreIndicator}
             </ScrollView>
           );
         }
@@ -665,6 +713,8 @@ const MediaGrid = React.memo(
               contentContainerStyle={styles.grid}
               showsVerticalScrollIndicator={false}
               scrollEnabled={!Platform.isTV}
+              onScroll={handleScroll}
+              scrollEventThrottle={100}
             >
               {visibleRows.map((row, rowIndex) => (
                 <View
@@ -705,6 +755,7 @@ const MediaGrid = React.memo(
                   </View>
                 </View>
               ))}
+              {LoadingMoreIndicator}
             </ScrollView>
           </MediaGridHandlersContext.Provider>
         );
@@ -797,8 +848,10 @@ const MediaGrid = React.memo(
       prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
       prevProps.badgeVisibility === nextProps.badgeVisibility &&
       prevProps.useNativeFocus === nextProps.useNativeFocus &&
-      prevProps.useMinimalCards === nextProps.useMinimalCards
-      // onItemPress is omitted - function reference changes are expected
+      prevProps.useMinimalCards === nextProps.useMinimalCards &&
+      prevProps.loadingMore === nextProps.loadingMore &&
+      prevProps.hasMoreItems === nextProps.hasMoreItems
+      // onItemPress and onEndReached are omitted - function reference changes are expected
     );
   },
 );
