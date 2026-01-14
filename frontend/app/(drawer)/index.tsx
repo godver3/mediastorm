@@ -2454,6 +2454,11 @@ function VirtualizedShelf({
   const shouldCollapse = Boolean(collapseIfEmpty && isEmpty);
   const lastFocusTimeRef = React.useRef<number>(0);
   const cardRefsMap = React.useRef<Map<number, View | null>>(new Map());
+  // Track native tags for first/last items to constrain horizontal focus within shelf
+  const [firstItemTag, setFirstItemTag] = React.useState<number | null>(null);
+  const [lastItemTag, setLastItemTag] = React.useState<number | null>(null);
+  const lastItemIndexRef = React.useRef<number>(cards.length - 1);
+  lastItemIndexRef.current = cards.length - 1;
 
   // Create card lookup map for O(1) access by ID
   const cardMap = useMemo(() => {
@@ -2481,6 +2486,11 @@ function VirtualizedShelf({
       registerShelfFlatListRef(shelfKey, null);
     };
   }, [registerShelfFlatListRef, shelfKey]);
+
+  // Reset last item tag when cards length changes (new last item)
+  React.useEffect(() => {
+    setLastItemTag(null);
+  }, [cards.length]);
 
   // Calculate item size for virtualized list (card width + spacing)
   const itemSize = cardWidth + cardSpacing;
@@ -2551,11 +2561,7 @@ function VirtualizedShelf({
       const shouldAutoFocus = autoFocus && index === 0;
       // Check if this is the first or last item for focus containment
       const isFirstItem = index === 0;
-      const isLastItem = index === cards.length - 1;
-
-      // Get refs for focus containment
-      const firstItemRef = cardRefsMap.current.get(0);
-      const lastItemRef = cardRefsMap.current.get(cards.length - 1);
+      const isLastItem = index === lastItemIndexRef.current;
 
       // Compute release icon for movies (shared between platforms)
       const releaseIcon = card.mediaType === 'movie' ? getMovieReleaseIcon({
@@ -2575,14 +2581,26 @@ function VirtualizedShelf({
         <Pressable
           ref={(ref) => {
             cardRefsMap.current.set(index, ref);
+            // Track native tags for first/last items to enable focus containment
+            if (ref && isAndroidTV) {
+              const tag = findNodeHandle(ref);
+              if (tag) {
+                if (isFirstItem && tag !== firstItemTag) {
+                  setFirstItemTag(tag);
+                }
+                if (isLastItem && tag !== lastItemTag) {
+                  setLastItemTag(tag);
+                }
+              }
+            }
           }}
           onPress={() => shelfHandlers.onSelect(card.id)}
           onFocus={() => shelfHandlers.onFocus(card.id, index)}
           hasTVPreferredFocus={shouldAutoFocus}
           tvParallaxProperties={{ enabled: false }}
-          // Contain horizontal focus within the shelf
-          nextFocusLeft={isFirstItem && firstItemRef ? findNodeHandle(firstItemRef) ?? undefined : undefined}
-          nextFocusRight={isLastItem && lastItemRef ? findNodeHandle(lastItemRef) ?? undefined : undefined}
+          // Contain horizontal focus within the shelf (Android TV only)
+          nextFocusLeft={isFirstItem && firstItemTag ? firstItemTag : undefined}
+          nextFocusRight={isLastItem && lastItemTag ? lastItemTag : undefined}
           style={({ focused }) => [styles.card, focused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
           // @ts-ignore - Android TV performance optimization
           renderToHardwareTextureAndroid={isAndroidTV}
@@ -2662,7 +2680,7 @@ function VirtualizedShelf({
         </Pressable>
       );
     },
-    [autoFocus, cards.length, shelfHandlers, styles, badgeVisibility],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, firstItemTag, lastItemTag],
   );
 
   if (shouldCollapse) {
