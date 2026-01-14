@@ -2309,6 +2309,7 @@ function IndexScreen() {
                   cardWidth={desktopStyles!.cardWidth}
                   cardHeight={desktopStyles!.cardHeight}
                   cardSpacing={desktopStyles!.cardSpacing}
+                  shelfPadding={desktopStyles!.shelfPadding}
                   onCardSelect={handleCardSelect}
                   onCardFocus={handleCardFocus}
                   onCardIndexFocus={handleCardIndexFocus}
@@ -2420,6 +2421,7 @@ type VirtualizedShelfProps = {
   cardWidth: number;
   cardHeight: number;
   cardSpacing: number;
+  shelfPadding: number;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
 };
 
@@ -2443,6 +2445,7 @@ function VirtualizedShelf({
   cardWidth,
   cardHeight,
   cardSpacing,
+  shelfPadding,
   badgeVisibility,
 }: VirtualizedShelfProps) {
   const containerRef = React.useRef<RNView | null>(null);
@@ -2482,26 +2485,21 @@ function VirtualizedShelf({
   // Calculate item size for virtualized list (card width + spacing)
   const itemSize = cardWidth + cardSpacing;
 
-  // TV scroll handler - keeps focused item slightly left of center, unless near end of shelf
-  // Uses scrollToOffset for smoother animation (same approach as MediaGrid)
+  // TV scroll handler - snaps scroll position to card boundaries so cards are never cut off
   const scrollToFocusedItem = React.useCallback(
     (index: number) => {
       if (!Platform.isTV || !flatListRef.current) return;
 
-      // Get screen width to calculate visible items
-      const { width: screenWidth } = require('react-native').Dimensions.get('window');
+      // Number of full cards to keep visible to the left of the focused item
+      const cardsToLeft = 2;
 
-      // Calculate the item's position
-      const itemPosition = index * itemSize;
+      // Calculate target scroll position that aligns to card boundaries
+      const targetCardIndex = Math.max(0, index - cardsToLeft);
+      // Also cap so we don't scroll past where the last card would be at cardsToLeft position
+      const maxCardIndex = Math.max(0, cards.length - 1 - cardsToLeft);
+      const clampedIndex = Math.min(targetCardIndex, maxCardIndex);
 
-      // Target: 2 full cards visible to the left of the focused item
-      // Use 2.5 * itemSize to ensure 2 complete cards plus buffer are visible
-      const leftOffset = Math.round(2.5 * itemSize);
-      let targetX = Math.round(itemPosition - leftOffset);
-
-      // Clamp to valid range
-      const maxScroll = Math.max(0, cards.length * itemSize - screenWidth);
-      targetX = Math.max(0, Math.min(targetX, maxScroll));
+      const targetX = clampedIndex * itemSize;
 
       flatListRef.current.scrollToOffset({
         offset: targetX,
@@ -2585,7 +2583,7 @@ function VirtualizedShelf({
           // Contain horizontal focus within the shelf
           nextFocusLeft={isFirstItem && firstItemRef ? findNodeHandle(firstItemRef) ?? undefined : undefined}
           nextFocusRight={isLastItem && lastItemRef ? findNodeHandle(lastItemRef) ?? undefined : undefined}
-          style={({ focused }) => [styles.card, focused && styles.cardFocused]}
+          style={({ focused }) => [styles.card, focused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
           // @ts-ignore - Android TV performance optimization
           renderToHardwareTextureAndroid={isAndroidTV}
         >
@@ -2699,6 +2697,7 @@ function VirtualizedShelf({
             horizontal
             showsHorizontalScrollIndicator={false}
             scrollEnabled={!Platform.isTV}
+            contentContainerStyle={{ paddingRight: shelfPadding }}
             getItemLayout={(_, index) => ({
               length: itemSize,
               offset: itemSize * index,
@@ -2737,6 +2736,7 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.cardWidth === next.cardWidth &&
     prev.cardHeight === next.cardHeight &&
     prev.cardSpacing === next.cardSpacing &&
+    prev.shelfPadding === next.shelfPadding &&
     prev.badgeVisibility === next.badgeVisibility
   );
 }
@@ -3186,11 +3186,14 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
   });
 
+  const shelfPadding = theme.spacing['2xl'];
+
   return {
     styles,
     cardWidth,
     cardHeight,
     cardSpacing,
+    shelfPadding,
   };
 }
 

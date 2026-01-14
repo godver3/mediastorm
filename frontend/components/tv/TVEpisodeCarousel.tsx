@@ -109,14 +109,15 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   const episodeItemSize = THUMBNAIL_WIDTH + EPISODE_GAP;
 
   // Scroll handlers using scrollToOffset pattern from VirtualizedShelf
+  // Snaps to card boundaries so items are never cut off
   const scrollToSeason = useCallback(
     (index: number) => {
       if (!Platform.isTV || !seasonListRef.current) return;
 
       const { width: screenWidth } = Dimensions.get('window');
-      const itemPosition = index * seasonItemSize;
-      const leftOffset = Math.round(1.5 * seasonItemSize);
-      let targetX = Math.round(itemPosition - leftOffset);
+      // Keep 1 full season chip visible to the left
+      const targetChipIndex = Math.max(0, index - 1);
+      let targetX = targetChipIndex * seasonItemSize;
 
       const maxScroll = Math.max(0, seasons.length * seasonItemSize - screenWidth);
       targetX = Math.max(0, Math.min(targetX, maxScroll));

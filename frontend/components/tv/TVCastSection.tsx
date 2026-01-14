@@ -57,15 +57,15 @@ const TVCastSection = memo(function TVCastSection({
   }, [credits, maxCast]);
 
   // Scroll handler using same pattern as home screen shelves
+  // Snaps to card boundaries so items are never cut off
   const scrollToIndex = useCallback(
     (index: number) => {
       if (!Platform.isTV || !listRef.current) return;
 
       const { width: screenWidth } = Dimensions.get('window');
-      const itemPosition = index * itemSize;
-      // Keep 1.5 cards visible to the left
-      const leftOffset = Math.round(1.5 * itemSize);
-      let targetX = Math.round(itemPosition - leftOffset);
+      // Keep 1 full card visible to the left
+      const targetCardIndex = Math.max(0, index - 1);
+      let targetX = targetCardIndex * itemSize;
 
       const maxScroll = Math.max(0, castToShow.length * itemSize - screenWidth);
       targetX = Math.max(0, Math.min(targetX, maxScroll));
