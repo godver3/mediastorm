@@ -14,11 +14,13 @@ import TVEpisodeStrip from '@/components/TVEpisodeStrip';
 
 // Safely import new TV components - fallback to TVEpisodeStrip if unavailable
 let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
+let TVCastSection: typeof import('@/components/tv').TVCastSection | null = null;
 try {
   const tvComponents = require('@/components/tv');
   TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
+  TVCastSection = tvComponents.TVCastSection;
 } catch {
-  // TVEpisodeCarousel not available, will use TVEpisodeStrip fallback
+  // TV components not available, will use fallbacks
 }
 import {
   apiService,
@@ -57,6 +59,7 @@ import {
   ImageStyle,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   View,
 } from 'react-native';
@@ -64,6 +67,7 @@ import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
   useAnimatedStyle,
+  useAnimatedScrollHandler,
   useSharedValue,
   withTiming,
   Easing,
@@ -283,12 +287,19 @@ export default function DetailsScreen() {
   const shouldUseAdaptiveHeroSizing = isMobile || (isWeb && isWebTouch);
   const isPortraitOrientation = windowHeight >= windowWidth;
   const shouldAnchorHeroToTop = shouldUseAdaptiveHeroSizing && isPortraitOrientation;
+  // Compute media type early for content box sizing
+  const rawMediaTypeForLayout = toStringParam(params.mediaType);
+  const mediaTypeForLayout = (rawMediaTypeForLayout || 'movie').toLowerCase();
+  const isSeriesLayout = mediaTypeForLayout === 'series' || mediaTypeForLayout === 'tv' || mediaTypeForLayout === 'show';
+
   const contentBoxStyle = useMemo(() => {
     if (Platform.isTV) {
-      return { height: Math.round(windowHeight * 0.5) };
+      // Series need more space for episode carousel + cast, movies need less
+      const heightRatio = isSeriesLayout ? 0.55 : 0.4;
+      return { height: Math.round(windowHeight * heightRatio) };
     }
     return { flex: 1 };
-  }, [Platform.isTV, windowHeight]);
+  }, [Platform.isTV, windowHeight, isSeriesLayout]);
   const [headerImageDimensions, setHeaderImageDimensions] = useState<{ width: number; height: number } | null>(null);
   // On tvOS, measure the header image so we can avoid over-zooming portrait artwork
   const shouldMeasureHeaderImage = shouldUseAdaptiveHeroSizing || Platform.isTV;
@@ -4040,6 +4051,8 @@ export default function DetailsScreen() {
                 return episodeProgressMap.get(key) ?? 0;
               }}
               autoFocusEpisodes={!activeEpisode}
+              autoFocusSelectedSeason={true}
+              onFocusRowChange={handleTVFocusAreaChange}
             />
           ) : Platform.isTV && isSeries && (
             <SpatialNavigationNode
@@ -4065,28 +4078,31 @@ export default function DetailsScreen() {
           <SpatialNavigationNode
             orientation="horizontal"
             focusKey="details-action-row"
-            onActive={() => console.log('[Details NAV DEBUG] details-action-row ACTIVE')}
+            onActive={() => {
+              console.log('[Details NAV DEBUG] details-action-row ACTIVE');
+              handleTVFocusAreaChange('actions');
+            }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
             <View style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
-              <DefaultFocus>
-                <FocusablePressable
-                  focusKey="watch-now"
-                  text={!useCompactActionLayout ? watchNowLabel : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
-                  accessibilityLabel={watchNowLabel}
-                  onSelect={handleWatchNow}
-                  disabled={isResolving || (isSeries && episodesLoading)}
-                  loading={isResolving || (isSeries && episodesLoading)}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
-                  showReadyPip={prequeueReady}
-                />
-              </DefaultFocus>
+              <FocusablePressable
+                focusKey="watch-now"
+                text={!useCompactActionLayout ? watchNowLabel : undefined}
+                icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
+                accessibilityLabel={watchNowLabel}
+                onSelect={handleWatchNow}
+                onFocus={() => handleTVFocusAreaChange('actions')}
+                disabled={isResolving || (isSeries && episodesLoading)}
+                loading={isResolving || (isSeries && episodesLoading)}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
+                showReadyPip={prequeueReady}
+              />
               <FocusablePressable
                 focusKey="manual-select"
                 text={!useCompactActionLayout ? manualSelectLabel : undefined}
                 icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
                 accessibilityLabel={manualSelectLabel}
                 onSelect={handleManualSelect}
+                onFocus={() => handleTVFocusAreaChange('actions')}
                 disabled={isSeries && episodesLoading}
                 style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
               />
@@ -4097,6 +4113,7 @@ export default function DetailsScreen() {
                   icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
                   accessibilityLabel="Launch debug player overlay"
                   onSelect={handleLaunchDebugPlayer}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
                   disabled={isResolving || (isSeries && episodesLoading)}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
                 />
@@ -4108,6 +4125,7 @@ export default function DetailsScreen() {
                   icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
                   accessibilityLabel="Select Episode"
                   onSelect={() => setSeasonSelectorVisible(true)}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                 />
               )}
@@ -4119,6 +4137,7 @@ export default function DetailsScreen() {
                   accessibilityLabel="Shuffle play random episode"
                   onSelect={handleShufflePlay}
                   onLongPress={handleShuffleSeasonPlay}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   disabled={episodesLoading || allEpisodes.length === 0}
                 />
@@ -4135,6 +4154,7 @@ export default function DetailsScreen() {
                 }
                 accessibilityLabel={watchlistBusy ? 'Saving watchlist change' : watchlistButtonLabel}
                 onSelect={handleToggleWatchlist}
+                onFocus={() => handleTVFocusAreaChange('actions')}
                 loading={watchlistBusy}
                 style={[
                   useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
@@ -4148,6 +4168,7 @@ export default function DetailsScreen() {
                 icon={useCompactActionLayout || Platform.isTV ? (isWatched ? 'eye' : 'eye-outline') : undefined}
                 accessibilityLabel={watchlistBusy ? 'Saving watched state' : watchStateButtonLabel}
                 onSelect={handleToggleWatched}
+                onFocus={() => handleTVFocusAreaChange('actions')}
                 loading={watchlistBusy}
                 style={[
                   useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
@@ -4184,6 +4205,15 @@ export default function DetailsScreen() {
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
+          {/* TV Cast Section - shows cast with D-pad navigation */}
+          {Platform.isTV && TVCastSection && credits && (
+            <TVCastSection
+              credits={credits}
+              isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+              maxCast={10}
+              onFocus={() => handleTVFocusAreaChange('cast')}
+            />
+          )}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>
               <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />
@@ -4494,9 +4524,39 @@ export default function DetailsScreen() {
 
   // Fade in background when metadata is ready
   const backgroundOpacity = useSharedValue(shouldAnimateBackground ? 0 : 1);
+  // TV parallax scroll - background moves at 0.4x rate of content
+  const tvScrollY = useSharedValue(0);
   const backgroundAnimatedStyle = useAnimatedStyle(() => ({
     opacity: backgroundOpacity.value,
+    ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 }] } : {}),
   }));
+  const tvScrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      tvScrollY.value = event.contentOffset.y;
+    },
+  });
+
+  // Ref for TV scroll view to programmatically scroll
+  const tvScrollViewRef = useRef<Animated.ScrollView>(null);
+
+  // Handle focus area change - scroll to appropriate position for each focus area
+  const handleTVFocusAreaChange = useCallback((area: 'seasons' | 'episodes' | 'actions' | 'cast') => {
+    if (!Platform.isTV || !tvScrollViewRef.current) return;
+
+    // Scroll positions based on focus area:
+    // Lower value = higher on screen = more artwork visible
+    // - seasons: very low scroll, show mostly artwork with season chips barely visible
+    // - episodes: moderate scroll, show action buttons and episode cards
+    // - actions/cast: scroll to bottom to show cast section
+    const scrollPositions = {
+      seasons: 0,                                   // No scroll - maximum artwork visible
+      episodes: Math.round(windowHeight * 0.40),   // Show action buttons + episodes
+      actions: Math.round(windowHeight * 2),       // Large value to scroll to bottom (clamped by ScrollView)
+      cast: Math.round(windowHeight * 2),          // Large value to scroll to bottom (clamped by ScrollView)
+    };
+    const targetY = scrollPositions[area];
+    tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
+  }, [windowHeight]);
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
@@ -4594,27 +4654,44 @@ export default function DetailsScreen() {
                   end={{ x: 0.5, y: 1 }}
                   style={styles.gradientOverlay}
                 />
-                <View style={styles.contentOverlay}>
-                  <View style={[styles.contentBox, contentBoxStyle]}>
-                    <View style={styles.contentBoxInner}>
-                      <View style={styles.contentContainer}>
+                {Platform.isTV ? (
+                  <Animated.ScrollView
+                    ref={tvScrollViewRef}
+                    style={styles.tvScrollContainer}
+                    contentContainerStyle={styles.tvScrollContent}
+                    showsVerticalScrollIndicator={false}
+                    onScroll={tvScrollHandler}
+                    scrollEventThrottle={16}
+                    // Disable native scroll-to-focus - we control scroll programmatically
+                    scrollEnabled={false}
+                  >
+                    {/* Transparent spacer to show backdrop initially - larger for more artwork at scroll 0 */}
+                    <View style={{ height: Math.round(windowHeight * 0.65) }} />
+                    {/* Content area with gradient background - starts higher with softer transition */}
+                    <LinearGradient
+                      colors={['transparent', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.85)', theme.colors.background.base]}
+                      locations={[0, 0.1, 0.25, 0.45]}
+                      style={styles.tvContentGradient}
+                    >
+                      <View style={styles.tvContentInner}>
                         {renderDetailsContent()}
+                      </View>
+                    </LinearGradient>
+                  </Animated.ScrollView>
+                ) : (
+                  <View style={styles.contentOverlay}>
+                    <View style={[styles.contentBox, contentBoxStyle]}>
+                      <View style={styles.contentBoxInner}>
+                        <View style={styles.contentContainer}>
+                          {renderDetailsContent()}
+                        </View>
                       </View>
                     </View>
                   </View>
-                </View>
+                )}
               </>
             )}
-            {Platform.isTV && posterUrl && (
-              <View style={styles.posterContainerTV}>
-                <Image source={{ uri: posterUrl }} style={styles.posterImageTV} resizeMode="cover" />
-                <LinearGradient
-                  colors={['transparent', 'rgba(0, 0, 0, 0.7)']}
-                  locations={[0, 1]}
-                  style={styles.posterGradientTV}
-                />
-              </View>
-            )}
+            {/* Corner poster removed - was covering backdrop art. Plex style shows full backdrop instead */}
           </View>
         </SafeAreaWrapper>
         <MobileTabBar />

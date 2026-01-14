@@ -1,12 +1,15 @@
 import { Platform, StyleSheet } from 'react-native';
 import type { NovaTheme } from '@/theme';
-import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { isTV, isAndroidTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 
 export const createDetailsStyles = (theme: NovaTheme) => {
-  // Unified TV scaling - tvOS is baseline (1.0), Android TV auto-derives
+  // Unified TV scaling - tvOS is baseline (1.0), Android TV auto-derives for spacing/layout
   const tvScale = isTV ? getTVScaleMultiplier() : 1;
-  // TV text scale designed for tvOS at 1.375x
-  const tvTextScale = isTV ? 1.375 * tvScale : 1;
+  // Text scale for UI elements with hardcoded pixel values (ratings, release info, etc.)
+  const tvTextScale = isTV ? 1.2 * tvScale : 1;
+  // Title/description scale - these use theme typography which is mobile-sized
+  // tvOS: 1.2x, Android TV: 1.0x (no scaling needed)
+  const tvTitleScale = isTV ? (isAndroidTV ? 1.0 : 1.2) : 1;
 
   return StyleSheet.create({
     safeArea: {
@@ -97,11 +100,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     },
     topContent: {},
     topContentTV: {
-      backgroundColor: 'rgba(0, 0, 0, 0.35)',
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.lg,
-      borderRadius: theme.radius.md,
-      alignSelf: 'flex-start',
+      // No margin needed without background
     },
     topContentMobile: {
       backgroundColor: 'rgba(0, 0, 0, 0.35)',
@@ -110,7 +109,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       borderRadius: theme.radius.md,
     },
     bottomContent: {
-      ...(Platform.isTV ? { flex: 0 } : null),
+      ...(Platform.isTV ? { flex: 0, marginTop: tvScale * 16 } : null),
       position: 'relative',
     },
     mobileBottomContent: {
@@ -121,16 +120,16 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       gap: theme.spacing.md,
       marginBottom: theme.spacing.lg,
-      ...(isTV ? { maxWidth: '70%' } : null),
+      ...(isTV ? { maxWidth: '70%', marginLeft: tvScale * 48 } : null),
     },
     title: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
       ...(isTV
         ? {
-            // Design for tvOS (+8px), Android TV auto-scales, 25% larger
-            fontSize: Math.round((theme.typography.title.xl.fontSize + 8) * tvScale * 1.25),
-            lineHeight: Math.round((theme.typography.title.xl.lineHeight + 8) * tvScale * 1.25),
+            // TV title - use tvTitleScale (no Android TV reduction for readability)
+            fontSize: Math.round(theme.typography.title.xl.fontSize * tvTitleScale),
+            lineHeight: Math.round(theme.typography.title.xl.lineHeight * tvTitleScale),
           }
         : null),
     },
@@ -139,28 +138,30 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexWrap: 'wrap',
       gap: theme.spacing.md,
       marginBottom: theme.spacing.md,
+      ...(isTV ? { marginLeft: tvScale * 48 } : null),
     },
     ratingBadge: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: Math.round((isTV ? 7 : 4) * tvScale),
+      gap: Math.round(4 * tvTextScale),
       backgroundColor: 'rgba(255, 255, 255, 0.1)',
-      paddingHorizontal: Math.round((isTV ? 11 : 8) * tvScale),
-      paddingVertical: Math.round((isTV ? 6 : 4) * tvScale),
+      paddingHorizontal: Math.round(8 * tvTextScale),
+      paddingVertical: Math.round(4 * tvTextScale),
       borderRadius: Math.round(6 * tvScale),
     },
     ratingValue: {
-      fontSize: Math.round((isTV ? 17 : 14) * tvScale),
+      fontSize: Math.round(14 * tvTextScale),
       fontWeight: '700',
     },
     ratingLabel: {
-      fontSize: Math.round((isTV ? 14 : 12) * tvTextScale),
+      fontSize: Math.round(12 * tvTextScale),
       color: theme.colors.text.secondary,
     },
     releaseInfoRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       marginBottom: theme.spacing.md,
+      ...(isTV ? { marginLeft: tvScale * 48 } : null),
     },
     releaseInfoItem: {
       marginRight: theme.spacing.lg,
@@ -197,13 +198,10 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       maxWidth: theme.breakpoint === 'compact' ? '100%' : '60%',
       ...(isTV
         ? {
-            // Design for tvOS at 1.5x, Android TV at 1.875x (25% larger than before)
-            fontSize: Math.round(
-              theme.typography.body.lg.fontSize * (Platform.OS === 'android' ? 1.875 : 1.5) * tvScale,
-            ),
-            lineHeight: Math.round(
-              theme.typography.body.lg.lineHeight * (Platform.OS === 'android' ? 1.875 : 1.5) * tvScale,
-            ),
+            // TV description - use tvTitleScale (no Android TV reduction for readability)
+            fontSize: Math.round(theme.typography.body.lg.fontSize * tvTitleScale),
+            lineHeight: Math.round(theme.typography.body.lg.lineHeight * tvTitleScale),
+            marginLeft: tvScale * 48,
           }
         : null),
     },
@@ -231,6 +229,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: theme.spacing.lg,
+      ...(isTV ? { marginLeft: tvScale * 48 } : null),
     },
     compactActionRow: {
       flexWrap: 'nowrap',
@@ -409,6 +408,22 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     episodeOverviewText: {
       ...theme.typography.body.md,
       lineHeight: theme.typography.body.md.fontSize * 1.5,
+    },
+
+    // TV Scrollable Layout Styles
+    tvScrollContainer: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 4,
+    },
+    tvScrollContent: {
+      flexGrow: 1,
+    },
+    tvContentGradient: {
+      minHeight: '100%',
+      paddingTop: tvScale * 60,
+    },
+    tvContentInner: {
+      paddingBottom: tvScale * 32,
     },
   });
 };

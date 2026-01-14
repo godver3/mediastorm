@@ -57,12 +57,12 @@ const NativeFilterButton = ({
           paddingVertical: paddingV,
           borderRadius,
           backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
-          borderWidth: StyleSheet.hairlineWidth,
+          borderWidth: responsiveSize(6, 2),
           borderColor: focused
             ? theme.colors.accent.primary
             : isActive
               ? theme.colors.accent.primary
-              : theme.colors.border.subtle,
+              : 'transparent',
         },
       ]}
     >
@@ -589,14 +589,14 @@ const createStyles = (theme: NovaTheme, _screenWidth: number, _screenHeight: num
       paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
-      borderWidth: 2,
+      // Invisible border same size as focused to prevent layout shift
+      borderWidth: 3,
       borderColor: 'transparent',
       // Android TV renders larger than tvOS, so use smaller minHeight
       minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
     },
     searchInputFocused: {
       borderColor: theme.colors.accent.primary,
-      borderWidth: 3,
       ...(Platform.isTV && Platform.OS === 'ios'
         ? {
             shadowColor: theme.colors.accent.primary,

@@ -57,12 +57,12 @@ const NativeFilterButton = ({
           paddingVertical: paddingV,
           borderRadius,
           backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
-          borderWidth: StyleSheet.hairlineWidth,
+          borderWidth: responsiveSize(6, 2),
           borderColor: focused
             ? theme.colors.accent.primary
             : isActive
               ? theme.colors.accent.primary
-              : theme.colors.border.subtle,
+              : 'transparent',
         },
       ]}
     >
