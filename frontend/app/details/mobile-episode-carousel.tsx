@@ -17,7 +17,7 @@ import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
 } from 'react-native-reanimated';
-import { Image } from 'expo-image';
+import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';

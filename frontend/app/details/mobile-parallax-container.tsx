@@ -5,7 +5,7 @@
 
 import React, { memo, useMemo, type ReactNode } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/Image';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useAnimatedScrollHandler,

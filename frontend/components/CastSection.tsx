@@ -1,6 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { Credits, CastMember } from '@/services/api';

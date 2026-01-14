@@ -1,25 +1,26 @@
-import { Image as RNImage, ImageProps as RNImageProps, ImageStyle, Platform, StyleProp } from 'react-native';
-import { ComponentProps } from 'react';
+import { Image as RNImage, ImageProps as RNImageProps, ImageStyle, NativeModules, Platform, StyleProp } from 'react-native';
 
 // Use disk-only caching on TV to reduce memory pressure (112MB+ GL memory savings)
 const DEFAULT_CACHE_POLICY = Platform.isTV ? 'disk' : 'memory-disk';
 
-// Check if expo-image native module is available
-let ExpoImageModule: typeof import('expo-image') | null = null;
+// Check if expo-image native module is available BEFORE requiring
+// This prevents the require from throwing when native module doesn't exist
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let ExpoImageModule: any = null;
 let hasExpoImage = false;
 
-try {
-  ExpoImageModule = require('expo-image');
-  // Try to access the Image component to verify native module is loaded
-  if (ExpoImageModule?.Image) {
-    hasExpoImage = true;
+// Only try to require expo-image if the native module exists
+if (NativeModules.ExpoImage) {
+  try {
+    ExpoImageModule = require('expo-image');
+    if (ExpoImageModule?.Image) {
+      hasExpoImage = true;
+    }
+  } catch {
+    // expo-image JS module not available
+    hasExpoImage = false;
   }
-} catch {
-  hasExpoImage = false;
 }
-
-// Re-export the appropriate Image component
-type _ExpoImageProps = ComponentProps<typeof import('expo-image').Image>;
 
 interface ImageWrapperProps {
   source: string | { uri: string } | number;

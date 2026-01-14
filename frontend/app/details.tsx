@@ -11,6 +11,15 @@ import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import EpisodeCard from '@/components/EpisodeCard';
 import TVEpisodeStrip from '@/components/TVEpisodeStrip';
+
+// Safely import new TV components - fallback to TVEpisodeStrip if unavailable
+let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
+try {
+  const tvComponents = require('@/components/tv');
+  TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
+} catch {
+  // TVEpisodeCarousel not available, will use TVEpisodeStrip fallback
+}
 import {
   apiService,
   type ContentPreference,
@@ -4015,8 +4024,24 @@ export default function DetailsScreen() {
         onActive={() => console.log('[Details NAV DEBUG] details-content-column ACTIVE')}
         onInactive={() => console.log('[Details NAV DEBUG] details-content-column INACTIVE')}>
         <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
-          {/* Always render this node on TV for series to ensure correct registration order */}
-          {Platform.isTV && isSeries && (
+          {/* TV Episode Carousel - uses native Pressable focus with FlatList */}
+          {Platform.isTV && isSeries && seasons.length > 0 && TVEpisodeCarousel ? (
+            <TVEpisodeCarousel
+              seasons={seasons}
+              selectedSeason={selectedSeason}
+              episodes={selectedSeason?.episodes ?? []}
+              activeEpisode={activeEpisode}
+              onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
+              onEpisodeSelect={handleEpisodeSelect}
+              onEpisodePlay={handlePlayEpisode}
+              isEpisodeWatched={isEpisodeWatched}
+              getEpisodeProgress={(episode: SeriesEpisode) => {
+                const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
+                return episodeProgressMap.get(key) ?? 0;
+              }}
+              autoFocusEpisodes={!activeEpisode}
+            />
+          ) : Platform.isTV && isSeries && (
             <SpatialNavigationNode
               orientation="horizontal"
               focusKey="episode-strip-wrapper"

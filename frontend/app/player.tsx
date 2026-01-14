@@ -689,10 +689,18 @@ export default function PlayerScreen() {
   const wasPlayingBeforeBackgroundRef = useRef(false);
   const isPipActiveRef = useRef(isPipActive);
   isPipActiveRef.current = isPipActive;
+  // Track when we entered background (for detecting screensaver/long pause)
+  const backgroundedAtRef = useRef<number | null>(null);
+  // Threshold for considering session potentially expired (slightly less than backend's 60s idle timeout)
+  const SESSION_EXPIRY_THRESHOLD_MS = 50000;
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
       if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // Record when we went to background
+        backgroundedAtRef.current = Date.now();
+        console.log('[player] App entering background, recording time');
+
         // Don't pause if in PiP mode - the video should keep playing
         if (isPipActiveRef.current) {
           console.log('[player] Skipping auto-pause: PiP mode active');
@@ -712,15 +720,35 @@ export default function PlayerScreen() {
           console.log('[player] Auto-paused: app went to background');
         }
       } else if (nextAppState === 'active') {
-        // App came back to foreground - we don't auto-resume, user can manually resume
+        // App came back to foreground
+        const backgroundDuration = backgroundedAtRef.current ? Date.now() - backgroundedAtRef.current : 0;
+        backgroundedAtRef.current = null;
         wasPlayingBeforeBackgroundRef.current = false;
+
+        // If we were backgrounded for a long time with an HLS stream, validate session is still alive
+        if (isHlsStream && backgroundDuration > SESSION_EXPIRY_THRESHOLD_MS) {
+          console.log('[player] Returning from long background, validating HLS session', {
+            backgroundDurationMs: backgroundDuration,
+            thresholdMs: SESSION_EXPIRY_THRESHOLD_MS,
+          });
+
+          // Check if session is still valid
+          const status = await hlsSessionActions.getStatus();
+          if (!status) {
+            console.log('[player] HLS session expired during background, destroying player');
+            showToast('Stream session expired. Please restart playback.', { tone: 'warning', duration: 4000 });
+            router.back();
+            return;
+          }
+          console.log('[player] HLS session still valid after background');
+        }
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [paused]);
+  }, [paused, isHlsStream, hlsSessionActions, showToast, router]);
 
   // Pause teardown effect: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause. When paused for 20+ seconds on an HLS stream,
@@ -1239,7 +1267,7 @@ export default function PlayerScreen() {
   }, [hlsSessionState.keyframeDelta, hlsSessionState.actualStartOffset]);
 
   // Send keepalive pings and poll for session status to detect stream errors
-  // The backend kills FFmpeg after 30s of no segment requests, but players buffer aggressively
+  // The backend kills FFmpeg after 60s of no segment requests, but players buffer aggressively
   // so we send keepalives continuously while the player is mounted with an HLS stream
   useEffect(() => {
     if (!isHlsStream) {

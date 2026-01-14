@@ -356,7 +356,9 @@ type HLSSession struct {
 
 const (
 	// How long to wait with no segment requests before killing FFmpeg
-	hlsIdleTimeout = 30 * time.Second
+	// Set to 60s to be more forgiving during pause/screensaver scenarios
+	// Frontend sends keepalives every 10s, so this allows for missed keepalives
+	hlsIdleTimeout = 60 * time.Second
 
 	// How long to wait for the first segment request before killing FFmpeg
 	// (prevents sessions that never receive any requests from lingering)
@@ -921,7 +923,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		}
 	}()
 
-	// Start idle timeout goroutine - kills FFmpeg if no segments requested for 30s
+	// Start idle timeout goroutine - kills FFmpeg if no segments requested for hlsIdleTimeout
 	idleDone := make(chan struct{})
 	go func() {
 		defer close(idleDone)
@@ -953,7 +955,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 					return
 				}
 
-				// Idle timeout: if no segment requests for 30s after playback started
+				// Idle timeout: if no segment requests for hlsIdleTimeout after playback started
 				if segmentCount > 0 && idleTime > hlsIdleTimeout {
 					log.Printf("[hls] live session %s: IDLE_TIMEOUT - no requests for %v (%d segments served)",
 						session.ID, idleTime, segmentCount)
