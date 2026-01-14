@@ -123,7 +123,7 @@ func (m *SubtitleExtractManager) buildWebDAVURL(cleanPath string) string {
 	return base + pathToUse
 }
 
-// cleanupLoop periodically removes stale sessions
+// cleanupLoop periodically removes stale sessions and logs debug info
 func (m *SubtitleExtractManager) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -131,11 +131,152 @@ func (m *SubtitleExtractManager) cleanupLoop() {
 	for {
 		select {
 		case <-ticker.C:
+			m.logSessionDebugInfo()
 			m.cleanupStaleSessions()
 		case <-m.cleanupDone:
 			return
 		}
 	}
+}
+
+// logSessionDebugInfo logs debug info about active sessions and their VTT files once per minute
+func (m *SubtitleExtractManager) logSessionDebugInfo() {
+	m.mu.RLock()
+	sessionCount := len(m.sessions)
+	if sessionCount == 0 {
+		m.mu.RUnlock()
+		return
+	}
+
+	log.Printf("[subtitle-extract] === VTT Debug Dump (once per minute) ===")
+	log.Printf("[subtitle-extract] Active sessions: %d", sessionCount)
+
+	for id, session := range m.sessions {
+		session.mu.Lock()
+		vttPath := session.VTTPath
+		startOffset := session.StartOffset
+		firstCueTime := session.FirstCueTime
+		extractionDone := session.extractionDone
+		extractionErr := session.extractionErr
+		lastAccess := session.LastAccess
+		createdAt := session.CreatedAt
+		session.mu.Unlock()
+
+		// Read VTT file and parse cue info
+		cueCount := 0
+		var firstCueStart, lastCueEnd float64
+		var contentStr string
+		if content, err := os.ReadFile(vttPath); err == nil {
+			contentStr = string(content)
+			cueCount, firstCueStart, lastCueEnd = parseVTTCueStats(contentStr)
+		}
+
+		// Get file size
+		var fileSize int64
+		if stat, err := os.Stat(vttPath); err == nil {
+			fileSize = stat.Size()
+		}
+
+		status := "extracting"
+		if extractionDone {
+			status = "done"
+		}
+		if extractionErr != nil {
+			status = fmt.Sprintf("error: %v", extractionErr)
+		}
+
+		// Detect edge cases
+		var warnings []string
+		trimmedContent := strings.TrimSpace(contentStr)
+		isHeaderOnly := trimmedContent == "WEBVTT" || trimmedContent == "WEBVTT\n"
+		hasTimestamps := strings.Contains(contentStr, "-->")
+		sessionAge := time.Since(createdAt)
+
+		if isHeaderOnly {
+			warnings = append(warnings, "HEADER-ONLY")
+		}
+		if !hasTimestamps && fileSize > 10 {
+			warnings = append(warnings, "NO-TIMESTAMPS")
+		}
+		if cueCount == 0 && hasTimestamps {
+			warnings = append(warnings, "PARSE-FAILED")
+		}
+		// Warn if extraction is taking too long (>30s and still no cues)
+		if !extractionDone && cueCount == 0 && sessionAge > 30*time.Second {
+			warnings = append(warnings, fmt.Sprintf("SLOW-EXTRACTION(%s)", sessionAge.Round(time.Second)))
+		}
+		// Warn if extraction done but no cues
+		if extractionDone && cueCount == 0 && extractionErr == nil {
+			warnings = append(warnings, "DONE-BUT-EMPTY")
+		}
+
+		warningStr := ""
+		if len(warnings) > 0 {
+			warningStr = fmt.Sprintf(" WARNINGS: [%s]", strings.Join(warnings, ", "))
+		}
+
+		log.Printf("[subtitle-extract]   Session %s: status=%s, startOffset=%.1f, firstCueTime=%.1f, age=%s%s",
+			id[:8], status, startOffset, firstCueTime, sessionAge.Round(time.Second), warningStr)
+		log.Printf("[subtitle-extract]     VTT: %d bytes, %d cues, range: %.2f-%.2fs, lastAccess: %s ago",
+			fileSize, cueCount, firstCueStart, lastCueEnd, time.Since(lastAccess).Round(time.Second))
+	}
+	m.mu.RUnlock()
+	log.Printf("[subtitle-extract] === End VTT Debug Dump ===")
+}
+
+// parseVTTCueStats parses VTT content and returns cue count, first cue start, last cue end
+func parseVTTCueStats(content string) (cueCount int, firstCueStart, lastCueEnd float64) {
+	lines := strings.Split(content, "\n")
+	firstCueStart = -1
+	lastCueEnd = -1
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "-->") {
+			continue
+		}
+
+		parts := strings.Split(line, "-->")
+		if len(parts) < 2 {
+			continue
+		}
+
+		startStr := strings.TrimSpace(parts[0])
+		endStr := strings.TrimSpace(parts[1])
+		// Remove positioning info
+		if idx := strings.Index(startStr, " "); idx > 0 {
+			startStr = startStr[:idx]
+		}
+		if idx := strings.Index(endStr, " "); idx > 0 {
+			endStr = endStr[:idx]
+		}
+
+		startTime := parseVTTTimestamp(startStr)
+		endTime := parseVTTTimestamp(endStr)
+
+		if firstCueStart < 0 {
+			firstCueStart = startTime
+		}
+		lastCueEnd = endTime
+		cueCount++
+	}
+	return
+}
+
+// parseVTTTimestamp parses a VTT timestamp string to seconds
+func parseVTTTimestamp(ts string) float64 {
+	parts := strings.Split(ts, ":")
+	if len(parts) == 3 {
+		hours, _ := strconv.ParseFloat(parts[0], 64)
+		minutes, _ := strconv.ParseFloat(parts[1], 64)
+		seconds, _ := strconv.ParseFloat(parts[2], 64)
+		return hours*3600 + minutes*60 + seconds
+	} else if len(parts) == 2 {
+		minutes, _ := strconv.ParseFloat(parts[0], 64)
+		seconds, _ := strconv.ParseFloat(parts[1], 64)
+		return minutes*60 + seconds
+	}
+	return 0
 }
 
 // cleanupStaleSessions removes sessions that haven't been accessed recently
@@ -700,10 +841,14 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	session.LastAccess = time.Now()
 	vttPath := session.VTTPath
 	extractionErr := session.extractionErr
+	extractionDone := session.extractionDone
+	startOffset := session.StartOffset
+	sessionID := session.ID
 	session.mu.Unlock()
 
 	// Check for extraction error
 	if extractionErr != nil {
+		log.Printf("[subtitle-extract] serve %s: extraction error: %v", sessionID[:8], extractionErr)
 		http.Error(w, fmt.Sprintf("subtitle extraction failed: %v", extractionErr), http.StatusInternalServerError)
 		return
 	}
@@ -712,6 +857,7 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	stat, err := os.Stat(vttPath)
 	if os.IsNotExist(err) {
 		// Return empty VTT header if file doesn't exist yet
+		log.Printf("[subtitle-extract] serve %s: VTT file not ready yet, returning empty header", sessionID[:8])
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -719,6 +865,7 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err != nil {
+		log.Printf("[subtitle-extract] serve %s: failed to stat VTT file: %v", sessionID[:8], err)
 		http.Error(w, "failed to stat subtitle file", http.StatusInternalServerError)
 		return
 	}
@@ -726,9 +873,45 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	// Read and serve the current contents
 	content, err := os.ReadFile(vttPath)
 	if err != nil {
+		log.Printf("[subtitle-extract] serve %s: failed to read VTT file: %v", sessionID[:8], err)
 		http.Error(w, "failed to read subtitle file", http.StatusInternalServerError)
 		return
 	}
+
+	contentStr := string(content)
+	contentLen := len(content)
+
+	// Parse cue stats for debug logging
+	cueCount, firstCueStart, lastCueEnd := parseVTTCueStats(contentStr)
+	status := "extracting"
+	if extractionDone {
+		status = "done"
+	}
+
+	// Detect edge cases
+	trimmedContent := strings.TrimSpace(contentStr)
+	isHeaderOnly := trimmedContent == "WEBVTT" || trimmedContent == "WEBVTT\n"
+	hasTimestamps := strings.Contains(contentStr, "-->")
+
+	if isHeaderOnly {
+		log.Printf("[subtitle-extract] serve %s: WARNING - VTT is header-only (%d bytes), extraction may not have started or no cues yet",
+			sessionID[:8], contentLen)
+	} else if !hasTimestamps && contentLen > 10 {
+		log.Printf("[subtitle-extract] serve %s: WARNING - VTT has %d bytes but NO timestamps, possibly truncated/corrupted",
+			sessionID[:8], contentLen)
+		// Log first part of content for debugging
+		preview := contentStr
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		log.Printf("[subtitle-extract] serve %s: content preview: %q", sessionID[:8], preview)
+	} else if cueCount == 0 && hasTimestamps {
+		log.Printf("[subtitle-extract] serve %s: WARNING - VTT has timestamps but parsed 0 cues, parse issue?",
+			sessionID[:8])
+	}
+
+	log.Printf("[subtitle-extract] serve %s: %d bytes, %d cues, range: %.2f-%.2fs, startOffset: %.1f, status: %s",
+		sessionID[:8], stat.Size(), cueCount, firstCueStart, lastCueEnd, startOffset, status)
 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")

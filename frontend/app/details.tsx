@@ -62,6 +62,9 @@ import {
   ScrollView,
   Text,
   View,
+  findNodeHandle,
+  // @ts-ignore - TVFocusGuideView is available on TV platforms
+  TVFocusGuideView,
 } from 'react-native';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
@@ -742,6 +745,14 @@ export default function DetailsScreen() {
   const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
   // Pre-loaded trailer stream URL (proxy URL for YouTube trailers on mobile)
   const [trailerStreamUrl, setTrailerStreamUrl] = useState<string | null>(null);
+
+  // Refs for action button focus trapping (Android TV)
+  const watchedButtonRef = useRef<View>(null);
+  const trailerButtonRef = useRef<View>(null);
+  const [watchedButtonTag, setWatchedButtonTag] = useState<number | undefined>(undefined);
+  const [trailerButtonTag, setTrailerButtonTag] = useState<number | undefined>(undefined);
+  // Track active episode tag for action buttons -> episode focus navigation
+  const [activeEpisodeTag, setActiveEpisodeTag] = useState<number | undefined>(undefined);
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
@@ -1596,6 +1607,21 @@ export default function DetailsScreen() {
     () => Boolean((primaryTrailer && primaryTrailer.url) || (trailers?.length ?? 0) > 0),
     [primaryTrailer, trailers],
   );
+
+  // Update native tags for action button focus trapping (Android TV)
+  // This allows the last button in the row to trap rightward focus
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !Platform.isTV) return;
+    const timer = setTimeout(() => {
+      if (watchedButtonRef.current) {
+        setWatchedButtonTag(findNodeHandle(watchedButtonRef.current) ?? undefined);
+      }
+      if (trailerButtonRef.current) {
+        setTrailerButtonTag(findNodeHandle(trailerButtonRef.current) ?? undefined);
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [hasAvailableTrailer, trailersLoading]);
 
   const trailerButtonLabel = useMemo(() => (trailersLoading ? 'Loading trailer…' : 'Watch trailer'), [trailersLoading]);
 
@@ -4053,6 +4079,7 @@ export default function DetailsScreen() {
               autoFocusEpisodes={!activeEpisode}
               autoFocusSelectedSeason={true}
               onFocusRowChange={handleTVFocusAreaChange}
+              onActiveEpisodeTagChange={setActiveEpisodeTag}
             />
           ) : Platform.isTV && isSeries && (
             <SpatialNavigationNode
@@ -4083,7 +4110,11 @@ export default function DetailsScreen() {
               handleTVFocusAreaChange('actions');
             }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            <View style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
+            {/* TVFocusGuideView traps right navigation to prevent escaping to cast section on tvOS */}
+            <TVFocusGuideView
+              style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
+              trapFocusRight={Platform.OS === 'ios' && Platform.isTV}
+            >
               <FocusablePressable
                 focusKey="watch-now"
                 text={!useCompactActionLayout ? watchNowLabel : undefined}
@@ -4095,6 +4126,7 @@ export default function DetailsScreen() {
                 loading={isResolving || (isSeries && episodesLoading)}
                 style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
                 showReadyPip={prequeueReady}
+                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
               />
               <FocusablePressable
                 focusKey="manual-select"
@@ -4105,6 +4137,7 @@ export default function DetailsScreen() {
                 onFocus={() => handleTVFocusAreaChange('actions')}
                 disabled={isSeries && episodesLoading}
                 style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
               />
               {shouldShowDebugPlayerButton && (
                 <FocusablePressable
@@ -4116,6 +4149,7 @@ export default function DetailsScreen() {
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   disabled={isResolving || (isSeries && episodesLoading)}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
+                  nextFocusUp={isSeries ? activeEpisodeTag : undefined}
                 />
               )}
               {isSeries && (
@@ -4127,6 +4161,7 @@ export default function DetailsScreen() {
                   onSelect={() => setSeasonSelectorVisible(true)}
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                  nextFocusUp={activeEpisodeTag}
                 />
               )}
               {isSeries && (
@@ -4140,6 +4175,7 @@ export default function DetailsScreen() {
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   disabled={episodesLoading || allEpisodes.length === 0}
+                  nextFocusUp={activeEpisodeTag}
                 />
               )}
               <FocusablePressable
@@ -4161,8 +4197,10 @@ export default function DetailsScreen() {
                   isWatchlisted && styles.watchlistActionButtonActive,
                 ]}
                 disabled={!canToggleWatchlist || watchlistBusy}
+                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
               />
               <FocusablePressable
+                ref={watchedButtonRef}
                 focusKey="toggle-watched"
                 text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchStateButtonLabel) : undefined}
                 icon={useCompactActionLayout || Platform.isTV ? (isWatched ? 'eye' : 'eye-outline') : undefined}
@@ -4175,10 +4213,14 @@ export default function DetailsScreen() {
                   isWatched && styles.watchStateButtonActive,
                 ]}
                 disabled={watchlistBusy}
+                // Trap rightward focus when this is the last button (no trailer available)
+                nextFocusRight={!(trailersLoading || hasAvailableTrailer) ? watchedButtonTag : undefined}
+                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
               />
               {/* Trailer button */}
               {(trailersLoading || hasAvailableTrailer) && (
                 <FocusablePressable
+                  ref={trailerButtonRef}
                   focusKey="watch-trailer"
                   text={!useCompactActionLayout ? trailerButtonLabel : undefined}
                   icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
@@ -4188,6 +4230,9 @@ export default function DetailsScreen() {
                   loading={trailersLoading}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
                   disabled={trailerButtonDisabled}
+                  // Trap rightward focus - this is always the last button when shown
+                  nextFocusRight={trailerButtonTag}
+                  nextFocusUp={isSeries ? activeEpisodeTag : undefined}
                 />
               )}
               {/* Show progress badge in action row only for movies (no episode card) */}
@@ -4202,7 +4247,7 @@ export default function DetailsScreen() {
                   </Text>
                 </View>
               )}
-            </View>
+            </TVFocusGuideView>
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
