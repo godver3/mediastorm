@@ -13,6 +13,8 @@ import {
   Text,
   View,
   findNodeHandle,
+  // @ts-ignore - TVFocusGuideView is available on TV platforms
+  TVFocusGuideView,
 } from 'react-native';
 import { Image } from '../Image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -46,6 +48,8 @@ interface TVEpisodeCarouselProps {
   autoFocusEpisodes?: boolean;
   autoFocusSelectedSeason?: boolean;
   onFocusRowChange?: (area: 'seasons' | 'episodes' | 'actions' | 'cast') => void;
+  /** Callback when active episode's native tag changes (for parent focus navigation) */
+  onActiveEpisodeTagChange?: (tag: number | undefined) => void;
 }
 
 const formatAirDate = (dateString?: string): string | null => {
@@ -82,6 +86,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   autoFocusEpisodes = false,
   autoFocusSelectedSeason = false,
   onFocusRowChange,
+  onActiveEpisodeTagChange,
 }: TVEpisodeCarouselProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -94,6 +99,12 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   const seasonCardRefs = useRef<Map<number, View | null>>(new Map());
   const episodeCardRefs = useRef<Map<number, View | null>>(new Map());
 
+  // Ref for TVFocusGuideView destinations (first season chip for upward navigation from episodes)
+  const [seasonFocusDestinations, setSeasonFocusDestinations] = useState<View[]>([]);
+
+  // Track the active episode's native tag for focus navigation (season chips -> active episode)
+  const [activeEpisodeTag, setActiveEpisodeTag] = useState<number | undefined>(undefined);
+
   // Track focused episode for details panel
   const [focusedEpisode, setFocusedEpisode] = useState<SeriesEpisode | null>(activeEpisode);
 
@@ -103,6 +114,41 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
       setFocusedEpisode(activeEpisode);
     }
   }, [activeEpisode]);
+
+  // Update active episode tag for focus navigation (allows season chips to navigate down to active episode)
+  useEffect(() => {
+    if (!Platform.isTV || !activeEpisode || episodes.length === 0) {
+      setActiveEpisodeTag(undefined);
+      return;
+    }
+
+    // Find the index of the active episode
+    const activeIndex = episodes.findIndex(
+      (ep) =>
+        ep.seasonNumber === activeEpisode.seasonNumber &&
+        ep.episodeNumber === activeEpisode.episodeNumber
+    );
+
+    if (activeIndex < 0) {
+      setActiveEpisodeTag(undefined);
+      return;
+    }
+
+    // Delay to ensure refs are assigned after render
+    const timer = setTimeout(() => {
+      const activeRef = episodeCardRefs.current.get(activeIndex);
+      if (activeRef) {
+        setActiveEpisodeTag(findNodeHandle(activeRef) ?? undefined);
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [activeEpisode, episodes]);
+
+  // Notify parent when active episode tag changes (for action buttons -> episode focus)
+  useEffect(() => {
+    onActiveEpisodeTagChange?.(activeEpisodeTag);
+  }, [activeEpisodeTag, onActiveEpisodeTagChange]);
 
   // Calculate item sizes
   const seasonItemSize = SEASON_CHIP_WIDTH + SEASON_CHIP_GAP;
@@ -165,6 +211,22 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     }
   }, [activeEpisode, episodes, scrollToEpisode]);
 
+  // Update TVFocusGuideView destinations when season chips are ready
+  // This allows episode cards to navigate up to season chips even when scrolled
+  useEffect(() => {
+    if (!isAppleTV || seasons.length === 0) return;
+
+    // Delay to ensure refs are assigned after render
+    const timer = setTimeout(() => {
+      const firstSeasonRef = seasonCardRefs.current.get(0);
+      if (firstSeasonRef) {
+        setSeasonFocusDestinations([firstSeasonRef]);
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [seasons.length]);
+
   // Handle season selection
   const handleSeasonSelect = useCallback(
     (season: SeriesSeason) => {
@@ -213,6 +275,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
           tvParallaxProperties={{ enabled: false }}
           nextFocusLeft={isFirst && firstRef ? findNodeHandle(firstRef) ?? undefined : undefined}
           nextFocusRight={isLast && lastRef ? findNodeHandle(lastRef) ?? undefined : undefined}
+          nextFocusDown={activeEpisodeTag}
           style={({ focused }) => [
             styles.seasonChip,
             isSelected && styles.seasonChipSelected,
@@ -233,7 +296,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         </Pressable>
       );
     },
-    [selectedSeason, seasons.length, handleSeasonSelect, scrollToSeason, styles, onFocusRowChange, autoFocusSelectedSeason]
+    [selectedSeason, seasons.length, handleSeasonSelect, scrollToSeason, styles, onFocusRowChange, autoFocusSelectedSeason, activeEpisodeTag]
   );
 
   // Render episode thumbnail
@@ -342,28 +405,55 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         />
       </View>
 
-      {/* Episode Carousel */}
-      <View style={styles.episodeRow}>
-        <FlatList
-          ref={episodeListRef}
-          data={episodes}
-          renderItem={renderEpisodeItem}
-          keyExtractor={(item) => `ep-${item.seasonNumber}-${item.episodeNumber}`}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          scrollEnabled={!Platform.isTV}
-          getItemLayout={(_, index) => ({
-            length: episodeItemSize,
-            offset: episodeItemSize * index,
-            index,
-          })}
-          contentContainerStyle={styles.episodeListContent}
-          initialNumToRender={isAndroidTV ? 7 : 9}
-          maxToRenderPerBatch={isAndroidTV ? 5 : 7}
-          windowSize={3}
-          removeClippedSubviews={Platform.isTV}
-        />
-      </View>
+      {/* Episode Carousel - wrapped in TVFocusGuideView on tvOS for upward navigation to season chips */}
+      {isAppleTV ? (
+        <TVFocusGuideView
+          style={styles.episodeRow}
+          destinations={seasonFocusDestinations}
+        >
+          <FlatList
+            ref={episodeListRef}
+            data={episodes}
+            renderItem={renderEpisodeItem}
+            keyExtractor={(item) => `ep-${item.seasonNumber}-${item.episodeNumber}`}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            scrollEnabled={false}
+            getItemLayout={(_, index) => ({
+              length: episodeItemSize,
+              offset: episodeItemSize * index,
+              index,
+            })}
+            contentContainerStyle={styles.episodeListContent}
+            initialNumToRender={9}
+            maxToRenderPerBatch={7}
+            windowSize={3}
+            removeClippedSubviews={true}
+          />
+        </TVFocusGuideView>
+      ) : (
+        <View style={styles.episodeRow}>
+          <FlatList
+            ref={episodeListRef}
+            data={episodes}
+            renderItem={renderEpisodeItem}
+            keyExtractor={(item) => `ep-${item.seasonNumber}-${item.episodeNumber}`}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            scrollEnabled={!Platform.isTV}
+            getItemLayout={(_, index) => ({
+              length: episodeItemSize,
+              offset: episodeItemSize * index,
+              index,
+            })}
+            contentContainerStyle={styles.episodeListContent}
+            initialNumToRender={isAndroidTV ? 7 : 9}
+            maxToRenderPerBatch={isAndroidTV ? 5 : 7}
+            windowSize={3}
+            removeClippedSubviews={Platform.isTV}
+          />
+        </View>
+      )}
 
       {/* Episode Details Panel */}
       {detailsContent && (

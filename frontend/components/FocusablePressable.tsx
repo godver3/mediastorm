@@ -2,7 +2,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { tvScale, isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useMemo } from 'react';
+import { forwardRef, memo, useMemo } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -44,9 +44,17 @@ interface CustomPressableProps extends PressableProps {
   showReadyPip?: boolean;
   /** Style applied to the outer wrapper View (use to override alignSelf for centering) */
   wrapperStyle?: StyleProp<ViewStyle>;
+  /** Native tag to focus when pressing Right (Android TV focus trapping) */
+  nextFocusRight?: number;
+  /** Native tag to focus when pressing Left (Android TV focus trapping) */
+  nextFocusLeft?: number;
+  /** Native tag to focus when pressing Up (Android TV focus trapping) */
+  nextFocusUp?: number;
+  /** Native tag to focus when pressing Down (Android TV focus trapping) */
+  nextFocusDown?: number;
 }
 
-const FocusablePressable = ({
+const FocusablePressable = forwardRef<View, CustomPressableProps>(({
   text,
   icon,
   iconSize = 24,
@@ -63,8 +71,12 @@ const FocusablePressable = ({
   loading = false,
   showReadyPip = false,
   wrapperStyle,
+  nextFocusRight,
+  nextFocusLeft,
+  nextFocusUp,
+  nextFocusDown,
   ...props
-}: CustomPressableProps) => {
+}, ref) => {
   const { onPress: _ignoredOnPress, ...restProps } = props;
   void _ignoredOnPress;
   void _focusKey;
@@ -79,6 +91,7 @@ const FocusablePressable = ({
   return (
     <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
       <Pressable
+        ref={ref}
         {...restProps}
         disabled={disabled || loading}
         onPress={onSelect}
@@ -86,6 +99,10 @@ const FocusablePressable = ({
         hasTVPreferredFocus={autoFocus}
         tvParallaxProperties={{ enabled: false }}
         renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}
+        nextFocusRight={nextFocusRight}
+        nextFocusLeft={nextFocusLeft}
+        nextFocusUp={nextFocusUp}
+        nextFocusDown={nextFocusDown}
         style={({ focused }) => [
           styles.watchButton,
           style,
@@ -167,7 +184,7 @@ const FocusablePressable = ({
       )}
     </View>
   );
-};
+});
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
   // Unified TV scaling - design for tvOS at 1.375x, Android TV at 1.71875x (25% larger)
