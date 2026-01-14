@@ -1,13 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View, Platform } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-native';
 
-import {
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  SpatialNavigationScrollView,
-  DefaultFocus,
-} from '@/services/tv-navigation';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -136,82 +129,79 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
   }
 
   return (
-    <SpatialNavigationRoot isActive={visible}>
-      <View style={styles.overlay}>
-        {!Platform.isTV ? <Pressable style={styles.backdrop} onPress={onClose} /> : null}
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Filter by Category</Text>
-            <Text style={styles.modalSubtitle}>
-              {selectedCategories.length === 0
-                ? 'All categories shown'
-                : `${selectedCategories.length} ${selectedCategories.length === 1 ? 'category' : 'categories'} selected`}
-            </Text>
-          </View>
+    <View style={styles.overlay}>
+      {!Platform.isTV ? <Pressable style={styles.backdrop} onPress={onClose} /> : null}
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Filter by Category</Text>
+          <Text style={styles.modalSubtitle}>
+            {selectedCategories.length === 0
+              ? 'All categories shown'
+              : `${selectedCategories.length} ${selectedCategories.length === 1 ? 'category' : 'categories'} selected`}
+          </Text>
+        </View>
 
-          <SpatialNavigationNode orientation="vertical">
-            <View style={styles.actionRow}>
-              <DefaultFocus>
-                <SpatialNavigationFocusableView
-                  focusKey="select-all-btn"
-                  onSelect={() => withSelectGuard(handleSelectAll)}>
-                  {({ isFocused }: { isFocused: boolean }) => (
-                    <View style={[styles.actionButton, isFocused && styles.actionButtonFocused]}>
-                      <Text style={[styles.actionButtonText, isFocused && styles.actionButtonTextFocused]}>
-                        {allSelected ? 'Clear All' : 'Select All'}
-                      </Text>
-                    </View>
-                  )}
-                </SpatialNavigationFocusableView>
-              </DefaultFocus>
-            </View>
+        <View style={styles.actionRow}>
+          <Pressable
+            onPress={() => withSelectGuard(handleSelectAll)}
+            hasTVPreferredFocus={true}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.actionButton, focused && styles.actionButtonFocused]}
+          >
+            {({ focused }) => (
+              <Text style={[styles.actionButtonText, focused && styles.actionButtonTextFocused]}>
+                {allSelected ? 'Clear All' : 'Select All'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
 
-            <SpatialNavigationNode orientation="vertical">
-              <SpatialNavigationScrollView contentContainerStyle={styles.categoriesList}>
-                {categories.map((category) => {
-                  const isSelected = selectedCategories.includes(category);
-                  return (
-                    <SpatialNavigationFocusableView
-                      key={category}
-                      focusKey={`category-${category}`}
-                      onSelect={() => withSelectGuard(() => onToggleCategory(category))}>
-                      {({ isFocused }: { isFocused: boolean }) => (
-                        <View
-                          style={[
-                            styles.categoryItem,
-                            isFocused && styles.categoryItemFocused,
-                            isSelected && styles.categoryItemSelected,
-                          ]}>
-                          <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
-                          <Text
-                            style={[
-                              styles.categoryText,
-                              isFocused && styles.categoryTextFocused,
-                              isSelected && styles.categoryTextSelected,
-                            ]}>
-                            {category}
-                          </Text>
-                        </View>
-                      )}
-                    </SpatialNavigationFocusableView>
-                  );
-                })}
-              </SpatialNavigationScrollView>
-            </SpatialNavigationNode>
-
-            <View style={styles.modalFooter}>
-              <SpatialNavigationFocusableView focusKey="close-btn" onSelect={() => withSelectGuard(onClose)}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                  </View>
+        <ScrollView contentContainerStyle={styles.categoriesList}>
+          {categories.map((category) => {
+            const isSelected = selectedCategories.includes(category);
+            return (
+              <Pressable
+                key={category}
+                onPress={() => withSelectGuard(() => onToggleCategory(category))}
+                tvParallaxProperties={{ enabled: false }}
+                style={({ focused }) => [
+                  styles.categoryItem,
+                  focused && styles.categoryItemFocused,
+                  isSelected && styles.categoryItemSelected,
+                ]}
+              >
+                {({ focused }) => (
+                  <>
+                    <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
+                    <Text
+                      style={[
+                        styles.categoryText,
+                        focused && styles.categoryTextFocused,
+                        isSelected && styles.categoryTextSelected,
+                      ]}
+                    >
+                      {category}
+                    </Text>
+                  </>
                 )}
-              </SpatialNavigationFocusableView>
-            </View>
-          </SpatialNavigationNode>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.modalFooter}>
+          <Pressable
+            onPress={() => withSelectGuard(onClose)}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}
+          >
+            {({ focused }) => (
+              <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
+            )}
+          </Pressable>
         </View>
       </View>
-    </SpatialNavigationRoot>
+    </View>
   );
 };
 

@@ -1,10 +1,8 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { CustomMenu } from '@/components/CustomMenu';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SpatialNavigationRoot } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { Direction } from '@bam.tech/lrud';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
@@ -77,15 +75,6 @@ export default function DrawerLayout() {
     // When drawer is closed, enable menu key so we can use it for navigation
     RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen);
   }, [isMenuOpen]);
-
-  const onDirectionHandledWithoutMovement = useCallback(
-    (movement: Direction) => {
-      if (movement === 'right') {
-        closeMenu();
-      }
-    },
-    [closeMenu],
-  );
 
   if (shouldUseTabs) {
     return (
@@ -238,17 +227,8 @@ export default function DrawerLayout() {
         </Stack>
       </TVBackground>
 
-      {/* Custom menu overlay */}
-      {/* Android TV uses native focus handling, so skip SpatialNavigationRoot */}
-      {Platform.OS === 'android' && Platform.isTV ? (
-        <CustomMenu isVisible={isMenuOpen} onClose={closeMenu} />
-      ) : (
-        <SpatialNavigationRoot
-          isActive={isMenuOpen}
-          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
-          <CustomMenu isVisible={isMenuOpen} onClose={closeMenu} />
-        </SpatialNavigationRoot>
-      )}
+      {/* Custom menu overlay - unified native focus for all platforms */}
+      <CustomMenu isVisible={isMenuOpen} onClose={closeMenu} />
     </View>
   );
 }

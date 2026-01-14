@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Dimensions, Platform } from 'react-native';
 
 /**
  * Unified TV Scaling Utility
@@ -117,4 +117,65 @@ export function getTVScaleMultiplier(): number {
  */
 export function tvValue<T>(options: { tv: T; mobile: T }): T {
   return isTV ? options.tv : options.mobile;
+}
+
+/**
+ * Reference width for responsive TV sizing.
+ * All TV designs should target this width (1080p tvOS).
+ * Values will scale proportionally to actual screen width.
+ */
+export const TV_REFERENCE_WIDTH = 1920;
+
+/**
+ * Screen-width-based responsive sizing for TV platforms.
+ * Design everything for 1920px width (tvOS 1080p), and it automatically
+ * scales to match the actual screen width on any TV platform.
+ *
+ * This is the PREFERRED approach for new code - it eliminates the need
+ * for platform-specific multipliers entirely.
+ *
+ * @param designValue - The value designed for 1920px width
+ * @param mobileValue - Optional fallback for mobile (defaults to designValue * 0.5)
+ * @returns The proportionally scaled value for the current screen
+ *
+ * @example
+ * // Same code works on tvOS and Android TV
+ * const fontSize = responsiveSize(32);     // 32px at 1920w, scales proportionally
+ * const padding = responsiveSize(24);      // 24px at 1920w
+ * const iconSize = responsiveSize(48);     // 48px at 1920w
+ *
+ * @example
+ * // With mobile fallback
+ * const cardWidth = responsiveSize(320, 160); // 320px at 1920w TV, 160px on mobile
+ */
+export function responsiveSize(designValue: number, mobileValue?: number): number {
+  if (!isTV) {
+    return mobileValue ?? Math.round(designValue * 0.5);
+  }
+
+  const { width } = Dimensions.get('window');
+  return Math.round(designValue * (width / TV_REFERENCE_WIDTH));
+}
+
+/**
+ * Get the responsive scale multiplier for the current screen.
+ * Useful when applying scaling to multiple values at once.
+ *
+ * @returns Scale factor based on screen width relative to reference (1920px)
+ *
+ * @example
+ * const scale = getResponsiveScale();
+ * const styles = {
+ *   fontSize: 24 * scale,
+ *   padding: 16 * scale,
+ *   iconSize: 48 * scale,
+ * };
+ */
+export function getResponsiveScale(): number {
+  if (!isTV) {
+    return 0.5; // Mobile default
+  }
+
+  const { width } = Dimensions.get('window');
+  return width / TV_REFERENCE_WIDTH;
 }

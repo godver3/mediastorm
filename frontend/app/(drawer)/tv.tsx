@@ -2,41 +2,83 @@
 // SPDX-License-Identifier: MIT-0
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
-import FocusablePressable from '@/components/FocusablePressable';
 import {
   QUALITY_OPTIONS,
   YEAR_RANGE_OPTIONS,
   matchesYearRange,
   useDiscoveryPreferences,
 } from '@/hooks/useDiscoveryPreferences';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { Direction } from '@bam.tech/lrud';
-import { useIsFocused } from '@react-navigation/native';
+import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import MediaGrid from '../../components/MediaGrid';
-import { useMenuContext } from '../../components/MenuContext';
-import { useUserProfiles } from '../../components/UserProfilesContext';
-import { useTrendingTVShows } from '../../hooks/useApi';
 import { Title } from '../../services/api';
+
+// Native preference button for TV platforms
+const NativePreferenceButton = ({
+  label,
+  isActive,
+  onPress,
+  autoFocus,
+  theme,
+}: {
+  label: string;
+  isActive: boolean;
+  onPress: () => void;
+  autoFocus?: boolean;
+  theme: NovaTheme;
+}) => {
+  const paddingH = responsiveSize(24, 12);
+  const paddingV = responsiveSize(12, 8);
+  const fontSize = responsiveSize(22, 14);
+  const borderRadius = responsiveSize(8, 6);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      hasTVPreferredFocus={autoFocus}
+      tvParallaxProperties={{ enabled: false }}
+      style={({ focused }) => ({
+        paddingHorizontal: paddingH,
+        paddingVertical: paddingV,
+        borderRadius,
+        minWidth: responsiveSize(120, 80),
+        backgroundColor: focused
+          ? theme.colors.accent.primary
+          : isActive
+            ? theme.colors.accent.secondary
+            : theme.colors.overlay.button,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: focused
+          ? theme.colors.accent.primary
+          : isActive
+            ? theme.colors.accent.secondary
+            : theme.colors.border.subtle,
+      })}
+    >
+      {({ focused }) => (
+        <Text
+          style={{
+            fontSize,
+            fontWeight: '500',
+            textAlign: 'center',
+            color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+          }}
+        >
+          {label}
+        </Text>
+      )}
+    </Pressable>
+  );
+};
 
 export default function TVShowsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId } = useUserProfiles();
   const { settings, userSettings } = useBackendSettings();
-  const isFocused = useIsFocused();
-  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
-  const focusedIndex = 0;
   const router = useRouter();
 
   const { preferences, updatePreferences, qualityLabel } = useDiscoveryPreferences();
@@ -48,15 +90,6 @@ export default function TVShowsScreen() {
     const titles = trendingTVShows?.map((item) => item.title) ?? [];
     return titles.filter((item) => matchesYearRange(item.year, preferences.yearRange));
   }, [preferences.yearRange, trendingTVShows]);
-
-  const onDirectionHandledWithoutMovement = useCallback(
-    (movement: Direction) => {
-      if (movement === 'left' && focusedIndex === 0) {
-        openMenu();
-      }
-    },
-    [openMenu, focusedIndex],
-  );
 
   const handleTVShowPress = useCallback(
     (title: Title) => {
@@ -81,51 +114,38 @@ export default function TVShowsScreen() {
   );
 
   return (
-    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.container}>
-        <DefaultFocus>
-          <SpatialNavigationFocusableView>
-            <Text style={styles.title}>TV Shows</Text>
-          </SpatialNavigationFocusableView>
-        </DefaultFocus>
+        <Text style={styles.title}>TV Shows</Text>
 
         <View style={styles.preferenceSection}>
           <Text style={styles.sectionLabel}>Quality</Text>
-          <SpatialNavigationNode orientation="horizontal">
-            <View style={styles.preferenceRow}>
-              {QUALITY_OPTIONS.map((option) => (
-                <FocusablePressable
-                  key={option.value}
-                  focusKey={`quality-${option.value}`}
-                  text={option.label}
-                  onSelect={() => updatePreferences({ quality: option.value })}
-                  style={[
-                    styles.preferenceButton,
-                    preferences.quality === option.value && styles.preferenceButtonActive,
-                  ]}
-                />
-              ))}
-            </View>
-          </SpatialNavigationNode>
+          <View style={styles.preferenceRow}>
+            {QUALITY_OPTIONS.map((option, index) => (
+              <NativePreferenceButton
+                key={option.value}
+                label={option.label}
+                isActive={preferences.quality === option.value}
+                onPress={() => updatePreferences({ quality: option.value })}
+                autoFocus={index === 0}
+                theme={theme}
+              />
+            ))}
+          </View>
 
           <Text style={styles.sectionLabel}>Era</Text>
-          <SpatialNavigationNode orientation="horizontal">
-            <View style={styles.preferenceRow}>
-              {YEAR_RANGE_OPTIONS.map((option) => (
-                <FocusablePressable
-                  key={option.value}
-                  focusKey={`year-${option.value}`}
-                  text={option.label}
-                  onSelect={() => updatePreferences({ yearRange: option.value })}
-                  style={[
-                    styles.preferenceButton,
-                    preferences.yearRange === option.value && styles.preferenceButtonActive,
-                  ]}
-                />
-              ))}
-            </View>
-          </SpatialNavigationNode>
+          <View style={styles.preferenceRow}>
+            {YEAR_RANGE_OPTIONS.map((option) => (
+              <NativePreferenceButton
+                key={option.value}
+                label={option.label}
+                isActive={preferences.yearRange === option.value}
+                onPress={() => updatePreferences({ yearRange: option.value })}
+                theme={theme}
+              />
+            ))}
+          </View>
         </View>
 
         <MediaGrid
@@ -135,22 +155,30 @@ export default function TVShowsScreen() {
           error={error}
           onItemPress={handleTVShowPress}
           badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+          useNativeFocus={true}
         />
       </View>
-    </SpatialNavigationRoot>
+    </>
   );
 }
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+// Import the hook that was used
+import { useTrendingTVShows } from '../../hooks/useApi';
+
+const createStyles = (theme: NovaTheme) => {
+  const titleSize = responsiveSize(36, 24);
+  const sectionLabelSize = responsiveSize(20, 14);
+
+  return StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base,
+      backgroundColor: isTV ? 'transparent' : theme.colors.background.base,
       paddingHorizontal: theme.spacing.xl,
       paddingTop: theme.spacing.xl,
     },
     title: {
-      ...theme.typography.title.xl,
+      fontSize: titleSize,
+      fontWeight: '700',
       color: theme.colors.text.primary,
       marginBottom: theme.spacing.lg,
       textAlign: 'left',
@@ -161,7 +189,7 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: theme.spacing['2xl'],
     },
     sectionLabel: {
-      ...theme.typography.body.sm,
+      fontSize: sectionLabelSize,
       color: theme.colors.text.secondary,
     },
     preferenceRow: {
@@ -169,11 +197,5 @@ const createStyles = (theme: NovaTheme) =>
       flexWrap: 'wrap',
       gap: theme.spacing.sm,
     },
-    preferenceButton: {
-      minWidth: 96,
-    },
-    preferenceButtonActive: {
-      backgroundColor: theme.colors.accent.secondary,
-      borderColor: theme.colors.accent.secondary,
-    },
   });
+};

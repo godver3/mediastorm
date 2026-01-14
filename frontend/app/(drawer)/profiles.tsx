@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -12,22 +13,15 @@ import {
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
-import FocusablePressable from '@/components/FocusablePressable';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import type { UserProfile } from '@/services/api';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  SpatialNavigationScrollView,
-  SpatialNavigationVirtualizedGrid,
-} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { Direction } from '@bam.tech/lrud';
+import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 
@@ -81,7 +75,12 @@ export default function ProfilesScreen() {
   const [openColorSelectorId, setOpenColorSelectorId] = useState<string | null>(null);
 
   const isProfileModalVisible = selectedProfile !== null;
-  const isActive = isFocused && !isMenuOpen && !isProfileModalVisible && !pendingPinUserId;
+
+  // Refs for native focus management
+  const refreshButtonRef = useRef<View>(null);
+  const profileCardRefs = useRef<(View | null)[]>([]);
+  const colorSwatchRefs = useRef<(View | null)[]>([]);
+  const modalButtonRefs = useRef<(View | null)[]>([]);
 
   useEffect(() => {
     if (error) {
@@ -138,14 +137,21 @@ export default function ProfilesScreen() {
     }
   }, [refresh, showToast]);
 
-  const onDirectionHandledWithoutMovement = useCallback(
-    (movement: Direction) => {
-      if (movement === 'left') {
+  // TV: Handle left key to open menu when not in modal
+  useEffect(() => {
+    if (!isTV || isMenuOpen || isProfileModalVisible) return;
+
+    const handleKeyDown = (key: SupportedKeys) => {
+      if (key === SupportedKeys.Left) {
         openMenu();
       }
-    },
-    [openMenu],
-  );
+    };
+
+    RemoteControlManager.addKeydownListener(handleKeyDown);
+    return () => {
+      RemoteControlManager.removeKeydownListener(handleKeyDown);
+    };
+  }, [isMenuOpen, isProfileModalVisible, openMenu]);
 
   // TV: Grid data for profile cards
   const gridData = useMemo<GridItem[]>(() => {
@@ -162,22 +168,30 @@ export default function ProfilesScreen() {
     setSelectedProfile(null);
   }, []);
 
-  // TV: Render grid item
+  // TV: Render grid item with native focus
   const renderGridItem = useCallback(
-    ({ item }: { item: GridItem }) => {
+    ({ item, index }: { item: GridItem; index: number }) => {
       const { profile } = item;
       const isProfileActive = activeUserId === profile.id;
       const avatarColor = profile.color || undefined;
 
       return (
-        <SpatialNavigationFocusableView
-          focusKey={`profile-card-${profile.id}`}
-          onSelect={() => handleProfileCardSelect(profile)}
+        <Pressable
+          key={profile.id}
+          ref={(ref) => {
+            profileCardRefs.current[index] = ref;
+          }}
+          onPress={() => handleProfileCardSelect(profile)}
+          hasTVPreferredFocus={index === 0}
+          tvParallaxProperties={{ enabled: false }}
+          style={({ focused }) => [
+            styles.gridCard,
+            focused && styles.gridCardFocused,
+            isProfileActive && styles.gridCardActive,
+          ]}
         >
-          {({ isFocused }: { isFocused: boolean }) => (
-            <View
-              style={[styles.gridCard, isFocused && styles.gridCardFocused, isProfileActive && styles.gridCardActive]}
-            >
+          {({ focused }) => (
+            <>
               <View style={[styles.gridCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
                 <Text style={styles.gridCardAvatarText}>{profile.name.charAt(0).toUpperCase()}</Text>
                 {profile.hasPin && (
@@ -195,177 +209,201 @@ export default function ProfilesScreen() {
                 {profile.name}
               </Text>
               {isProfileActive && <Text style={styles.gridCardBadge}>Active</Text>}
-            </View>
+            </>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     },
     [activeUserId, styles, handleProfileCardSelect],
   );
 
-  // TV Layout
+  // TV Layout - Native focus
   if (Platform.isTV) {
+    // Responsive sizing for TV
+    const refreshButtonPaddingH = responsiveSize(32, 16);
+    const refreshButtonPaddingV = responsiveSize(16, 8);
+    const refreshButtonFontSize = responsiveSize(24, 14);
+    const refreshButtonBorderRadius = responsiveSize(8, 6);
+    const iconSize = responsiveSize(28, 16);
+
     return (
       <>
-        <SpatialNavigationRoot
-          isActive={isActive}
-          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
-        >
-          <Stack.Screen options={{ headerShown: false }} />
-          <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
-            <View style={styles.tvCenteredWrapper}>
-              <View style={styles.tvContentContainer}>
-                <View style={styles.headerRow}>
-                  <View>
-                    <Text style={styles.title}>Profiles</Text>
-                    <Text style={styles.description}>Select a profile to switch or customize</Text>
-                  </View>
-                  <SpatialNavigationNode orientation="horizontal">
-                    <FocusablePressable
-                      focusKey="profiles-refresh"
-                      text={pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
-                      icon="refresh-outline"
-                      onSelect={handleRefreshProfiles}
-                      disabled={pending === 'refresh'}
-                      style={styles.headerButton}
-                    />
-                  </SpatialNavigationNode>
+        <Stack.Screen options={{ headerShown: false }} />
+        <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
+          <View style={styles.tvContainer}>
+            <View style={styles.headerRow}>
+                <View>
+                  <Text style={styles.title}>Profiles</Text>
+                  <Text style={styles.description}>Select a profile to switch or customize</Text>
                 </View>
-
-                {loading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-                    <Text style={styles.loadingText}>Loading profiles…</Text>
-                  </View>
-                ) : (
-                  <DefaultFocus>
-                    <SpatialNavigationVirtualizedGrid
-                      data={gridData}
-                      renderItem={renderGridItem}
-                      numberOfColumns={3}
-                      itemHeight={styles.gridItemHeight}
-                      numberOfRenderedRows={4}
-                      numberOfRowsVisibleOnScreen={2}
-                      rowContainerStyle={styles.gridRowContainer}
-                      style={styles.virtualizedGrid}
-                    />
-                  </DefaultFocus>
-                )}
+                <Pressable
+                  ref={refreshButtonRef}
+                  onPress={handleRefreshProfiles}
+                  disabled={pending === 'refresh'}
+                  tvParallaxProperties={{ enabled: false }}
+                  style={({ focused }) => [
+                    styles.headerButton,
+                    {
+                      paddingHorizontal: refreshButtonPaddingH,
+                      paddingVertical: refreshButtonPaddingV,
+                      borderRadius: refreshButtonBorderRadius,
+                      backgroundColor: focused
+                        ? theme.colors.accent.primary
+                        : theme.colors.background.surface,
+                    },
+                  ]}
+                >
+                  {({ focused }) => (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: responsiveSize(12, 6) }}>
+                      <Ionicons
+                        name="refresh-outline"
+                        size={iconSize}
+                        color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                      />
+                      <Text
+                        style={{
+                          fontSize: refreshButtonFontSize,
+                          fontWeight: '500',
+                          color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+                        }}
+                      >
+                        {pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
               </View>
-            </View>
-          </FixedSafeAreaView>
-        </SpatialNavigationRoot>
 
-        {/* Profile Actions Modal */}
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+                  <Text style={styles.loadingText}>Loading profiles…</Text>
+                </View>
+              ) : (
+                <ScrollView style={styles.virtualizedGrid} contentContainerStyle={styles.gridRowContainer}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xl }}>
+                    {gridData.map((item, index) => renderGridItem({ item, index }))}
+                  </View>
+                </ScrollView>
+              )}
+          </View>
+        </FixedSafeAreaView>
+
+        {/* Profile Actions Modal - Native focus */}
         <Modal
           visible={isProfileModalVisible && selectedProfile !== null}
           transparent={true}
           animationType="fade"
           onRequestClose={handleCloseProfileActions}
         >
-          <SpatialNavigationRoot isActive={isProfileModalVisible}>
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                {selectedProfile && (
-                  <>
-                    <View style={styles.profileModalHeader}>
-                      <View
-                        style={[
-                          styles.profileModalAvatar,
-                          selectedProfile.color && { backgroundColor: selectedProfile.color },
-                        ]}
-                      >
-                        <Text style={styles.profileModalAvatarText}>
-                          {selectedProfile.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <Text style={styles.modalTitle}>{selectedProfile.name}</Text>
-                    </View>
-
-                    <View style={styles.colorPickerSection}>
-                      <Text style={styles.colorPickerLabel}>Profile Color</Text>
-                      <SpatialNavigationNode orientation="horizontal">
-                        <View style={styles.colorPickerRow}>
-                          {PROFILE_COLORS.map((color) => {
-                            const isSelected = selectedProfile.color === color.value;
-                            return (
-                              <SpatialNavigationFocusableView
-                                key={color.value}
-                                focusKey={`color-${color.value}`}
-                                onSelect={() => handleUpdateColor(selectedProfile.id, color.value)}
-                              >
-                                {({ isFocused }: { isFocused: boolean }) => (
-                                  <View
-                                    style={[
-                                      styles.colorSwatch,
-                                      { backgroundColor: color.value },
-                                      isFocused && styles.colorSwatchFocused,
-                                      isSelected && styles.colorSwatchSelected,
-                                    ]}
-                                  />
-                                )}
-                              </SpatialNavigationFocusableView>
-                            );
-                          })}
-                        </View>
-                      </SpatialNavigationNode>
-                    </View>
-
-                    <SpatialNavigationNode orientation="vertical">
-                      <View style={styles.modalButtonsContainer}>
-                        <DefaultFocus>
-                          <FocusablePressable
-                            focusKey="profile-modal-activate"
-                            text={activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
-                            onSelect={() => {
-                              void handleActivateProfile(selectedProfile.id);
-                              handleCloseProfileActions();
-                            }}
-                            disabled={
-                              activeUserId === selectedProfile.id || pending === `activate:${selectedProfile.id}`
-                            }
-                            style={styles.modalButton}
-                            focusedStyle={styles.modalButtonFocused}
-                            textStyle={styles.modalButtonText}
-                            focusedTextStyle={styles.modalButtonTextFocused}
-                          />
-                        </DefaultFocus>
-                        <FocusablePressable
-                          focusKey="profile-modal-cancel"
-                          text="Close"
-                          onSelect={handleCloseProfileActions}
-                          style={styles.modalButton}
-                          focusedStyle={styles.modalButtonFocused}
-                          textStyle={styles.modalButtonText}
-                          focusedTextStyle={styles.modalButtonTextFocused}
-                        />
-                      </View>
-                    </SpatialNavigationNode>
-
-                    <View style={styles.adminInfoNote}>
-                      <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
-                      <Text style={styles.adminInfoNoteText}>
-                        To create, rename, set PIN, or delete profiles, use the Admin Web UI
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              {selectedProfile && (
+                <>
+                  <View style={styles.profileModalHeader}>
+                    <View
+                      style={[
+                        styles.profileModalAvatar,
+                        selectedProfile.color && { backgroundColor: selectedProfile.color },
+                      ]}
+                    >
+                      <Text style={styles.profileModalAvatarText}>
+                        {selectedProfile.name.charAt(0).toUpperCase()}
                       </Text>
                     </View>
-                  </>
-                )}
-              </View>
-            </View>
-          </SpatialNavigationRoot>
-        </Modal>
+                    <Text style={styles.modalTitle}>{selectedProfile.name}</Text>
+                  </View>
 
+                  <View style={styles.colorPickerSection}>
+                    <Text style={styles.colorPickerLabel}>Profile Color</Text>
+                    <View style={styles.colorPickerRow}>
+                      {PROFILE_COLORS.map((color, colorIndex) => {
+                        const isSelected = selectedProfile.color === color.value;
+                        return (
+                          <Pressable
+                            key={color.value}
+                            ref={(ref) => {
+                              colorSwatchRefs.current[colorIndex] = ref;
+                            }}
+                            onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
+                            hasTVPreferredFocus={colorIndex === 0}
+                            tvParallaxProperties={{ enabled: false }}
+                            style={({ focused }) => [
+                              styles.colorSwatch,
+                              { backgroundColor: color.value },
+                              focused && styles.colorSwatchFocused,
+                              isSelected && styles.colorSwatchSelected,
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View style={styles.modalButtonsContainer}>
+                    <Pressable
+                      ref={(ref) => {
+                        modalButtonRefs.current[0] = ref;
+                      }}
+                      onPress={() => {
+                        void handleActivateProfile(selectedProfile.id);
+                        handleCloseProfileActions();
+                      }}
+                      disabled={activeUserId === selectedProfile.id || pending === `activate:${selectedProfile.id}`}
+                      tvParallaxProperties={{ enabled: false }}
+                      style={({ focused }) => [
+                        styles.modalButton,
+                        focused && styles.modalButtonFocused,
+                        (activeUserId === selectedProfile.id) && { opacity: 0.5 },
+                      ]}
+                    >
+                      {({ focused }) => (
+                        <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>
+                          {activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
+                        </Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      ref={(ref) => {
+                        modalButtonRefs.current[1] = ref;
+                      }}
+                      onPress={handleCloseProfileActions}
+                      tvParallaxProperties={{ enabled: false }}
+                      style={({ focused }) => [
+                        styles.modalButton,
+                        focused && styles.modalButtonFocused,
+                      ]}
+                    >
+                      {({ focused }) => (
+                        <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>
+                          Close
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.adminInfoNote}>
+                    <Ionicons name="information-circle-outline" size={responsiveSize(24, 18)} color={theme.colors.text.muted} />
+                    <Text style={styles.adminInfoNoteText}>
+                      To create, rename, set PIN, or delete profiles, use the Admin Web UI
+                    </Text>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       </>
     );
   }
 
   // Mobile Layout - uses card grid similar to TV
   return (
-    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          <SpatialNavigationScrollView
+          <ScrollView
             contentContainerStyle={styles.scrollContent}
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
@@ -375,11 +413,15 @@ export default function ProfilesScreen() {
                 <Text style={styles.title}>Profiles</Text>
                 <Text style={styles.description}>Select a profile to switch or customize</Text>
               </View>
-              <FocusablePressable
-                text={pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
-                onSelect={handleRefreshProfiles}
+              <Pressable
+                onPress={handleRefreshProfiles}
                 disabled={pending === 'refresh'}
-              />
+                style={styles.mobileRefreshButton}
+              >
+                <Text style={styles.mobileRefreshButtonText}>
+                  {pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
+                </Text>
+              </Pressable>
             </View>
 
             {loading ? (
@@ -430,7 +472,7 @@ export default function ProfilesScreen() {
                 To create, rename, set PIN, or delete profiles, use the Admin Web UI
               </Text>
             </View>
-          </SpatialNavigationScrollView>
+          </ScrollView>
         </View>
       </FixedSafeAreaView>
 
@@ -507,24 +549,25 @@ export default function ProfilesScreen() {
           </View>
         </View>
       </Modal>
-    </SpatialNavigationRoot>
+    </>
   );
 }
 
 const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080) => {
-  const isTV = Platform.isTV;
-  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
+  const isTVPlatform = Platform.isTV;
   const isCompact = theme.breakpoint === 'compact';
-  const horizontalPadding = isTV ? theme.spacing.xl * 1.5 : isCompact ? theme.spacing.lg : theme.spacing['2xl'];
+  const horizontalPadding = isTVPlatform ? theme.spacing.xl * 1.5 : isCompact ? theme.spacing.lg : theme.spacing['2xl'];
 
-  // TV centered content (60% of screen width)
-  const tvContentWidth = isTV ? screenWidth * 0.6 : screenWidth;
-  const tvContentPadding = isTV ? theme.spacing.xl : horizontalPadding;
+  // Ensure we have valid screen dimensions (fallback to 1920x1080 for TV)
+  const effectiveWidth = screenWidth > 0 ? screenWidth : (isTV ? 1920 : 375);
+  const effectiveHeight = screenHeight > 0 ? screenHeight : (isTV ? 1080 : 812);
 
   // TV grid configuration
   const columnsCount = isTV ? 3 : 4; // Fewer columns since content area is narrower
   const gap = theme.spacing.xl;
-  const availableWidth = isTV ? tvContentWidth - tvContentPadding * 2 : screenWidth - horizontalPadding * 2;
+  // TV: 20% padding each side means 60% content width
+  const tvAvailableWidth = effectiveWidth * 0.6;
+  const availableWidth = isTV ? tvAvailableWidth : effectiveWidth - horizontalPadding * 2;
   const totalGapWidth = gap * (columnsCount - 1);
   const cardWidth = isTV ? Math.floor((availableWidth - totalGapWidth) / columnsCount) : 0;
   const cardHeight = isTV ? Math.round(cardWidth * 1.1) : 0; // Slightly taller than wide for profile cards
@@ -532,7 +575,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
 
   // Mobile grid configuration - 3 columns responsive to screen width
   const mobileGap = theme.spacing.md;
-  const mobileAvailableWidth = screenWidth - horizontalPadding * 2;
+  const mobileAvailableWidth = effectiveWidth - horizontalPadding * 2;
   const mobileCardWidth = Math.floor((mobileAvailableWidth - mobileGap * 2) / 3);
   const mobileAvatarSize = Math.min(56, Math.floor(mobileCardWidth * 0.5));
   const mobileAvatarFontSize = Math.floor(mobileAvatarSize * 0.45);
@@ -542,17 +585,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flex: 1,
       backgroundColor: isTV ? 'transparent' : theme.colors.background.base,
     },
-    // TV: Full-screen wrapper that centers content
-    tvCenteredWrapper: {
+    // TV: Simple container with horizontal padding for centering effect
+    tvContainer: {
       flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    // TV: Centered content container (60% width)
-    tvContentContainer: {
-      width: tvContentWidth,
-      flex: 1,
-      paddingHorizontal: tvContentPadding,
+      paddingHorizontal: isTV ? effectiveWidth * 0.2 : horizontalPadding, // 20% padding each side = 60% content
       paddingTop: theme.spacing.xl * 1.5,
     },
     container: {
@@ -615,6 +651,18 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
       gap: theme.spacing.sm,
       marginVertical: theme.spacing.sm,
+    },
+    mobileRefreshButton: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingVertical: theme.spacing.sm,
+      backgroundColor: theme.colors.background.surface,
+      borderRadius: theme.radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+    },
+    mobileRefreshButtonText: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.primary,
     },
 
     // TV Grid styles
@@ -803,11 +851,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontWeight: '600',
     },
     colorPickerSection: {
-      gap: isTV ? (isAndroidTV ? theme.spacing.xs : theme.spacing.sm) : theme.spacing.sm,
-      marginBottom: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
+      gap: isTV ? theme.spacing.sm : theme.spacing.sm,
+      marginBottom: isTV ? theme.spacing.lg : theme.spacing.md,
     },
     colorPickerLabel: {
-      ...(isTV ? (isAndroidTV ? theme.typography.caption.sm : theme.typography.label.md) : theme.typography.body.sm),
+      ...(isTV ? theme.typography.label.md : theme.typography.body.sm),
       color: theme.colors.text.secondary,
       textAlign: 'center',
       marginBottom: isTV ? theme.spacing.sm : theme.spacing.xs,
@@ -822,18 +870,18 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       zIndex: 1000,
     },
     modalContainer: {
-      width: isAndroidTV ? '40%' : '80%',
-      maxWidth: isAndroidTV ? 350 : 700,
+      width: '60%',
+      maxWidth: 700,
       margin: '10%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: isAndroidTV ? theme.radius.lg : theme.radius.xl,
+      borderRadius: theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
-      padding: isAndroidTV ? theme.spacing.xl : theme.spacing['2xl'],
-      gap: isAndroidTV ? theme.spacing.md : theme.spacing.lg,
+      padding: theme.spacing['2xl'],
+      gap: theme.spacing.lg,
     },
     modalTitle: {
-      ...(isAndroidTV ? theme.typography.title.lg : theme.typography.title.xl),
+      ...theme.typography.title.xl,
       color: theme.colors.text.primary,
     },
     pinErrorContainer: {
@@ -905,13 +953,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: 'white',
     },
     modalButton: {
-      minWidth: isAndroidTV ? 140 : 280,
-      minHeight: isAndroidTV ? 32 : 64,
+      minWidth: 280,
+      minHeight: 64,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingVertical: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
-      paddingHorizontal: isAndroidTV ? theme.spacing.xl : theme.spacing['2xl'],
-      borderWidth: isAndroidTV ? 2 : 3,
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing['2xl'],
+      borderWidth: 3,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
       borderColor: theme.colors.border.subtle,
@@ -921,12 +969,12 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       backgroundColor: theme.colors.background.elevated,
     },
     modalButtonText: {
-      ...(isAndroidTV ? theme.typography.body.sm : theme.typography.title.md),
+      ...theme.typography.title.md,
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
     modalButtonTextFocused: {
-      ...(isAndroidTV ? theme.typography.body.sm : theme.typography.title.md),
+      ...theme.typography.title.md,
       color: theme.colors.text.primary,
     },
     modalButtonsContainer: {
@@ -936,19 +984,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     // Profile actions modal styles
     profileModalHeader: {
       alignItems: 'center',
-      gap: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
-      marginBottom: isTV ? (isAndroidTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.md,
+      gap: isTV ? theme.spacing.lg : theme.spacing.md,
+      marginBottom: isTV ? theme.spacing.lg : theme.spacing.md,
     },
     profileModalAvatar: {
-      width: isTV ? (isAndroidTV ? 70 : 100) : 64,
-      height: isTV ? (isAndroidTV ? 70 : 100) : 64,
-      borderRadius: isTV ? (isAndroidTV ? 35 : 50) : 32,
+      width: isTV ? 100 : 64,
+      height: isTV ? 100 : 64,
+      borderRadius: isTV ? 50 : 32,
       backgroundColor: theme.colors.background.surface,
       justifyContent: 'center',
       alignItems: 'center',
     },
     profileModalAvatarText: {
-      fontSize: isTV ? (isAndroidTV ? 32 : 48) : 28,
+      fontSize: isTV ? 48 : 28,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -974,10 +1022,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
     },
     colorSwatch: {
-      width: isTV ? (isAndroidTV ? 24 : 48) : 36,
-      height: isTV ? (isAndroidTV ? 24 : 48) : 36,
-      borderRadius: isTV ? (isAndroidTV ? 12 : 24) : 18,
-      borderWidth: isTV ? (isAndroidTV ? 2 : 3) : 2,
+      width: isTV ? 48 : 36,
+      height: isTV ? 48 : 36,
+      borderRadius: isTV ? 24 : 18,
+      borderWidth: isTV ? 3 : 2,
       borderColor: 'transparent',
     },
     colorSwatchFocused: {
@@ -998,14 +1046,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: isAndroidTV ? theme.spacing.xs : theme.spacing.sm,
-      marginTop: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
-      paddingTop: isAndroidTV ? theme.spacing.sm : theme.spacing.md,
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.md,
+      paddingTop: theme.spacing.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
     },
     adminInfoNoteText: {
-      ...(isAndroidTV ? theme.typography.caption.sm : theme.typography.body.md),
+      ...theme.typography.body.md,
       color: theme.colors.text.muted,
     },
     // Admin info note styles (Mobile)

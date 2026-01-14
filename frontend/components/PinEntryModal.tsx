@@ -10,12 +10,6 @@ import {
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
 
 import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
@@ -81,6 +75,9 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
       fontSize: useLargeSizing ? 16 : 14,
       textAlign: 'center',
     },
+    pinInputWrapper: {
+      marginBottom: 24,
+    },
     pinInput: {
       backgroundColor: theme.colors.background.elevated,
       borderRadius: 12,
@@ -90,7 +87,6 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
       color: theme.colors.text.primary,
       textAlign: 'center',
       minWidth: useLargeSizing ? 280 : 200,
-      marginBottom: 24,
       borderWidth: 2,
       borderColor: 'transparent',
       fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif',
@@ -267,110 +263,103 @@ export const PinEntryModal: React.FC = () => {
       transparent={true}
       animationType="fade"
       onRequestClose={handleCancel}>
-      <SpatialNavigationRoot isActive={isVisible}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.header}>
-              {pendingUser && (
-                <View
-                  style={[
-                    styles.avatar,
-                    pendingUser.color && { backgroundColor: pendingUser.color },
-                  ]}>
-                  <Text style={styles.avatarText}>
-                    {pendingUser.name.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
-              <Text style={styles.modalTitle}>Enter PIN</Text>
-              <Text style={styles.modalSubtitle}>
-                {isInitialPinCheck
-                  ? `Enter PIN to continue as ${pendingUser?.name}`
-                  : `${pendingUser?.name} is protected with a PIN`}
-              </Text>
-            </View>
-
-            {error && (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{error}</Text>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
+          <View style={styles.header}>
+            {pendingUser && (
+              <View
+                style={[
+                  styles.avatar,
+                  pendingUser.color && { backgroundColor: pendingUser.color },
+                ]}>
+                <Text style={styles.avatarText}>
+                  {pendingUser.name.charAt(0).toUpperCase()}
+                </Text>
               </View>
             )}
+            <Text style={styles.modalTitle}>Enter PIN</Text>
+            <Text style={styles.modalSubtitle}>
+              {isInitialPinCheck
+                ? `Enter PIN to continue as ${pendingUser?.name}`
+                : `${pendingUser?.name} is protected with a PIN`}
+            </Text>
+          </View>
 
-            <SpatialNavigationNode orientation="vertical">
-              <DefaultFocus>
-                <SpatialNavigationFocusableView
-                  focusKey="pin-input"
-                  onSelect={() => inputRef.current?.focus()}
-                  onBlur={() => inputRef.current?.blur()}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <Pressable tvParallaxProperties={{ enabled: false }}>
-                    <TextInput
-                      ref={inputRef}
-                      {...(Platform.isTV ? { defaultValue: pin } : { value: pin })}
-                      onChangeText={handleChangeText}
-                      onFocus={handleFocus}
-                      onBlur={handleBlur}
-                      placeholder="Enter PIN"
-                      placeholderTextColor={theme.colors.text.muted}
-                      style={[
-                        styles.pinInput,
-                        isFocused && styles.pinInputFocused,
-                        error && styles.pinInputError,
-                      ]}
-                      secureTextEntry={!Platform.isTV}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      autoComplete="off"
-                      textContentType="none"
-                      keyboardType="numeric"
-                      maxLength={16}
-                      returnKeyType="done"
-                      onSubmitEditing={() => {
-                        const pinValue = Platform.isTV ? tempPinRef.current : pin;
-                        if (pinValue.trim()) {
-                          void handleSubmit();
-                        }
-                      }}
-                      editable={Platform.isTV ? isFocused : true}
-                      {...(Platform.OS === 'ios' &&
-                        Platform.isTV && {
-                          keyboardAppearance: 'dark',
-                        })}
-                    />
-                  </Pressable>
-                )}
-              </SpatialNavigationFocusableView>
-              </DefaultFocus>
+          {error && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
 
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.actions}>
-                  {canCancel ? (
-                    <FocusablePressable
-                      focusKey="pin-cancel"
-                      text="Cancel"
-                      onSelect={handleCancel}
-                      style={styles.button}
-                      focusedStyle={styles.buttonFocused}
-                      textStyle={styles.buttonText}
-                      focusedTextStyle={styles.buttonTextFocused}
-                    />
-                  ) : null}
-                  <FocusablePressable
-                    focusKey="pin-submit"
-                    text={loading ? 'Verifying...' : 'Submit'}
-                    onSelect={handleSubmit}
-                    disabled={loading}
-                    style={[styles.button, styles.buttonPrimary]}
-                    focusedStyle={[styles.buttonFocused, styles.buttonPrimaryFocused]}
-                    textStyle={styles.buttonText}
-                    focusedTextStyle={styles.buttonTextFocused}
-                  />
-                </View>
-              </SpatialNavigationNode>
-            </SpatialNavigationNode>
+          <Pressable
+            onPress={() => inputRef.current?.focus()}
+            hasTVPreferredFocus={true}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [
+              styles.pinInputWrapper,
+              focused && { opacity: 1 },
+            ]}
+          >
+            {({ focused }) => (
+              <TextInput
+                ref={inputRef}
+                {...(Platform.isTV ? { defaultValue: pin } : { value: pin })}
+                onChangeText={handleChangeText}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                placeholder="Enter PIN"
+                placeholderTextColor={theme.colors.text.muted}
+                style={[
+                  styles.pinInput,
+                  focused && styles.pinInputFocused,
+                  error && styles.pinInputError,
+                ]}
+                secureTextEntry={!Platform.isTV}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="off"
+                textContentType="none"
+                keyboardType="numeric"
+                maxLength={16}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  const pinValue = Platform.isTV ? tempPinRef.current : pin;
+                  if (pinValue.trim()) {
+                    void handleSubmit();
+                  }
+                }}
+                editable={Platform.isTV ? focused : true}
+                {...(Platform.OS === 'ios' &&
+                  Platform.isTV && {
+                    keyboardAppearance: 'dark',
+                  })}
+              />
+            )}
+          </Pressable>
+
+          <View style={styles.actions}>
+            {canCancel ? (
+              <FocusablePressable
+                text="Cancel"
+                onSelect={handleCancel}
+                style={styles.button}
+                focusedStyle={styles.buttonFocused}
+                textStyle={styles.buttonText}
+                focusedTextStyle={styles.buttonTextFocused}
+              />
+            ) : null}
+            <FocusablePressable
+              text={loading ? 'Verifying...' : 'Submit'}
+              onSelect={handleSubmit}
+              disabled={loading}
+              style={[styles.button, styles.buttonPrimary]}
+              focusedStyle={[styles.buttonFocused, styles.buttonPrimaryFocused]}
+              textStyle={styles.buttonText}
+              focusedTextStyle={styles.buttonTextFocused}
+            />
           </View>
         </View>
-      </SpatialNavigationRoot>
+      </View>
     </Modal>
   );
 };

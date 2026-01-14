@@ -1,10 +1,8 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
-import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -14,14 +12,10 @@ import {
   Text,
   View,
   Animated,
-  ScrollView,
   Pressable,
   findNodeHandle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
-const isTVOS = Platform.isTV && Platform.OS === 'ios';
 
 // Routes that should remain accessible when backend is unreachable
 const ALWAYS_ACCESSIBLE_ROUTES = ['/', '/settings'];
@@ -31,7 +25,8 @@ interface CustomMenuProps {
   onClose: () => void;
 }
 
-const MENU_WIDTH = isAndroidTV ? 288 : Platform.isTV ? 400 : 320;
+// Unified responsive menu width - design for 1920px, scales to screen
+const MENU_WIDTH = responsiveSize(400, 320);
 
 export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }: CustomMenuProps) {
   const router = useRouter();
@@ -44,22 +39,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const slideAnim = useRef(new Animated.Value(isVisible ? 0 : -MENU_WIDTH)).current;
   const [isAnimatedHidden, setIsAnimatedHidden] = useState(!isVisible);
 
-  // Refs for Android TV focus trapping - prevent Left from leaving the menu
+  // Refs for native TV focus trapping - prevent Left from leaving the menu
   const menuItemRefs = useRef<(View | null)[]>([]);
   const [menuItemTags, setMenuItemTags] = useState<(number | null)[]>([]);
-
-  // Track menu open count to force re-registration of spatial navigation nodes
-  // This fixes an issue where spatial navigation skips menu items after navigation
-  const openCountRef = useRef(0);
-  const [menuKey, setMenuKey] = useState(0);
-
-  // Increment key when menu becomes visible to force SpatialNavigationNode re-registration
-  useEffect(() => {
-    if (isVisible) {
-      openCountRef.current += 1;
-      setMenuKey(openCountRef.current);
-    }
-  }, [isVisible]);
 
   // Backend is considered available if reachable OR still loading initially
   const isBackendAvailable = isBackendReachable || (settingsLoading && !settingsReady);
@@ -108,9 +90,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     });
   }, [isVisible, slideAnim]);
 
-  // Android TV: Compute native tags for focus trapping after refs are assigned
+  // TV: Compute native tags for focus trapping after refs are assigned
   useEffect(() => {
-    if (!isAndroidTV || !isVisible) return;
+    if (!isTV || !isVisible) return;
 
     // Small delay to ensure refs are assigned
     const timer = setTimeout(() => {
@@ -121,29 +103,10 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     return () => clearTimeout(timer);
   }, [isVisible, menuItems.length]);
 
-  // Android TV: Use native Pressable focus handling instead of manual D-pad navigation
-  // Manual handling caused race conditions between our focusedIndex state and native focus
-  useEffect(() => {
-    if (!isAndroidTV || !isVisible) return;
-
-    // Back button is NOT intercepted here - it propagates to minimize the app
-    // (handled in GoBackConfiguration.tsx by returning false when drawer is open)
-
-    // Handle left/right D-pad keys when drawer is open
-    // Left: disabled (do nothing), Right: close drawer
-    const handleKeyDown = (key: SupportedKeys) => {
-      if (key === SupportedKeys.Right) {
-        onClose();
-      }
-      // Left is intentionally ignored (disabled)
-    };
-
-    RemoteControlManager.addKeydownListener(handleKeyDown);
-
-    return () => {
-      RemoteControlManager.removeKeydownListener(handleKeyDown);
-    };
-  }, [isVisible, onClose]);
+  // TV: Native focus handles Right navigation out of drawer
+  // The drawer closes when shelf items detect they received focus while drawer is open
+  // Left navigation is trapped via nextFocusLeft on menu items pointing to themselves
+  // No keydown listener needed - we work with the native focus system instead of against it
 
   const handleItemSelect = useCallback(
     (routeName: string) => {
@@ -151,13 +114,13 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         return;
       }
       // On TV platforms, if already on the target route, just close the drawer
-      if (Platform.isTV && pathname === routeName) {
+      if (isTV && pathname === routeName) {
         onClose();
         return;
       }
-      // On Android TV, immediately hide the menu before navigating to avoid
+      // On TV, immediately hide the menu before navigating to avoid
       // Fabric race condition where animation and navigation both modify view hierarchy
-      if (isAndroidTV) {
+      if (isTV) {
         setIsAnimatedHidden(true);
         slideAnim.setValue(-MENU_WIDTH);
         onClose();
@@ -177,6 +140,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     return null;
   }
 
+  // Unified responsive icon size for TV
+  const iconSize = responsiveSize(38, 24);
+
   return (
     <>
       {isVisible && <View style={styles.overlay} pointerEvents="none" />}
@@ -191,55 +157,55 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
             paddingBottom: insets.bottom,
           },
         ]}>
-        {/* Android TV: Simple View with Pressable items */}
-        {isAndroidTV ? (
-          <View style={[styles.scrollView, styles.scrollContent]}>
-            <View style={styles.header}>
-              {activeUser && (
-                <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
-                  <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
-                </View>
-              )}
-              <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
-            </View>
-            {(() => {
-              // Find first and last enabled items for focus trapping
-              const firstEnabledIndex = menuItems.findIndex((i) => !isRouteDisabled(i.name));
-              const lastEnabledIndex = menuItems.findLastIndex((i) => !isRouteDisabled(i.name));
-              const firstEnabledTag = menuItemTags[firstEnabledIndex];
-              const lastEnabledTag = menuItemTags[lastEnabledIndex];
+        {/* Unified native focus for all TV platforms */}
+        <View style={[styles.scrollView, styles.scrollContent]}>
+          <View style={styles.header}>
+            {isTV && activeUser && (
+              <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
+                <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
+              </View>
+            )}
+            <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
+          </View>
+          {(() => {
+            // Find first and last enabled items for focus trapping
+            const firstEnabledIndex = menuItems.findIndex((i) => !isRouteDisabled(i.name));
+            const lastEnabledIndex = menuItems.findLastIndex((i) => !isRouteDisabled(i.name));
+            const firstEnabledTag = menuItemTags[firstEnabledIndex];
+            const lastEnabledTag = menuItemTags[lastEnabledIndex];
 
-              return menuItems.map((item, index) => {
-                const disabled = isRouteDisabled(item.name);
-                const isFirstEnabled = index === firstEnabledIndex;
-                const isLastEnabled = index === lastEnabledIndex;
-                // Use native Pressable focus handling instead of manual RemoteControlManager tracking
-                // nextFocusLeft points to self to trap focus within menu (prevent Left from leaving)
-                // nextFocusUp on first enabled item and nextFocusDown on last enabled item trap vertical navigation
-                const selfTag = menuItemTags[index];
-                return (
-                  <Pressable
-                    key={item.name}
-                    ref={(ref) => {
-                      menuItemRefs.current[index] = ref;
-                    }}
-                    hasTVPreferredFocus={isFirstEnabled && isVisible}
-                    onPress={() => handleItemSelect(item.name)}
-                    disabled={disabled}
-                    focusable={!disabled}
-                    nextFocusLeft={selfTag ?? undefined}
-                    nextFocusUp={isFirstEnabled ? (firstEnabledTag ?? undefined) : undefined}
-                    nextFocusDown={isLastEnabled ? (lastEnabledTag ?? undefined) : undefined}
-                    style={({ focused }) => [
-                      styles.menuItem,
-                      focused && !disabled && styles.menuItemFocused,
-                      disabled && styles.menuItemDisabled,
-                    ]}>
+            return menuItems.map((item, index) => {
+              const disabled = isRouteDisabled(item.name);
+              const isFirstEnabled = index === firstEnabledIndex;
+              const isLastEnabled = index === lastEnabledIndex;
+              // Use native Pressable focus handling
+              // nextFocusLeft points to self to trap focus within menu (prevent Left from leaving)
+              // nextFocusUp on first enabled item and nextFocusDown on last enabled item trap vertical navigation
+              const selfTag = menuItemTags[index];
+              return (
+                <Pressable
+                  key={item.name}
+                  ref={(ref) => {
+                    menuItemRefs.current[index] = ref;
+                  }}
+                  hasTVPreferredFocus={isFirstEnabled && isVisible}
+                  onPress={() => handleItemSelect(item.name)}
+                  disabled={disabled}
+                  focusable={!disabled}
+                  nextFocusLeft={selfTag ?? undefined}
+                  nextFocusUp={isFirstEnabled ? (firstEnabledTag ?? undefined) : undefined}
+                  nextFocusDown={isLastEnabled ? (lastEnabledTag ?? undefined) : undefined}
+                  tvParallaxProperties={{ enabled: false }}
+                  style={({ focused }) => [
+                    styles.menuItem,
+                    focused && !disabled && styles.menuItemFocused,
+                    disabled && styles.menuItemDisabled,
+                  ]}>
                   {({ focused }) => (
                     <>
                       <MaterialCommunityIcons
                         name={getMenuIconName(item.name)}
-                        size={26}
+                        size={iconSize}
                         color={
                           disabled
                             ? theme.colors.text.disabled
@@ -260,120 +226,26 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
                     </>
                   )}
                 </Pressable>
-                );
-              });
-            })()}
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            scrollEnabled={!Platform.isTV}>
-            <View style={styles.header}>
-              {Platform.isTV && activeUser && (
-                <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
-                  <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
-                </View>
-              )}
-              <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
-            </View>
-            {/* Key changes when menu opens, forcing re-registration of spatial navigation nodes */}
-            <SpatialNavigationNode key={`menu-nav-${menuKey}`} orientation="vertical">
-              {menuItems.map((item, index) => {
-                const disabled = isRouteDisabled(item.name);
-                const getIconColor = (isFocused: boolean) => {
-                  if (disabled) return theme.colors.text.disabled;
-                  if (isFocused) return theme.colors.background.base;
-                  return theme.colors.text.primary;
-                };
-
-                // Find the first non-disabled item to use as default focus target
-                const firstEnabledIndex = menuItems.findIndex((i) => !isRouteDisabled(i.name));
-                // Use first enabled item as fallback if current route is disabled
-                const defaultFocusIndex = isRouteDisabled(menuItems[currentRouteIndex]?.name)
-                  ? firstEnabledIndex
-                  : currentRouteIndex;
-                const shouldHaveDefaultFocus = index === defaultFocusIndex;
-
-                // Use SpatialNavigationNode with isFocusable={!disabled} to skip disabled items
-                const focusableNode = (
-                  <SpatialNavigationNode
-                    key={item.name}
-                    isFocusable={!disabled}
-                    onSelect={disabled ? undefined : () => handleItemSelect(item.name)}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <Pressable
-                        style={[
-                          styles.menuItem,
-                          isFocused && !disabled && styles.menuItemFocused,
-                          disabled && styles.menuItemDisabled,
-                        ]}
-                        tvParallaxProperties={{ enabled: false }}>
-                        <MaterialCommunityIcons
-                          name={getMenuIconName(item.name)}
-                          size={Platform.isTV ? 38 : 24}
-                          color={getIconColor(isFocused)}
-                          style={[styles.icon, disabled && styles.iconDisabled]}
-                        />
-                        <Text
-                          style={[
-                            styles.menuText,
-                            isFocused && !disabled && styles.menuTextFocused,
-                            disabled && styles.menuTextDisabled,
-                          ]}>
-                          {item.label}
-                        </Text>
-                      </Pressable>
-                    )}
-                  </SpatialNavigationNode>
-                );
-
-                return shouldHaveDefaultFocus ? (
-                  <DefaultFocus key={item.name}>{focusableNode}</DefaultFocus>
-                ) : (
-                  focusableNode
-                );
-              })}
-            </SpatialNavigationNode>
-          </ScrollView>
-        )}
+              );
+            });
+          })()}
+        </View>
       </Animated.View>
     </>
   );
 });
 
 const useMenuStyles = function (theme: NovaTheme) {
-  const getIconSize = () => {
-    if (isAndroidTV) return 26;
-    if (isTVOS) return 38;
-    return 24;
-  };
-
-  const getHeaderPadding = () => {
-    if (isAndroidTV) return theme.spacing.md;
-    if (isTVOS) return theme.spacing.xl;
-    return theme.spacing.lg;
-  };
-
-  const getMenuItemPaddingVertical = () => {
-    if (isAndroidTV) return theme.spacing.md;
-    if (isTVOS) return theme.spacing.xl;
-    return theme.spacing.md;
-  };
-
-  const getMenuItemPaddingStart = () => {
-    if (isAndroidTV) return theme.spacing.xl;
-    if (isTVOS) return theme.spacing['3xl'];
-    return theme.spacing['2xl'];
-  };
-
-  const getMenuItemPaddingEnd = () => {
-    if (isAndroidTV) return theme.spacing.md;
-    if (isTVOS) return theme.spacing.xl;
-    return theme.spacing.lg;
-  };
-
-  const iconSize = getIconSize();
+  // Unified responsive sizing - design for 1920px width
+  const iconSize = responsiveSize(38, 24);
+  const headerPadding = responsiveSize(32, 16);
+  const menuItemPaddingVertical = responsiveSize(24, 12);
+  const menuItemPaddingStart = responsiveSize(40, 24);
+  const menuItemPaddingEnd = responsiveSize(24, 16);
+  const avatarSize = responsiveSize(56, 40);
+  const avatarFontSize = responsiveSize(24, 16);
+  const menuFontSize = responsiveSize(28, 16);
+  const menuLineHeight = responsiveSize(36, 22);
 
   return StyleSheet.create({
     overlay: {
@@ -408,38 +280,40 @@ const useMenuStyles = function (theme: NovaTheme) {
       flexGrow: 1,
     },
     header: {
-      flexDirection: Platform.isTV ? 'row' : 'column',
-      alignItems: Platform.isTV ? 'center' : 'flex-start',
-      paddingHorizontal: getHeaderPadding(),
-      paddingVertical: getHeaderPadding(),
-      gap: Platform.isTV ? theme.spacing.md : theme.spacing.sm,
+      flexDirection: isTV ? 'row' : 'column',
+      alignItems: isTV ? 'center' : 'flex-start',
+      paddingHorizontal: headerPadding,
+      paddingVertical: headerPadding,
+      gap: responsiveSize(16, 8),
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       marginBottom: theme.spacing.md,
     },
     headerAvatar: {
-      width: isAndroidTV ? 40 : 56,
-      height: isAndroidTV ? 40 : 56,
-      borderRadius: isAndroidTV ? 20 : 28,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarSize / 2,
       backgroundColor: theme.colors.background.elevated,
       justifyContent: 'center',
       alignItems: 'center',
     },
     headerAvatarText: {
-      fontSize: isAndroidTV ? 18 : 24,
+      fontSize: avatarFontSize,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
     userName: {
-      ...(isAndroidTV ? theme.typography.title.lg : isTVOS ? theme.typography.title.xl : theme.typography.title.md),
+      fontSize: menuFontSize,
+      lineHeight: menuLineHeight,
+      fontWeight: '600',
       color: theme.colors.text.primary,
     },
     menuItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: getMenuItemPaddingVertical(),
-      paddingStart: getMenuItemPaddingStart(),
-      paddingEnd: getMenuItemPaddingEnd(),
+      paddingVertical: menuItemPaddingVertical,
+      paddingStart: menuItemPaddingStart,
+      paddingEnd: menuItemPaddingEnd,
       marginHorizontal: theme.spacing.md,
       borderRadius: theme.radius.md,
     },
@@ -458,7 +332,9 @@ const useMenuStyles = function (theme: NovaTheme) {
       opacity: 0.5,
     },
     menuText: {
-      ...(isAndroidTV ? theme.typography.title.lg : isTVOS ? theme.typography.title.xl : theme.typography.title.md),
+      fontSize: menuFontSize,
+      lineHeight: menuLineHeight,
+      fontWeight: '500',
       color: theme.colors.text.primary,
     },
     menuTextDisabled: {

@@ -1,17 +1,15 @@
 /**
- * TvModal - A modal component that works properly with tvOS spatial navigation
+ * TvModal - A modal component that works properly with tvOS/Android TV focus
  *
- * React Native's Modal component breaks spatial navigation because it renders
+ * React Native's Modal component breaks focus navigation because it renders
  * in a separate root view. This component renders the modal content in the same
- * tree, allowing spatial navigation to work correctly.
+ * tree, allowing native TV focus to work correctly.
  */
 
-import { SpatialNavigationRoot } from '@/services/tv-navigation';
 import { useTheme } from '@/theme';
 import { ReactNode, useEffect, useMemo, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { useMenuContext } from './MenuContext';
 
 interface TvModalProps {
   visible: boolean;
@@ -34,7 +32,6 @@ export function TvModal({
   const fadeAnim = useMemo(() => new Animated.Value(0), []);
   const onRequestCloseRef = useRef(onRequestClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
-  const { isOpen: isMenuOpen } = useMenuContext();
 
   // Keep the ref up to date
   useEffect(() => {
@@ -114,13 +111,10 @@ export function TvModal({
         />
       ) : null}
 
-      {/* Modal content with its own spatial navigation root */}
-      {/* Disable navigation when menu is open to prevent simultaneous navigation */}
-      <SpatialNavigationRoot isActive={visible && !isMenuOpen}>
-        <View style={styles.contentContainer} pointerEvents="box-none">
-          {children}
-        </View>
-      </SpatialNavigationRoot>
+      {/* Modal content - native focus handles navigation */}
+      <View style={styles.contentContainer} pointerEvents="box-none">
+        {children}
+      </View>
     </Animated.View>
   );
 }

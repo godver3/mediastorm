@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Image } from '@/components/Image';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,12 +19,6 @@ import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useTheme, type NovaTheme } from '@/theme';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
 import { useToast } from '@/components/ToastContext';
 
 // Local logo asset with fallback chain
@@ -207,210 +202,188 @@ export default function LoginScreen() {
     setServerUrl(tempServerUrlRef.current);
   }, []);
 
-  // TV-specific render
+  // TV-specific render - using native navigation
   if (Platform.isTV) {
     return (
-      <SpatialNavigationRoot isActive={true}>
-        <FixedSafeAreaView style={styles.safeArea} edges={[]}>
-          {/* Static gradient background */}
-          <LinearGradient
-            colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0.85 }}
-            style={StyleSheet.absoluteFill}
-          />
-          {/* Login card overlay */}
-          <Animated.View style={[styles.container, tvAnimatedStyle]}>
+      <FixedSafeAreaView style={styles.safeArea} edges={[]}>
+        {/* Static gradient background */}
+        <LinearGradient
+          colors={['#2a1245', '#3d1a5c', theme.colors.background.base]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0.85 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {/* Login card overlay */}
+        <KeyboardAwareScrollView
+          contentContainerStyle={styles.container}
+          enableOnAndroid={true}
+          extraScrollHeight={200}
+          keyboardShouldPersistTaps="handled"
+        >
             <View style={styles.card}>
-              <View style={styles.tvImageHeaderContainer}>
-                <Image
-                  source={getLogoSource()}
-                  style={styles.tvLogoImage}
-                  contentFit="cover"
-                  onError={handleLogoError}
-                />
-                <LinearGradient
-                  colors={['transparent', theme.colors.background.surface]}
-                  style={styles.tvImageGradientOverlay}
-                />
-              </View>
-              <View style={styles.header}>
-                <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
-                {!showServerConfig && backendUrl ? (
-                  <Text style={styles.serverInfo} numberOfLines={1}>
-                    {backendUrl.replace(/\/api$/, '')}
-                  </Text>
-                ) : null}
-              </View>
-
-              <SpatialNavigationNode orientation="vertical">
-                {showServerConfig ? (
-                  <View style={styles.formContainer}>
-                    <DefaultFocus>
-                      <SpatialNavigationFocusableView
-                        focusKey="server-url"
-                        onSelect={() => serverUrlRef.current?.focus()}
-                        onFocus={() => Platform.OS === 'android' && serverUrlRef.current?.focus()}
-                        onBlur={() => serverUrlRef.current?.blur()}
-                      >
-                        {({ isFocused }: { isFocused: boolean }) => (
-                          <Pressable tvParallaxProperties={{ enabled: false }}>
-                            <View style={styles.inputContainer}>
-                              <Text style={styles.inputLabel}>Server URL</Text>
-                              <TextInput
-                                key={`server-url-${serverUrl}`}
-                                ref={serverUrlRef}
-                                defaultValue={serverUrl}
-                                onChangeText={(text) => {
-                                  tempServerUrlRef.current = text;
-                                }}
-                                onFocus={handleServerUrlFocus}
-                                onBlur={handleServerUrlBlur}
-                                placeholder="http://192.168.1.100:7777"
-                                placeholderTextColor={theme.colors.text.muted}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                autoComplete="off"
-                                textContentType="none"
-                                returnKeyType="done"
-                                onSubmitEditing={Keyboard.dismiss}
-                                style={[styles.input, isFocused && styles.inputFocused]}
-                                underlineColorAndroid="transparent"
-                                importantForAutofill="no"
-                                disableFullscreenUI={true}
-                                caretHidden={true}
-                              />
-                            </View>
-                          </Pressable>
-                        )}
-                      </SpatialNavigationFocusableView>
-                    </DefaultFocus>
-
-                    <View>
-                      <FocusablePressable
-                        focusKey="server-connect"
-                        text="Connect"
-                        onSelect={handleSaveServer}
-                        loading={isSavingServer}
-                        style={styles.tvButton}
-                        focusedStyle={styles.tvButtonFocused}
-                        textStyle={styles.tvButtonText}
-                        focusedTextStyle={styles.tvButtonTextFocused}
-                      />
-                    </View>
-                  </View>
-                ) : (
-                  <View style={styles.formContainer}>
-                    <DefaultFocus>
-                      <SpatialNavigationFocusableView
-                        focusKey="login-username"
-                        onSelect={() => usernameRef.current?.focus()}
-                        onFocus={() => Platform.OS === 'android' && usernameRef.current?.focus()}
-                        onBlur={() => usernameRef.current?.blur()}
-                      >
-                        {({ isFocused }: { isFocused: boolean }) => (
-                          <Pressable tvParallaxProperties={{ enabled: false }}>
-                            <View style={styles.inputContainer}>
-                              <Text style={styles.inputLabel}>Username</Text>
-                              <TextInput
-                                key={`username-${username}`}
-                                ref={usernameRef}
-                                defaultValue={username}
-                                onChangeText={(text) => {
-                                  tempUsernameRef.current = text;
-                                }}
-                                onFocus={handleUsernameFocus}
-                                onBlur={handleUsernameBlur}
-                                placeholder="Enter username"
-                                placeholderTextColor="#aaaaaa"
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                autoComplete="off"
-                                textContentType="none"
-                                returnKeyType="next"
-                                onSubmitEditing={() => passwordRef.current?.focus()}
-                                style={[styles.input, isFocused && styles.inputFocused]}
-                                underlineColorAndroid="transparent"
-                                importantForAutofill="no"
-                                disableFullscreenUI={true}
-                                caretHidden={true}
-                              />
-                            </View>
-                          </Pressable>
-                        )}
-                      </SpatialNavigationFocusableView>
-                    </DefaultFocus>
-
-                    <SpatialNavigationFocusableView
-                      focusKey="login-password"
-                      onSelect={() => passwordRef.current?.focus()}
-                      onFocus={() => Platform.OS === 'android' && passwordRef.current?.focus()}
-                      onBlur={() => passwordRef.current?.blur()}
-                    >
-                      {({ isFocused }: { isFocused: boolean }) => (
-                        <Pressable tvParallaxProperties={{ enabled: false }}>
-                          <View style={styles.inputContainer}>
-                            <Text style={styles.inputLabel}>Password</Text>
-                            <TextInput
-                              key={`password-${password}`}
-                              ref={passwordRef}
-                              defaultValue={password}
-                              onChangeText={(text) => {
-                                tempPasswordRef.current = text;
-                              }}
-                              onFocus={handlePasswordFocus}
-                              onBlur={handlePasswordBlur}
-                              placeholder="Enter password"
-                              placeholderTextColor="#aaaaaa"
-                              secureTextEntry
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              autoComplete="off"
-                              textContentType="none"
-                              returnKeyType="done"
-                              onSubmitEditing={Keyboard.dismiss}
-                              style={[styles.input, isFocused && styles.inputFocused]}
-                              underlineColorAndroid="transparent"
-                              importantForAutofill="no"
-                              disableFullscreenUI={true}
-                              caretHidden={true}
-                            />
-                          </View>
-                        </Pressable>
-                      )}
-                    </SpatialNavigationFocusableView>
-
-                    <View>
-                      <FocusablePressable
-                        focusKey="login-submit"
-                        text="Sign In"
-                        onSelect={handleLogin}
-                        loading={isLoading}
-                        style={styles.tvButton}
-                        focusedStyle={styles.tvButtonFocused}
-                        textStyle={styles.tvButtonText}
-                        focusedTextStyle={styles.tvButtonTextFocused}
-                      />
-                    </View>
-
-                    <View>
-                      <FocusablePressable
-                        focusKey="login-change-server"
-                        text="Change Server"
-                        onSelect={() => setShowServerConfig(true)}
-                        style={styles.tvSecondaryButton}
-                        focusedStyle={styles.tvSecondaryButtonFocused}
-                        textStyle={styles.tvButtonText}
-                        focusedTextStyle={styles.tvButtonTextFocused}
-                      />
-                    </View>
-                  </View>
-                )}
-              </SpatialNavigationNode>
+            <View style={styles.tvImageHeaderContainer}>
+              <Image
+                source={getLogoSource()}
+                style={styles.tvLogoImage}
+                contentFit="cover"
+                onError={handleLogoError}
+              />
+              <LinearGradient
+                colors={['transparent', theme.colors.background.surface]}
+                style={styles.tvImageGradientOverlay}
+              />
             </View>
-          </Animated.View>
-        </FixedSafeAreaView>
-      </SpatialNavigationRoot>
+            <View style={styles.header}>
+              <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
+              {!showServerConfig && backendUrl ? (
+                <Text style={styles.serverInfo} numberOfLines={1}>
+                  {backendUrl.replace(/\/api$/, '')}
+                </Text>
+              ) : null}
+            </View>
+
+            {showServerConfig ? (
+              <View style={styles.form}>
+                <Pressable
+                  onPress={() => serverUrlRef.current?.focus()}
+                  hasTVPreferredFocus={true}
+                  tvParallaxProperties={{ enabled: false }}
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
+                >
+                  {({ focused }) => (
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.inputLabel}>Server URL</Text>
+                      <TextInput
+                        key={`server-url-${serverUrl}`}
+                        ref={serverUrlRef}
+                        defaultValue={serverUrl}
+                        onChangeText={(text) => {
+                          tempServerUrlRef.current = text;
+                        }}
+                        onFocus={handleServerUrlFocus}
+                        onBlur={handleServerUrlBlur}
+                        placeholder="http://192.168.1.100:7777"
+                        placeholderTextColor={theme.colors.text.muted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
+                        style={[styles.input, focused && styles.inputFocused]}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                      />
+                    </View>
+                  )}
+                </Pressable>
+
+                <FocusablePressable
+                  text="Connect"
+                  onSelect={handleSaveServer}
+                  loading={isSavingServer}
+                  style={styles.tvButton}
+                  focusedStyle={styles.tvButtonFocused}
+                  textStyle={styles.tvButtonText}
+                  focusedTextStyle={styles.tvButtonTextFocused}
+                  wrapperStyle={styles.tvButtonWrapper}
+                />
+              </View>
+            ) : (
+              <View style={styles.form}>
+                <Pressable
+                  onPress={() => usernameRef.current?.focus()}
+                  hasTVPreferredFocus={true}
+                  tvParallaxProperties={{ enabled: false }}
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
+                >
+                  {({ focused }) => (
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.inputLabel}>Username</Text>
+                      <TextInput
+                        key={`username-${username}`}
+                        ref={usernameRef}
+                        defaultValue={username}
+                        onChangeText={(text) => {
+                          tempUsernameRef.current = text;
+                        }}
+                        onFocus={handleUsernameFocus}
+                        onBlur={handleUsernameBlur}
+                        placeholder="Enter username"
+                        placeholderTextColor={theme.colors.text.muted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        returnKeyType="next"
+                        onSubmitEditing={() => passwordRef.current?.focus()}
+                        style={[styles.input, focused && styles.inputFocused]}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                      />
+                    </View>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => passwordRef.current?.focus()}
+                  tvParallaxProperties={{ enabled: false }}
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
+                >
+                  {({ focused }) => (
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.inputLabel}>Password</Text>
+                      <TextInput
+                        key={`password-${password}`}
+                        ref={passwordRef}
+                        defaultValue={password}
+                        onChangeText={(text) => {
+                          tempPasswordRef.current = text;
+                        }}
+                        onFocus={handlePasswordFocus}
+                        onBlur={handlePasswordBlur}
+                        placeholder="Enter password"
+                        placeholderTextColor={theme.colors.text.muted}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
+                        style={[styles.input, focused && styles.inputFocused]}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                      />
+                    </View>
+                  )}
+                </Pressable>
+
+                <FocusablePressable
+                  text="Sign In"
+                  onSelect={handleLogin}
+                  loading={isLoading}
+                  style={styles.tvButton}
+                  focusedStyle={styles.tvButtonFocused}
+                  textStyle={styles.tvButtonText}
+                  focusedTextStyle={styles.tvButtonTextFocused}
+                  wrapperStyle={styles.tvButtonWrapper}
+                />
+
+                <FocusablePressable
+                  text="Change Server"
+                  onSelect={() => setShowServerConfig(true)}
+                  style={styles.tvSecondaryButton}
+                  focusedStyle={styles.tvSecondaryButtonFocused}
+                  textStyle={styles.tvButtonText}
+                  focusedTextStyle={styles.tvButtonTextFocused}
+                  wrapperStyle={styles.tvButtonWrapper}
+                />
+              </View>
+            )}
+          </View>
+        </KeyboardAwareScrollView>
+      </FixedSafeAreaView>
     );
   }
 
@@ -694,7 +667,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     },
     card: {
       width: '100%',
-      maxWidth: isTV ? s(500) : s(400),
+      maxWidth: isAndroidTV ? 280 : isTV ? s(500) : s(400),
       backgroundColor: theme.colors.background.surface,
       borderRadius: s(16),
       overflow: 'hidden',
@@ -801,6 +774,15 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     } as any,
     inputFocused: {
       borderColor: theme.colors.accent.primary,
+    },
+    tvInputWrapper: {
+      width: '100%',
+    },
+    tvInputWrapperFocused: {
+      // Focus state handled by input border
+    },
+    tvButtonWrapper: {
+      alignSelf: 'center',
     },
     button: {
       backgroundColor: theme.colors.accent.primary,

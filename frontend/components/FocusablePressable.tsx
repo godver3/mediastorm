@@ -1,9 +1,8 @@
-import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { tvScale, isTV, isAndroidTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { tvScale, isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useMemo, useRef } from 'react';
+import { memo, useMemo } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -36,7 +35,10 @@ interface CustomPressableProps extends PressableProps {
   textStyle?: StyleProp<TextStyle>;
   focusedTextStyle?: StyleProp<TextStyle>;
   disabled?: boolean;
+  /** @deprecated No longer used - native focus handles focus keys automatically */
   focusKey?: string;
+  /** Set to true to give this button initial focus on TV */
+  autoFocus?: boolean;
   loading?: boolean;
   /** Show a small indicator pip in the top-right corner (e.g., for prequeue ready) */
   showReadyPip?: boolean;
@@ -56,7 +58,8 @@ const FocusablePressable = ({
   textStyle,
   focusedTextStyle,
   disabled,
-  focusKey,
+  focusKey: _focusKey, // deprecated, ignored
+  autoFocus = false,
   loading = false,
   showReadyPip = false,
   wrapperStyle,
@@ -64,6 +67,7 @@ const FocusablePressable = ({
 }: CustomPressableProps) => {
   const { onPress: _ignoredOnPress, ...restProps } = props;
   void _ignoredOnPress;
+  void _focusKey;
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme, !!icon || invisibleIcon), [theme, icon, invisibleIcon]);
 
@@ -71,115 +75,81 @@ const FocusablePressable = ({
   // Design for tvOS (1.375x), Android TV auto-derives via tvScale
   const scaledIconSize = tvScale(iconSize * 1.375, iconSize);
 
-  // ActivityIndicator "small" is about 20px, scale it to match iconSize
-  const spinnerScale = scaledIconSize / 20;
-
-  // Track when onSelect was last handled to prevent double-triggering on TV
-  // (both SpatialNavigationFocusableView and Pressable can fire for the same event)
-  const lastSelectTimeRef = useRef(0);
-  const SELECT_DEBOUNCE_MS = 100;
-
-  // Wrap in a View to position the pip outside the spatial navigation wrapper
-  // This prevents clipping on Android TV where the library's internal View clips overflow
-  const wrapper = (
-    <SpatialNavigationFocusableView
-      focusKey={focusKey}
-      onSelect={() => {
-        if (!disabled) {
-          const now = Date.now();
-          if (now - lastSelectTimeRef.current > SELECT_DEBOUNCE_MS) {
-            lastSelectTimeRef.current = now;
-            onSelect();
-          }
-        }
-      }}
-      onFocus={onFocus}>
-      {({ isFocused }: { isFocused: boolean }) => {
-        // Show both icon and text if both are provided
-        const showBoth = icon && text;
-
-        const content = (
-          <View style={{ position: 'relative' }}>
-            <View
-              style={[
-                showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
-                invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
-              ]}>
-              {icon && !loading ? (
-                <Ionicons
-                  name={icon}
-                  size={scaledIconSize}
-                  color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
-                />
-              ) : !loading && !icon && text ? null : icon ? (
-                <View style={{ width: scaledIconSize, height: scaledIconSize }} />
-              ) : null}
-              {text && (
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    isFocused ? styles.watchButtonTextFocused : styles.watchButtonText,
-                    isFocused ? focusedTextStyle : textStyle,
-                    loading && { opacity: 0 },
-                  ]}>
-                  {text}
-                </Text>
-              )}
-            </View>
-            {loading && (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                }}>
-                <ActivityIndicator
-                  size="small"
-                  color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
-                />
-              </View>
-            )}
-          </View>
-        );
-
-        const viewStyle = [
-          styles.watchButton,
-          style,
-          isFocused && styles.watchButtonFocused,
-          isFocused && focusedStyle,
-          disabled && !loading && styles.watchButtonDisabled,
-        ];
-
-        // On TV, selection is handled by SpatialNavigationFocusableView's onSelect.
-        // We disable the native tvOS parallax/wiggle effect but keep the element focusable
-        // so that TVEventHandler can receive remote control events.
-        return (
-          <Pressable
-            {...restProps}
-            disabled={disabled || loading}
-            style={viewStyle}
-            onPress={!Platform.isTV ? onSelect : undefined}
-            // Disable native tvOS parallax/motion effects - visual focus is managed by SpatialNavigationFocusableView
-            tvParallaxProperties={{ enabled: false }}
-            // Use hardware texture on Android TV to improve compositing over SurfaceView video layer
-            renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}>
-            {content}
-          </Pressable>
-        );
-      }}
-    </SpatialNavigationFocusableView>
-  );
-
-  // Always render the same structure to prevent spatial navigation re-registration
-  // when showReadyPip changes. The pip is conditionally visible but the wrapper
-  // structure stays consistent to maintain navigation node positions.
+  // Native Pressable with focus styling - unified for tvOS and Android TV
   return (
     <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
-      {wrapper}
+      <Pressable
+        {...restProps}
+        disabled={disabled || loading}
+        onPress={onSelect}
+        onFocus={onFocus}
+        hasTVPreferredFocus={autoFocus}
+        tvParallaxProperties={{ enabled: false }}
+        renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}
+        style={({ focused }) => [
+          styles.watchButton,
+          style,
+          focused && styles.watchButtonFocused,
+          focused && focusedStyle,
+          disabled && !loading && styles.watchButtonDisabled,
+        ]}
+      >
+        {({ focused }) => {
+          // Show both icon and text if both are provided
+          const showBoth = icon && text;
+
+          return (
+            <View style={{ position: 'relative' }}>
+              <View
+                style={[
+                  showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
+                  invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
+                ]}
+              >
+                {icon && !loading ? (
+                  <Ionicons
+                    name={icon}
+                    size={scaledIconSize}
+                    color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                  />
+                ) : !loading && !icon && text ? null : icon ? (
+                  <View style={{ width: scaledIconSize, height: scaledIconSize }} />
+                ) : null}
+                {text && (
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      focused ? styles.watchButtonTextFocused : styles.watchButtonText,
+                      focused ? focusedTextStyle : textStyle,
+                      loading && { opacity: 0 },
+                    ]}
+                  >
+                    {text}
+                  </Text>
+                )}
+              </View>
+              {loading && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}
+                >
+                  <ActivityIndicator
+                    size="small"
+                    color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                  />
+                </View>
+              )}
+            </View>
+          );
+        }}
+      </Pressable>
       {showReadyPip && !loading && (
         <View
           style={{

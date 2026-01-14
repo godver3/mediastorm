@@ -20,12 +20,6 @@ import VideoPlayer, {
 import { createPlayerStyles } from '@/styles/player-styles';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
-import {
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  useLockSpatialNavigation,
-  useSpatialNavigator,
-} from '@/services/tv-navigation';
 import Constants from 'expo-constants';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1885,24 +1879,7 @@ export default function PlayerScreen() {
     }
   }, [effectiveMovie]);
 
-  // Lock/unlock spatial navigation based on controls visibility
-  const { lock: baseLockSpatialNav, unlock: baseUnlockSpatialNav } = useLockSpatialNavigation();
-  const spatialNavigator = useSpatialNavigator();
-
-  // Wrap lock/unlock with logging
-  const lockSpatialNav = useCallback(() => {
-    if (isTvPlatform) {
-      return;
-    }
-    baseLockSpatialNav();
-  }, [baseLockSpatialNav, isTvPlatform]);
-
-  const unlockSpatialNav = useCallback(() => {
-    if (isTvPlatform) {
-      return;
-    }
-    baseUnlockSpatialNav();
-  }, [baseUnlockSpatialNav, isTvPlatform]);
+  // Track focus state for controls (native focus doesn't need lock/unlock)
 
   // Track if we've grabbed focus for this controls visible session
   const hasFocusedRef = useRef(false);
@@ -1915,11 +1892,6 @@ export default function PlayerScreen() {
   }, []);
 
   // Ensure RemoteControlManager stays active so key events reach the controls overlay
-  useEffect(() => {
-    if (isTvPlatform && !usesSystemManagedControls) {
-      baseUnlockSpatialNav();
-    }
-  }, [baseUnlockSpatialNav, isTvPlatform, usesSystemManagedControls]);
 
   useEffect(() => {
     if (usesSystemManagedControls) {
@@ -1934,41 +1906,13 @@ export default function PlayerScreen() {
       return;
     }
 
-    if (isTvPlatform) {
-      // On TV, controls are in a Modal with their own SpatialNavigationRoot.
-      // Don't call grabFocus from the outer context - let DefaultFocus inside
-      // the Modal handle initial focus.
-      if (!controlsVisible) {
-        // Reset focus flag when controls are hidden so we re-grab on next show
-        hasFocusedRef.current = false;
-      }
-      return;
-    }
-
-    // Lock/unlock spatial navigation based on controls visibility
-    if (controlsVisible) {
-      unlockSpatialNav();
-
-      // Grab focus to the last focused element when controls become visible
-      // Only do this once per controls visible session
-      if (!hasFocusedRef.current) {
-        hasFocusedRef.current = true;
-        // Use a longer delay to ensure the button is rendered, registered, and nav is unlocked
-        setTimeout(() => {
-          try {
-            const focusKey = lastFocusedKeyRef.current || 'play-pause-button';
-            spatialNavigator.grabFocus(focusKey);
-          } catch {
-            // Focus grab can fail if element not yet registered
-          }
-        }, 150);
-      }
-    } else {
-      lockSpatialNav();
-      // Reset focus flag when controls are hidden
+    // Reset focus flag when controls visibility changes
+    if (!controlsVisible) {
       hasFocusedRef.current = false;
+    } else if (!hasFocusedRef.current) {
+      hasFocusedRef.current = true;
     }
-  }, [controlsVisible, usesSystemManagedControls, lockSpatialNav, unlockSpatialNav, spatialNavigator, isTvPlatform]);
+  }, [controlsVisible, usesSystemManagedControls]);
 
   useEffect(() => {
     if (usesSystemManagedControls) {
@@ -4927,7 +4871,7 @@ export default function PlayerScreen() {
   }, [hideLoadingScreen]);
 
   return (
-    <SpatialNavigationRoot isActive={Platform.isTV && !isModalOpen && !controlsVisible}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar style="light" hidden={shouldHideStatusBar} animated />
       {/* On Android, don't apply top safe area to the container (which would shift the video when status bar toggles).
@@ -5158,7 +5102,6 @@ export default function PlayerScreen() {
                           />
                         </View>
                         <View style={styles.overlayControls} pointerEvents="box-none">
-                          <SpatialNavigationNode orientation="vertical">
                             <Controls
                               key={`controls-tv-${isPipActive}`}
                               paused={paused}
@@ -5217,7 +5160,6 @@ export default function PlayerScreen() {
                               shuffleMode={shuffleMode}
                               onEnterPip={handleEnterPip}
                             />
-                          </SpatialNavigationNode>
                         </View>
                       </View>
                     </Animated.View>
@@ -5285,7 +5227,6 @@ export default function PlayerScreen() {
                       />
                     </View>
                     <View style={styles.overlayControls} pointerEvents="box-none">
-                      <SpatialNavigationNode orientation="vertical">
                         <Controls
                           key={`controls-mobile-${isPipActive}`}
                           paused={paused}
@@ -5342,7 +5283,6 @@ export default function PlayerScreen() {
                           onEnterPip={handleEnterPip}
                           flashSkipButton={flashSkipButton}
                         />
-                      </SpatialNavigationNode>
                     </View>
                   </View>
                 </ControlsContainerComponent>
@@ -5505,6 +5445,6 @@ export default function PlayerScreen() {
           )}
         </View>
       </FixedSafeAreaView>
-    </SpatialNavigationRoot>
+    </>
   );
 }

@@ -1,34 +1,24 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
-import FocusablePressable from '@/components/FocusablePressable';
 import MediaGrid from '@/components/MediaGrid';
-import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, type Title, type TrendingItem, type SeriesWatchState } from '@/services/api';
-import {
-  DefaultFocus,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  useSpatialNavigator,
-} from '@/services/tv-navigation';
+import { apiService, type Title, type TrendingItem } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { Direction } from '@bam.tech/lrud';
-import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useTVDimensions } from '@/hooks/useTVDimensions';
-import { isAndroidTV } from '@/theme/tokens/tvScale';
+import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
-// Native filter button for Android TV - uses Pressable with style function (no re-renders)
+// Native filter button for all TV platforms - uses Pressable with style function (no re-renders)
+// Uses responsiveSize() for unified scaling across tvOS and Android TV
 const NativeFilterButton = ({
   label,
   icon,
@@ -43,43 +33,68 @@ const NativeFilterButton = ({
   onPress: () => void;
   autoFocus?: boolean;
   theme: NovaTheme;
-}) => (
-  <Pressable
-    onPress={onPress}
-    hasTVPreferredFocus={autoFocus}
-    style={({ focused }) => [
-      {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        paddingHorizontal: theme.spacing['2xl'],
-        paddingVertical: theme.spacing.md,
-        borderRadius: theme.radius.md,
-        backgroundColor: theme.colors.background.surface,
-        borderWidth: focused ? 2 : StyleSheet.hairlineWidth,
-        borderColor: focused
-          ? theme.colors.text.primary
-          : isActive
+}) => {
+  // Unified responsive sizing - design for 1920px width, scales automatically
+  const iconSize = responsiveSize(36, 20);
+  const paddingH = responsiveSize(28, 14);
+  const paddingV = responsiveSize(16, 8);
+  const borderRadius = responsiveSize(12, 6);
+  const fontSize = responsiveSize(24, 14);
+  const lineHeight = responsiveSize(32, 18);
+  const gap = responsiveSize(12, 6);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      hasTVPreferredFocus={autoFocus}
+      tvParallaxProperties={{ enabled: false }}
+      style={({ focused }) => [
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap,
+          paddingHorizontal: paddingH,
+          paddingVertical: paddingV,
+          borderRadius,
+          backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: focused
             ? theme.colors.accent.primary
-            : theme.colors.border.subtle,
-      },
-    ]}
-  >
-    <Ionicons name={icon} size={20} color={theme.colors.text.primary} />
-    <Text style={{ color: theme.colors.text.primary, fontSize: 16, fontWeight: '500' }}>{label}</Text>
-  </Pressable>
-);
+            : isActive
+              ? theme.colors.accent.primary
+              : theme.colors.border.subtle,
+        },
+      ]}
+    >
+      {({ focused }) => (
+        <>
+          <Ionicons
+            name={icon}
+            size={iconSize}
+            color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+          />
+          <Text
+            style={{
+              color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+              fontSize,
+              lineHeight,
+              fontWeight: '500',
+            }}
+          >
+            {label}
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+};
 
 export default function WatchlistScreen() {
   const theme = useTheme();
-  const { width: screenWidth } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const isFocused = useIsFocused();
-  const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId, activeUserId } = useUserProfiles();
+  const { activeUserId } = useUserProfiles();
   const { settings, userSettings } = useBackendSettings();
-  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
   // Get shelf parameter - if present, we're exploring a non-watchlist shelf
   const { shelf: shelfId } = useLocalSearchParams<{ shelf?: string }>();
@@ -487,8 +502,6 @@ export default function WatchlistScreen() {
   }, [navigation, tabTitle]);
 
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
-  const [focusedFilterIndex, setFocusedFilterIndex] = useState<number | null>(null);
-  const navigator = useSpatialNavigator();
 
   const filteredTitles = useMemo(() => {
     if (filter === 'all') {
@@ -503,25 +516,6 @@ export default function WatchlistScreen() {
       { key: 'movie', label: 'Movies', icon: 'film-outline' },
       { key: 'series', label: 'TV Shows', icon: 'tv-outline' },
     ];
-
-  const onDirectionHandledWithoutMovement = useCallback(
-    (movement: Direction) => {
-      // Enable horizontal step within the filter row when no movement occurred
-      if ((movement === 'right' || movement === 'left') && focusedFilterIndex !== null) {
-        const delta = movement === 'right' ? 1 : -1;
-        const nextIndex = focusedFilterIndex + delta;
-        if (nextIndex >= 0 && nextIndex < filterOptions.length) {
-          navigator.grabFocus(`watchlist-filter-${filterOptions[nextIndex].key}`);
-          return;
-        }
-      }
-
-      if (movement === 'left') {
-        openMenu();
-      }
-    },
-    [filterOptions, focusedFilterIndex, navigator, openMenu],
-  );
 
   const handleTitlePress = useCallback(
     (title: WatchlistTitle) => {
@@ -563,108 +557,44 @@ export default function WatchlistScreen() {
     return isExploreMode ? 'No items in this list' : 'Your watchlist is empty';
   }, [filter, allTitles.length, isExploreMode, pageTitle]);
 
-  // Android TV: Use fully native focus (no SpatialNavigationRoot)
-  if (isAndroidTV) {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
-          <View style={styles.container}>
-            <View style={styles.controlsRow}>
-              <View style={styles.filtersRow}>
-                {filterOptions.map((option, index) => (
-                  <NativeFilterButton
-                    key={option.key}
-                    label={option.label}
-                    icon={option.icon}
-                    isActive={filter === option.key}
-                    onPress={() => setFilter(option.key)}
-                    autoFocus={index === 0}
-                    theme={theme}
-                  />
-                ))}
-              </View>
-            </View>
-
-            <MediaGrid
-              title={`${pageTitle} · ${filterLabel}`}
-              items={filteredTitles}
-              loading={loading}
-              error={error}
-              onItemPress={handleTitlePress}
-              layout="grid"
-              numColumns={6}
-              defaultFocusFirstItem={false}
-              badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
-              emptyMessage={emptyMessage}
-              useNativeFocus={true}
-              useMinimalCards={true}
-            />
-          </View>
-        </FixedSafeAreaView>
-      </>
-    );
-  }
-
-  // tvOS and other platforms: Use SpatialNavigation
+  // Unified native focus for all TV platforms (tvOS and Android TV)
   return (
-    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          {/* Arrange filters and grid vertically for predictable TV navigation */}
-          <SpatialNavigationNode orientation="vertical">
-            <View style={styles.controlsRow}>
-              {/* Make filters a vertical list on TV for Up/Down navigation */}
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.filtersRow}>
-                  {filterOptions.map((option, index) => {
-                    const isActiveFilter = filter === option.key;
-                    const isFirst = index === 0;
-                    return isFirst ? (
-                      <DefaultFocus key={option.key}>
-                        <FocusablePressable
-                          focusKey={`watchlist-filter-${option.key}`}
-                          text={option.label}
-                          icon={option.icon}
-                          onFocus={() => setFocusedFilterIndex(index)}
-                          onSelect={() => setFilter(option.key)}
-                          style={[styles.filterButton, isActiveFilter && styles.filterButtonActive]}
-                        />
-                      </DefaultFocus>
-                    ) : (
-                      <FocusablePressable
-                        key={option.key}
-                        focusKey={`watchlist-filter-${option.key}`}
-                        text={option.label}
-                        icon={option.icon}
-                        onFocus={() => setFocusedFilterIndex(index)}
-                        onSelect={() => setFilter(option.key)}
-                        style={[styles.filterButton, isActiveFilter && styles.filterButtonActive]}
-                      />
-                    );
-                  })}
-                </View>
-              </SpatialNavigationNode>
+          <View style={styles.controlsRow}>
+            <View style={styles.filtersRow}>
+              {filterOptions.map((option, index) => (
+                <NativeFilterButton
+                  key={option.key}
+                  label={option.label}
+                  icon={option.icon}
+                  isActive={filter === option.key}
+                  onPress={() => setFilter(option.key)}
+                  autoFocus={index === 0}
+                  theme={theme}
+                />
+              ))}
             </View>
+          </View>
 
-            <MediaGrid
-              title={`${pageTitle} · ${filterLabel}`}
-              items={filteredTitles}
-              loading={loading}
-              error={error}
-              onItemPress={handleTitlePress}
-              layout="grid"
-              numColumns={6}
-              defaultFocusFirstItem={!theme.breakpoint || theme.breakpoint !== 'compact'}
-              badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
-              emptyMessage={emptyMessage}
-            />
-          </SpatialNavigationNode>
-
+          <MediaGrid
+            title={`${pageTitle} · ${filterLabel}`}
+            items={filteredTitles}
+            loading={loading}
+            error={error}
+            onItemPress={handleTitlePress}
+            layout="grid"
+            numColumns={6}
+            defaultFocusFirstItem={false}
+            badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+            emptyMessage={emptyMessage}
+            useNativeFocus={true}
+          />
         </View>
       </FixedSafeAreaView>
-    </SpatialNavigationRoot>
+    </>
   );
 }
 
@@ -692,14 +622,5 @@ const createStyles = (theme: NovaTheme) =>
       flexWrap: 'wrap',
       gap: theme.spacing.sm,
       marginBottom: theme.spacing.sm,
-    },
-    filterButton: {
-      paddingHorizontal: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.md,
-      backgroundColor: theme.colors.background.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
-    },
-    filterButtonActive: {
-      borderColor: theme.colors.accent.primary,
     },
   });

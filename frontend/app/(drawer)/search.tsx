@@ -1,40 +1,93 @@
+import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
-import FocusablePressable from '@/components/FocusablePressable';
-import { Image } from '@/components/Image';
+import MediaGrid from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
-import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useSearchTitles } from '@/hooks/useApi';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { Title } from '@/services/api';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  useLockSpatialNavigation,
-  useSpatialNavigator,
-} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { Direction } from '@bam.tech/lrud';
+import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Keyboard,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { useTVDimensions } from '@/hooks/useTVDimensions';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-type ResultTitle = Title & { uniqueKey: string };
+// Native filter button - uses Pressable with style function (no re-renders)
+// Uses responsiveSize() for unified scaling across tvOS and Android TV
+const NativeFilterButton = ({
+  label,
+  icon,
+  isActive,
+  onPress,
+  autoFocus,
+  theme,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  isActive: boolean;
+  onPress: () => void;
+  autoFocus?: boolean;
+  theme: NovaTheme;
+}) => {
+  // Unified responsive sizing - design for 1920px width, scales automatically
+  const iconSize = responsiveSize(36, 20);
+  const paddingH = responsiveSize(28, 14);
+  const paddingV = responsiveSize(16, 8);
+  const borderRadius = responsiveSize(12, 6);
+  const fontSize = responsiveSize(24, 14);
+  const lineHeight = responsiveSize(32, 18);
+  const gap = responsiveSize(12, 6);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      hasTVPreferredFocus={autoFocus}
+      tvParallaxProperties={{ enabled: false }}
+      style={({ focused }) => [
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap,
+          paddingHorizontal: paddingH,
+          paddingVertical: paddingV,
+          borderRadius,
+          backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: focused
+            ? theme.colors.accent.primary
+            : isActive
+              ? theme.colors.accent.primary
+              : theme.colors.border.subtle,
+        },
+      ]}
+    >
+      {({ focused }) => (
+        <>
+          <Ionicons
+            name={icon}
+            size={iconSize}
+            color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+          />
+          <Text
+            style={{
+              color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+              fontSize,
+              lineHeight,
+              fontWeight: '500',
+            }}
+          >
+            {label}
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+};
 
 // Calculate similarity score between search query and title name
 function calculateSimilarity(query: string, title: string): number {
@@ -94,9 +147,8 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const router = useRouter();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId } = useUserProfiles();
   const isFocused = useIsFocused();
-  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
+  const { settings, userSettings } = useBackendSettings();
 
   // Reset navigation flag when screen becomes focused again
   // And clean up keyboard overlay when screen loses focus or unmounts
@@ -134,14 +186,9 @@ export default function SearchScreen() {
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const tempQueryRef = useRef('');
-  const { lock, unlock } = useLockSpatialNavigation();
-  const rowRefs = useRef<{ [key: string]: View | null }>({});
-  const rowPositionsRef = useRef<{ [key: string]: number }>({});
-  const mainScrollViewRef = useRef<any>(null);
   const isNavigatingRef = useRef(false);
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
-  const [focusedFilterIndex, setFocusedFilterIndex] = useState<number | null>(null);
-  const navigator = useSpatialNavigator();
+  const [isInputFocused, setIsInputFocused] = useState(false);
 
   const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
     [
@@ -210,32 +257,24 @@ export default function SearchScreen() {
     return items.filter((item) => item.mediaType === filter);
   }, [items, filter]);
 
-  // Clear row position cache when results change (positions will be different)
-  React.useEffect(() => {
-    rowPositionsRef.current = {};
-  }, [filteredItems]);
+  // TV: Handle left key to open menu when not typing
+  useEffect(() => {
+    if (!isTV || isMenuOpen || isInputFocused) return;
 
-  const onDirectionHandledWithoutMovement = useCallback(
-    (movement: Direction) => {
-      // Enable horizontal step within the filter row when no movement occurred
-      if ((movement === 'right' || movement === 'left') && focusedFilterIndex !== null) {
-        const delta = movement === 'right' ? 1 : -1;
-        const nextIndex = focusedFilterIndex + delta;
-        if (nextIndex >= 0 && nextIndex < filterOptions.length) {
-          navigator.grabFocus(`search-filter-${filterOptions[nextIndex].key}`);
-          return;
-        }
-      }
-
-      if (movement === 'left') {
+    const handleKeyDown = (key: SupportedKeys) => {
+      if (key === SupportedKeys.Left) {
         openMenu();
       }
-    },
-    [filterOptions, focusedFilterIndex, navigator, openMenu],
-  );
+    };
+
+    RemoteControlManager.addKeydownListener(handleKeyDown);
+    return () => {
+      RemoteControlManager.removeKeydownListener(handleKeyDown);
+    };
+  }, [isMenuOpen, isInputFocused, openMenu]);
 
   const handleResultPress = useCallback(
-    (title: ResultTitle) => {
+    (title: Title) => {
       console.log('[SEARCH DEBUG] handleResultPress called for:', title.name);
       console.log('[SEARCH DEBUG] Input focused before blur:', inputRef.current?.isFocused());
 
@@ -274,21 +313,19 @@ export default function SearchScreen() {
     console.log('[SEARCH DEBUG] TextInput onFocus called');
     console.log('[SEARCH DEBUG] isNavigatingRef.current:', isNavigatingRef.current);
 
-    // If we're navigating away, immediately blur and don't lock navigation
+    // If we're navigating away, immediately blur
     if (isNavigatingRef.current) {
       console.log('[SEARCH DEBUG] Blocking focus during navigation, blurring immediately');
       inputRef.current?.blur();
       return;
     }
 
-    // Lock spatial navigation to prevent d-pad from navigating away while typing
-    lock();
-  }, [lock]);
+    setIsInputFocused(true);
+  }, []);
 
   const handleBlur = useCallback(() => {
     console.log('[SEARCH DEBUG] TextInput onBlur called');
-    // Unlock spatial navigation to re-enable d-pad navigation
-    unlock();
+    setIsInputFocused(false);
     // Trigger search when keyboard closes
     if (Platform.isTV) {
       const finalQuery = tempQueryRef.current.trim();
@@ -297,7 +334,7 @@ export default function SearchScreen() {
         setSubmittedQuery(finalQuery);
       }
     }
-  }, [unlock]);
+  }, []);
 
   const handleSubmit = useCallback(() => {
     // Trigger search on submit
@@ -334,47 +371,14 @@ export default function SearchScreen() {
   const isCompact = (isMobileDevice && !isWideScreen) || theme.breakpoint === 'compact';
   const showClearButton = isCompact && query.trim().length > 0;
 
-  // Scroll to row when it receives focus (for TV navigation) — match home index behavior
-  // Uses position caching to avoid expensive measureLayout calls on Android TV
-  const scrollToRow = useCallback((rowKey: string) => {
-    if (!Platform.isTV || !mainScrollViewRef.current) {
-      return;
-    }
-
-    const scrollView = mainScrollViewRef.current;
-
-    const performScroll = (targetY: number) => {
-      scrollView?.scrollTo({ y: targetY, animated: true });
-    };
-
-    // Check cache first (avoids expensive measureLayout on Android)
-    const cachedPosition = rowPositionsRef.current[rowKey];
-    if (cachedPosition !== undefined) {
-      performScroll(cachedPosition);
-      return;
-    }
-
-    // Fall back to measureLayout for first access, then cache
-    const rowRef = rowRefs.current[rowKey];
-    if (!rowRef) {
-      return;
-    }
-
-    rowRef.measureLayout(
-      scrollView as any,
-      (_left, top) => {
-        const targetY = Math.max(0, top - 20);
-        // Cache the position for future use
-        rowPositionsRef.current[rowKey] = targetY;
-        performScroll(targetY);
-      },
-      () => {
-        // silently ignore failures
-      },
-    );
-  }, []);
+  const filterLabel = filter === 'movie' ? 'Movies' : filter === 'series' ? 'TV Shows' : 'All';
+  const emptyMessage = useMemo(() => {
+    const type = filter === 'movie' ? 'movies' : filter === 'series' ? 'TV shows' : 'results';
+    return `No ${type} found for "${submittedQuery}"`;
+  }, [filter, submittedQuery]);
 
   const renderContent = () => {
+    // Show placeholder when no query has been submitted
     if (!hasQuery) {
       return (
         <View style={styles.placeholderContainer}>
@@ -383,311 +387,139 @@ export default function SearchScreen() {
       );
     }
 
-    // Only show full loading state if we have no results yet
-    if (loading && (!filteredItems || filteredItems.length === 0)) {
-      return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-          {!Platform.isTV && <Text style={styles.loadingText}>Searching...</Text>}
-        </View>
-      );
-    }
-
-    if (error && (!filteredItems || filteredItems.length === 0)) {
-      return (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Error: {error}</Text>
-        </View>
-      );
-    }
-
-    if (!filteredItems || filteredItems.length === 0) {
-      const filterLabel = filter === 'movie' ? 'movies' : filter === 'series' ? 'TV shows' : 'results';
-      return (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            No {filterLabel} found for "{submittedQuery}"
-          </Text>
-        </View>
-      );
-    }
-
-    // For mobile/compact view, use a proper interactive grid
-    if (isCompact) {
-      return (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.gridContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {!Platform.isTV && <Text style={styles.resultsTitle}>Search Results</Text>}
-          <View style={styles.grid}>
-            {filteredItems.map((item, index) => (
-              <Pressable
-                key={item.uniqueKey || `item-${index}`}
-                style={styles.compactCard}
-                onPress={() => handleResultPress(item)}
-                android_ripple={{ color: theme.colors.accent.primary + '30' }}
-              >
-                <View style={styles.cardImageContainer}>
-                  {item.poster?.url ? (
-                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} contentFit="cover" transition={0} cachePolicy={Platform.isTV ? 'disk' : 'memory'} />
-                  ) : (
-                    <View style={styles.placeholder}>
-                      <Text style={styles.placeholderImageText}>No Image</Text>
-                    </View>
-                  )}
-                  {item.mediaType && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
-                    </View>
-                  )}
-                  <View style={styles.cardTextContainer}>
-                    <LinearGradient
-                      pointerEvents="none"
-                      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                      locations={[0, 0.6, 1]}
-                      start={{ x: 0.5, y: 0 }}
-                      end={{ x: 0.5, y: 1 }}
-                      style={styles.cardTextGradient}
-                    />
-                    <Text style={styles.cardTitle} numberOfLines={2}>
-                      {item.name}
-                    </Text>
-                    {item.year ? <Text style={styles.cardYear}>{item.year}</Text> : null}
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-          {loading && (
-            <View style={styles.loadingMoreContainer}>
-              <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-            </View>
-          )}
-        </ScrollView>
-      );
-    }
-
-    // For TV/desktop/wide tablets, use focusable grid with spatial navigation
-    // Split items into rows for proper grid navigation
-    // Use 6 columns on TV, otherwise base on screen width
-    const columnsPerRow = Platform.isTV ? 6 : screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4;
-    const rows: ResultTitle[][] = [];
-    for (let i = 0; i < filteredItems.length; i += columnsPerRow) {
-      rows.push(filteredItems.slice(i, i + columnsPerRow));
-    }
-
-    // Key changes when row count changes, forcing grid recalculation
-    const gridKey = `grid-${rows.length}`;
-
+    // Use MediaGrid for consistent styling with watchlist
     return (
-      <ScrollView
-        ref={mainScrollViewRef}
-        style={styles.scrollView}
-        bounces={false}
-        showsVerticalScrollIndicator={false}
-        scrollEnabled={true}
-        contentInsetAdjustmentBehavior="never"
-        automaticallyAdjustContentInsets={false}
-        removeClippedSubviews={Platform.isTV}
-        scrollEventThrottle={16}
-        // Android TV: prevent native focus-based scrolling
-        focusable={false}
-        // @ts-ignore - TV-specific prop
-        isTVSelectable={false}
-      >
-        <View style={styles.gridContent}>
-          {!Platform.isTV && <Text style={styles.resultsTitle}>Search Results</Text>}
-          <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
-            {rows.map((row, rowIndex) => {
-              const rowKey = `row-${rowIndex}`;
-
-              return (
-                <View
-                  key={rowKey}
-                  ref={(ref) => {
-                    rowRefs.current[rowKey] = ref;
-                  }}
-                  style={styles.rowContainer}
-                >
-                  <SpatialNavigationNode orientation="horizontal">
-                    <View style={styles.gridRow}>
-                      {row.map((item, colIndex) => {
-                        const cardKey = item.uniqueKey || `item-${rowIndex}-${colIndex}`;
-
-                        const focusable = (
-                          <SpatialNavigationFocusableView
-                            onSelect={() => handleResultPress(item)}
-                            onFocus={() => scrollToRow(rowKey)}
-                          >
-                            {({ isFocused }: { isFocused: boolean }) => (
-                              <View style={[styles.card, isFocused && styles.cardFocused]}>
-                                <View style={styles.cardImageContainer}>
-                                  {item.poster?.url ? (
-                                    <Image
-                                      key={`img-${cardKey}`}
-                                      source={{ uri: item.poster.url }}
-                                      style={styles.cardImage}
-                                      contentFit="cover"
-                                      transition={0}
-                                      cachePolicy={Platform.isTV ? 'disk' : 'memory'}
-                                      recyclingKey={cardKey}
-                                    />
-                                  ) : (
-                                    <View style={styles.placeholder}>
-                                      <Text style={styles.placeholderText}>No Image</Text>
-                                    </View>
-                                  )}
-                                  {item.mediaType && (
-                                    <View style={styles.badge}>
-                                      <Text style={styles.badgeText}>
-                                        {item.mediaType === 'series' ? 'TV' : 'MOVIE'}
-                                      </Text>
-                                    </View>
-                                  )}
-                                </View>
-                                <View style={styles.cardTextContainer}>
-                                  <LinearGradient
-                                    pointerEvents="none"
-                                    colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                                    locations={[0, 0.6, 1]}
-                                    start={{ x: 0.5, y: 0 }}
-                                    end={{ x: 0.5, y: 1 }}
-                                    style={styles.cardTextGradient}
-                                  />
-                                  <Text style={styles.cardTitle} numberOfLines={2}>
-                                    {item.name}
-                                  </Text>
-                                  {item.year ? <Text style={styles.cardYear}>{item.year}</Text> : null}
-                                </View>
-                              </View>
-                            )}
-                          </SpatialNavigationFocusableView>
-                        );
-
-                        return <React.Fragment key={cardKey}>{focusable}</React.Fragment>;
-                      })}
-                    </View>
-                  </SpatialNavigationNode>
-                </View>
-              );
-            })}
-          </SpatialNavigationNode>
-          {loading && (
-            <View style={styles.loadingMoreContainer}>
-              <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-            </View>
-          )}
-        </View>
-      </ScrollView>
+      <MediaGrid
+        title={`Search Results · ${filterLabel}`}
+        items={filteredItems}
+        loading={loading}
+        error={error ?? undefined}
+        onItemPress={handleResultPress}
+        layout="grid"
+        numColumns={6}
+        defaultFocusFirstItem={true}
+        badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+        emptyMessage={emptyMessage}
+        useNativeFocus={true}
+      />
     );
   };
 
   return (
-    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          <SpatialNavigationNode orientation="vertical">
-            <View style={styles.headerRow}>
-              <DefaultFocus>
-                <SpatialNavigationFocusableView
-                  onSelect={() => {
-                    // Programmatically focus the TextInput to show keyboard on TV
-                    inputRef.current?.focus();
-                  }}
-                  onBlur={() => {
-                    // Blur the TextInput when spatial navigation moves away
-                    inputRef.current?.blur();
-                  }}
-                >
-                  {({ isFocused: textInputFocused }: { isFocused: boolean }) => (
-                    <Pressable tvParallaxProperties={{ enabled: false }}>
-                      <View
-                        style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
-                        pointerEvents={isMenuOpen ? 'none' : 'auto'}
-                      >
-                        <View style={styles.searchInputContent}>
-                          {!isCompact && (
-                            <MaterialCommunityIcons
-                              name="magnify"
-                              style={styles.searchIcon}
-                              size={isCompact ? 20 : 28}
-                            />
-                          )}
-                          <TextInput
-                            ref={inputRef}
-                            style={[styles.searchInput, textInputFocused && styles.searchInputFocused]}
-                            placeholder="Search for movies or TV shows"
-                            placeholderTextColor={theme.colors.text.muted}
-                            {...(Platform.isTV ? { defaultValue: query } : { value: query })}
-                            onChangeText={handleChangeText}
-                            onFocus={handleFocus}
-                            onBlur={handleBlur}
-                            returnKeyType="search"
-                            onSubmitEditing={handleSubmit}
-                            autoCorrect={false}
-                            autoCapitalize="none"
-                            autoComplete="off"
-                            textContentType="none"
-                            spellCheck={false}
-                            clearButtonMode="never"
-                            enablesReturnKeyAutomatically={false}
-                            multiline={false}
-                            numberOfLines={1}
-                            underlineColorAndroid="transparent"
-                            importantForAutofill="no"
-                            disableFullscreenUI={true}
-                            editable={Platform.isTV ? textInputFocused && !isMenuOpen : !isMenuOpen}
-                            {...(Platform.OS === 'ios' &&
-                              Platform.isTV && {
-                                keyboardAppearance: 'dark',
-                              })}
-                          />
-                          {showClearButton ? (
-                            <Pressable
-                              accessibilityHint="Clears the current search"
-                              accessibilityLabel="Clear search"
-                              hitSlop={10}
-                              onPress={handleClearSearch}
-                              style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}
-                            >
-                              <MaterialCommunityIcons
-                                name="close"
-                                style={styles.clearButtonIcon}
-                                size={isCompact ? 22 : 26}
-                              />
-                            </Pressable>
-                          ) : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  )}
-                </SpatialNavigationFocusableView>
-              </DefaultFocus>
-
-              {/* Filter buttons */}
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.filtersRow}>
-                  {filterOptions.map((option, index) => {
-                    const isFilterActive = filter === option.key;
-                    return (
-                      <FocusablePressable
-                        key={option.key}
-                        focusKey={`search-filter-${option.key}`}
-                        text={option.label}
-                        icon={option.icon}
-                        onFocus={() => setFocusedFilterIndex(index)}
-                        onSelect={() => setFilter(option.key)}
-                        style={[styles.filterButton, isFilterActive && styles.filterButtonActive]}
+          <View style={styles.headerRow}>
+            {/* Search input - on TV, wrapping in Pressable allows focus */}
+            {Platform.isTV ? (
+              <Pressable
+                onPress={() => inputRef.current?.focus()}
+                hasTVPreferredFocus={!hasQuery}
+                tvParallaxProperties={{ enabled: false }}
+                style={({ focused }) => [
+                  styles.searchInputWrapper,
+                  focused && styles.searchInputWrapperFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <View style={styles.searchInputContent} pointerEvents={isMenuOpen ? 'none' : 'auto'}>
+                    {!isCompact && (
+                      <MaterialCommunityIcons
+                        name="magnify"
+                        style={styles.searchIcon}
+                        size={isCompact ? 20 : 28}
                       />
-                    );
-                  })}
+                    )}
+                    <TextInput
+                      ref={inputRef}
+                      style={[styles.searchInput, (focused || isInputFocused) && styles.searchInputFocused]}
+                      placeholder="Search for movies or TV shows"
+                      placeholderTextColor={theme.colors.text.muted}
+                      defaultValue={query}
+                      onChangeText={handleChangeText}
+                      onFocus={handleFocus}
+                      onBlur={handleBlur}
+                      returnKeyType="search"
+                      onSubmitEditing={handleSubmit}
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      textContentType="none"
+                      spellCheck={false}
+                      clearButtonMode="never"
+                      enablesReturnKeyAutomatically={false}
+                      multiline={false}
+                      numberOfLines={1}
+                      underlineColorAndroid="transparent"
+                      importantForAutofill="no"
+                      disableFullscreenUI={true}
+                      editable={(focused || isInputFocused) && !isMenuOpen}
+                      {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
+                    />
+                  </View>
+                )}
+              </Pressable>
+            ) : (
+              <View style={styles.searchInputWrapper} pointerEvents={isMenuOpen ? 'none' : 'auto'}>
+                <View style={styles.searchInputContent}>
+                  <TextInput
+                    ref={inputRef}
+                    style={styles.searchInput}
+                    placeholder="Search for movies or TV shows"
+                    placeholderTextColor={theme.colors.text.muted}
+                    value={query}
+                    onChangeText={handleChangeText}
+                    onFocus={handleFocus}
+                    onBlur={handleBlur}
+                    returnKeyType="search"
+                    onSubmitEditing={handleSubmit}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    textContentType="none"
+                    spellCheck={false}
+                    clearButtonMode="never"
+                    enablesReturnKeyAutomatically={false}
+                    multiline={false}
+                    numberOfLines={1}
+                    underlineColorAndroid="transparent"
+                    importantForAutofill="no"
+                    editable={!isMenuOpen}
+                  />
+                  {showClearButton ? (
+                    <Pressable
+                      accessibilityHint="Clears the current search"
+                      accessibilityLabel="Clear search"
+                      hitSlop={10}
+                      onPress={handleClearSearch}
+                      style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}
+                    >
+                      <MaterialCommunityIcons
+                        name="close"
+                        style={styles.clearButtonIcon}
+                        size={isCompact ? 22 : 26}
+                      />
+                    </Pressable>
+                  ) : null}
                 </View>
-              </SpatialNavigationNode>
+              </View>
+            )}
+
+            {/* Filter buttons */}
+            <View style={styles.filtersRow}>
+              {filterOptions.map((option) => (
+                <NativeFilterButton
+                  key={option.key}
+                  label={option.label}
+                  icon={option.icon}
+                  isActive={filter === option.key}
+                  onPress={() => setFilter(option.key)}
+                  theme={theme}
+                />
+              ))}
             </View>
-          </SpatialNavigationNode>
+          </View>
 
           {renderContent()}
 
@@ -703,28 +535,12 @@ export default function SearchScreen() {
           )}
         </View>
       </FixedSafeAreaView>
-    </SpatialNavigationRoot>
+    </>
   );
 }
 
-const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: number) => {
-  // Calculate card dimensions for proper grid layout
+const createStyles = (theme: NovaTheme, _screenWidth: number, _screenHeight: number) => {
   const isCompact = theme.breakpoint === 'compact';
-
-  // Grid configuration - use 4 columns on wide mobile screens (foldables, tablets)
-  const isWideCompact = isCompact && screenWidth >= 600;
-  const columnsCount = isCompact ? (isWideCompact ? 4 : 2) : Platform.isTV ? 6 : 7;
-  const gap = isCompact ? theme.spacing.md : theme.spacing.lg;
-  const horizontalPadding = isCompact ? theme.spacing.lg : theme.spacing['2xl'];
-
-  // Calculate card width based on screen width to fill available space
-  // Available width = screen width - (horizontal padding * 2) - (gaps between cards)
-  const availableWidth = screenWidth - horizontalPadding * 2;
-  const totalGapWidth = gap * (columnsCount - 1);
-  const cardWidth = Math.floor((availableWidth - totalGapWidth) / columnsCount);
-
-  // Card height maintains portrait poster aspect ratio (2:3)
-  const cardHeight = Math.round(cardWidth * (3 / 2));
 
   return StyleSheet.create({
     safeArea: {
@@ -734,7 +550,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     container: {
       flex: 1,
       backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base,
-      paddingHorizontal: horizontalPadding,
+      paddingHorizontal: theme.spacing.xl,
       paddingTop: theme.spacing.xl,
     },
     headerRow: {
@@ -744,17 +560,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     filtersRow: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: theme.spacing.sm,
-      flexShrink: 0,
-    },
-    filterButton: {
-      paddingHorizontal: isCompact ? theme.spacing.lg : theme.spacing['2xl'],
-      backgroundColor: theme.colors.background.surface,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
-    },
-    filterButtonActive: {
-      borderColor: theme.colors.accent.primary,
+      marginBottom: theme.spacing.sm,
     },
     searchInputWrapper: {
       justifyContent: 'center',
@@ -817,138 +625,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     clearButtonIcon: {
       color: theme.colors.text.secondary,
     },
-    scrollView: {
-      flex: 1,
-    },
-    gridContent: {
-      paddingBottom: theme.spacing['3xl'],
-    },
-    resultsTitle: {
-      ...theme.typography.title.lg,
-      color: theme.colors.text.primary,
-      marginBottom: theme.spacing.lg,
-    },
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: gap,
-      justifyContent: 'flex-start',
-    },
-    rowContainer: {
-      marginBottom: gap,
-    },
-    gridRow: {
-      flexDirection: 'row',
-      gap: gap,
-      flexWrap: 'wrap',
-    },
-    card: {
-      width: cardWidth,
-      height: cardHeight,
-      borderRadius: theme.radius.md,
-      overflow: 'hidden',
-      backgroundColor: theme.colors.background.surface,
-      borderWidth: 3,
-      borderColor: 'transparent',
-    },
-    cardFocused: {
-      borderColor: theme.colors.accent.primary,
-      // Keep borderWidth constant to prevent layout shift
-      // Only color changes for better performance
-    },
-    compactCard: {
-      width: cardWidth,
-      height: cardHeight,
-      backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.md,
-      overflow: 'hidden',
-      borderWidth: 3,
-      borderColor: 'transparent',
-    },
-    cardImageContainer: {
-      width: '100%',
-      height: '100%',
-      backgroundColor: theme.colors.background.elevated,
-      position: 'relative',
-    },
-    cardImage: {
-      width: '100%',
-      height: '100%',
-    },
-    badge: {
-      position: 'absolute',
-      top: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
-      right: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      paddingHorizontal: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
-      paddingVertical: isCompact ? 2 : Platform.OS === 'android' ? 1 : theme.spacing.xs,
-      borderRadius: theme.radius.sm,
-      borderWidth: isCompact ? 1 : Platform.OS === 'android' ? 1 : 2,
-      borderColor: theme.colors.accent.primary,
-    },
-    badgeText: {
-      ...theme.typography.caption.sm,
-      color: theme.colors.accent.primary,
-      fontWeight: '700',
-      // Android TV renders larger, use smaller font
-      fontSize: isCompact ? 10 : Platform.OS === 'android' ? 10 : 16,
-      letterSpacing: 0.5,
-    },
-    cardTextContainer: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      padding: isCompact ? theme.spacing.sm : theme.spacing.md,
-      gap: theme.spacing.xs,
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      minHeight: '40%',
-    },
-    cardTextGradient: {
-      ...StyleSheet.absoluteFillObject,
-    },
-    cardTitle: {
-      ...(Platform.isTV ? theme.typography.body.lg : theme.typography.body.md),
-      ...(Platform.isTV && Platform.OS === 'ios'
-        ? {
-            fontSize: Math.round(theme.typography.body.lg.fontSize * 1.5),
-            lineHeight: Math.round(theme.typography.body.lg.lineHeight * 1.5),
-          }
-        : null),
-      color: theme.colors.text.primary,
-      textAlign: 'center',
-      zIndex: 1,
-      fontWeight: '600',
-    },
-    cardYear: {
-      ...(Platform.isTV ? theme.typography.body.md : theme.typography.caption.sm),
-      ...(Platform.isTV && Platform.OS === 'ios'
-        ? {
-            fontSize: Math.round(theme.typography.body.md.fontSize * 1.25),
-            lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.25),
-          }
-        : null),
-      color: theme.colors.text.secondary,
-      textAlign: 'center',
-      zIndex: 1,
-    },
-    cardInfo: {
-      padding: theme.spacing.sm,
-      gap: 2,
-      justifyContent: 'center',
-    },
-    placeholder: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: theme.colors.background.elevated,
-    },
-    placeholderImageText: {
-      ...theme.typography.caption.sm,
-      color: theme.colors.text.muted,
-      textAlign: 'center',
-    },
     placeholderContainer: {
       flex: 1,
       alignItems: 'center',
@@ -957,43 +633,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     placeholderText: {
       ...(Platform.isTV ? theme.typography.title.xl : theme.typography.body.md),
-      color: theme.colors.text.muted,
-      textAlign: 'center',
-    },
-    loadingContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: theme.spacing['3xl'],
-    },
-    loadingText: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.secondary,
-      marginTop: theme.spacing.md,
-    },
-    loadingMoreContainer: {
-      alignItems: 'center',
-      paddingVertical: theme.spacing.xl,
-    },
-    errorContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: theme.spacing['3xl'],
-    },
-    errorText: {
-      ...theme.typography.body.md,
-      color: theme.colors.status.danger,
-      textAlign: 'center',
-    },
-    emptyContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: theme.spacing['3xl'],
-    },
-    emptyText: {
-      ...theme.typography.body.md,
       color: theme.colors.text.muted,
       textAlign: 'center',
     },
