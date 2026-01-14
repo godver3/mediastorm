@@ -5,6 +5,7 @@
 
 import type { Trailer } from '@/services/api';
 import type { NovaTheme } from '@/theme';
+import { TvModal } from '@/components/TvModal';
 import { Ionicons } from '@expo/vector-icons';
 import { createElement, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -216,18 +217,20 @@ export const TrailerModal = ({
     );
   }
 
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+  const content = (
+    <>
       <StatusBar hidden />
       <View style={styles.fullscreenOverlay}>
-        {/* Top darkened area with title and close button */}
+        {/* Top darkened area with title and close button (hidden on TV) */}
         <View style={styles.topBar}>
           <Text style={styles.trailerTitle} numberOfLines={1}>
             {trailerName}
           </Text>
-          <Pressable onPress={onClose} style={styles.closeButton} hitSlop={16}>
-            <Ionicons name="close" size={28} color="#ffffff" />
-          </Pressable>
+          {!Platform.isTV && (
+            <Pressable onPress={onClose} style={styles.closeButton} hitSlop={16}>
+              <Ionicons name="close" size={28} color="#ffffff" />
+            </Pressable>
+          )}
         </View>
 
         {/* Video player area */}
@@ -236,6 +239,21 @@ export const TrailerModal = ({
         {/* Bottom darkened area */}
         <Pressable style={styles.bottomBar} onPress={onClose} />
       </View>
+    </>
+  );
+
+  // Use TvModal on TV platforms (handles back button properly), regular Modal on mobile
+  if (Platform.isTV) {
+    return (
+      <TvModal visible onRequestClose={onClose} withBackdrop={false}>
+        {content}
+      </TvModal>
+    );
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      {content}
     </Modal>
   );
 };

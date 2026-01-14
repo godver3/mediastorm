@@ -4176,14 +4176,15 @@ export default function DetailsScreen() {
                 ]}
                 disabled={watchlistBusy}
               />
-              {/* Trailer button temporarily disabled */}
-              {false && !isSeries && (trailersLoading || hasAvailableTrailer) && (
+              {/* Trailer button */}
+              {(trailersLoading || hasAvailableTrailer) && (
                 <FocusablePressable
                   focusKey="watch-trailer"
                   text={!useCompactActionLayout ? trailerButtonLabel : undefined}
                   icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
                   accessibilityLabel={trailerButtonLabel}
                   onSelect={handleWatchTrailer}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
                   loading={trailersLoading}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
                   disabled={trailerButtonDisabled}
@@ -4547,16 +4548,17 @@ export default function DetailsScreen() {
     // Lower value = higher on screen = more artwork visible
     // - seasons: very low scroll, show mostly artwork with season chips barely visible
     // - episodes: moderate scroll, show action buttons and episode cards
-    // - actions/cast: scroll to bottom to show cast section
+    // - actions: for series scroll to bottom, for movies stay at top (show artwork)
+    // - cast: scroll to bottom to show cast section
     const scrollPositions = {
       seasons: 0,                                   // No scroll - maximum artwork visible
       episodes: Math.round(windowHeight * 0.40),   // Show action buttons + episodes
-      actions: Math.round(windowHeight * 2),       // Large value to scroll to bottom (clamped by ScrollView)
+      actions: isSeries ? Math.round(windowHeight * 2) : Math.round(windowHeight * 0.15),  // Series: scroll to bottom, Movies: show artwork with action row visible
       cast: Math.round(windowHeight * 2),          // Large value to scroll to bottom (clamped by ScrollView)
     };
     const targetY = scrollPositions[area];
     tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
-  }, [windowHeight]);
+  }, [windowHeight, isSeries]);
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
