@@ -37,6 +37,8 @@ interface TVCastSectionProps {
   onFocus?: () => void;
   /** Native tag of the element to focus when navigating up */
   nextFocusUp?: number;
+  /** Reduce top margin (e.g. for movies where cast follows action bar directly) */
+  compactMargin?: boolean;
 }
 
 const TVCastSection = memo(function TVCastSection({
@@ -45,6 +47,7 @@ const TVCastSection = memo(function TVCastSection({
   maxCast = 12,
   onFocus,
   nextFocusUp,
+  compactMargin,
 }: TVCastSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -145,17 +148,33 @@ const TVCastSection = memo(function TVCastSection({
     [castToShow.length, scrollToIndex, styles, theme, onFocus, nextFocusUp]
   );
 
+  // Render skeleton cards while loading
+  const renderSkeletonCards = useCallback(() => {
+    const skeletonCount = 6;
+    return (
+      <View style={styles.skeletonRow}>
+        {Array.from({ length: skeletonCount }).map((_, index) => (
+          <View key={`skeleton-${index}`} style={styles.skeletonCard}>
+            <View style={styles.skeletonPhoto} />
+            <View style={styles.skeletonTextContainer}>
+              <View style={styles.skeletonName} />
+              <View style={styles.skeletonCharacter} />
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }, [styles]);
+
   if (!castToShow.length && !isLoading) {
     return null;
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
       <Text style={styles.heading}>Cast</Text>
       {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading cast...</Text>
-        </View>
+        renderSkeletonCards()
       ) : (
         <FlatList
           ref={listRef}
@@ -194,14 +213,39 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: tvScale(16),
       marginLeft: tvScale(48),
     },
-    loadingContainer: {
-      height: CARD_HEIGHT,
-      justifyContent: 'center',
-      alignItems: 'center',
+    skeletonRow: {
+      flexDirection: 'row',
+      paddingHorizontal: tvScale(48),
+      gap: CARD_GAP,
     },
-    loadingText: {
-      fontSize: tvScale(16),
-      color: theme.colors.text.muted,
+    skeletonCard: {
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+      borderRadius: tvScale(8),
+      backgroundColor: theme.colors.background.surface,
+      overflow: 'hidden',
+    },
+    skeletonPhoto: {
+      width: '100%',
+      height: PHOTO_HEIGHT,
+      backgroundColor: theme.colors.background.elevated,
+    },
+    skeletonTextContainer: {
+      flex: 1,
+      padding: tvScale(8),
+      gap: tvScale(6),
+    },
+    skeletonName: {
+      height: tvScale(14),
+      width: '80%',
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: tvScale(4),
+    },
+    skeletonCharacter: {
+      height: tvScale(12),
+      width: '60%',
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: tvScale(4),
     },
     listContent: {
       paddingHorizontal: tvScale(48),

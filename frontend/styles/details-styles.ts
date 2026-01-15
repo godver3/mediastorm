@@ -138,7 +138,13 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexWrap: 'wrap',
       gap: theme.spacing.md,
       marginBottom: theme.spacing.md,
-      ...(isTV ? { marginLeft: tvScale * 48 } : null),
+      ...(isTV
+        ? {
+            marginLeft: tvScale * 48,
+            // Reserve space for rating badges to prevent layout shift when data loads
+            minHeight: Math.round(32 * tvScale),
+          }
+        : null),
     },
     ratingBadge: {
       flexDirection: 'row',
@@ -161,7 +167,13 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       flexWrap: 'wrap',
       marginBottom: theme.spacing.md,
-      ...(isTV ? { marginLeft: tvScale * 48 } : null),
+      ...(isTV
+        ? {
+            marginLeft: tvScale * 48,
+            // Reserve space for release info to prevent layout shift when data loads
+            minHeight: Math.round(40 * tvScale),
+          }
+        : null),
     },
     releaseInfoItem: {
       marginRight: theme.spacing.lg,
