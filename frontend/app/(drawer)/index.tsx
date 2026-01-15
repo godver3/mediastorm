@@ -711,6 +711,12 @@ function IndexScreen() {
     [shouldUseMobileLayout, theme],
   );
 
+  // Memoize badge visibility to prevent prop identity changes on each render
+  const badgeVisibility = useMemo(
+    () => userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [],
+    [userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility]
+  );
+
   // Cache series overviews for continue watching items
   const [seriesOverviews, setSeriesOverviews] = useState<Map<string, string>>(new Map());
 
@@ -952,7 +958,6 @@ function IndexScreen() {
   // Uses MovieReleasesContext which handles batching, deduplication, and persistence
   useEffect(() => {
     // Only fetch if releaseStatus badge is enabled
-    const badgeVisibility = userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [];
     if (!badgeVisibility.includes('releaseStatus')) {
       return;
     }
@@ -1021,7 +1026,7 @@ function IndexScreen() {
 
     // Queue for fetching - context handles batching and deduplication
     queueReleaseFetch(moviesToFetch);
-  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, hasMovieRelease, queueReleaseFetch]);
+  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, badgeVisibility, hasMovieRelease, queueReleaseFetch]);
 
   const trendingMovieCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
@@ -1933,10 +1938,12 @@ function IndexScreen() {
     customListLoading,
   ]);
 
-  // Track navigation structure changes for debugging
+  // Track navigation structure changes - only based on which shelves exist, NOT card counts
+  // Using card counts in the key was causing full remounts on every data load
   const navigationKey = useMemo(() => {
     if (!desktopShelves || desktopShelves.length === 0) return `shelves-empty-${shelfResetCounter}`;
-    return `shelves-${desktopShelves.map((s) => `${s.key}-${s.cards.length}`).join('-')}-reset-${shelfResetCounter}`;
+    // Only include shelf keys, not card counts - data changes shouldn't cause remounts
+    return `shelves-${desktopShelves.map((s) => s.key).join('-')}-reset-${shelfResetCounter}`;
   }, [desktopShelves, shelfResetCounter]);
 
   // Note: focusedShelfIndex computation removed - was unused (_shouldShowTopGradient)
@@ -2143,7 +2150,7 @@ function IndexScreen() {
                       loading={data.loading}
                       onItemPress={data.onItemPress}
                       onItemLongPress={data.onItemLongPress}
-                      badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+                      badgeVisibility={badgeVisibility}
                     />
                   </View>
                 );
@@ -2379,7 +2386,7 @@ function IndexScreen() {
                   registerShelfRef={registerShelfRef}
                   registerShelfFlatListRef={registerShelfFlatListRef}
                   isInitialLoad={isInitialLoadRef.current}
-                  badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+                  badgeVisibility={badgeVisibility}
                   onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
                 />
               ))}

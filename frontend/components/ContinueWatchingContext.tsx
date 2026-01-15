@@ -47,7 +47,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
   const [items, setItems] = useState<SeriesWatchState[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { activeUserId, loading: userLoading } = useUserProfiles();
+  const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
 
   const refresh = useCallback(
@@ -225,13 +225,15 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
   const value = useMemo<ContinueWatchingContextValue>(
     () => ({
       items,
-      loading: loading || userLoading,
+      // Only use own loading state - don't cascade userLoading changes to all consumers
+      // This prevents re-renders when UserProfilesContext.loading changes
+      loading,
       error,
       refresh,
       recordEpisodeWatch,
       hideFromContinueWatching,
     }),
-    [items, loading, userLoading, error, refresh, recordEpisodeWatch, hideFromContinueWatching],
+    [items, loading, error, refresh, recordEpisodeWatch, hideFromContinueWatching],
   );
 
   return <ContinueWatchingContext.Provider value={value}>{children}</ContinueWatchingContext.Provider>;

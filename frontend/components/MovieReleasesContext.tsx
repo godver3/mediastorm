@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { apiService, type Title } from '@/services/api';
 
 type ReleaseData = {
@@ -50,7 +50,8 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
     if (flushTimerRef.current) {
       clearTimeout(flushTimerRef.current);
     }
-    flushTimerRef.current = setTimeout(flushPendingUpdates, 100);
+    // Use longer debounce during initial load to batch more updates together
+    flushTimerRef.current = setTimeout(flushPendingUpdates, 300);
   }, [flushPendingUpdates]);
 
   // Execute the batch fetch
@@ -116,11 +117,15 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
     return fetchedIdsRef.current.has(id);
   }, []);
 
-  const value: MovieReleasesContextValue = {
-    releases,
-    hasRelease,
-    queueReleaseFetch,
-  };
+  // Memoize context value to prevent unnecessary consumer re-renders
+  const value = useMemo<MovieReleasesContextValue>(
+    () => ({
+      releases,
+      hasRelease,
+      queueReleaseFetch,
+    }),
+    [releases, hasRelease, queueReleaseFetch]
+  );
 
   return (
     <MovieReleasesContext.Provider value={value}>

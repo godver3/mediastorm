@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 
@@ -56,7 +56,11 @@ export function useTrendingMovies(userId?: string | null, enabled = true): UseAp
     fetchData();
   }, [isReady, backendUrl, fetchData, enabled]);
 
-  return { data, loading, error, refetch: fetchData };
+  // Memoize return value to prevent unnecessary re-renders of consumers
+  return useMemo(
+    () => ({ data, loading, error, refetch: fetchData }),
+    [data, loading, error, fetchData]
+  );
 }
 
 // Hook for trending TV shows
@@ -90,7 +94,11 @@ export function useTrendingTVShows(userId?: string | null, enabled = true): UseA
     fetchData();
   }, [isReady, backendUrl, fetchData, enabled]);
 
-  return { data, loading, error, refetch: fetchData };
+  // Memoize return value to prevent unnecessary re-renders of consumers
+  return useMemo(
+    () => ({ data, loading, error, refetch: fetchData }),
+    [data, loading, error, fetchData]
+  );
 }
 
 // Helper to deduplicate and sort search results
@@ -193,5 +201,9 @@ export function useSearchTitles(query: string): UseApiState<SearchResult[]> {
     };
   }, [debouncedQuery, backendUrl, isReady, refreshToken]);
 
-  return { data, loading, error, refetch };
+  // Memoize return value to prevent unnecessary re-renders of consumers
+  return useMemo(
+    () => ({ data, loading, error, refetch }),
+    [data, loading, error, refetch]
+  );
 }

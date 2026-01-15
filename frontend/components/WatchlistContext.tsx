@@ -58,7 +58,7 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { activeUserId, loading: userLoading } = useUserProfiles();
+  const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
 
   const requireUserId = useCallback(() => {
@@ -187,7 +187,9 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     return {
       items,
-      loading: loading || userLoading,
+      // Only use own loading state - don't cascade userLoading changes to all consumers
+      // This prevents re-renders when UserProfilesContext.loading changes
+      loading,
       error,
       refresh,
       addToWatchlist,
@@ -196,7 +198,7 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isInWatchlist,
       getItem,
     };
-  }, [items, loading, userLoading, error, refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState]);
+  }, [items, loading, error, refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState]);
 
   return <WatchlistContext.Provider value={value}>{children}</WatchlistContext.Provider>;
 };

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { apiService, WatchStatusItem, WatchStatusUpdate } from '../services/api';
 import { useUserProfiles } from './UserProfilesContext';
 
@@ -196,18 +196,22 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [activeUser?.id],
   );
 
-  const value: WatchStatusContextValue = {
-    items,
-    loading,
-    error,
-    isWatched,
-    getItem,
-    toggleWatchStatus,
-    updateWatchStatus,
-    bulkUpdateWatchStatus,
-    removeWatchStatus,
-    refresh,
-  };
+  // Memoize context value to prevent unnecessary consumer re-renders
+  const value = useMemo<WatchStatusContextValue>(
+    () => ({
+      items,
+      loading,
+      error,
+      isWatched,
+      getItem,
+      toggleWatchStatus,
+      updateWatchStatus,
+      bulkUpdateWatchStatus,
+      removeWatchStatus,
+      refresh,
+    }),
+    [items, loading, error, isWatched, getItem, toggleWatchStatus, updateWatchStatus, bulkUpdateWatchStatus, removeWatchStatus, refresh]
+  );
 
   return <WatchStatusContext.Provider value={value}>{children}</WatchStatusContext.Provider>;
 };
