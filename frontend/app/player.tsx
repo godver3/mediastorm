@@ -125,6 +125,8 @@ export default function PlayerScreen() {
     shuffleMode: shuffleModeParam,
     preExtractedSubtitles: preExtractedSubtitlesParam,
     subtitleDebug: subtitleDebugParam,
+    preselectedAudioTrack: preselectedAudioTrackParam,
+    preselectedSubtitleTrack: preselectedSubtitleTrackParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -233,6 +235,25 @@ export default function PlayerScreen() {
     }
     return null;
   }, [preExtractedSubtitlesParam]);
+
+  // Parse preselected track indices (tracks already baked into HLS session by prequeue)
+  const preselectedAudioTrack = useMemo(() => {
+    const raw = Array.isArray(preselectedAudioTrackParam) ? preselectedAudioTrackParam[0] : preselectedAudioTrackParam;
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }, [preselectedAudioTrackParam]);
+
+  const preselectedSubtitleTrack = useMemo(() => {
+    const raw = Array.isArray(preselectedSubtitleTrackParam) ? preselectedSubtitleTrackParam[0] : preselectedSubtitleTrackParam;
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }, [preselectedSubtitleTrackParam]);
 
   const [sourcePath, setSourcePath] = useState<string | undefined>(initialSourcePath);
   const safeAreaInsets = useSafeAreaInsets();
@@ -2628,6 +2649,12 @@ export default function PlayerScreen() {
 
     if (!nextEpisode) return;
 
+    // Skip prequeue if no active user - don't create "default" prequeue entries
+    if (!activeUserId) {
+      console.log('[player] Skipping next episode prequeue - no active user');
+      return;
+    }
+
     console.log('[player] Triggering prequeue for next episode:', {
       season: nextEpisode.seasonNumber,
       episode: nextEpisode.episodeNumber,
@@ -2639,7 +2666,7 @@ export default function PlayerScreen() {
         titleId: seriesId,
         titleName: cleanSeriesTitle || title || '',
         mediaType: 'series',
-        userId: activeUserId || 'default',
+        userId: activeUserId,
         seasonNumber: nextEpisode.seasonNumber,
         episodeNumber: nextEpisode.episodeNumber,
       });
@@ -4210,6 +4237,38 @@ export default function PlayerScreen() {
     let forceRecreate = false;
 
     if (isFirstSet) {
+      // Check if prequeue already baked in the correct tracks
+      // If preselected tracks match user preferences, skip recreation entirely
+      const audioMatchesPreselected = preselectedAudioTrack !== undefined && preselectedAudioTrack === selectedAudioTrackIndex;
+      const subtitleMatchesPreselected = preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack === selectedSubtitleTrackIndex;
+      // Consider subtitle "matching" if preselected is undefined and selected is null/undefined (both mean no subtitle)
+      const subtitleEffectivelyMatches = subtitleMatchesPreselected ||
+        (preselectedSubtitleTrack === undefined && (selectedSubtitleTrackIndex === null || selectedSubtitleTrackIndex === undefined));
+
+      if (audioMatchesPreselected || (preselectedAudioTrack !== undefined && subtitleEffectivelyMatches)) {
+        console.log('[player] prequeue tracks match preferences - skipping HLS session recreation', {
+          preselectedAudio: preselectedAudioTrack,
+          preselectedSubtitle: preselectedSubtitleTrack,
+          preferredAudio: selectedAudioTrackIndex,
+          preferredSubtitle: selectedSubtitleTrackIndex,
+          audioMatches: audioMatchesPreselected,
+          subtitleMatches: subtitleEffectivelyMatches,
+        });
+        // Initialize refs with preselected values and skip recreation
+        lastHlsTrackSelectionRef.current = { audio: preselectedAudioTrack, subtitle: preselectedSubtitleTrack ?? null };
+        setTimeout(() => {
+          hasAppliedInitialTracksRef.current = true;
+          console.log('[player] marked initial tracks as applied (preselected)');
+          const pendingSeek = pendingSessionSeekRef.current;
+          if (pendingSeek !== null && pendingSeek > 0) {
+            setTimeout(() => {
+              applyPendingSessionSeek('preselected-tracks-applied');
+            }, isHlsStream ? 1000 : 0);
+          }
+        }, 500);
+        return;
+      }
+
       // Check if warm start already created a session before we had track info
       // If so, we need to recreate the session with the correct tracks
       const warmStartHappenedWithoutTracks = hasAttemptedInitialWarmStartRef.current;
@@ -4306,6 +4365,14 @@ export default function PlayerScreen() {
       pausedForSeekRef.current = true;
       setIsVideoBuffering(true);
 
+      // CRITICAL: Clear the video source BEFORE calling the API.
+      // This ensures the old player is fully destroyed before the new one starts,
+      // preventing potential dual-player audio issues on Android TV.
+      console.log('[player] clearing video source before track recreation to prevent dual players');
+      hlsSessionActions.setRecreating(true);
+      hlsSessionActions.setSkipTrackPreferences(true);
+      setCurrentMovieUrl('');
+
       try {
         console.log('[player] creating NEW HLS session with selected tracks', {
           audioTrack: selectedAudioTrackIndex,
@@ -4334,9 +4401,7 @@ export default function PlayerScreen() {
         setCurrentTime(sessionStart);
         // Mark that we've done a warm seek (track switch recreates session)
         hasWarmSeekedRef.current = true;
-        // Mark that we're recreating HLS session to preserve track selections
-        hlsSessionActions.setRecreating(true);
-        hlsSessionActions.setSkipTrackPreferences(true);
+        // Set the new movie URL (recreating flags already set before API call)
         setCurrentMovieUrl(response.playlistUrl);
         hasReceivedPlayerLoadRef.current = false;
         setHasStartedPlaying(false);
@@ -4383,6 +4448,8 @@ export default function PlayerScreen() {
     updateDuration,
     applyPendingSessionSeek,
     hlsSessionActions,
+    preselectedAudioTrack,
+    preselectedSubtitleTrack,
   ]);
 
   const styles = useMemo(() => createPlayerStyles(theme), [theme]);

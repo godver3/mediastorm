@@ -42,6 +42,9 @@ export interface PlayerParams extends Record<string, any> {
   tvdbId?: string;
   preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
   subtitleDebug?: string; // Enable subtitle sync debug overlay
+  shuffleMode?: string; // Random episode playback mode
+  preselectedAudioTrack?: string; // Track index already baked into HLS session by prequeue
+  preselectedSubtitleTrack?: string; // Track index already baked into HLS session by prequeue
 }
 
 export const parseBooleanParam = (value?: string | string[]): boolean => {

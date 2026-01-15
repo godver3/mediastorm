@@ -682,6 +682,7 @@ export type PrequeueStatus = 'queued' | 'searching' | 'resolving' | 'probing' | 
 export interface PrequeueStatusResponse {
   prequeueId: string;
   status: PrequeueStatus;
+  userId?: string; // The user who created this prequeue
   targetEpisode?: EpisodeReference;
 
   // When ready:

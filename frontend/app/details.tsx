@@ -2022,7 +2022,23 @@ export default function DetailsScreen() {
         willCreateNewHLS: needsHLS && (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number'),
       });
 
-      if (needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number') {
+      // Check if we can use the pre-created HLS session
+      // Skip if: no HLS URL, need resume offset, or prequeue userId doesn't match current user
+      const prequeueUserIdMatches = !prequeueStatus.userId || prequeueStatus.userId === activeUserId;
+      const canUsePreCreatedHLS = needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number' && prequeueUserIdMatches;
+
+      // Track selected audio/subtitle tracks for passing to player (declared here so accessible in router.push)
+      let selectedAudioTrack: number | undefined;
+      let selectedSubtitleTrack: number | undefined;
+
+      if (!prequeueUserIdMatches && prequeueStatus.hlsPlaylistUrl) {
+        console.log('[prequeue] ⚠️ Pre-created HLS userId mismatch, will create new session', {
+          prequeueUserId: prequeueStatus.userId,
+          activeUserId,
+        });
+      }
+
+      if (canUsePreCreatedHLS) {
         // HDR/TrueHD content with HLS session already created by backend (no resume position)
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const authToken = apiService.getAuthToken();
@@ -2051,11 +2067,11 @@ export default function DetailsScreen() {
 
         try {
           // Use prequeue-selected tracks if available, otherwise fall back to fetching metadata
-          let selectedAudioTrack: number | undefined =
+          selectedAudioTrack =
             prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
               ? prequeueStatus.selectedAudioTrack
               : undefined;
-          let selectedSubtitleTrack: number | undefined =
+          selectedSubtitleTrack =
             prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
               ? prequeueStatus.selectedSubtitleTrack
               : undefined;
@@ -2229,6 +2245,13 @@ export default function DetailsScreen() {
             : {}),
           // Shuffle mode for random episode playback (use ref for synchronous access)
           ...(pendingShuffleModeRef.current || isShuffleMode ? { shuffleMode: '1' } : {}),
+          // Pass prequeue-selected tracks so player knows what's baked into the HLS session
+          ...(selectedAudioTrack !== undefined && selectedAudioTrack >= 0
+            ? { preselectedAudioTrack: String(selectedAudioTrack) }
+            : {}),
+          ...(selectedSubtitleTrack !== undefined && selectedSubtitleTrack >= 0
+            ? { preselectedSubtitleTrack: String(selectedSubtitleTrack) }
+            : {}),
         },
       });
     },

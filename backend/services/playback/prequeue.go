@@ -59,6 +59,7 @@ type SubtitleTrackInfo struct {
 type PrequeueStatusResponse struct {
 	PrequeueID    string                   `json:"prequeueId"`
 	Status        PrequeueStatus           `json:"status"`
+	UserID        string                   `json:"userId,omitempty"` // The user who created this prequeue
 	TargetEpisode *models.EpisodeReference `json:"targetEpisode,omitempty"`
 
 	// When ready:
@@ -359,6 +360,7 @@ func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 	return &PrequeueStatusResponse{
 		PrequeueID:            e.ID,
 		Status:                e.Status,
+		UserID:                e.UserID,
 		TargetEpisode:         e.TargetEpisode,
 		StreamPath:            e.StreamPath,
 		FileSize:              e.FileSize,

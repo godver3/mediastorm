@@ -2183,6 +2183,27 @@ func (s *Service) savePlaybackProgressLocked() error {
 	return nil
 }
 
+// ListAllPlaybackProgress returns all playback progress for all users (for admin dashboard).
+func (s *Service) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string][]models.PlaybackProgress)
+	for userID, perUser := range s.playbackProgress {
+		items := make([]models.PlaybackProgress, 0, len(perUser))
+		for _, progress := range perUser {
+			// Only include items that haven't been hidden from continue watching
+			if !progress.HiddenFromContinueWatching {
+				items = append(items, progress)
+			}
+		}
+		if len(items) > 0 {
+			result[userID] = items
+		}
+	}
+	return result
+}
+
 // clearPlaybackProgressEntryLocked removes a stored playback entry for the supplied item.
 // Callers must hold s.mu before invoking this helper.
 func (s *Service) clearPlaybackProgressEntryLocked(userID, mediaType, itemID string) bool {

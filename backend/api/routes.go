@@ -247,6 +247,8 @@ func Register(
 
 	// Admin endpoints for monitoring (master only)
 	adminHandler := handlers.NewAdminHandler(videoHandler.GetHLSManager())
+	adminHandler.SetProgressService(historyHandler.Service)
+	adminHandler.SetUserService(usersSvc)
 	adminRouter := protected.PathPrefix("/admin").Subrouter()
 	adminRouter.Use(MasterOnlyMiddleware())
 	adminRouter.HandleFunc("/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)
