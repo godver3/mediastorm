@@ -14,6 +14,7 @@ import {
   Animated,
   Pressable,
   findNodeHandle,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenuContext } from './MenuContext';
@@ -35,7 +36,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const theme = useTheme();
   const styles = useMenuStyles(theme);
   const insets = useSafeAreaInsets();
-  const { activeUser } = useUserProfiles();
+  const { activeUser, getIconUrl } = useUserProfiles();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
   const { firstContentFocusableTag } = useMenuContext();
   const slideAnim = useRef(new Animated.Value(isVisible ? 0 : -MENU_WIDTH)).current;
@@ -163,9 +164,16 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         <View style={[styles.scrollView, styles.scrollContent]}>
           <View style={styles.header}>
             {isTV && activeUser && (
-              <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
-                <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
-              </View>
+              activeUser.hasIcon ? (
+                <Image
+                  source={{ uri: getIconUrl(activeUser.id) }}
+                  style={styles.headerAvatarImage}
+                />
+              ) : (
+                <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
+                  <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
+                </View>
+              )
             )}
             <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
           </View>
@@ -299,6 +307,11 @@ const useMenuStyles = function (theme: NovaTheme) {
       backgroundColor: theme.colors.background.elevated,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    headerAvatarImage: {
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarSize / 2,
     },
     headerAvatarText: {
       fontSize: avatarFontSize,
