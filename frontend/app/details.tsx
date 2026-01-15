@@ -1812,6 +1812,19 @@ export default function DetailsScreen() {
     });
   }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
 
+  // Show ratings skeleton while loading to prevent layout shift
+  const isMetadataLoadingForSkeleton = isSeries ? seriesDetailsLoading : movieDetailsLoading;
+  const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
+
+  // Placeholder release rows while loading (movies only)
+  const releaseSkeletonRows = useMemo(() => {
+    if (isSeries || !shouldShowReleaseSkeleton) return [];
+    return [
+      { key: 'theatrical-skeleton', label: 'Theatrical', value: '—' },
+      { key: 'home-skeleton', label: 'Home Release', value: '—' },
+    ];
+  }, [isSeries, shouldShowReleaseSkeleton]);
+
   const handleInitiatePlayback = useCallback(
     async (result: NZBResult, signal?: AbortSignal, overrides?: { useDebugPlayer?: boolean }) => {
       // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
@@ -3948,22 +3961,26 @@ export default function DetailsScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>{title}</Text>
         </View>
-        {ratings.length > 0 && (
+        {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
           <View style={styles.ratingsRow}>
-            {ratings.map((rating) => {
-              const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-              const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
-              const iconSize = Math.round((isTV ? 17 : 14) * tvScale);
-              return (
-                <RatingBadge
-                  key={rating.source}
-                  rating={rating}
-                  config={config}
-                  iconSize={iconSize}
-                  styles={styles}
-                />
-              );
-            })}
+            {ratings.length > 0 ? (
+              ratings.map((rating) => {
+                const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+                const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
+                const iconSize = Math.round((isTV ? 17 : 14) * tvScale);
+                return (
+                  <RatingBadge
+                    key={rating.source}
+                    rating={rating}
+                    config={config}
+                    iconSize={iconSize}
+                    styles={styles}
+                  />
+                );
+              })
+            ) : (
+              <Text style={styles.ratingValue}>—</Text>
+            )}
           </View>
         )}
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
@@ -4039,13 +4056,12 @@ export default function DetailsScreen() {
         )}
         {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
           <View style={styles.releaseInfoRow}>
-            {releaseRows.map((row) => (
+            {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
               <View key={row.key} style={styles.releaseInfoItem}>
                 <Text style={styles.releaseInfoLabel}>{row.label}</Text>
                 <Text style={styles.releaseInfoValue}>{row.value}</Text>
               </View>
             ))}
-            {shouldShowReleaseSkeleton && <Text style={styles.releaseInfoLoading}>Fetching release dates…</Text>}
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
@@ -4308,13 +4324,15 @@ export default function DetailsScreen() {
             </SpatialNavigationNode>
           )}
           {/* TV Cast Section - shows cast with D-pad navigation */}
-          {Platform.isTV && TVCastSection && credits && (
+          {/* Show while loading to reserve space and prevent layout shift */}
+          {Platform.isTV && TVCastSection && (isMetadataLoadingForSkeleton || credits) && (
             <TVCastSection
               credits={credits}
               isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
               maxCast={10}
               onFocus={() => handleTVFocusAreaChange('cast')}
               nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+              compactMargin
             />
           )}
           {!Platform.isTV && activeEpisode && (
@@ -4405,22 +4423,26 @@ export default function DetailsScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>{title}</Text>
         </View>
-        {ratings.length > 0 && (
+        {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
           <View style={styles.ratingsRow}>
-            {ratings.map((rating) => {
-              const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-              const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
-              const iconSize = 14;
-              return (
-                <RatingBadge
-                  key={rating.source}
-                  rating={rating}
-                  config={config}
-                  iconSize={iconSize}
-                  styles={styles}
-                />
-              );
-            })}
+            {ratings.length > 0 ? (
+              ratings.map((rating) => {
+                const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+                const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
+                const iconSize = 14;
+                return (
+                  <RatingBadge
+                    key={rating.source}
+                    rating={rating}
+                    config={config}
+                    iconSize={iconSize}
+                    styles={styles}
+                  />
+                );
+              })
+            ) : (
+              <Text style={styles.ratingValue}>—</Text>
+            )}
           </View>
         )}
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
@@ -4459,13 +4481,12 @@ export default function DetailsScreen() {
         )}
         {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
           <View style={styles.releaseInfoRow}>
-            {releaseRows.map((row) => (
+            {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
               <View key={row.key} style={styles.releaseInfoItem}>
                 <Text style={styles.releaseInfoLabel}>{row.label}</Text>
                 <Text style={styles.releaseInfoValue}>{row.value}</Text>
               </View>
             ))}
-            {shouldShowReleaseSkeleton && <Text style={styles.releaseInfoLoading}>Fetching release dates…</Text>}
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
@@ -4648,11 +4669,11 @@ export default function DetailsScreen() {
 
     // Scroll positions based on focus area:
     // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast
-    // Lower value = higher on screen = more artwork visible
+    // Higher value = more scroll = content raised higher in viewport
     const scrollPositions = {
       actions: Math.round(windowHeight * 0.15),    // Show artwork with action row visible
       seasons: Math.round(windowHeight * 0.25),   // Show action row + season selector
-      episodes: Math.round(windowHeight * 0.40), // Show seasons + episode carousel
+      episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
       cast: Math.round(windowHeight * 2),        // Large value to scroll to bottom (clamped by ScrollView)
     };
     const targetY = scrollPositions[area];
