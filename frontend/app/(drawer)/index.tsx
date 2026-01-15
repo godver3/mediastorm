@@ -1293,7 +1293,6 @@ function IndexScreen() {
   // Use refs instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
   const focusedCardIndexRef = useRef<number>(0);
-  const justArrivedAtLeftEdgeRef = useRef<boolean>(false); // Flag to track if we just arrived at index 0
   const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [shelfResetCounter, setShelfResetCounter] = useState(0);
 
@@ -1409,11 +1408,6 @@ function IndexScreen() {
   // Track focused card index within shelf for edge detection (uses ref to avoid re-renders)
   const handleCardIndexFocus = useCallback((_shelfKey: string, index: number) => {
     focusedCardIndexRef.current = index;
-    // Set flag when we arrive at index 0 - this prevents menu from opening
-    // when navigating TO the first item (only open when ALREADY at first item)
-    if (index === 0) {
-      justArrivedAtLeftEdgeRef.current = true;
-    }
     // Close menu if it's open - focus has transferred to the shelf
     if (isMenuOpen) {
       closeMenu();
@@ -1957,14 +1951,7 @@ function IndexScreen() {
     }
     const handleKeyDown = (key: SupportedKeys) => {
       if (key === SupportedKeys.Left && focusedCardIndexRef.current === 0) {
-        // If we just arrived at index 0, clear the flag but don't open menu
-        // This prevents menu from opening when navigating TO the first item
-        if (justArrivedAtLeftEdgeRef.current) {
-          justArrivedAtLeftEdgeRef.current = false;
-        } else {
-          // We were already at index 0, so open the menu
-          openMenu();
-        }
+        openMenu();
       }
     };
     RemoteControlManager.addKeydownListener(handleKeyDown);

@@ -2,13 +2,17 @@ import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import MediaGrid from '@/components/MediaGrid';
+import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { apiService, type Title, type TrendingItem } from '@/services/api';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -27,6 +31,7 @@ const NativeFilterButton = ({
   icon,
   isActive,
   onPress,
+  onFocus,
   autoFocus,
   theme,
 }: {
@@ -34,6 +39,7 @@ const NativeFilterButton = ({
   icon: keyof typeof Ionicons.glyphMap;
   isActive: boolean;
   onPress: () => void;
+  onFocus?: () => void;
   autoFocus?: boolean;
   theme: NovaTheme;
 }) => {
@@ -49,6 +55,7 @@ const NativeFilterButton = ({
   return (
     <Pressable
       onPress={onPress}
+      onFocus={onFocus}
       hasTVPreferredFocus={autoFocus}
       tvParallaxProperties={{ enabled: false }}
       style={({ focused }) => [
@@ -98,6 +105,11 @@ export default function WatchlistScreen() {
   const router = useRouter();
   const { activeUserId } = useUserProfiles();
   const { settings, userSettings } = useBackendSettings();
+  const { isOpen: isMenuOpen, openMenu } = useMenuContext();
+  const isFocused = useIsFocused();
+
+  // Track if focus is on a left-edge element (All button or leftmost grid column)
+  const isAtLeftEdgeRef = useRef(false);
 
   // Get shelf parameter - if present, we're exploring a non-watchlist shelf
   const { shelf: shelfId } = useLocalSearchParams<{ shelf?: string }>();
@@ -577,6 +589,36 @@ export default function WatchlistScreen() {
     return isExploreMode ? 'No items in this list' : 'Your watchlist is empty';
   }, [filter, allTitles.length, isExploreMode, pageTitle]);
 
+  // Number of columns in the grid (must match MediaGrid numColumns)
+  const numColumns = 6;
+
+  // Handle focus on filter buttons - first button (index 0) is at left edge
+  const handleFilterFocus = useCallback((filterIndex: number) => {
+    isAtLeftEdgeRef.current = filterIndex === 0;
+  }, []);
+
+  // Handle focus on grid items - leftmost column (index % numColumns === 0) is at left edge
+  const handleGridItemFocus = useCallback((itemIndex: number) => {
+    isAtLeftEdgeRef.current = itemIndex % numColumns === 0;
+  }, [numColumns]);
+
+  // Handle left key press to open menu when at left edge (TV)
+  const isActive = isFocused && !isMenuOpen;
+  useEffect(() => {
+    if (!isTV || !isActive) return;
+
+    const handleKeyDown = (key: SupportedKeys) => {
+      if (key === SupportedKeys.Left && isAtLeftEdgeRef.current) {
+        openMenu();
+      }
+    };
+
+    RemoteControlManager.addKeydownListener(handleKeyDown);
+    return () => {
+      RemoteControlManager.removeKeydownListener(handleKeyDown);
+    };
+  }, [isActive, openMenu]);
+
   // Unified native focus for all TV platforms (tvOS and Android TV)
   return (
     <>
@@ -592,6 +634,7 @@ export default function WatchlistScreen() {
                   icon={option.icon}
                   isActive={filter === option.key}
                   onPress={() => setFilter(option.key)}
+                  onFocus={() => handleFilterFocus(index)}
                   autoFocus={index === 0}
                   theme={theme}
                 />
@@ -606,7 +649,7 @@ export default function WatchlistScreen() {
             error={error}
             onItemPress={handleTitlePress}
             layout="grid"
-            numColumns={6}
+            numColumns={numColumns}
             defaultFocusFirstItem={false}
             badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
             emptyMessage={emptyMessage}
@@ -614,6 +657,7 @@ export default function WatchlistScreen() {
             onEndReached={handleLoadMore}
             loadingMore={exploreLoadingMore}
             hasMoreItems={hasMoreItems}
+            onItemFocus={handleGridItemFocus}
           />
         </View>
       </FixedSafeAreaView>

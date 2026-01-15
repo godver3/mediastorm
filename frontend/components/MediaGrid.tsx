@@ -30,6 +30,7 @@ interface MediaGridHandlers {
   onItemPress: (itemId: string) => void;
   onItemLongPress: (itemId: string) => void;
   onRowFocus: (rowIndex: number) => void;
+  onItemFocus: (index: number) => void;
 }
 const MediaGridHandlersContext = React.createContext<MediaGridHandlers | null>(null);
 
@@ -52,6 +53,7 @@ interface MediaGridProps {
   onEndReached?: () => void; // Called when user scrolls near the end (for infinite scroll)
   loadingMore?: boolean; // Show loading indicator at the bottom for progressive loading
   hasMoreItems?: boolean; // Whether there are more items to load
+  onItemFocus?: (index: number) => void; // Called when an item receives focus (TV) - index is the item's position in the list
 }
 
 // Static styles for MinimalCard - avoids object creation per render
@@ -85,10 +87,12 @@ const minimalCardStyles = {
 const MinimalCard = React.memo(function MinimalCard({
   item,
   rowIndex,
+  itemIndex,
   autoFocus,
 }: {
   item: DisplayTitle;
   rowIndex: number;
+  itemIndex: number;
   autoFocus?: boolean;
 }) {
   const handlers = React.useContext(MediaGridHandlersContext);
@@ -103,7 +107,8 @@ const MinimalCard = React.memo(function MinimalCard({
 
   const handleFocus = useCallback(() => {
     handlers?.onRowFocus(rowIndex);
-  }, [handlers, rowIndex]);
+    handlers?.onItemFocus(itemIndex);
+  }, [handlers, rowIndex, itemIndex]);
 
   return (
     <Pressable
@@ -147,6 +152,7 @@ const MinimalCard = React.memo(function MinimalCard({
   prevProps.item.poster?.url === nextProps.item.poster?.url &&
   prevProps.item.year === nextProps.item.year &&
   prevProps.rowIndex === nextProps.rowIndex &&
+  prevProps.itemIndex === nextProps.itemIndex &&
   prevProps.autoFocus === nextProps.autoFocus
 );
 
@@ -374,6 +380,7 @@ const MediaGrid = React.memo(
     onEndReached,
     loadingMore = false,
     hasMoreItems = false,
+    onItemFocus,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth } = useTVDimensions();
@@ -494,6 +501,8 @@ const MediaGrid = React.memo(
     hasMoreItemsRef.current = hasMoreItems;
     const loadingMoreRef = useRef(loadingMore);
     loadingMoreRef.current = loadingMore;
+    const onItemFocusRef = useRef(onItemFocus);
+    onItemFocusRef.current = onItemFocus;
 
     // Stable handlers via context
     const gridHandlers = useMemo<MediaGridHandlers>(() => ({
@@ -515,6 +524,9 @@ const MediaGrid = React.memo(
         if (rowIndex >= renderedRowCount - 5 && hasMoreItemsRef.current && !loadingMoreRef.current) {
           onEndReachedRef.current?.();
         }
+      },
+      onItemFocus: (index: number) => {
+        onItemFocusRef.current?.(index);
       },
     }), [itemMap, onItemPress, onItemLongPress, renderedRowCount]);
 
@@ -728,6 +740,7 @@ const MediaGrid = React.memo(
                     {row.map((item, colIndex) => {
                       const index = rowIndex * columns + colIndex;
                       const isFirstItem = index === 0;
+                      const isLeftmostColumn = colIndex === 0;
                       return (
                         <View
                           key={keyExtractor(item, index)}
@@ -737,16 +750,21 @@ const MediaGrid = React.memo(
                             <MinimalCard
                               item={item}
                               rowIndex={rowIndex}
+                              itemIndex={index}
                               autoFocus={defaultFocusFirstItem && isFirstItem}
                             />
                           ) : (
                             <MediaItem
                               title={item}
                               onPress={() => onItemPress?.(item)}
-                              onFocus={() => gridHandlers.onRowFocus(rowIndex)}
+                              onFocus={() => {
+                                gridHandlers.onRowFocus(rowIndex);
+                                gridHandlers.onItemFocus(index);
+                              }}
                               badgeVisibility={badgeVisibility}
                               useNativeFocus={true}
                               autoFocus={defaultFocusFirstItem && isFirstItem}
+                              trapLeftFocus={isLeftmostColumn}
                             />
                           )}
                         </View>
