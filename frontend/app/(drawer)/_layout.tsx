@@ -8,7 +8,7 @@ import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import { Tabs } from 'expo-router/tabs';
 import { useCallback, useEffect, type ComponentProps } from 'react';
-import { Platform, StyleSheet, View, Text } from 'react-native';
+import { Image, Platform, StyleSheet, View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenuContext } from '../../components/MenuContext';
 import { TVBackground } from '../../components/TVBackground';
@@ -24,7 +24,7 @@ export default function DrawerLayout() {
   const { isOpen: isMenuOpen, closeMenu } = useMenuContext();
   const insets = useSafeAreaInsets();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
-  const { activeUser } = useUserProfiles();
+  const { activeUser, getIconUrl } = useUserProfiles();
 
   const shouldUseTabs = useShouldUseTabs();
 
@@ -96,6 +96,21 @@ export default function DrawerLayout() {
             ],
             tabBarIcon: ({ color, focused }) => {
               if (route.name === 'profiles' && activeUser) {
+                if (activeUser.hasIcon) {
+                  return (
+                    <Image
+                      source={{ uri: getIconUrl(activeUser.id) }}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        borderWidth: focused ? 2 : 0,
+                        borderColor: theme.colors.accent.primary,
+                        opacity: disabled ? 0.4 : 1,
+                      }}
+                    />
+                  );
+                }
                 return (
                   <View
                     style={{

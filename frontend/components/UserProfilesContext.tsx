@@ -24,6 +24,9 @@ interface UserProfilesContextValue {
   createUser: (name: string) => Promise<UserProfile>;
   renameUser: (id: string, name: string) => Promise<UserProfile>;
   updateColor: (id: string, color: string) => Promise<UserProfile>;
+  setIconUrl: (id: string, iconUrl: string) => Promise<UserProfile>;
+  clearIcon: (id: string) => Promise<UserProfile>;
+  getIconUrl: (id: string) => string;
   setPin: (id: string, pin: string) => Promise<UserProfile>;
   clearPin: (id: string) => Promise<UserProfile>;
   deleteUser: (id: string) => Promise<void>;
@@ -109,6 +112,14 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
           apiService.getUsers(),
           AsyncStorage.getItem(ACTIVE_USER_STORAGE_KEY),
         ]);
+
+        // Debug logging for profile icon data
+        console.log('[UserProfiles] Loaded users from API:', list.map(u => ({
+          id: u.id,
+          name: u.name,
+          hasIcon: u.hasIcon,
+          iconUrl: u.iconUrl,
+        })));
 
         setUsers(list);
         usersRef.current = list;
@@ -299,6 +310,22 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return updated;
   }, []);
 
+  const setIconUrl = useCallback(async (id: string, iconUrl: string) => {
+    const updated = await apiService.setUserIconUrl(id, iconUrl);
+    setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
+    return updated;
+  }, []);
+
+  const clearIcon = useCallback(async (id: string) => {
+    const updated = await apiService.clearUserIcon(id);
+    setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
+    return updated;
+  }, []);
+
+  const getIconUrl = useCallback((id: string) => {
+    return apiService.getProfileIconUrl(id);
+  }, []);
+
   const setPin = useCallback(async (id: string, pin: string) => {
     const updated = await apiService.setUserPin(id, pin);
     setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
@@ -347,6 +374,9 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       createUser,
       renameUser,
       updateColor,
+      setIconUrl,
+      clearIcon,
+      getIconUrl,
       setPin,
       clearPin,
       deleteUser,
@@ -369,6 +399,9 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     createUser,
     renameUser,
     updateColor,
+    setIconUrl,
+    clearIcon,
+    getIconUrl,
     setPin,
     clearPin,
     deleteUser,

@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
-import { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { ComponentProps } from 'react';
@@ -74,7 +74,20 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
   const pathname = usePathname();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { activeUser } = useUserProfiles();
+  const { activeUser, getIconUrl } = useUserProfiles();
+
+  // Debug logging for profile icon
+  useEffect(() => {
+    if (activeUser) {
+      const iconUrl = getIconUrl(activeUser.id);
+      console.log('[MobileTabBar] Profile icon debug:', {
+        userId: activeUser.id,
+        userName: activeUser.name,
+        hasIcon: activeUser.hasIcon,
+        iconUrl: iconUrl,
+      });
+    }
+  }, [activeUser, getIconUrl]);
 
   const styles = useMemo(() => createStyles(theme, insets.bottom), [theme, insets.bottom]);
 
@@ -113,21 +126,34 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
             style={styles.tabButton}
             testID={`mobile-tab-${item.key}`}>
             {item.key === 'profiles' && activeUser ? (
-              <View
-                style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 12,
-                  backgroundColor: activeUser.color || theme.colors.background.elevated,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  borderWidth: isActive ? 2 : 0,
-                  borderColor: theme.colors.accent.primary,
-                }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
-                  {activeUser.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
+              activeUser.hasIcon ? (
+                <Image
+                  source={{ uri: getIconUrl(activeUser.id) }}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    borderWidth: isActive ? 2 : 0,
+                    borderColor: theme.colors.accent.primary,
+                  }}
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    backgroundColor: activeUser.color || theme.colors.background.elevated,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    borderWidth: isActive ? 2 : 0,
+                    borderColor: theme.colors.accent.primary,
+                  }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                    {activeUser.name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )
             ) : (
               <MaterialCommunityIcons
                 name={item.icon}

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -65,6 +66,7 @@ export default function ProfilesScreen() {
     activeUserId,
     selectUser,
     updateColor,
+    getIconUrl,
     refresh,
     pendingPinUserId,
   } = useUserProfiles();
@@ -174,6 +176,7 @@ export default function ProfilesScreen() {
       const { profile } = item;
       const isProfileActive = activeUserId === profile.id;
       const avatarColor = profile.color || undefined;
+      const hasIcon = profile.hasIcon;
 
       return (
         <Pressable
@@ -192,19 +195,27 @@ export default function ProfilesScreen() {
         >
           {({ focused }) => (
             <>
-              <View style={[styles.gridCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
-                <Text style={styles.gridCardAvatarText}>{profile.name.charAt(0).toUpperCase()}</Text>
-                {profile.hasPin && (
-                  <View style={styles.pinIndicator}>
-                    <Text style={styles.pinIndicatorText}>PIN</Text>
-                  </View>
-                )}
-                {profile.isKidsProfile && (
-                  <View style={styles.kidsIndicator}>
-                    <Text style={styles.kidsIndicatorText}>KIDS</Text>
-                  </View>
-                )}
-              </View>
+              {hasIcon ? (
+                <Image
+                  source={{ uri: getIconUrl(profile.id) }}
+                  style={styles.gridCardAvatar}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={[styles.gridCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
+                  <Text style={styles.gridCardAvatarText}>{profile.name.charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
+              {profile.hasPin && (
+                <View style={styles.pinIndicator}>
+                  <Text style={styles.pinIndicatorText}>PIN</Text>
+                </View>
+              )}
+              {profile.isKidsProfile && (
+                <View style={styles.kidsIndicator}>
+                  <Text style={styles.kidsIndicatorText}>KIDS</Text>
+                </View>
+              )}
               <Text style={styles.gridCardName} numberOfLines={1}>
                 {profile.name}
               </Text>
@@ -214,7 +225,7 @@ export default function ProfilesScreen() {
         </Pressable>
       );
     },
-    [activeUserId, styles, handleProfileCardSelect],
+    [activeUserId, styles, handleProfileCardSelect, getIconUrl],
   );
 
   // TV Layout - Native focus
@@ -301,44 +312,54 @@ export default function ProfilesScreen() {
               {selectedProfile && (
                 <>
                   <View style={styles.profileModalHeader}>
-                    <View
-                      style={[
-                        styles.profileModalAvatar,
-                        selectedProfile.color && { backgroundColor: selectedProfile.color },
-                      ]}
-                    >
-                      <Text style={styles.profileModalAvatarText}>
-                        {selectedProfile.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
+                    {selectedProfile.hasIcon ? (
+                      <Image
+                        source={{ uri: getIconUrl(selectedProfile.id) }}
+                        style={styles.profileModalAvatar}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.profileModalAvatar,
+                          selectedProfile.color && { backgroundColor: selectedProfile.color },
+                        ]}
+                      >
+                        <Text style={styles.profileModalAvatarText}>
+                          {selectedProfile.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
                     <Text style={styles.modalTitle}>{selectedProfile.name}</Text>
                   </View>
 
-                  <View style={styles.colorPickerSection}>
-                    <Text style={styles.colorPickerLabel}>Profile Color</Text>
-                    <View style={styles.colorPickerRow}>
-                      {PROFILE_COLORS.map((color, colorIndex) => {
-                        const isSelected = selectedProfile.color === color.value;
-                        return (
-                          <Pressable
-                            key={color.value}
-                            ref={(ref) => {
-                              colorSwatchRefs.current[colorIndex] = ref;
-                            }}
-                            onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
-                            hasTVPreferredFocus={colorIndex === 0}
-                            tvParallaxProperties={{ enabled: false }}
-                            style={({ focused }) => [
-                              styles.colorSwatch,
-                              { backgroundColor: color.value },
-                              focused && styles.colorSwatchFocused,
-                              isSelected && styles.colorSwatchSelected,
-                            ]}
-                          />
-                        );
-                      })}
+                  {!selectedProfile.hasIcon && (
+                    <View style={styles.colorPickerSection}>
+                      <Text style={styles.colorPickerLabel}>Profile Color</Text>
+                      <View style={styles.colorPickerRow}>
+                        {PROFILE_COLORS.map((color, colorIndex) => {
+                          const isSelected = selectedProfile.color === color.value;
+                          return (
+                            <Pressable
+                              key={color.value}
+                              ref={(ref) => {
+                                colorSwatchRefs.current[colorIndex] = ref;
+                              }}
+                              onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
+                              hasTVPreferredFocus={colorIndex === 0}
+                              tvParallaxProperties={{ enabled: false }}
+                              style={({ focused }) => [
+                                styles.colorSwatch,
+                                { backgroundColor: color.value },
+                                focused && styles.colorSwatchFocused,
+                                isSelected && styles.colorSwatchSelected,
+                              ]}
+                            />
+                          );
+                        })}
+                      </View>
                     </View>
-                  </View>
+                  )}
 
                   <View style={styles.modalButtonsContainer}>
                     <Pressable
@@ -436,6 +457,7 @@ export default function ProfilesScreen() {
                 {users.map((user) => {
                   const isProfileActive = activeUserId === user.id;
                   const avatarColor = user.color || undefined;
+                  const hasIcon = user.hasIcon;
 
                   return (
                     <Pressable
@@ -443,19 +465,27 @@ export default function ProfilesScreen() {
                       onPress={() => handleProfileCardSelect(user)}
                       style={[styles.mobileCard, isProfileActive && styles.mobileCardActive]}
                     >
-                      <View style={[styles.mobileCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
-                        <Text style={styles.mobileCardAvatarText}>{user.name.charAt(0).toUpperCase()}</Text>
-                        {user.hasPin && (
-                          <View style={styles.mobileCardPinIndicator}>
-                            <Text style={styles.mobileCardPinIndicatorText}>PIN</Text>
-                          </View>
-                        )}
-                        {user.isKidsProfile && (
-                          <View style={styles.mobileCardKidsIndicator}>
-                            <Text style={styles.mobileCardKidsIndicatorText}>KIDS</Text>
-                          </View>
-                        )}
-                      </View>
+                      {hasIcon ? (
+                        <Image
+                          source={{ uri: getIconUrl(user.id) }}
+                          style={styles.mobileCardAvatar}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={[styles.mobileCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
+                          <Text style={styles.mobileCardAvatarText}>{user.name.charAt(0).toUpperCase()}</Text>
+                        </View>
+                      )}
+                      {user.hasPin && (
+                        <View style={styles.mobileCardPinIndicator}>
+                          <Text style={styles.mobileCardPinIndicatorText}>PIN</Text>
+                        </View>
+                      )}
+                      {user.isKidsProfile && (
+                        <View style={styles.mobileCardKidsIndicator}>
+                          <Text style={styles.mobileCardKidsIndicatorText}>KIDS</Text>
+                        </View>
+                      )}
                       <Text style={styles.mobileCardName} numberOfLines={1}>
                         {user.name}
                       </Text>
@@ -488,16 +518,24 @@ export default function ProfilesScreen() {
             {selectedProfile && (
               <>
                 <View style={styles.profileModalHeader}>
-                  <View
-                    style={[
-                      styles.profileModalAvatar,
-                      selectedProfile.color && { backgroundColor: selectedProfile.color },
-                    ]}
-                  >
-                    <Text style={styles.profileModalAvatarText}>
-                      {selectedProfile.name.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
+                  {selectedProfile.hasIcon ? (
+                    <Image
+                      source={{ uri: getIconUrl(selectedProfile.id) }}
+                      style={styles.profileModalAvatar}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View
+                      style={[
+                        styles.profileModalAvatar,
+                        selectedProfile.color && { backgroundColor: selectedProfile.color },
+                      ]}
+                    >
+                      <Text style={styles.profileModalAvatarText}>
+                        {selectedProfile.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                   <Text style={styles.mobileModalTitle}>{selectedProfile.name}</Text>
                   {selectedProfile.isKidsProfile && (
                     <View style={styles.mobileModalKidsBadge}>
@@ -506,25 +544,27 @@ export default function ProfilesScreen() {
                   )}
                 </View>
 
-                <View style={styles.colorPickerSection}>
-                  <Text style={styles.colorPickerLabel}>Profile Color</Text>
-                  <View style={styles.mobileColorPickerRow}>
-                    {PROFILE_COLORS.map((color) => {
-                      const isSelected = selectedProfile.color === color.value;
-                      return (
-                        <Pressable
-                          key={color.value}
-                          onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
-                          style={[
-                            styles.colorSwatch,
-                            { backgroundColor: color.value },
-                            isSelected && styles.colorSwatchSelected,
-                          ]}
-                        />
-                      );
-                    })}
+                {!selectedProfile.hasIcon && (
+                  <View style={styles.colorPickerSection}>
+                    <Text style={styles.colorPickerLabel}>Profile Color</Text>
+                    <View style={styles.mobileColorPickerRow}>
+                      {PROFILE_COLORS.map((color) => {
+                        const isSelected = selectedProfile.color === color.value;
+                        return (
+                          <Pressable
+                            key={color.value}
+                            onPress={() => handleUpdateColor(selectedProfile.id, color.value)}
+                            style={[
+                              styles.colorSwatch,
+                              { backgroundColor: color.value },
+                              isSelected && styles.colorSwatchSelected,
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
                   </View>
-                </View>
+                )}
 
                 <View style={styles.mobileModalActions}>
                   {activeUserId !== selectedProfile.id && (

@@ -539,7 +539,9 @@ export interface UserProfile {
   id: string;
   name: string;
   color?: string;
+  iconUrl?: string; // Local filename of downloaded profile icon image
   hasPin?: boolean; // Whether this profile has a PIN set (pinHash not exposed to frontend)
+  hasIcon?: boolean; // Whether this profile has a custom icon set
   isKidsProfile?: boolean; // Whether this is a kids profile with content restrictions
   traktAccountId?: string; // ID of linked Trakt account
   createdAt: string;
@@ -1682,6 +1684,26 @@ class ApiService {
       method: 'PUT',
       body: JSON.stringify({ color }),
     });
+  }
+
+  async setUserIconUrl(id: string, iconUrl: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(id);
+    return this.request<UserProfile>(`/users/${safeId}/icon`, {
+      method: 'PUT',
+      body: JSON.stringify({ iconUrl }),
+    });
+  }
+
+  async clearUserIcon(id: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(id);
+    return this.request<UserProfile>(`/users/${safeId}/icon`, {
+      method: 'DELETE',
+    });
+  }
+
+  getProfileIconUrl(id: string): string {
+    const safeId = this.normaliseUserId(id);
+    return `${this.baseUrl}/users/${safeId}/icon`;
   }
 
   async setUserPin(id: string, pin: string): Promise<UserProfile> {

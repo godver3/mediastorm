@@ -22,6 +22,9 @@ type usersService interface {
 	BelongsToAccount(profileID, accountID string) bool
 	Rename(id, name string) (models.User, error)
 	SetColor(id, color string) (models.User, error)
+	SetIconURL(id, iconURL string) (models.User, error)
+	ClearIconURL(id string) (models.User, error)
+	GetIconPath(id string) (string, error)
 	Delete(id string) error
 	Exists(id string) bool
 	SetPin(id, pin string) (models.User, error)
@@ -194,6 +197,118 @@ func (h *UsersHandler) SetColor(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
+}
+
+// SetIconURL downloads an image from the provided URL and sets it as the profile icon.
+func (h *UsersHandler) SetIconURL(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify profile belongs to the logged-in account
+	accountID := auth.GetAccountID(r)
+	if !h.Service.BelongsToAccount(id, accountID) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		IconURL string `json:"iconUrl"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetIconURL(id, body.IconURL)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, users.ErrUserNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, users.ErrInvalidIconURL):
+			status = http.StatusBadRequest
+		case errors.Is(err, users.ErrInvalidImageFormat):
+			status = http.StatusBadRequest
+		case errors.Is(err, users.ErrIconDownloadFailed):
+			status = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ClearIconURL removes the profile icon.
+func (h *UsersHandler) ClearIconURL(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify profile belongs to the logged-in account
+	accountID := auth.GetAccountID(r)
+	if !h.Service.BelongsToAccount(id, accountID) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	user, err := h.Service.ClearIconURL(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ServeProfileIcon serves the profile icon image file.
+func (h *UsersHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	iconPath, err := h.Service.GetIconPath(id)
+	if err != nil {
+		if errors.Is(err, users.ErrUserNotFound) {
+			http.Error(w, "profile not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if iconPath == "" {
+		http.Error(w, "no icon set for this profile", http.StatusNotFound)
+		return
+	}
+
+	// Determine content type from extension
+	contentType := "image/png"
+	if strings.HasSuffix(iconPath, ".jpg") || strings.HasSuffix(iconPath, ".jpeg") {
+		contentType = "image/jpeg"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeFile(w, r, iconPath)
 }
 
 func (h *UsersHandler) Options(w http.ResponseWriter, r *http.Request) {

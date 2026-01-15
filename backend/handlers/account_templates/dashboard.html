@@ -56,9 +56,13 @@
         {{range .Profiles}}
         <div class="profile-card" data-profile-id="{{.ID}}">
             <div class="profile-header">
+                {{if .IconURL}}
+                <img class="profile-avatar" src="/account/api/profiles/icon?profileId={{.ID}}" alt="{{.Name}}" style="object-fit: cover;">
+                {{else}}
                 <div class="profile-avatar" style="background: {{if .Color}}{{.Color}}{{else}}#3B82F6{{end}};">
                     {{slice .Name 0 1}}
                 </div>
+                {{end}}
                 <div class="profile-info">
                     <h3>{{.Name}}</h3>
                     <p>{{if .IsKidsProfile}}<span class="badge badge-accent">Kids</span>{{else}}Standard Profile{{end}}</p>
@@ -136,6 +140,15 @@
                     <input type="text" id="editProfileName" class="form-input" required>
                 </div>
                 <div class="form-group">
+                    <label class="form-label">Profile Icon URL</label>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="url" id="editIconUrl" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1;" oninput="toggleColorPickerByUrl(this.value)">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="setProfileIcon()" id="setIconBtn">Set Icon</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="clearProfileIcon()" id="clearIconBtn" style="display: none;">Clear</button>
+                    </div>
+                    <p class="form-hint">Enter a URL to a PNG or JPG image. When set, this replaces the color avatar.</p>
+                </div>
+                <div class="form-group" id="colorPickerGroup">
                     <label class="form-label">Color</label>
                     <div class="color-picker" id="editProfileColor">
                         <div class="color-dot" style="background: #3B82F6;" data-color="#3B82F6" onclick="selectEditColor(this)"></div>
@@ -147,6 +160,7 @@
                         <div class="color-dot" style="background: #22C55E;" data-color="#22C55E" onclick="selectEditColor(this)"></div>
                         <div class="color-dot" style="background: #14B8A6;" data-color="#14B8A6" onclick="selectEditColor(this)"></div>
                     </div>
+                    <p class="form-hint" id="colorDisabledHint" style="display: none; color: var(--text-muted);">Color is disabled when a custom icon is set. Clear the icon to use colors.</p>
                 </div>
                 <div class="form-group">
                     <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
@@ -249,13 +263,93 @@
         document.getElementById('editProfileId').value = profileId;
         document.getElementById('editProfileName').value = profile.name;
         document.getElementById('editKidsProfile').checked = profile.isKidsProfile;
+        document.getElementById('editIconUrl').value = '';
         editSelectedColor = profile.color || '#3B82F6';
 
         document.querySelectorAll('#editProfileColor .color-dot').forEach(d => {
             d.classList.toggle('selected', d.dataset.color === editSelectedColor);
         });
 
+        // Handle icon state
+        const hasIcon = profile.hasIcon || profile.iconUrl;
+        updateColorPickerState(hasIcon);
+        document.getElementById('clearIconBtn').style.display = hasIcon ? 'inline-flex' : 'none';
+        document.getElementById('setIconBtn').style.display = hasIcon ? 'none' : 'inline-flex';
+
         document.getElementById('editModal').style.display = 'flex';
+    }
+
+    function updateColorPickerState(disabled) {
+        const colorPicker = document.getElementById('editProfileColor');
+        const colorHint = document.getElementById('colorDisabledHint');
+        if (disabled) {
+            colorPicker.style.opacity = '0.5';
+            colorPicker.style.pointerEvents = 'none';
+            colorHint.style.display = 'block';
+        } else {
+            colorPicker.style.opacity = '1';
+            colorPicker.style.pointerEvents = 'auto';
+            colorHint.style.display = 'none';
+        }
+    }
+
+    function toggleColorPickerByUrl(url) {
+        // Disable color picker if URL is entered (even before saving)
+        const hasUrl = url && url.trim().length > 0;
+        updateColorPickerState(hasUrl);
+    }
+
+    async function setProfileIcon() {
+        const profileId = document.getElementById('editProfileId').value;
+        const iconUrl = document.getElementById('editIconUrl').value.trim();
+
+        if (!iconUrl) {
+            showToast('Please enter an icon URL', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('setIconBtn');
+        btn.disabled = true;
+        btn.textContent = 'Downloading...';
+
+        try {
+            const response = await fetch('/account/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ iconUrl })
+            });
+            if (response.ok) {
+                showToast('Profile icon set successfully');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to set icon', 'error');
+            }
+        } catch (err) {
+            showToast('Error setting icon: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Set Icon';
+        }
+    }
+
+    async function clearProfileIcon() {
+        const profileId = document.getElementById('editProfileId').value;
+
+        try {
+            const response = await fetch('/account/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
+                method: 'DELETE'
+            });
+            if (response.ok) {
+                showToast('Profile icon removed');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to remove icon', 'error');
+            }
+        } catch (err) {
+            showToast('Error removing icon: ' + err.message, 'error');
+        }
     }
 
     function closeEditModal() {

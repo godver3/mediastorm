@@ -640,6 +640,104 @@ func (h *AccountUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(profile)
 }
 
+// SetProfileIcon downloads an image from the provided URL and sets it as the profile icon.
+func (h *AccountUIHandler) SetProfileIcon(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify ownership
+	if !h.usersService.BelongsToAccount(profileID, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		IconURL string `json:"iconUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	profile, err := h.usersService.SetIconURL(profileID, req.IconURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(profile)
+}
+
+// ClearProfileIcon removes the profile icon.
+func (h *AccountUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify ownership
+	if !h.usersService.BelongsToAccount(profileID, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	profile, err := h.usersService.ClearIconURL(profileID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(profile)
+}
+
+// ServeProfileIcon serves the profile icon image file.
+func (h *AccountUIHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request) {
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	iconPath, err := h.usersService.GetIconPath(profileID)
+	if err != nil {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	if iconPath == "" {
+		http.Error(w, "No icon set for this profile", http.StatusNotFound)
+		return
+	}
+
+	// Determine content type from extension
+	contentType := "image/png"
+	if strings.HasSuffix(iconPath, ".jpg") || strings.HasSuffix(iconPath, ".jpeg") {
+		contentType = "image/jpeg"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeFile(w, r, iconPath)
+}
+
 // SetProfilePin sets a profile's PIN.
 func (h *AccountUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
