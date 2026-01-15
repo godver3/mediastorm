@@ -1726,11 +1726,11 @@
 
         const styles = '<style>'+
             '.priority-container{position:relative;}'+
-            '.priority-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;cursor:grab;user-select:none;touch-action:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease;}'+
-            '.priority-row:active{cursor:grabbing;}'+
+            '.priority-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;user-select:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease;}'+
             '.priority-row.dragging{background:rgba(138,43,226,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;transform:scale(1.02);}'+
             '.priority-row.drag-over{border-top:2px solid #8a2be2;margin-top:-2px;}'+
-            '.priority-handle{color:#666;margin-right:12px;font-size:16px;}'+
+            '.priority-handle{color:#666;margin-right:12px;font-size:16px;cursor:grab;touch-action:none;padding:8px;margin:-8px;margin-right:4px;}'+
+            '.priority-handle:active{cursor:grabbing;}'+
             '.priority-num{color:#888;margin-right:10px;min-width:24px;text-align:right;}'+
             '.priority-name{flex:1;}'+
             '</style>';
@@ -1813,12 +1813,12 @@
 
         const styles = '<style>'+
             '.shelves-container{position:relative;}'+
-            '.shelf-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;cursor:grab;user-select:none;touch-action:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease,opacity 0.15s ease;}'+
-            '.shelf-row:active{cursor:grabbing;}'+
+            '.shelf-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;user-select:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease,opacity 0.15s ease;}'+
             '.shelf-row.dragging{background:rgba(138,43,226,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;transform:scale(1.02);}'+
             '.shelf-row.drag-over{border-top:2px solid #8a2be2;margin-top:-2px;}'+
             '.shelf-row.disabled{opacity:0.5;}'+
-            '.shelf-handle{color:#666;margin-right:12px;font-size:16px;}'+
+            '.shelf-handle{color:#666;margin-right:12px;font-size:16px;cursor:grab;touch-action:none;padding:8px;margin:-8px;margin-right:4px;}'+
+            '.shelf-handle:active{cursor:grabbing;}'+
             '.shelf-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;}'+
             '.shelf-type-badge{font-size:10px;padding:2px 6px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;font-weight:normal;}'+
             '.shelf-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;}'+
@@ -2213,8 +2213,12 @@
 
     function handleDragStart(e, type) {
         const rowClass = type === 'priority' ? '.priority-row' : '.shelf-row';
+        const handleClass = type === 'priority' ? '.priority-handle' : '.shelf-handle';
         const row = e.target.closest(rowClass);
         if (!row) return;
+
+        // Only start drag when touching/clicking the drag handle (prevents accidental drag while scrolling on mobile)
+        if (!e.target.closest(handleClass)) return;
 
         // Don't start drag if clicking on interactive elements
         if (e.target.closest('.shelf-toggle') || e.target.closest('.shelf-edit-btn') || e.target.closest('.shelf-delete-btn')) return;
