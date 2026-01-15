@@ -592,6 +592,7 @@ export interface UserShelfConfig {
   order: number;
   type?: 'builtin' | 'mdblist'; // Type of shelf - builtin or custom MDBList
   listUrl?: string; // MDBList URL for custom lists
+  limit?: number; // Optional limit on number of items returned (0 = unlimited)
 }
 
 export interface UserHomeShelvesSettings {

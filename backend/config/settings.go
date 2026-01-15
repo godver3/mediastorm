@@ -216,6 +216,7 @@ type ShelfConfig struct {
 	Order   int    `json:"order"`             // Sort order (lower numbers appear first)
 	Type    string `json:"type,omitempty"`    // "builtin" (default) or "mdblist" for custom lists
 	ListURL string `json:"listUrl,omitempty"` // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	Limit   int    `json:"limit,omitempty"`   // Optional limit on number of items returned (0 = no limit)
 }
 
 // TrendingMovieSource determines which source to use for trending movies.

@@ -420,6 +420,15 @@ var SettingsSchema = map[string]interface{}{
 				"showWhen":    "type=mdblist",
 				"order":       3,
 			},
+			"limit": map[string]interface{}{
+				"type":        "number",
+				"label":       "Item Limit",
+				"description": "Max items to return (0 = unlimited)",
+				"showWhen":    "type=mdblist",
+				"order":       4,
+				"min":         0,
+				"max":         500,
+			},
 		},
 	},
 	"display": map[string]interface{}{

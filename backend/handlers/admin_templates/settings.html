@@ -1875,6 +1875,10 @@
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">URL</label>'+
                     '<input type="text" id="newShelfUrl" placeholder="https://mdblist.com/lists/username/list-name/json">'+
                 '</div>'+
+                '<div class="form-group" style="flex:0 0 80px;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Limit</label>'+
+                    '<input type="number" id="newShelfLimit" placeholder="0" min="0" max="500" value="0">'+
+                '</div>'+
                 '<button onclick="addCustomShelf()" style="margin-bottom:1rem;">Add</button>'+
             '</div>'+
             '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json</p>'+
@@ -1985,9 +1989,11 @@
         const typeSelect = document.getElementById('newShelfType');
         const nameInput = document.getElementById('newShelfName');
         const urlInput = document.getElementById('newShelfUrl');
+        const limitInput = document.getElementById('newShelfLimit');
         const shelfType = typeSelect?.value || 'mdblist';
         const name = nameInput?.value?.trim();
         let url = urlInput?.value?.trim();
+        const limit = parseInt(limitInput?.value || '0', 10) || 0;
 
         if (!name || !url) {
             alert('Please enter both a name and URL');
@@ -2027,13 +2033,15 @@
             enabled: true,
             order: maxOrder + 1,
             type: shelfType,
-            listUrl: url
+            listUrl: url,
+            limit: limit
         });
 
         // Clear inputs
         if (typeSelect) typeSelect.value = 'mdblist';
         nameInput.value = '';
         urlInput.value = '';
+        if (limitInput) limitInput.value = '0';
 
         renderSettings();
     }
@@ -2082,9 +2090,13 @@
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
                         <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
-                    <div style="margin-bottom:16px;">
+                    <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
                         <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
+                        <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
                     <div style="display:flex;gap:12px;justify-content:flex-end;">
                         <button onclick="closeEditShelfModal()" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:white;cursor:pointer;">Cancel</button>
@@ -2125,8 +2137,10 @@
     function saveEditedShelf(shelfId) {
         const nameInput = document.getElementById('editShelfName');
         const urlInput = document.getElementById('editShelfUrl');
+        const limitInput = document.getElementById('editShelfLimit');
         const name = nameInput?.value?.trim();
         let url = urlInput?.value?.trim();
+        const limit = parseInt(limitInput?.value || '0', 10) || 0;
 
         if (!name || !url) {
             alert('Please enter both a name and URL');
@@ -2154,6 +2168,7 @@
 
         shelf.name = name;
         shelf.listUrl = url;
+        shelf.limit = limit;
         closeEditShelfModal();
         renderSettings();
     }
