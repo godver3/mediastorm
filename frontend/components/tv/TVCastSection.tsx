@@ -35,6 +35,8 @@ interface TVCastSectionProps {
   isLoading?: boolean;
   maxCast?: number;
   onFocus?: () => void;
+  /** Native tag of the element to focus when navigating up */
+  nextFocusUp?: number;
 }
 
 const TVCastSection = memo(function TVCastSection({
@@ -42,6 +44,7 @@ const TVCastSection = memo(function TVCastSection({
   isLoading,
   maxCast = 12,
   onFocus,
+  nextFocusUp,
 }: TVCastSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -96,6 +99,7 @@ const TVCastSection = memo(function TVCastSection({
           tvParallaxProperties={{ enabled: false }}
           nextFocusLeft={isFirst && firstRef ? findNodeHandle(firstRef) ?? undefined : undefined}
           nextFocusRight={isLast && lastRef ? findNodeHandle(lastRef) ?? undefined : undefined}
+          nextFocusUp={nextFocusUp}
           // @ts-ignore - Android TV performance optimization
           renderToHardwareTextureAndroid={isAndroidTV}
           style={({ focused }) => [
@@ -138,7 +142,7 @@ const TVCastSection = memo(function TVCastSection({
         </Pressable>
       );
     },
-    [castToShow.length, scrollToIndex, styles, theme, onFocus]
+    [castToShow.length, scrollToIndex, styles, theme, onFocus, nextFocusUp]
   );
 
   if (!castToShow.length && !isLoading) {
@@ -171,6 +175,7 @@ const TVCastSection = memo(function TVCastSection({
           maxToRenderPerBatch={4}
           windowSize={3}
           removeClippedSubviews={Platform.isTV}
+          extraData={nextFocusUp}
         />
       )}
     </View>

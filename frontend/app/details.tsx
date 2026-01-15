@@ -753,6 +753,8 @@ export default function DetailsScreen() {
   const [trailerButtonTag, setTrailerButtonTag] = useState<number | undefined>(undefined);
   // Track active episode tag for action buttons -> episode focus navigation
   const [activeEpisodeTag, setActiveEpisodeTag] = useState<number | undefined>(undefined);
+  // Track selected season tag for action buttons -> season focus navigation
+  const [selectedSeasonTag, setSelectedSeasonTag] = useState<number | undefined>(undefined);
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
@@ -1041,6 +1043,7 @@ export default function DetailsScreen() {
     }
 
     let cancelled = false;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const initiatePrequeue = async (): Promise<{
       id: string;
@@ -1097,11 +1100,27 @@ export default function DetailsScreen() {
       }
     };
 
-    // Store the promise so play button can wait for it
-    prequeuePromiseRef.current = initiatePrequeue();
+    // Debounce prequeue for series to avoid rapid requests when user navigates between episodes
+    // Movies start immediately since there's no episode navigation
+    const prequeueDelay = isSeries && targetEpisode ? 500 : 0;
+
+    if (prequeueDelay > 0) {
+      console.log('[prequeue] Debouncing prequeue for', prequeueDelay, 'ms');
+      debounceTimer = setTimeout(() => {
+        if (!cancelled) {
+          prequeuePromiseRef.current = initiatePrequeue();
+        }
+      }, prequeueDelay);
+    } else {
+      // Store the promise so play button can wait for it
+      prequeuePromiseRef.current = initiatePrequeue();
+    }
 
     return () => {
       cancelled = true;
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
       prequeuePromiseRef.current = null;
     };
   }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode]);
@@ -1583,10 +1602,20 @@ export default function DetailsScreen() {
 
   const watchlistButtonLabel = isWatchlisted ? 'Remove' : 'Watchlist';
   const watchStateButtonLabel = isSeries ? 'Watch State' : isWatched ? 'Mark as not watched' : 'Mark as watched';
+  // Compute episode code for the episode that will be played (for TV series)
+  const episodeToPlayCode = useMemo(() => {
+    const episode = activeEpisode || nextUpEpisode;
+    if (!isSeries || !episode) return null;
+    const seasonStr = String(episode.seasonNumber).padStart(2, '0');
+    const episodeStr = String(episode.episodeNumber).padStart(2, '0');
+    return `S${seasonStr}E${episodeStr}`;
+  }, [isSeries, activeEpisode, nextUpEpisode]);
   const watchNowLabel = Platform.isTV
-    ? !isSeries || !hasWatchedEpisodes
-      ? 'Play'
-      : 'Up Next'
+    ? isSeries && episodeToPlayCode
+      ? `${!hasWatchedEpisodes ? 'Play' : 'Up Next'} ${episodeToPlayCode}`
+      : !isSeries || !hasWatchedEpisodes
+        ? 'Play'
+        : 'Up Next'
     : isResolving
       ? 'Resolving…'
       : !isSeries || !hasWatchedEpisodes
@@ -4084,47 +4113,7 @@ export default function DetailsScreen() {
         onActive={() => console.log('[Details NAV DEBUG] details-content-column ACTIVE')}
         onInactive={() => console.log('[Details NAV DEBUG] details-content-column INACTIVE')}>
         <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
-          {/* TV Episode Carousel - uses native Pressable focus with FlatList */}
-          {Platform.isTV && isSeries && seasons.length > 0 && TVEpisodeCarousel ? (
-            <TVEpisodeCarousel
-              seasons={seasons}
-              selectedSeason={selectedSeason}
-              episodes={selectedSeason?.episodes ?? []}
-              activeEpisode={activeEpisode}
-              onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
-              onEpisodeSelect={handleEpisodeSelect}
-              onEpisodePlay={handlePlayEpisode}
-              isEpisodeWatched={isEpisodeWatched}
-              getEpisodeProgress={(episode: SeriesEpisode) => {
-                const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
-                return episodeProgressMap.get(key) ?? 0;
-              }}
-              autoFocusEpisodes={!activeEpisode}
-              autoFocusSelectedSeason={true}
-              onFocusRowChange={handleTVFocusAreaChange}
-              onActiveEpisodeTagChange={setActiveEpisodeTag}
-            />
-          ) : Platform.isTV && isSeries && (
-            <SpatialNavigationNode
-              orientation="horizontal"
-              focusKey="episode-strip-wrapper"
-              onActive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper ACTIVE')}
-              onInactive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper INACTIVE')}>
-              {activeEpisode ? (
-                <TVEpisodeStrip
-                  activeEpisode={activeEpisode}
-                  allEpisodes={allEpisodes}
-                  selectedSeason={selectedSeason}
-                  percentWatched={displayProgress}
-                  onSelect={handleWatchNow}
-                  onFocus={handleEpisodeStripFocus}
-                  onBlur={handleEpisodeStripBlur}
-                />
-              ) : (
-                <View />
-              )}
-            </SpatialNavigationNode>
-          )}
+          {/* Action Row - moved above episode carousel for TV */}
           <SpatialNavigationNode
             orientation="horizontal"
             focusKey="details-action-row"
@@ -4149,7 +4138,8 @@ export default function DetailsScreen() {
                 loading={isResolving || (isSeries && episodesLoading)}
                 style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
                 showReadyPip={prequeueReady}
-                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                autoFocus={Platform.isTV}
+                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
               />
               <FocusablePressable
                 focusKey="manual-select"
@@ -4160,7 +4150,7 @@ export default function DetailsScreen() {
                 onFocus={() => handleTVFocusAreaChange('actions')}
                 disabled={isSeries && episodesLoading}
                 style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
               />
               {shouldShowDebugPlayerButton && (
                 <FocusablePressable
@@ -4172,7 +4162,7 @@ export default function DetailsScreen() {
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   disabled={isResolving || (isSeries && episodesLoading)}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
-                  nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                  nextFocusDown={isSeries ? selectedSeasonTag : undefined}
                 />
               )}
               {isSeries && (
@@ -4184,7 +4174,7 @@ export default function DetailsScreen() {
                   onSelect={() => setSeasonSelectorVisible(true)}
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                  nextFocusUp={activeEpisodeTag}
+                  nextFocusDown={selectedSeasonTag}
                 />
               )}
               {isSeries && (
@@ -4198,7 +4188,7 @@ export default function DetailsScreen() {
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   disabled={episodesLoading || allEpisodes.length === 0}
-                  nextFocusUp={activeEpisodeTag}
+                  nextFocusDown={selectedSeasonTag}
                 />
               )}
               <FocusablePressable
@@ -4220,7 +4210,7 @@ export default function DetailsScreen() {
                   isWatchlisted && styles.watchlistActionButtonActive,
                 ]}
                 disabled={!canToggleWatchlist || watchlistBusy}
-                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
               />
               <FocusablePressable
                 ref={watchedButtonRef}
@@ -4238,7 +4228,7 @@ export default function DetailsScreen() {
                 disabled={watchlistBusy}
                 // Trap rightward focus when this is the last button (no trailer available)
                 nextFocusRight={!(trailersLoading || hasAvailableTrailer) ? watchedButtonTag : undefined}
-                nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
               />
               {/* Trailer button */}
               {(trailersLoading || hasAvailableTrailer) && (
@@ -4255,7 +4245,7 @@ export default function DetailsScreen() {
                   disabled={trailerButtonDisabled}
                   // Trap rightward focus - this is always the last button when shown
                   nextFocusRight={trailerButtonTag}
-                  nextFocusUp={isSeries ? activeEpisodeTag : undefined}
+                  nextFocusDown={isSeries ? selectedSeasonTag : undefined}
                 />
               )}
               {/* Show progress badge in action row only for movies (no episode card) */}
@@ -4274,6 +4264,49 @@ export default function DetailsScreen() {
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
+          {/* TV Episode Carousel - uses native Pressable focus with FlatList */}
+          {Platform.isTV && isSeries && seasons.length > 0 && TVEpisodeCarousel ? (
+            <TVEpisodeCarousel
+              seasons={seasons}
+              selectedSeason={selectedSeason}
+              episodes={selectedSeason?.episodes ?? []}
+              activeEpisode={activeEpisode}
+              onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
+              onEpisodeSelect={handleEpisodeSelect}
+              onEpisodeFocus={handleEpisodeFocus}
+              onEpisodePlay={handlePlayEpisode}
+              isEpisodeWatched={isEpisodeWatched}
+              getEpisodeProgress={(episode: SeriesEpisode) => {
+                const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
+                return episodeProgressMap.get(key) ?? 0;
+              }}
+              autoFocusEpisodes={false}
+              autoFocusSelectedSeason={false}
+              onFocusRowChange={handleTVFocusAreaChange}
+              onActiveEpisodeTagChange={setActiveEpisodeTag}
+              onSelectedSeasonTagChange={setSelectedSeasonTag}
+            />
+          ) : Platform.isTV && isSeries && (
+            <SpatialNavigationNode
+              orientation="horizontal"
+              focusKey="episode-strip-wrapper"
+              onActive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper ACTIVE')}
+              onInactive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper INACTIVE')}>
+              {activeEpisode ? (
+                <TVEpisodeStrip
+                  activeEpisode={activeEpisode}
+                  allEpisodes={allEpisodes}
+                  selectedSeason={selectedSeason}
+                  percentWatched={displayProgress}
+                  onSelect={handleWatchNow}
+                  onFocus={handleEpisodeStripFocus}
+                  onBlur={handleEpisodeStripBlur}
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
+          )}
           {/* TV Cast Section - shows cast with D-pad navigation */}
           {Platform.isTV && TVCastSection && credits && (
             <TVCastSection
@@ -4281,6 +4314,7 @@ export default function DetailsScreen() {
               isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
               maxCast={10}
               onFocus={() => handleTVFocusAreaChange('cast')}
+              nextFocusUp={isSeries ? activeEpisodeTag : undefined}
             />
           )}
           {!Platform.isTV && activeEpisode && (
@@ -4613,20 +4647,17 @@ export default function DetailsScreen() {
     if (!Platform.isTV || !tvScrollViewRef.current) return;
 
     // Scroll positions based on focus area:
+    // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast
     // Lower value = higher on screen = more artwork visible
-    // - seasons: very low scroll, show mostly artwork with season chips barely visible
-    // - episodes: moderate scroll, show action buttons and episode cards
-    // - actions: for series scroll to bottom, for movies stay at top (show artwork)
-    // - cast: scroll to bottom to show cast section
     const scrollPositions = {
-      seasons: 0,                                   // No scroll - maximum artwork visible
-      episodes: Math.round(windowHeight * 0.40),   // Show action buttons + episodes
-      actions: isSeries ? Math.round(windowHeight * 2) : Math.round(windowHeight * 0.15),  // Series: scroll to bottom, Movies: show artwork with action row visible
-      cast: Math.round(windowHeight * 2),          // Large value to scroll to bottom (clamped by ScrollView)
+      actions: Math.round(windowHeight * 0.15),    // Show artwork with action row visible
+      seasons: Math.round(windowHeight * 0.25),   // Show action row + season selector
+      episodes: Math.round(windowHeight * 0.40), // Show seasons + episode carousel
+      cast: Math.round(windowHeight * 2),        // Large value to scroll to bottom (clamped by ScrollView)
     };
     const targetY = scrollPositions[area];
     tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
-  }, [windowHeight, isSeries]);
+  }, [windowHeight]);
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);

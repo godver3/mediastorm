@@ -229,7 +229,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: theme.spacing.lg,
-      ...(isTV ? { marginLeft: tvScale * 48 } : null),
+      ...(isTV ? { marginLeft: tvScale * 48, marginBottom: tvScale * 24 } : null),
     },
     compactActionRow: {
       flexWrap: 'nowrap',

@@ -42,6 +42,7 @@ interface TVEpisodeCarouselProps {
   activeEpisode: SeriesEpisode | null;
   onSeasonSelect: (season: SeriesSeason) => void;
   onEpisodeSelect: (episode: SeriesEpisode) => void;
+  onEpisodeFocus?: (episode: SeriesEpisode) => void;
   onEpisodePlay?: (episode: SeriesEpisode) => void;
   isEpisodeWatched?: (episode: SeriesEpisode) => boolean;
   getEpisodeProgress?: (episode: SeriesEpisode) => number;
@@ -50,6 +51,8 @@ interface TVEpisodeCarouselProps {
   onFocusRowChange?: (area: 'seasons' | 'episodes' | 'actions' | 'cast') => void;
   /** Callback when active episode's native tag changes (for parent focus navigation) */
   onActiveEpisodeTagChange?: (tag: number | undefined) => void;
+  /** Callback when selected season's native tag changes (for parent focus navigation) */
+  onSelectedSeasonTagChange?: (tag: number | undefined) => void;
 }
 
 const formatAirDate = (dateString?: string): string | null => {
@@ -80,6 +83,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   activeEpisode,
   onSeasonSelect,
   onEpisodeSelect,
+  onEpisodeFocus,
   onEpisodePlay,
   isEpisodeWatched,
   getEpisodeProgress,
@@ -87,6 +91,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   autoFocusSelectedSeason = false,
   onFocusRowChange,
   onActiveEpisodeTagChange,
+  onSelectedSeasonTagChange,
 }: TVEpisodeCarouselProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -105,8 +110,26 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   // Track the active episode's native tag for focus navigation (season chips -> active episode)
   const [activeEpisodeTag, setActiveEpisodeTag] = useState<number | undefined>(undefined);
 
+  // Track the selected season's native tag for focus navigation (action buttons -> selected season)
+  const [selectedSeasonTag, setSelectedSeasonTag] = useState<number | undefined>(undefined);
+
   // Track focused episode for details panel
   const [focusedEpisode, setFocusedEpisode] = useState<SeriesEpisode | null>(activeEpisode);
+
+  // Track current focus area to avoid redundant onFocusRowChange calls
+  const currentFocusAreaRef = useRef<'seasons' | 'episodes' | null>(null);
+
+  // Debounce timer for episode focus updates to parent
+  const episodeFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (episodeFocusTimerRef.current) {
+        clearTimeout(episodeFocusTimerRef.current);
+      }
+    };
+  }, []);
 
   // Update focused episode when active episode changes
   useEffect(() => {
@@ -134,13 +157,13 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
       return;
     }
 
-    // Delay to ensure refs are assigned after render
+    // Short delay to ensure refs are assigned after render
     const timer = setTimeout(() => {
       const activeRef = episodeCardRefs.current.get(activeIndex);
       if (activeRef) {
         setActiveEpisodeTag(findNodeHandle(activeRef) ?? undefined);
       }
-    }, 150);
+    }, 50);
 
     return () => clearTimeout(timer);
   }, [activeEpisode, episodes]);
@@ -150,50 +173,56 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     onActiveEpisodeTagChange?.(activeEpisodeTag);
   }, [activeEpisodeTag, onActiveEpisodeTagChange]);
 
+  // Update selected season tag for focus navigation (allows action buttons to navigate down to selected season)
+  useEffect(() => {
+    if (!Platform.isTV || !selectedSeason || seasons.length === 0) {
+      setSelectedSeasonTag(undefined);
+      return;
+    }
+
+    // Find the index of the selected season
+    const selectedIndex = seasons.findIndex((s) => s.number === selectedSeason.number);
+
+    if (selectedIndex < 0) {
+      setSelectedSeasonTag(undefined);
+      return;
+    }
+
+    // Short delay to ensure refs are assigned after render
+    const timer = setTimeout(() => {
+      const selectedRef = seasonCardRefs.current.get(selectedIndex);
+      if (selectedRef) {
+        setSelectedSeasonTag(findNodeHandle(selectedRef) ?? undefined);
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [selectedSeason, seasons]);
+
+  // Notify parent when selected season tag changes (for action buttons -> season focus)
+  useEffect(() => {
+    onSelectedSeasonTagChange?.(selectedSeasonTag);
+  }, [selectedSeasonTag, onSelectedSeasonTagChange]);
+
   // Calculate item sizes
   const seasonItemSize = SEASON_CHIP_WIDTH + SEASON_CHIP_GAP;
   const episodeItemSize = THUMBNAIL_WIDTH + EPISODE_GAP;
 
-  // Scroll handlers using scrollToOffset pattern from VirtualizedShelf
-  // Snaps to card boundaries so items are never cut off
+  // Simple scroll handlers using scrollToIndex
   const scrollToSeason = useCallback(
     (index: number) => {
       if (!Platform.isTV || !seasonListRef.current) return;
-
-      const { width: screenWidth } = Dimensions.get('window');
-      // Keep 1 full season chip visible to the left
-      const targetChipIndex = Math.max(0, index - 1);
-      let targetX = targetChipIndex * seasonItemSize;
-
-      const maxScroll = Math.max(0, seasons.length * seasonItemSize - screenWidth);
-      targetX = Math.max(0, Math.min(targetX, maxScroll));
-
-      seasonListRef.current.scrollToOffset({ offset: targetX, animated: true });
+      seasonListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
     },
-    [seasons.length, seasonItemSize]
+    []
   );
 
   const scrollToEpisode = useCallback(
     (index: number) => {
       if (!Platform.isTV || !episodeListRef.current) return;
-
-      const { width: screenWidth } = Dimensions.get('window');
-      const paddingLeft = tvScale(48);
-      const paddingRight = tvScale(48);
-      const itemPosition = index * episodeItemSize + paddingLeft;
-
-      // Keep 2 cards visible to the left
-      const leftOffset = Math.round(2 * episodeItemSize);
-      let targetX = Math.round(itemPosition - leftOffset - paddingLeft);
-
-      // Calculate max scroll - ensure last item + right padding stays on screen
-      const totalContentWidth = episodes.length * episodeItemSize + paddingLeft + paddingRight - EPISODE_GAP;
-      const maxScroll = Math.max(0, totalContentWidth - screenWidth);
-      targetX = Math.max(0, Math.min(targetX, maxScroll));
-
-      episodeListRef.current.scrollToOffset({ offset: targetX, animated: true });
+      episodeListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
     },
-    [episodes.length, episodeItemSize]
+    []
   );
 
   // Scroll to active episode when episodes change
@@ -235,20 +264,14 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     [onSeasonSelect]
   );
 
-  // Handle episode selection (tap to select, tap again to play)
+  // Handle episode selection - play episode directly
   const handleEpisodePress = useCallback(
     (episode: SeriesEpisode) => {
-      const isAlreadyActive =
-        activeEpisode?.seasonNumber === episode.seasonNumber &&
-        activeEpisode?.episodeNumber === episode.episodeNumber;
-
-      if (isAlreadyActive && onEpisodePlay) {
+      if (onEpisodePlay) {
         onEpisodePlay(episode);
-      } else {
-        onEpisodeSelect(episode);
       }
     },
-    [activeEpisode, onEpisodeSelect, onEpisodePlay]
+    [onEpisodePlay]
   );
 
   // Render season chip
@@ -269,7 +292,11 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
           onPress={() => handleSeasonSelect(season)}
           onFocus={() => {
             scrollToSeason(index);
-            onFocusRowChange?.('seasons');
+            // Only notify parent of row change when entering seasons row, not on every season
+            if (currentFocusAreaRef.current !== 'seasons') {
+              currentFocusAreaRef.current = 'seasons';
+              onFocusRowChange?.('seasons');
+            }
           }}
           hasTVPreferredFocus={isSelected && autoFocusSelectedSeason}
           tvParallaxProperties={{ enabled: false }}
@@ -302,9 +329,11 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   // Render episode thumbnail
   const renderEpisodeItem = useCallback(
     ({ item: episode, index }: { item: SeriesEpisode; index: number }) => {
+      // Use focusedEpisode (local state) for immediate visual feedback
+      // This updates instantly on navigation and persists when focus leaves the row
       const isActive =
-        activeEpisode?.seasonNumber === episode.seasonNumber &&
-        activeEpisode?.episodeNumber === episode.episodeNumber;
+        focusedEpisode?.seasonNumber === episode.seasonNumber &&
+        focusedEpisode?.episodeNumber === episode.episodeNumber;
       const isWatched = isEpisodeWatched?.(episode) ?? false;
       const progress = getEpisodeProgress?.(episode) ?? 0;
       const isFirst = index === 0;
@@ -324,12 +353,24 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
           onFocus={() => {
             setFocusedEpisode(episode);
             scrollToEpisode(index);
-            onFocusRowChange?.('episodes');
+            // Only notify parent of row change when entering episodes row, not on every episode
+            if (currentFocusAreaRef.current !== 'episodes') {
+              currentFocusAreaRef.current = 'episodes';
+              onFocusRowChange?.('episodes');
+            }
+            // Debounce parent state update to avoid lag when rapidly navigating
+            if (episodeFocusTimerRef.current) {
+              clearTimeout(episodeFocusTimerRef.current);
+            }
+            episodeFocusTimerRef.current = setTimeout(() => {
+              (onEpisodeFocus ?? onEpisodeSelect)(episode);
+            }, 150);
           }}
           hasTVPreferredFocus={shouldAutoFocus}
           tvParallaxProperties={{ enabled: false }}
           nextFocusLeft={isFirst && firstRef ? findNodeHandle(firstRef) ?? undefined : undefined}
           nextFocusRight={isLast && lastRef ? findNodeHandle(lastRef) ?? undefined : undefined}
+          nextFocusUp={selectedSeasonTag}
           // @ts-ignore - Android TV performance optimization
           renderToHardwareTextureAndroid={isAndroidTV}
           style={({ focused }) => styles.episodeCard}
@@ -348,7 +389,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
       );
     },
     [
-      activeEpisode,
+      focusedEpisode,
       episodes.length,
       onFocusRowChange,
       autoFocusEpisodes,
@@ -356,6 +397,9 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
       getEpisodeProgress,
       handleEpisodePress,
       scrollToEpisode,
+      onEpisodeFocus,
+      onEpisodeSelect,
+      selectedSeasonTag,
       theme,
       styles,
     ]
@@ -383,7 +427,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
 
   return (
     <View style={styles.container}>
-      {/* Season Selector Row */}
+      {/* Season Selector Row - render all seasons (no virtualization needed for small lists) */}
       <View style={styles.seasonRow}>
         <FlatList
           ref={seasonListRef}
@@ -399,13 +443,13 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
             index,
           })}
           contentContainerStyle={styles.seasonListContent}
-          initialNumToRender={10}
-          maxToRenderPerBatch={5}
-          windowSize={3}
+          initialNumToRender={seasons.length}
+          removeClippedSubviews={false}
+          extraData={activeEpisodeTag}
         />
       </View>
 
-      {/* Episode Carousel - wrapped in TVFocusGuideView on tvOS for upward navigation to season chips */}
+      {/* Episode Carousel - render all episodes (no virtualization needed for typical season sizes) */}
       {isAppleTV ? (
         <TVFocusGuideView
           style={styles.episodeRow}
@@ -425,10 +469,9 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
               index,
             })}
             contentContainerStyle={styles.episodeListContent}
-            initialNumToRender={9}
-            maxToRenderPerBatch={7}
-            windowSize={3}
-            removeClippedSubviews={true}
+            initialNumToRender={episodes.length}
+            removeClippedSubviews={false}
+            extraData={`${focusedEpisode?.seasonNumber}-${focusedEpisode?.episodeNumber}-${selectedSeasonTag}`}
           />
         </TVFocusGuideView>
       ) : (
@@ -447,10 +490,9 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
               index,
             })}
             contentContainerStyle={styles.episodeListContent}
-            initialNumToRender={isAndroidTV ? 7 : 9}
-            maxToRenderPerBatch={isAndroidTV ? 5 : 7}
-            windowSize={3}
-            removeClippedSubviews={Platform.isTV}
+            initialNumToRender={episodes.length}
+            removeClippedSubviews={false}
+            extraData={`${focusedEpisode?.seasonNumber}-${focusedEpisode?.episodeNumber}-${selectedSeasonTag}`}
           />
         </View>
       )}

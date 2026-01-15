@@ -646,7 +646,8 @@ export const SeriesEpisodes = ({
                     </SpatialNavigationFocusableView>
                   );
 
-                  if (index === 0) {
+                  // Default focus to selected season, or first season if none selected
+                  if (isActive || (!selectedSeason && index === 0)) {
                     return <DefaultFocus key={seasonKey}>{focusable}</DefaultFocus>;
                   }
 
@@ -727,6 +728,7 @@ export const SeriesEpisodes = ({
                     {selectedSeason.episodes.map((episode, index) => {
                       const episodeKey = `episode-${episode.id}`;
                       const watched = isEpisodeWatched?.(episode) ?? false;
+                      const isActiveEpisode = episodesMatch(activeEpisode, episode);
 
                       const handleEpisodeFocus = () => {
                         scrollToEpisode(episodeKey);
@@ -813,7 +815,8 @@ export const SeriesEpisodes = ({
                         </SpatialNavigationFocusableView>
                       );
 
-                      if (index === 0) {
+                      // Default focus to active episode, or first episode if none active
+                      if (isActiveEpisode || (!activeEpisode && index === 0)) {
                         return <DefaultFocus key={`episode-default-${episode.id}`}>{focusable}</DefaultFocus>;
                       }
 
