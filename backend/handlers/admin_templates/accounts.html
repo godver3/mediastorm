@@ -174,9 +174,12 @@ function renderProfiles() {
         if (p.isKidsProfile) badges.push('<span class="status-badge warning" style="font-size: 0.65rem;">Kids</span>');
         if (p.hasPin) badges.push('<span class="status-badge" style="font-size: 0.65rem;">PIN</span>');
 
+        const avatarHtml = p.hasIcon
+            ? `<img class="profile-avatar" src="${basePath}/api/profiles/icon?profileId=${p.id}" alt="${escapeHtml(p.name)}" style="object-fit: cover;">`
+            : `<div class="profile-avatar" style="background: ${p.color || '#6366f1'};">${initial}</div>`;
         return `
             <div class="profile-row">
-                <div class="profile-avatar" style="background: ${p.color || '#6366f1'};">${initial}</div>
+                ${avatarHtml}
                 <div class="profile-info">
                     <div class="profile-name">
                         ${escapeHtml(p.name)}
@@ -275,7 +278,7 @@ function showCreateProfileModal(defaultAccountId) {
     ).join('') : '';
 
     const colorOptions = PROFILE_COLORS.map((c, i) =>
-        `<label style="cursor: pointer;"><input type="radio" name="color" value="${c}" ${i === 0 ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid transparent;" class="color-opt"></div></label>`
+        `<label style="cursor: pointer;" class="color-label"><input type="radio" name="color" value="${c}" ${i === 0 ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid transparent;" class="color-opt"></div></label>`
     ).join('');
 
     showModal(`
@@ -291,6 +294,11 @@ function showCreateProfileModal(defaultAccountId) {
                     <select name="accountId" class="form-select">${accountOptions}</select>
                 </div>` : ''}
                 <div class="form-group">
+                    <label class="form-label">Profile Icon URL <span style="color: var(--text-muted); font-size: 0.75rem;">(optional)</span></label>
+                    <input type="url" name="iconUrl" class="form-input" placeholder="https://example.com/icon.png" onchange="toggleCreateColorPicker(this.value)">
+                    <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">Enter URL to PNG/JPG image. When set, replaces color avatar.</p>
+                </div>
+                <div class="form-group" id="createColorPickerGroup">
                     <label class="form-label">Color</label>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">${colorOptions}</div>
                 </div>
@@ -309,6 +317,36 @@ function showCreateProfileModal(defaultAccountId) {
     setupColorPicker();
 }
 
+function toggleCreateColorPicker(iconUrl) {
+    const colorGroup = document.getElementById('createColorPickerGroup');
+    if (colorGroup) {
+        if (iconUrl && iconUrl.trim()) {
+            colorGroup.style.opacity = '0.5';
+            colorGroup.style.pointerEvents = 'none';
+            colorGroup.querySelector('.form-label').innerHTML = 'Color <span style="color: var(--text-muted); font-size: 0.75rem;">(disabled when icon URL is set)</span>';
+        } else {
+            colorGroup.style.opacity = '1';
+            colorGroup.style.pointerEvents = 'auto';
+            colorGroup.querySelector('.form-label').textContent = 'Color';
+        }
+    }
+}
+
+function toggleEditColorPicker(iconUrl) {
+    const colorGroup = document.getElementById('colorPickerGroup');
+    if (colorGroup) {
+        if (iconUrl && iconUrl.trim()) {
+            colorGroup.style.opacity = '0.5';
+            colorGroup.style.pointerEvents = 'none';
+            colorGroup.querySelector('.form-label').innerHTML = 'Color <span style="color: var(--text-muted); font-size: 0.75rem;">(disabled when icon URL is set)</span>';
+        } else {
+            colorGroup.style.opacity = '1';
+            colorGroup.style.pointerEvents = 'auto';
+            colorGroup.querySelector('.form-label').textContent = 'Color';
+        }
+    }
+}
+
 function setupColorPicker() {
     document.querySelectorAll('.color-opt').forEach(opt => {
         const radio = opt.previousElementSibling;
@@ -323,6 +361,7 @@ function setupColorPicker() {
 async function createProfile(e) {
     e.preventDefault();
     const form = e.target;
+    const iconUrl = form.iconUrl?.value?.trim();
     const data = {
         name: form.name.value,
         accountId: isAdmin ? form.accountId.value : accountId, // Non-admin: auto-assign to their account
@@ -336,6 +375,26 @@ async function createProfile(e) {
             body: JSON.stringify(data)
         });
         if (!res.ok) throw new Error(await res.text());
+        const newProfile = await res.json();
+
+        // If icon URL provided, set it after profile creation
+        if (iconUrl && newProfile.id) {
+            try {
+                const iconRes = await fetch(basePath + '/api/profiles/icon?profileId=' + newProfile.id, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ iconUrl })
+                });
+                if (!iconRes.ok) {
+                    console.warn('Failed to set icon:', await iconRes.text());
+                    showToast('Profile created, but icon failed to set', 'warning');
+                }
+            } catch (iconErr) {
+                console.warn('Icon error:', iconErr);
+                showToast('Profile created, but icon failed to set', 'warning');
+            }
+        }
+
         hideModal();
         showToast('Profile created');
         loadData();
@@ -348,9 +407,24 @@ function showEditProfileModal(profileId) {
     const p = profiles.find(x => x.id === profileId);
     if (!p) return;
 
+    const hasIcon = p.hasIcon || p.iconUrl;
     const colorOptions = PROFILE_COLORS.map(c =>
-        `<label style="cursor: pointer;"><input type="radio" name="color" value="${c}" ${c === p.color ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid ${c === p.color ? 'white' : 'transparent'};" class="color-opt"></div></label>`
+        `<label style="cursor: pointer;${hasIcon ? ' opacity: 0.5; pointer-events: none;' : ''}"><input type="radio" name="color" value="${c}" ${c === p.color ? 'checked' : ''} style="display: none;"><div style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid ${c === p.color ? 'white' : 'transparent'};" class="color-opt"></div></label>`
     ).join('');
+
+    const iconSection = `
+        <div class="form-group">
+            <label class="form-label">Profile Icon URL</label>
+            ${hasIcon
+                ? `<p style="color: var(--text-muted); font-size: 0.875rem;">Custom icon is set. <button type="button" class="btn btn-sm btn-danger" onclick="clearProfileIcon('${profileId}')">Remove Icon</button></p>`
+                : `<div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <input type="url" id="iconUrlInput" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1; min-width: 200px;" oninput="toggleEditColorPicker(this.value)">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="setProfileIcon('${profileId}')">Set Icon</button>
+                </div>
+                <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">Enter URL to PNG/JPG image. When set, replaces color avatar.</p>`
+            }
+        </div>
+    `;
 
     showModal(`
         <div class="card-header"><h2>Edit Profile</h2></div>
@@ -360,8 +434,9 @@ function showEditProfileModal(profileId) {
                     <label class="form-label">Profile Name</label>
                     <input type="text" name="name" class="form-input" value="${escapeHtml(p.name)}" required>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Color</label>
+                ${iconSection}
+                <div class="form-group" id="colorPickerGroup">
+                    <label class="form-label">Color${hasIcon ? ' <span style="color: var(--text-muted); font-size: 0.75rem;">(disabled when icon is set)</span>' : ''}</label>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">${colorOptions}</div>
                 </div>
                 <div class="form-group">
@@ -440,6 +515,41 @@ async function clearPin(profileId) {
         });
         if (!res.ok) throw new Error(await res.text());
         showToast('PIN removed');
+        loadData();
+        hideModal();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function setProfileIcon(profileId) {
+    const iconUrl = document.getElementById('iconUrlInput')?.value?.trim();
+    if (!iconUrl) {
+        showToast('Please enter an icon URL', 'error');
+        return;
+    }
+    try {
+        const res = await fetch(basePath + '/api/profiles/icon?profileId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ iconUrl })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Profile icon set');
+        loadData();
+        hideModal();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function clearProfileIcon(profileId) {
+    try {
+        const res = await fetch(basePath + '/api/profiles/icon?profileId=' + profileId, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Profile icon removed');
         loadData();
         hideModal();
     } catch (err) {

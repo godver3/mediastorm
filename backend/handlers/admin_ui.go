@@ -2393,7 +2393,9 @@ type ProfileWithPinStatus struct {
 	AccountID      string    `json:"accountId,omitempty"`
 	Name           string    `json:"name"`
 	Color          string    `json:"color,omitempty"`
+	IconURL        string    `json:"iconUrl,omitempty"`
 	HasPin         bool      `json:"hasPin"`
+	HasIcon        bool      `json:"hasIcon"`
 	IsKidsProfile  bool      `json:"isKidsProfile"`
 	TraktAccountID string    `json:"traktAccountId,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -2418,7 +2420,9 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 			AccountID:      u.AccountID,
 			Name:           u.Name,
 			Color:          u.Color,
+			IconURL:        u.IconURL,
 			HasPin:         u.HasPin(),
+			HasIcon:        u.HasIcon(),
 			IsKidsProfile:  u.IsKidsProfile,
 			TraktAccountID: u.TraktAccountID,
 			CreatedAt:      u.CreatedAt,
@@ -2471,7 +2475,9 @@ func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 		ID:        user.ID,
 		Name:      user.Name,
 		Color:     user.Color,
+		IconURL:   user.IconURL,
 		HasPin:    user.HasPin(),
+		HasIcon:   user.HasIcon(),
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	})
@@ -2505,7 +2511,9 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 		ID:        user.ID,
 		Name:      user.Name,
 		Color:     user.Color,
+		IconURL:   user.IconURL,
 		HasPin:    user.HasPin(),
+		HasIcon:   user.HasIcon(),
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	})
@@ -2565,7 +2573,9 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		AccountID:     user.AccountID,
 		Name:          user.Name,
 		Color:         user.Color,
+		IconURL:       user.IconURL,
 		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
 		IsKidsProfile: user.IsKidsProfile,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
@@ -2613,7 +2623,9 @@ func (h *AdminUIHandler) RenameProfile(w http.ResponseWriter, r *http.Request) {
 		ID:        user.ID,
 		Name:      user.Name,
 		Color:     user.Color,
+		IconURL:   user.IconURL,
 		HasPin:    user.HasPin(),
+		HasIcon:   user.HasIcon(),
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	})
@@ -2687,7 +2699,9 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 		ID:            user.ID,
 		Name:          user.Name,
 		Color:         user.Color,
+		IconURL:       user.IconURL,
 		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
 		IsKidsProfile: user.IsKidsProfile,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
@@ -2733,11 +2747,135 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 		ID:            user.ID,
 		Name:          user.Name,
 		Color:         user.Color,
+		IconURL:       user.IconURL,
 		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
 		IsKidsProfile: user.IsKidsProfile,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
 	})
+}
+
+// SetProfileIconRequest represents a request to set a profile's icon URL
+type SetProfileIconRequest struct {
+	IconURL string `json:"iconUrl"`
+}
+
+// SetProfileIcon downloads an image from the provided URL and sets it as the profile icon
+func (h *AdminUIHandler) SetProfileIcon(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req SetProfileIconRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.SetIconURL(profileID, req.IconURL)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "download") {
+			status = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:            user.ID,
+		Name:          user.Name,
+		Color:         user.Color,
+		IconURL:       user.IconURL,
+		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	})
+}
+
+// ClearProfileIcon removes the profile icon
+func (h *AdminUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.usersService.ClearIconURL(profileID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:            user.ID,
+		Name:          user.Name,
+		Color:         user.Color,
+		IconURL:       user.IconURL,
+		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	})
+}
+
+// ServeProfileIcon serves the profile icon image file
+func (h *AdminUIHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	iconPath, err := h.usersService.GetIconPath(profileID)
+	if err != nil {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	if iconPath == "" {
+		http.Error(w, "No icon set for this profile", http.StatusNotFound)
+		return
+	}
+
+	// Determine content type from extension
+	contentType := "image/png"
+	if strings.HasSuffix(iconPath, ".jpg") || strings.HasSuffix(iconPath, ".jpeg") {
+		contentType = "image/jpeg"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeFile(w, r, iconPath)
 }
 
 // ============================================

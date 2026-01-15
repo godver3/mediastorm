@@ -110,6 +110,11 @@ func Register(
 	api.HandleFunc("/auth/default-password", accountsHandler.HasDefaultPassword).Methods(http.MethodGet)
 	api.HandleFunc("/auth/default-password", accountsHandler.Options).Methods(http.MethodOptions)
 
+	// Profile icon endpoint (public - needed for Image components that can't send auth headers)
+	// Must be registered before protected routes to avoid auth middleware
+	api.HandleFunc("/users/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
+	api.HandleFunc("/users/{userID}/icon", handleOptions).Methods(http.MethodOptions)
+
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(AccountAuthMiddleware(sessionsSvc))
@@ -319,6 +324,10 @@ func Register(
 	profileProtected.HandleFunc("/{userID}", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/color", usersHandler.SetColor).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/color", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/icon", usersHandler.SetIconURL).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/icon", usersHandler.ClearIconURL).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/icon", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.SetPin).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.ClearPin).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,13 +26,17 @@ var (
 	ErrPinRequired        = errors.New("PIN is required")
 	ErrPinInvalid         = errors.New("invalid PIN")
 	ErrPinTooShort        = errors.New("PIN must be at least 4 characters")
+	ErrInvalidIconURL     = errors.New("invalid icon URL")
+	ErrIconDownloadFailed = errors.New("failed to download icon")
+	ErrInvalidImageFormat = errors.New("invalid image format, must be PNG or JPG")
 )
 
 // Service manages persistence of NovaStream user profiles.
 type Service struct {
-	mu    sync.RWMutex
-	path  string
-	users map[string]models.User
+	mu         sync.RWMutex
+	path       string
+	storageDir string
+	users      map[string]models.User
 }
 
 // NewService creates a users service storing data inside the provided directory.
@@ -44,8 +50,9 @@ func NewService(storageDir string) (*Service, error) {
 	}
 
 	svc := &Service{
-		path:  filepath.Join(storageDir, "users.json"),
-		users: make(map[string]models.User),
+		path:       filepath.Join(storageDir, "users.json"),
+		storageDir: storageDir,
+		users:      make(map[string]models.User),
 	}
 
 	if err := svc.load(); err != nil {
@@ -258,6 +265,170 @@ func (s *Service) SetColor(id, color string) (models.User, error) {
 	}
 
 	return user, nil
+}
+
+// SetIconURL downloads an image from the provided URL and sets it as the user's profile icon.
+// The image is stored locally and the IconURL field is set to the local filename.
+func (s *Service) SetIconURL(id, iconURL string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	iconURL = strings.TrimSpace(iconURL)
+	if iconURL == "" {
+		return models.User{}, ErrInvalidIconURL
+	}
+
+	// Validate URL format
+	if !strings.HasPrefix(iconURL, "http://") && !strings.HasPrefix(iconURL, "https://") {
+		return models.User{}, ErrInvalidIconURL
+	}
+
+	// Check user exists before downloading
+	s.mu.RLock()
+	user, ok := s.users[id]
+	s.mu.RUnlock()
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Download the image
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(iconURL)
+	if err != nil {
+		return models.User{}, fmt.Errorf("%w: %v", ErrIconDownloadFailed, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return models.User{}, fmt.Errorf("%w: status %d", ErrIconDownloadFailed, resp.StatusCode)
+	}
+
+	// Determine file extension from Content-Type
+	contentType := resp.Header.Get("Content-Type")
+	var ext string
+	switch {
+	case strings.Contains(contentType, "image/png"):
+		ext = ".png"
+	case strings.Contains(contentType, "image/jpeg"), strings.Contains(contentType, "image/jpg"):
+		ext = ".jpg"
+	default:
+		// Try to detect from URL
+		lowerURL := strings.ToLower(iconURL)
+		if strings.HasSuffix(lowerURL, ".png") {
+			ext = ".png"
+		} else if strings.HasSuffix(lowerURL, ".jpg") || strings.HasSuffix(lowerURL, ".jpeg") {
+			ext = ".jpg"
+		} else {
+			return models.User{}, ErrInvalidImageFormat
+		}
+	}
+
+	// Create profile-icons directory if needed
+	iconsDir := filepath.Join(s.storageDir, "profile-icons")
+	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
+		return models.User{}, fmt.Errorf("create icons dir: %w", err)
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("%s%s", id, ext)
+	localPath := filepath.Join(iconsDir, filename)
+
+	// Delete old icon if exists with different extension
+	oldPng := filepath.Join(iconsDir, id+".png")
+	oldJpg := filepath.Join(iconsDir, id+".jpg")
+	if ext == ".png" {
+		os.Remove(oldJpg)
+	} else {
+		os.Remove(oldPng)
+	}
+
+	// Save the file
+	file, err := os.Create(localPath)
+	if err != nil {
+		return models.User{}, fmt.Errorf("create icon file: %w", err)
+	}
+	defer file.Close()
+
+	// Limit file size to 5MB
+	limitedReader := io.LimitReader(resp.Body, 5*1024*1024)
+	if _, err := io.Copy(file, limitedReader); err != nil {
+		os.Remove(localPath)
+		return models.User{}, fmt.Errorf("save icon: %w", err)
+	}
+
+	// Update user with local filename (not full path, for portability)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-fetch user in case it was modified
+	user, ok = s.users[id]
+	if !ok {
+		os.Remove(localPath)
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.IconURL = filename
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		os.Remove(localPath)
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// ClearIconURL removes the user's profile icon.
+func (s *Service) ClearIconURL(id string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Delete the icon file if it exists
+	if user.IconURL != "" {
+		iconsDir := filepath.Join(s.storageDir, "profile-icons")
+		iconPath := filepath.Join(iconsDir, user.IconURL)
+		os.Remove(iconPath) // Ignore error - file might not exist
+	}
+
+	user.IconURL = ""
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// GetIconPath returns the full path to a user's icon file.
+func (s *Service) GetIconPath(id string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return "", ErrUserNotFound
+	}
+
+	if user.IconURL == "" {
+		return "", nil
+	}
+
+	return filepath.Join(s.storageDir, "profile-icons", user.IconURL), nil
 }
 
 // SetPin sets or updates the user's PIN.

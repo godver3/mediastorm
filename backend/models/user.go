@@ -18,6 +18,7 @@ type User struct {
 	AccountID      string    `json:"accountId"`                // ID of the owning account
 	Name           string    `json:"name"`
 	Color          string    `json:"color,omitempty"`
+	IconURL        string    `json:"iconUrl,omitempty"`        // Local path to downloaded profile icon image (set via admin UI)
 	PinHash        string    `json:"-"`                        // bcrypt hash of PIN, excluded from JSON (security)
 	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
 	PlexAccountID  string    `json:"plexAccountId,omitempty"`  // ID of the linked Plex account (from config.PlexAccount)
@@ -31,17 +32,24 @@ func (u User) HasPin() bool {
 	return u.PinHash != ""
 }
 
+// HasIcon returns true if the user has a custom icon set.
+func (u User) HasIcon() bool {
+	return u.IconURL != ""
+}
+
 // MarshalJSON implements custom JSON marshaling to include the computed hasPin field.
 func (u User) MarshalJSON() ([]byte, error) {
 	type UserAlias User // prevent recursion
 	return json.Marshal(&struct {
 		UserAlias
 		HasPin         bool   `json:"hasPin"`
+		HasIcon        bool   `json:"hasIcon"`
 		TraktAccountID string `json:"traktAccountId,omitempty"`
 		PlexAccountID  string `json:"plexAccountId,omitempty"`
 	}{
 		UserAlias:      UserAlias(u),
 		HasPin:         u.HasPin(),
+		HasIcon:        u.HasIcon(),
 		TraktAccountID: u.TraktAccountID,
 		PlexAccountID:  u.PlexAccountID,
 	})
