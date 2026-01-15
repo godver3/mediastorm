@@ -73,13 +73,32 @@
             </svg>
             Active Streams
         </h2>
-        <button class="btn btn-sm btn-secondary" onclick="refreshStreams()">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="1 4 1 10 7 10"/>
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-            Refresh
-        </button>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <div class="view-toggle" style="display: flex; background: var(--bg-tertiary); border-radius: var(--radius); padding: 2px;">
+                <button id="viewCardBtn" class="view-toggle-btn active" onclick="setStreamView('card')" title="Card View">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7" rx="1"/>
+                        <rect x="14" y="3" width="7" height="7" rx="1"/>
+                        <rect x="3" y="14" width="7" height="7" rx="1"/>
+                        <rect x="14" y="14" width="7" height="7" rx="1"/>
+                    </svg>
+                </button>
+                <button id="viewTableBtn" class="view-toggle-btn" onclick="setStreamView('table')" title="Table View">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="refreshStreams()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="1 4 1 10 7 10"/>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                </svg>
+                Refresh
+            </button>
+        </div>
     </div>
     <div class="card-body">
         <div id="streamsContainer">
@@ -447,9 +466,281 @@
 {{end}}
 
 {{define "scripts"}}
+<style>
+    /* View toggle buttons */
+    .view-toggle-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 28px;
+        background: transparent;
+        border: none;
+        border-radius: calc(var(--radius) - 2px);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .view-toggle-btn:hover {
+        color: var(--text-secondary);
+        background: var(--bg-hover);
+    }
+    .view-toggle-btn.active {
+        background: var(--accent);
+        color: white;
+    }
+    .view-toggle-btn svg {
+        stroke: currentColor;
+    }
+    .view-toggle-btn.active svg {
+        stroke: white;
+    }
+
+    /* Media card grid */
+    .stream-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+    }
+
+    /* Mobile: poster-style cards in a 2-column grid */
+    @media (max-width: 640px) {
+        .stream-cards-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+    }
+
+    /* Media card */
+    .stream-card {
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .stream-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px var(--shadow);
+    }
+
+    .stream-card-media {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        background: var(--bg-primary);
+        overflow: hidden;
+    }
+
+    /* Mobile: poster aspect ratio (2:3) */
+    @media (max-width: 640px) {
+        .stream-card-media {
+            aspect-ratio: 2 / 3;
+        }
+        .stream-card-content {
+            padding: 0.625rem;
+        }
+        .stream-card-title {
+            font-size: 0.8125rem;
+        }
+        .stream-card-subtitle {
+            font-size: 0.75rem;
+        }
+        .stream-card-meta {
+            font-size: 0.6875rem;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.25rem;
+        }
+        .stream-card-badges {
+            top: 0.375rem;
+            right: 0.375rem;
+        }
+        .stream-card-badge {
+            font-size: 0.5625rem;
+            padding: 0.0625rem 0.25rem;
+        }
+        .stream-card-live-badge {
+            font-size: 0.5625rem;
+            padding: 0.125rem 0.375rem;
+        }
+        .stream-card-profile {
+            bottom: 0.375rem;
+            left: 0.375rem;
+            font-size: 0.5625rem;
+            padding: 0.125rem 0.375rem;
+        }
+        .stream-card-profile svg {
+            width: 10px;
+            height: 10px;
+        }
+    }
+    .stream-card-poster {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .stream-card-poster-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-primary) 100%);
+    }
+    .stream-card-poster-placeholder svg {
+        width: 48px;
+        height: 48px;
+        color: var(--text-muted);
+        opacity: 0.5;
+    }
+
+    .stream-card-live-badge {
+        position: absolute;
+        top: 0.5rem;
+        left: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.25rem 0.5rem;
+        background: rgba(239, 68, 68, 0.9);
+        color: white;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        border-radius: 4px;
+        letter-spacing: 0.025em;
+    }
+    .stream-card-profile {
+        position: absolute;
+        bottom: 0.5rem;
+        left: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.25rem 0.5rem;
+        background: rgba(0, 0, 0, 0.75);
+        color: white;
+        font-size: 0.6875rem;
+        font-weight: 500;
+        border-radius: 4px;
+        backdrop-filter: blur(4px);
+    }
+    .stream-card-profile svg {
+        opacity: 0.8;
+    }
+    .stream-card-live-badge::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        background: white;
+        border-radius: 50%;
+        animation: pulse-live 1.5s infinite;
+    }
+    @keyframes pulse-live {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    .stream-card-badges {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        display: flex;
+        gap: 0.25rem;
+    }
+    .stream-card-badge {
+        padding: 0.125rem 0.375rem;
+        font-size: 0.625rem;
+        font-weight: 600;
+        border-radius: 4px;
+    }
+    .stream-card-badge.dv {
+        background: rgba(139, 92, 246, 0.9);
+        color: white;
+    }
+    .stream-card-badge.hdr {
+        background: rgba(245, 158, 11, 0.9);
+        color: white;
+    }
+    .stream-card-badge.hls {
+        background: rgba(34, 197, 94, 0.9);
+        color: white;
+    }
+    .stream-card-badge.direct {
+        background: rgba(99, 102, 241, 0.9);
+        color: white;
+    }
+
+    .stream-card-content {
+        padding: 0.875rem;
+    }
+    .stream-card-title {
+        font-weight: 600;
+        font-size: 0.9375rem;
+        margin-bottom: 0.25rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .stream-card-subtitle {
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .stream-card-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+    .stream-card-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    .stream-card-meta-item svg {
+        width: 12px;
+        height: 12px;
+    }
+
+    .stream-card-progress {
+        height: 3px;
+        background: var(--bg-primary);
+        margin-top: 0.75rem;
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    .stream-card-progress-bar {
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.3s;
+    }
+</style>
 <script>
     const basePath = {{json .BasePath}};
     const isAdmin = {{json .IsAdmin}};
+
+    // Stream view state
+    let currentStreamView = localStorage.getItem('streamView') || 'card';
+    let cachedStreams = [];
+    const metadataCache = new Map();
+
+    function setStreamView(view) {
+        currentStreamView = view;
+        localStorage.setItem('streamView', view);
+
+        // Update button states
+        document.getElementById('viewCardBtn').classList.toggle('active', view === 'card');
+        document.getElementById('viewTableBtn').classList.toggle('active', view === 'table');
+
+        // Re-render with cached streams
+        if (cachedStreams.length > 0) {
+            renderStreams(cachedStreams);
+        }
+    }
 
     async function testEndpoint(url, elementPrefix) {
         const statusEl = document.getElementById(elementPrefix+'-status');
@@ -509,6 +800,204 @@
         return Math.floor(diffHours / 24) + 'd ago';
     }
 
+    // Get media display info from stream data
+    function getMediaInfo(stream) {
+        // Use data from backend if available (from matched playback progress)
+        if (stream.title) {
+            if (stream.media_type === 'episode') {
+                return {
+                    title: stream.title,
+                    subtitle: stream.episode_name
+                        ? `S${stream.season_number}E${stream.episode_number} - ${stream.episode_name}`
+                        : `Season ${stream.season_number}, Episode ${stream.episode_number}`,
+                    type: 'series',
+                    externalIds: stream.externalIds
+                };
+            } else {
+                return {
+                    title: stream.title,
+                    subtitle: stream.year ? String(stream.year) : '',
+                    type: 'movie',
+                    externalIds: stream.externalIds
+                };
+            }
+        }
+
+        // Fallback: clean up filename for display only
+        const filename = stream.filename || '';
+        const name = filename.replace(/\.[^/.]+$/, '').replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
+        return { title: name || 'Unknown', subtitle: '', type: 'unknown', externalIds: null };
+    }
+
+    // Fetch poster using external IDs (tvdbId/tmdbId) directly
+    async function fetchPoster(mediaInfo) {
+        if (!mediaInfo.externalIds) return null;
+
+        const cacheKey = JSON.stringify(mediaInfo.externalIds);
+        if (metadataCache.has(cacheKey)) {
+            return metadataCache.get(cacheKey);
+        }
+
+        try {
+            const tvdbId = mediaInfo.externalIds.tvdb;
+            const tmdbId = mediaInfo.externalIds.tmdb;
+            const type = mediaInfo.type === 'series' ? 'series' : 'movie';
+
+            // Build query params using IDs
+            const params = new URLSearchParams();
+            if (tvdbId) params.set('tvdbId', tvdbId);
+            if (tmdbId) params.set('tmdbId', tmdbId);
+            params.set('name', mediaInfo.title);
+
+            // Use series-details or movie-details endpoint to get poster by ID
+            const endpoint = type === 'series' ? 'metadata/series/details' : 'metadata/movie/details';
+            const response = await fetch(basePath + `/api/${endpoint}?${params.toString()}`, {
+                credentials: 'same-origin'
+            });
+
+            if (!response.ok) return null;
+
+            const data = await response.json();
+            const title = data.title || data;
+            const poster = title.poster?.url || title.backdrop?.url || null;
+
+            if (poster) {
+                metadataCache.set(cacheKey, poster);
+            }
+            return poster;
+        } catch (e) {
+            console.warn('Failed to fetch poster:', e);
+        }
+        return null;
+    }
+
+    function getProfilesDisplay(stream) {
+        // Use profile_names array if available, otherwise fall back to single profile_name
+        const names = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || (stream.profile_id ? [stream.profile_id] : []);
+        if (names.length === 0) return '<span style="color: var(--text-muted);">-</span>';
+        if (names.length === 1) return names[0];
+        // Multiple profiles - show comma-separated
+        return names.join(', ');
+    }
+
+    function renderTableView(streams) {
+        return '<div class="table-container"><table><thead><tr><th>File</th><th>Profile(s)</th><th>Type</th><th>Progress</th><th>Transferred</th><th>Started</th></tr></thead><tbody>' +
+            streams.map(stream => {
+                const progress = stream.percent_watched || 0;
+                const currentPos = stream.current_position || 0;
+                const duration = stream.duration || 0;
+                const timeDisplay = duration > 0 ? formatTime(currentPos) + ' / ' + formatTime(duration) : '-';
+                return '<tr><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+getProfilesDisplay(stream)+'</td><td><span class="status-badge '+(stream.type === 'hls' ? 'online' : 'warning')+'">'+(stream.type || 'direct')+'</span></td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>';
+            }).join('') +
+            '</tbody></table></div>';
+    }
+
+    function formatTime(seconds) {
+        if (!seconds || seconds < 0) return '0:00';
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        if (hours > 0) {
+            return `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function getCardProfileDisplay(stream) {
+        // Use profile_names array if available, otherwise fall back to single profile_name
+        const names = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || (stream.profile_id ? [stream.profile_id] : []);
+        if (names.length === 0) return 'Unknown';
+        if (names.length === 1) return names[0];
+        // Multiple profiles - show count with tooltip
+        return `<span title="${names.join(', ')}">${names.length} viewers</span>`;
+    }
+
+    function renderCardView(streams) {
+        return '<div class="stream-cards-grid">' +
+            streams.map((stream, idx) => {
+                const mediaInfo = getMediaInfo(stream);
+                const streamId = stream.id || idx;
+                const progress = stream.percent_watched || 0;
+                const hasProgress = progress > 0 || stream.duration > 0;
+                const currentPos = stream.current_position || 0;
+                const duration = stream.duration || 0;
+
+                const profileDisplay = getCardProfileDisplay(stream);
+                const profileNames = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || [];
+                const hasMultipleViewers = profileNames.length > 1;
+                return `
+                    <div class="stream-card" data-stream-id="${streamId}">
+                        <div class="stream-card-media">
+                            <div class="stream-card-poster-placeholder" id="poster-${streamId}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <polygon points="5 3 19 12 5 21 5 3"/>
+                                </svg>
+                            </div>
+                            <div class="stream-card-badges">
+                                ${stream.has_dv ? '<span class="stream-card-badge dv">DV</span>' : ''}
+                                ${stream.has_hdr ? '<span class="stream-card-badge hdr">HDR</span>' : ''}
+                                <span class="stream-card-badge ${stream.type === 'hls' ? 'hls' : 'direct'}">${(stream.type || 'direct').toUpperCase()}</span>
+                            </div>
+                            <div class="stream-card-profile" ${hasMultipleViewers ? `title="${profileNames.join(', ')}"` : ''}>
+                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                                    ${hasMultipleViewers ?
+                                        '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' :
+                                        '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'}
+                                </svg>
+                                ${profileDisplay}
+                            </div>
+                        </div>
+                        <div class="stream-card-content">
+                            <div class="stream-card-title" title="${mediaInfo.title}">${mediaInfo.title}</div>
+                            <div class="stream-card-subtitle">${mediaInfo.subtitle || ''}</div>
+                            <div class="stream-card-meta">
+                                <span class="stream-card-meta-item">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <polyline points="12 6 12 12 16 14"/>
+                                    </svg>
+                                    ${duration > 0 ? formatTime(currentPos) + ' / ' + formatTime(duration) : getTimeSince(stream.created_at)}
+                                </span>
+                                <span class="stream-card-meta-item" style="font-weight: 500; color: var(--accent);">
+                                    ${progress > 0 ? progress.toFixed(0) + '%' : '-'}
+                                </span>
+                            </div>
+                            ${hasProgress ? `<div class="stream-card-progress"><div class="stream-card-progress-bar" style="width: ${progress.toFixed(1)}%"></div></div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('') +
+            '</div>';
+    }
+
+    async function loadStreamPosters(streams) {
+        for (const stream of streams) {
+            const mediaInfo = getMediaInfo(stream);
+            const streamId = stream.id || streams.indexOf(stream);
+            const posterEl = document.getElementById(`poster-${streamId}`);
+
+            // Skip if no external IDs available (can't fetch poster without them)
+            if (!posterEl || !mediaInfo.externalIds) continue;
+
+            const poster = await fetchPoster(mediaInfo);
+            if (poster) {
+                posterEl.innerHTML = `<img class="stream-card-poster" src="${poster}" alt="${mediaInfo.title}" onerror="this.parentElement.innerHTML='<div class=\\'stream-card-poster-placeholder\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><polygon points=\\'5 3 19 12 5 21 5 3\\'/></svg></div>'">`;
+            }
+        }
+    }
+
+    function renderStreams(streams) {
+        const container = document.getElementById('streamsContainer');
+
+        if (currentStreamView === 'card') {
+            container.innerHTML = renderCardView(streams);
+            // Load posters asynchronously
+            loadStreamPosters(streams);
+        } else {
+            container.innerHTML = renderTableView(streams);
+        }
+    }
+
     async function refreshStreams() {
         const container = document.getElementById('streamsContainer');
         const countEl = document.getElementById('activeStreamCount');
@@ -523,6 +1012,7 @@
                 return;
             }
             const streams = data.streams || [];
+            cachedStreams = streams;
             countEl.textContent = streams.length;
             const totalBandwidth = streams.reduce((sum, s) => sum + (s.bytes_streamed || 0), 0);
             subtextEl.textContent = totalBandwidth > 0 ? formatBytes(totalBandwidth) + ' total' : 'No active streams';
@@ -530,9 +1020,7 @@
                 container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><polygon points="5 3 19 12 5 21 5 3"/></svg><p>No active streams</p></div>';
                 return;
             }
-            container.innerHTML = '<div class="table-container"><table><thead><tr><th>File</th><th>Profile</th><th>Type</th><th>Client IP</th><th>Transferred</th><th>Started</th></tr></thead><tbody>' +
-                streams.map(stream => '<tr><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+(stream.profile_name || stream.profile_id || '<span style="color: var(--text-muted);">-</span>')+'</td><td><span class="status-badge '+(stream.type === 'hls' ? 'online' : 'warning')+'">'+(stream.type || 'direct')+'</span></td><td style="font-family: monospace; font-size: 0.8125rem;">'+(stream.client_ip || '-')+'</td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>').join('') +
-                '</tbody></table></div>';
+            renderStreams(streams);
         } catch (e) {
             countEl.textContent = '-';
             subtextEl.textContent = 'Error';
@@ -620,6 +1108,8 @@
     setInterval(() => { refreshStreams(); }, 10000);
 
     document.addEventListener('DOMContentLoaded', () => {
+        // Initialize view toggle buttons based on saved preference
+        setStreamView(currentStreamView);
         refreshStreams();
         if (isAdmin) {
             testEndpoints();

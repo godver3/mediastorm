@@ -31,6 +31,7 @@ type historyService interface {
 	GetPlaybackProgress(userID, mediaType, itemID string) (*models.PlaybackProgress, error)
 	ListPlaybackProgress(userID string) ([]models.PlaybackProgress, error)
 	DeletePlaybackProgress(userID, mediaType, itemID string) error
+	ListAllPlaybackProgress() map[string][]models.PlaybackProgress // For admin dashboard
 }
 
 var _ historyService = (*history.Service)(nil)

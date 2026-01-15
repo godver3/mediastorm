@@ -908,6 +908,69 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get all playback progress for matching
+	var allProgress map[string][]models.PlaybackProgress
+	if h.historyService != nil {
+		allProgress = h.historyService.ListAllPlaybackProgress()
+	}
+
+	// Build user name -> ID map for reverse lookup
+	nameToUserID := make(map[string]string)
+	if h.usersService != nil {
+		for _, user := range h.usersService.ListAll() {
+			nameToUserID[strings.ToLower(user.Name)] = user.ID
+		}
+	}
+
+	// Helper to match progress for a stream - returns full progress for media identification
+	matchProgress := func(filename, profileID, profileName string) *models.PlaybackProgress {
+		cleanedFilename := cleanFilenameForProgressMatch(filename)
+
+		// Determine which user IDs to try for progress lookup
+		userIDsToTry := []string{}
+		if profileID != "" {
+			userIDsToTry = append(userIDsToTry, profileID)
+		}
+		if profileName != "" {
+			if mappedID, ok := nameToUserID[strings.ToLower(profileName)]; ok && mappedID != profileID {
+				userIDsToTry = append(userIDsToTry, mappedID)
+			}
+		}
+
+		// Try to find matching progress
+		for _, userID := range userIDsToTry {
+			if userProgress, ok := allProgress[userID]; ok {
+				for i := range userProgress {
+					progress := &userProgress[i]
+					progressName := ""
+					if progress.MediaType == "episode" {
+						progressName = progress.SeriesName
+						// Check for S##E## pattern match
+						if progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
+							sePattern := strings.ToLower(fmt.Sprintf("s%02de%02d", progress.SeasonNumber, progress.EpisodeNumber))
+							if strings.Contains(strings.ToLower(filename), sePattern) {
+								cleanedProgressName := cleanFilenameForProgressMatch(progressName)
+								if cleanedProgressName != "" && cleanedFilename != "" &&
+									strings.Contains(cleanedFilename, cleanedProgressName) {
+									return progress
+								}
+							}
+						}
+					} else {
+						progressName = progress.MovieName
+					}
+
+					cleanedProgressName := cleanFilenameForProgressMatch(progressName)
+					if cleanedProgressName != "" && cleanedFilename != "" &&
+						strings.Contains(cleanedFilename, cleanedProgressName) {
+						return progress
+					}
+				}
+			}
+		}
+		return nil
+	}
+
 	streams := []map[string]interface{}{}
 
 	// Get HLS sessions
@@ -915,6 +978,22 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		h.hlsManager.mu.RLock()
 		for _, session := range h.hlsManager.sessions {
 			session.mu.RLock()
+			log.Printf("[admin-ui] Stream check: id=%s profileID=%q profileName=%q bytes=%d", session.ID, session.ProfileID, session.ProfileName, session.BytesStreamed)
+			// Skip "default" user streams - but only if profileName is also empty/default
+			// (A stream with profileID="default" but valid profileName should still be shown)
+			isDefaultProfile := strings.ToLower(session.ProfileID) == "default" || session.ProfileID == ""
+			hasValidProfileName := session.ProfileName != "" && strings.ToLower(session.ProfileName) != "default"
+			if isDefaultProfile && !hasValidProfileName {
+				log.Printf("[admin-ui] Filtered: default profile with no valid name")
+				session.mu.RUnlock()
+				continue
+			}
+			// Skip streams with 0 bytes transferred (not actually playing)
+			if session.BytesStreamed == 0 {
+				log.Printf("[admin-ui] Filtered: 0 bytes")
+				session.mu.RUnlock()
+				continue
+			}
 			// Skip streams that don't belong to this account's profiles
 			if !isAdmin && !allowedProfileIDs[session.ProfileID] {
 				session.mu.RUnlock()
@@ -924,23 +1003,67 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			if filename == "" || filename == "." {
 				filename = filepath.Base(session.OriginalPath)
 			}
+
+			// Match playback progress for position and media identification
+			matchedProgress := matchProgress(filename, session.ProfileID, session.ProfileName)
+			duration := session.Duration
+			var position, percent float64
+			var mediaType, title, episodeName string
+			var seasonNumber, episodeNumber, year int
+			var externalIDs map[string]string
+
+			if matchedProgress != nil {
+				log.Printf("[admin-ui] Matched progress for %s: mediaType=%s title=%q externalIDs=%v", filename, matchedProgress.MediaType, matchedProgress.SeriesName, matchedProgress.ExternalIDs)
+			} else {
+				log.Printf("[admin-ui] No progress match for filename=%q profileID=%q profileName=%q", filename, session.ProfileID, session.ProfileName)
+			}
+			if matchedProgress != nil {
+				position = matchedProgress.Position
+				percent = matchedProgress.PercentWatched
+				if matchedProgress.Duration > 0 {
+					duration = matchedProgress.Duration
+				}
+				// Media identification
+				mediaType = matchedProgress.MediaType
+				externalIDs = matchedProgress.ExternalIDs
+				if matchedProgress.MediaType == "episode" {
+					title = matchedProgress.SeriesName
+					seasonNumber = matchedProgress.SeasonNumber
+					episodeNumber = matchedProgress.EpisodeNumber
+					episodeName = matchedProgress.EpisodeName
+				} else {
+					title = matchedProgress.MovieName
+					year = matchedProgress.Year
+				}
+			}
+
 			streams = append(streams, map[string]interface{}{
-				"id":             session.ID,
-				"type":           "hls",
-				"path":           session.Path,
-				"original_path":  session.OriginalPath,
-				"filename":       filename,
-				"profile_id":     session.ProfileID,
-				"profile_name":   session.ProfileName,
-				"client_ip":      session.ClientIP,
-				"created_at":     session.CreatedAt,
-				"last_access":    session.LastAccess,
-				"duration":       session.Duration,
-				"bytes_streamed": session.BytesStreamed,
-				"has_dv":         session.HasDV && !session.DVDisabled,
-				"has_hdr":        session.HasHDR,
-				"dv_profile":     session.DVProfile,
-				"segments":       session.SegmentsCreated,
+				"id":               session.ID,
+				"type":             "hls",
+				"path":             session.Path,
+				"original_path":    session.OriginalPath,
+				"filename":         filename,
+				"profile_id":       session.ProfileID,
+				"profile_name":     session.ProfileName,
+				"client_ip":        session.ClientIP,
+				"created_at":       session.CreatedAt,
+				"last_access":      session.LastAccess,
+				"duration":         duration,
+				"current_position": position,
+				"percent_watched":  percent,
+				"bytes_streamed":   session.BytesStreamed,
+				"has_dv":           session.HasDV && !session.DVDisabled,
+				"has_hdr":          session.HasHDR,
+				"dv_profile":       session.DVProfile,
+				"segments":         session.SegmentsCreated,
+				// Media identification
+				"media_type":     mediaType,
+				"title":          title,
+				"year":           year,
+				"season_number":  seasonNumber,
+				"episode_number": episodeNumber,
+				"episode_name":   episodeName,
+				"externalIds":    externalIDs,
 			})
 			session.mu.RUnlock()
 		}
@@ -954,19 +1077,56 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin && !allowedProfileIDs[stream.ProfileID] {
 			continue
 		}
+
+		// Match playback progress for position and media identification
+		matchedProgress := matchProgress(stream.Filename, stream.ProfileID, stream.ProfileName)
+		var position, percent, duration float64
+		var mediaType, title, episodeName string
+		var seasonNumber, episodeNumber, year int
+		var externalIDs map[string]string
+
+		if matchedProgress != nil {
+			position = matchedProgress.Position
+			percent = matchedProgress.PercentWatched
+			duration = matchedProgress.Duration
+			// Media identification
+			mediaType = matchedProgress.MediaType
+			externalIDs = matchedProgress.ExternalIDs
+			if matchedProgress.MediaType == "episode" {
+				title = matchedProgress.SeriesName
+				seasonNumber = matchedProgress.SeasonNumber
+				episodeNumber = matchedProgress.EpisodeNumber
+				episodeName = matchedProgress.EpisodeName
+			} else {
+				title = matchedProgress.MovieName
+				year = matchedProgress.Year
+			}
+		}
+
 		streams = append(streams, map[string]interface{}{
-			"id":             stream.ID,
-			"type":           "direct",
-			"path":           stream.Path,
-			"filename":       stream.Filename,
-			"profile_id":     stream.ProfileID,
-			"profile_name":   stream.ProfileName,
-			"client_ip":      stream.ClientIP,
-			"created_at":     stream.StartTime,
-			"last_access":    stream.LastActivity,
-			"bytes_streamed": stream.BytesStreamed,
-			"content_length": stream.ContentLength,
-			"user_agent":     stream.UserAgent,
+			"id":               stream.ID,
+			"type":             "direct",
+			"path":             stream.Path,
+			"filename":         stream.Filename,
+			"profile_id":       stream.ProfileID,
+			"profile_name":     stream.ProfileName,
+			"client_ip":        stream.ClientIP,
+			"created_at":       stream.StartTime,
+			"last_access":      stream.LastActivity,
+			"duration":         duration,
+			"current_position": position,
+			"percent_watched":  percent,
+			"bytes_streamed":   stream.BytesStreamed,
+			"content_length":   stream.ContentLength,
+			"user_agent":       stream.UserAgent,
+			// Media identification
+			"media_type":     mediaType,
+			"title":          title,
+			"year":           year,
+			"season_number":  seasonNumber,
+			"episode_number": episodeNumber,
+			"episode_name":   episodeName,
+			"externalIds":    externalIDs,
 		})
 	}
 
@@ -974,6 +1134,30 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"streams": streams,
 	})
+}
+
+// cleanFilenameForProgressMatch removes common filename artifacts for matching against media titles
+func cleanFilenameForProgressMatch(name string) string {
+	if name == "" {
+		return ""
+	}
+	// Remove file extension
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	// Replace common separators with spaces
+	name = strings.ReplaceAll(name, ".", " ")
+	name = strings.ReplaceAll(name, "_", " ")
+	name = strings.ReplaceAll(name, "-", " ")
+	// Lowercase for comparison
+	name = strings.ToLower(name)
+	// Remove common quality/codec indicators
+	for _, pattern := range []string{"1080p", "720p", "2160p", "4k", "bluray", "webrip", "webdl", "web dl", "hdtv", "x264", "x265", "hevc", "h264", "h265", "aac", "dts", "atmos", "truehd", "remux", "hybrid", "hdr", "ddp", "dv"} {
+		name = strings.ReplaceAll(name, pattern, "")
+	}
+	// Collapse multiple spaces
+	for strings.Contains(name, "  ") {
+		name = strings.ReplaceAll(name, "  ", " ")
+	}
+	return strings.TrimSpace(name)
 }
 
 // ProxyHealth proxies health check requests to avoid CORS issues
