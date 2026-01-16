@@ -4138,10 +4138,8 @@ export default function DetailsScreen() {
               handleTVFocusAreaChange('actions');
             }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            {/* TVFocusGuideView traps right navigation to prevent escaping to cast section on tvOS */}
             <TVFocusGuideView
               style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
-              trapFocusRight={Platform.OS === 'ios' && Platform.isTV}
             >
               <FocusablePressable
                 focusKey="watch-now"
@@ -4289,18 +4287,13 @@ export default function DetailsScreen() {
               activeEpisode={activeEpisode}
               onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
               onEpisodeSelect={handleEpisodeSelect}
-              onEpisodeFocus={handleEpisodeFocus}
               onEpisodePlay={handlePlayEpisode}
               isEpisodeWatched={isEpisodeWatched}
               getEpisodeProgress={(episode: SeriesEpisode) => {
                 const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
                 return episodeProgressMap.get(key) ?? 0;
               }}
-              autoFocusEpisodes={false}
-              autoFocusSelectedSeason={false}
               onFocusRowChange={handleTVFocusAreaChange}
-              onActiveEpisodeTagChange={setActiveEpisodeTag}
-              onSelectedSeasonTagChange={setSelectedSeasonTag}
             />
           ) : Platform.isTV && isSeries && (
             <SpatialNavigationNode

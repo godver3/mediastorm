@@ -28,6 +28,7 @@ interface TVEpisodeThumbnailProps {
   isWatched: boolean;
   progress: number; // 0-100 percent watched
   theme: NovaTheme;
+  showSelectedBadge?: boolean; // Show "Selected - Press to play" indicator
 }
 
 const formatEpisodeCode = (episode: SeriesEpisode): string => {
@@ -43,6 +44,7 @@ const TVEpisodeThumbnail = memo(function TVEpisodeThumbnail({
   isWatched,
   progress,
   theme,
+  showSelectedBadge = false,
 }: TVEpisodeThumbnailProps) {
   const styles = createStyles(theme);
   const episodeCode = formatEpisodeCode(episode);
@@ -101,6 +103,13 @@ const TVEpisodeThumbnail = memo(function TVEpisodeThumbnail({
         <View style={styles.progressBarContainer}>
           <View style={styles.progressBarBackground} />
           <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+        </View>
+      )}
+
+      {/* Selected badge - bottom left indicator */}
+      {showSelectedBadge && (
+        <View style={styles.selectedBadge}>
+          <Text style={styles.selectedBadgeText}>Selected</Text>
         </View>
       )}
     </View>
@@ -224,6 +233,20 @@ const createStyles = (theme: NovaTheme) =>
       left: 0,
       bottom: 0,
       backgroundColor: theme.colors.accent.primary,
+    },
+    selectedBadge: {
+      position: 'absolute',
+      bottom: tvScale(8),
+      left: tvScale(8),
+      backgroundColor: theme.colors.accent.primary,
+      paddingHorizontal: tvScale(8),
+      paddingVertical: tvScale(3),
+      borderRadius: tvScale(4),
+    },
+    selectedBadgeText: {
+      color: theme.colors.text.inverse,
+      fontSize: tvScale(11),
+      fontWeight: '600',
     },
   });
 
