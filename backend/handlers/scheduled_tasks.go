@@ -89,6 +89,39 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate config for Trakt list sync
+	if req.Type == config.ScheduledTaskTypeTraktListSync {
+		if req.Config == nil || req.Config["traktAccountId"] == "" || req.Config["profileId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Trakt list sync requires traktAccountId and profileId in config",
+			})
+			return
+		}
+		// Validate listType
+		listType := req.Config["listType"]
+		if listType == "" {
+			req.Config["listType"] = "watchlist" // Default to watchlist
+		} else if listType != "watchlist" && listType != "collection" && listType != "favorites" && listType != "custom" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Invalid list type. Must be watchlist, collection, favorites, or custom",
+			})
+			return
+		}
+		// Validate customListId if listType is custom
+		if listType == "custom" && req.Config["customListId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Custom list sync requires customListId in config",
+			})
+			return
+		}
+	}
+
 	task := config.ScheduledTask{
 		ID:         uuid.New().String(),
 		Type:       req.Type,

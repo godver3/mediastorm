@@ -230,6 +230,7 @@
                         <label class="form-label">Task Type</label>
                         <select id="newTaskType" class="form-select" onchange="onTaskTypeChange()">
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
+                            <option value="trakt_list_sync">Trakt List Sync</option>
                         </select>
                     </div>
 
@@ -251,6 +252,45 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="newTaskProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Trakt List Sync specific config -->
+                    <div id="traktListSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Trakt Account</label>
+                            <select id="newTaskTraktAccount" class="form-select" onchange="onTraktAccountChange()">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Trakt account to sync from</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">List Type</label>
+                            <select id="newTaskListType" class="form-select" onchange="onListTypeChange()">
+                                <option value="watchlist" selected>Watchlist</option>
+                                <option value="collection">Collection</option>
+                                <option value="favorites">Favorites</option>
+                                <option value="custom">Custom List</option>
+                            </select>
+                            <small class="text-muted">Which Trakt list to sync</small>
+                        </div>
+
+                        <div class="form-group" id="customListGroup" style="display: none;">
+                            <label class="form-label">Custom List</label>
+                            <select id="newTaskCustomList" class="form-select">
+                                <option value="">Loading lists...</option>
+                            </select>
+                            <small class="text-muted">Select a custom list to sync</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskTraktProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -336,6 +376,7 @@
                         <label class="form-label">Task Type</label>
                         <select id="editTaskType" class="form-select" disabled>
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
+                            <option value="trakt_list_sync">Trakt List Sync</option>
                         </select>
                         <small class="text-muted">Task type cannot be changed</small>
                     </div>
@@ -357,6 +398,42 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="editTaskProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Trakt List Sync specific config -->
+                    <div id="editTraktListSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Trakt Account</label>
+                            <select id="editTaskTraktAccount" class="form-select" onchange="onEditTraktAccountChange()">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">List Type</label>
+                            <select id="editTaskListType" class="form-select" onchange="onEditListTypeChange()">
+                                <option value="watchlist">Watchlist</option>
+                                <option value="collection">Collection</option>
+                                <option value="favorites">Favorites</option>
+                                <option value="custom">Custom List</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="editCustomListGroup" style="display: none;">
+                            <label class="form-label">Custom List</label>
+                            <select id="editTaskCustomList" class="form-select">
+                                <option value="">Loading lists...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskTraktProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -3317,12 +3394,25 @@
             const lastRunLabel = task.lastRunAt ? formatRelativeTime(task.lastRunAt) : 'Never';
             const taskTypeLabel = getTaskTypeLabel(task.type);
 
-            // Get Plex account and profile names
-            let plexAccountName = 'Unknown';
+            // Get account and profile names based on task type
+            let accountName = 'Unknown';
+            let accountSource = '';
             let profileName = 'Unknown';
+            let listTypeLabel = '';
             if (task.config) {
-                const plexAccount = plexAccounts.find(a => a.id === task.config.plexAccountId);
-                if (plexAccount) plexAccountName = plexAccount.name || plexAccount.username || 'Plex Account';
+                if (task.type === 'plex_watchlist_sync') {
+                    const plexAccount = plexAccounts.find(a => a.id === task.config.plexAccountId);
+                    if (plexAccount) accountName = plexAccount.name || plexAccount.username || 'Plex Account';
+                    accountSource = 'Plex';
+                } else if (task.type === 'trakt_list_sync') {
+                    const traktAccount = traktAccounts.find(a => a.id === task.config.traktAccountId);
+                    if (traktAccount) accountName = traktAccount.name || traktAccount.username || 'Trakt Account';
+                    accountSource = 'Trakt';
+                    // Get list type label
+                    const listType = task.config.listType || 'watchlist';
+                    const listTypeLabels = { watchlist: 'Watchlist', collection: 'Collection', favorites: 'Favorites', custom: 'Custom' };
+                    listTypeLabel = listTypeLabels[listType] || listType;
+                }
                 const profile = userProfiles.find(p => p.id === task.config.profileId);
                 if (profile) profileName = profile.name || 'Profile';
             }
@@ -3330,9 +3420,13 @@
             return `
                 <div class="import-card" data-task-id="${task.id}" style="margin-bottom: 0.75rem;">
                     <div class="import-card-header">
-                        <div style="display: flex; align-items: center; gap: 0.75rem; flex: 1;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1;">
                             <h3 style="margin: 0;">${escapeHtml(task.name || taskTypeLabel)}</h3>
-                            <span class="type-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent); font-size: 0.7rem;">${taskTypeLabel}</span>
+                            <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                                <span class="type-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent); font-size: 0.7rem;">${taskTypeLabel}</span>
+                                ${listTypeLabel ? `<span class="type-badge" style="background: rgba(99, 102, 241, 0.1); color: var(--accent); font-size: 0.65rem;">${listTypeLabel}</span>` : ''}
+                                ${task.config && task.config.dryRun === 'true' ? `<span class="type-badge" style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; font-size: 0.65rem;">DRY RUN</span>` : ''}
+                            </div>
                         </div>
                         <label class="toggle-switch" style="margin-left: auto;">
                             <input type="checkbox" ${task.enabled ? 'checked' : ''} onchange="toggleScheduledTask('${task.id}', this.checked)">
@@ -3349,8 +3443,8 @@
                                 <span>${frequencyLabel}</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-muted);">
-                                <span>Plex:</span>
-                                <strong>${escapeHtml(plexAccountName)}</strong>
+                                <span>${accountSource}:</span>
+                                <strong>${escapeHtml(accountName)}</strong>
                                 <span>→</span>
                                 <strong>${escapeHtml(profileName)}</strong>
                             </div>
@@ -3425,6 +3519,7 @@
     function getTaskTypeLabel(type) {
         switch (type) {
             case 'plex_watchlist_sync': return 'Plex Watchlist';
+            case 'trakt_list_sync': return 'Trakt List';
             default: return type;
         }
     }
@@ -3491,21 +3586,47 @@
     function showAddScheduledTaskModal() {
         // Populate Plex accounts dropdown
         const plexSelect = document.getElementById('newTaskPlexAccount');
-        const connectedAccounts = plexAccounts.filter(a => a.connected);
+        const connectedPlexAccounts = plexAccounts.filter(a => a.connected);
 
-        if (connectedAccounts.length === 0) {
-            showToast('Please connect a Plex account first', 'error');
+        // Populate Trakt accounts dropdown
+        const traktSelect = document.getElementById('newTaskTraktAccount');
+        const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
+
+        // Check if at least one service has connected accounts
+        if (connectedPlexAccounts.length === 0 && connectedTraktAccounts.length === 0) {
+            showToast('Please connect a Plex or Trakt account first', 'error');
             return;
         }
 
-        plexSelect.innerHTML = connectedAccounts.map(account =>
-            `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Plex Account')}</option>`
-        ).join('');
+        // Populate Plex dropdown
+        if (connectedPlexAccounts.length > 0) {
+            plexSelect.innerHTML = connectedPlexAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Plex Account')}</option>`
+            ).join('');
+        } else {
+            plexSelect.innerHTML = '<option value="">No Plex accounts connected</option>';
+        }
+
+        // Populate Trakt dropdown
+        if (connectedTraktAccounts.length > 0) {
+            traktSelect.innerHTML = connectedTraktAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
+            ).join('');
+        } else {
+            traktSelect.innerHTML = '<option value="">No Trakt accounts connected</option>';
+        }
 
         // Reset form
+        document.getElementById('newTaskType').value = 'plex_watchlist_sync';
         document.getElementById('newTaskName').value = '';
         document.getElementById('newTaskFrequency').value = '12hours';
         document.getElementById('newTaskEnabled').checked = true;
+        document.getElementById('newTaskDryRun').checked = false;
+        document.getElementById('newTaskListType').value = 'watchlist';
+        document.getElementById('customListGroup').style.display = 'none';
+
+        // Reset visibility
+        onTaskTypeChange();
 
         document.getElementById('addScheduledTaskModal').style.display = 'flex';
         document.body.style.overflow = 'hidden';
@@ -3519,19 +3640,102 @@
     function onTaskTypeChange() {
         const taskType = document.getElementById('newTaskType').value;
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
+        const traktConfig = document.getElementById('traktListSyncConfig');
         const syncOptions = document.getElementById('syncOptionsConfig');
+        const syncDirection = document.getElementById('newTaskSyncDirection');
 
         // Show/hide config sections based on task type
+        plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
+        traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
+
+        // Update sync direction labels based on task type
         if (taskType === 'plex_watchlist_sync') {
-            plexConfig.style.display = 'block';
-        } else {
-            plexConfig.style.display = 'none';
+            syncDirection.innerHTML = `
+                <option value="source_to_target" selected>Plex → strmr (Import from Plex)</option>
+                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
+        } else if (taskType === 'trakt_list_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target" selected>Trakt → strmr (Import from Trakt)</option>
+                <option value="target_to_source">strmr → Trakt (Export to Trakt)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
         }
 
         // Show sync options and dry run for any sync-type task
         const isSyncTask = taskType.includes('sync');
         syncOptions.style.display = isSyncTask ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
+    }
+
+    async function onListTypeChange() {
+        const listType = document.getElementById('newTaskListType').value;
+        const customListGroup = document.getElementById('customListGroup');
+        customListGroup.style.display = listType === 'custom' ? 'block' : 'none';
+
+        // Load custom lists if custom is selected and account is chosen
+        if (listType === 'custom') {
+            const accountId = document.getElementById('newTaskTraktAccount').value;
+            if (accountId) {
+                await loadTraktLists(accountId, 'newTaskCustomList');
+            }
+        }
+    }
+
+    async function onEditListTypeChange() {
+        const listType = document.getElementById('editTaskListType').value;
+        const customListGroup = document.getElementById('editCustomListGroup');
+        customListGroup.style.display = listType === 'custom' ? 'block' : 'none';
+
+        // Load custom lists if custom is selected and account is chosen
+        if (listType === 'custom') {
+            const accountId = document.getElementById('editTaskTraktAccount').value;
+            if (accountId) {
+                await loadTraktLists(accountId, 'editTaskCustomList');
+            }
+        }
+    }
+
+    async function onTraktAccountChange() {
+        const accountId = document.getElementById('newTaskTraktAccount').value;
+        if (!accountId) return;
+        await loadTraktLists(accountId, 'newTaskCustomList');
+    }
+
+    async function onEditTraktAccountChange() {
+        const accountId = document.getElementById('editTaskTraktAccount').value;
+        if (!accountId) return;
+        await loadTraktLists(accountId, 'editTaskCustomList');
+    }
+
+    async function loadTraktLists(accountId, selectId) {
+        const select = document.getElementById(selectId);
+        select.innerHTML = '<option value="">Loading lists...</option>';
+        select.disabled = true;
+
+        try {
+            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/lists`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load lists');
+            }
+
+            const lists = data.lists || [];
+            if (lists.length === 0) {
+                select.innerHTML = '<option value="">No custom lists found</option>';
+            } else {
+                select.innerHTML = lists.map(list =>
+                    `<option value="${list.id}">${escapeHtml(list.name)} (${list.itemCount} items)</option>`
+                ).join('');
+            }
+        } catch (err) {
+            console.error('Failed to load Trakt lists:', err);
+            select.innerHTML = '<option value="">Failed to load lists</option>';
+        } finally {
+            select.disabled = false;
+        }
     }
 
     function onSyncDirectionChange() {
@@ -3561,6 +3765,23 @@
             if (!config.plexAccountId || !config.profileId) {
                 showToast('Please select a Plex account and profile', 'error');
                 return;
+            }
+        } else if (taskType === 'trakt_list_sync') {
+            config.traktAccountId = document.getElementById('newTaskTraktAccount').value;
+            config.profileId = document.getElementById('newTaskTraktProfile').value;
+            config.listType = document.getElementById('newTaskListType').value;
+
+            if (!config.traktAccountId || !config.profileId) {
+                showToast('Please select a Trakt account and profile', 'error');
+                return;
+            }
+
+            if (config.listType === 'custom') {
+                config.customListId = document.getElementById('newTaskCustomList').value;
+                if (!config.customListId) {
+                    showToast('Please select a custom list', 'error');
+                    return;
+                }
             }
         }
 
@@ -3677,7 +3898,7 @@
         }
     }
 
-    function showEditScheduledTaskModal(taskId) {
+    async function showEditScheduledTaskModal(taskId) {
         const task = scheduledTasks.find(t => t.id === taskId);
         if (!task) {
             showToast('Task not found', 'error');
@@ -3686,10 +3907,18 @@
 
         // Populate Plex accounts dropdown
         const plexSelect = document.getElementById('editTaskPlexAccount');
-        const connectedAccounts = plexAccounts.filter(a => a.connected);
+        const connectedPlexAccounts = plexAccounts.filter(a => a.connected);
 
-        plexSelect.innerHTML = connectedAccounts.map(account =>
+        plexSelect.innerHTML = connectedPlexAccounts.map(account =>
             `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Plex Account')}</option>`
+        ).join('');
+
+        // Populate Trakt accounts dropdown
+        const traktSelect = document.getElementById('editTaskTraktAccount');
+        const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
+
+        traktSelect.innerHTML = connectedTraktAccounts.map(account =>
+            `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
         ).join('');
 
         // Set form values
@@ -3698,13 +3927,50 @@
         document.getElementById('editTaskName').value = task.name || '';
         document.getElementById('editTaskFrequency').value = task.frequency;
 
+        // Hide all config sections first
+        document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
+        document.getElementById('editTraktListSyncConfig').style.display = 'none';
+
         // Set config values for Plex watchlist sync
         if (task.type === 'plex_watchlist_sync' && task.config) {
             document.getElementById('editTaskPlexAccount').value = task.config.plexAccountId || '';
             document.getElementById('editTaskProfile').value = task.config.profileId || '';
             document.getElementById('editPlexWatchlistSyncConfig').style.display = 'block';
-        } else {
-            document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
+        }
+
+        // Set config values for Trakt list sync
+        if (task.type === 'trakt_list_sync' && task.config) {
+            document.getElementById('editTaskTraktAccount').value = task.config.traktAccountId || '';
+            document.getElementById('editTaskTraktProfile').value = task.config.profileId || '';
+            document.getElementById('editTaskListType').value = task.config.listType || 'watchlist';
+            document.getElementById('editTraktListSyncConfig').style.display = 'block';
+
+            // Handle custom list
+            if (task.config.listType === 'custom') {
+                document.getElementById('editCustomListGroup').style.display = 'block';
+                if (task.config.traktAccountId) {
+                    await loadTraktLists(task.config.traktAccountId, 'editTaskCustomList');
+                    document.getElementById('editTaskCustomList').value = task.config.customListId || '';
+                }
+            } else {
+                document.getElementById('editCustomListGroup').style.display = 'none';
+            }
+        }
+
+        // Update sync direction labels based on task type
+        const syncDirection = document.getElementById('editTaskSyncDirection');
+        if (task.type === 'plex_watchlist_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target">Plex → strmr (Import from Plex)</option>
+                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
+        } else if (task.type === 'trakt_list_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target">Trakt → strmr (Import from Trakt)</option>
+                <option value="target_to_source">strmr → Trakt (Export to Trakt)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
         }
 
         // Set sync options for sync-type tasks
@@ -3804,6 +4070,23 @@
             if (!config.plexAccountId || !config.profileId) {
                 showToast('Please select a Plex account and profile', 'error');
                 return;
+            }
+        } else if (taskType === 'trakt_list_sync') {
+            config.traktAccountId = document.getElementById('editTaskTraktAccount').value;
+            config.profileId = document.getElementById('editTaskTraktProfile').value;
+            config.listType = document.getElementById('editTaskListType').value;
+
+            if (!config.traktAccountId || !config.profileId) {
+                showToast('Please select a Trakt account and profile', 'error');
+                return;
+            }
+
+            if (config.listType === 'custom') {
+                config.customListId = document.getElementById('editTaskCustomList').value;
+                if (!config.customListId) {
+                    showToast('Please select a custom list', 'error');
+                    return;
+                }
             }
         }
 

@@ -575,3 +575,332 @@ func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, epi
 	_, err := c.AddToHistory(accessToken, request)
 	return err
 }
+
+// CollectionItem represents an item from the Trakt collection
+type CollectionItem struct {
+	CollectedAt time.Time `json:"collected_at"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
+	Movie       *Movie    `json:"movie,omitempty"`
+	Show        *Show     `json:"show,omitempty"`
+}
+
+// FavoriteItem represents an item from the Trakt favorites
+type FavoriteItem struct {
+	Rank     int       `json:"rank"`
+	ListedAt time.Time `json:"listed_at"`
+	Type     string    `json:"type"` // "movie" or "show"
+	Movie    *Movie    `json:"movie,omitempty"`
+	Show     *Show     `json:"show,omitempty"`
+}
+
+// UserList represents a custom Trakt list
+type UserList struct {
+	Name           string    `json:"name"`
+	Description    string    `json:"description,omitempty"`
+	Privacy        string    `json:"privacy"`
+	DisplayNumbers bool      `json:"display_numbers"`
+	AllowComments  bool      `json:"allow_comments"`
+	SortBy         string    `json:"sort_by"`
+	SortHow        string    `json:"sort_how"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ItemCount      int       `json:"item_count"`
+	CommentCount   int       `json:"comment_count"`
+	Likes          int       `json:"likes"`
+	IDs            struct {
+		Trakt int    `json:"trakt"`
+		Slug  string `json:"slug"`
+	} `json:"ids"`
+	User *UserProfile `json:"user,omitempty"`
+}
+
+// ListItem represents an item from a Trakt custom list
+type ListItem struct {
+	Rank     int       `json:"rank"`
+	ID       int64     `json:"id"`
+	ListedAt time.Time `json:"listed_at"`
+	Notes    string    `json:"notes,omitempty"`
+	Type     string    `json:"type"` // "movie" or "show"
+	Movie    *Movie    `json:"movie,omitempty"`
+	Show     *Show     `json:"show,omitempty"`
+}
+
+// GetCollection retrieves the user's collection (owned media)
+// mediaType can be "movies" or "shows"
+func (c *Client) GetCollection(accessToken string, mediaType string) ([]CollectionItem, error) {
+	url := fmt.Sprintf("%s/users/me/collection/%s", traktAPIBaseURL, mediaType)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt collection failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	var items []CollectionItem
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return items, nil
+}
+
+// GetAllCollection retrieves the complete collection (movies and shows)
+func (c *Client) GetAllCollection(accessToken string) ([]CollectionItem, error) {
+	movies, err := c.GetCollection(accessToken, "movies")
+	if err != nil {
+		return nil, fmt.Errorf("get movie collection: %w", err)
+	}
+
+	shows, err := c.GetCollection(accessToken, "shows")
+	if err != nil {
+		return nil, fmt.Errorf("get show collection: %w", err)
+	}
+
+	return append(movies, shows...), nil
+}
+
+// GetFavorites retrieves the user's favorites with pagination
+// mediaType can be "movies" or "shows"
+func (c *Client) GetFavorites(accessToken string, mediaType string, page, limit int) ([]FavoriteItem, int, error) {
+	url := fmt.Sprintf("%s/users/me/favorites/%s?page=%d&limit=%d", traktAPIBaseURL, mediaType, page, limit)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("trakt favorites failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	totalCount := 0
+	if totalHeader := resp.Header.Get("X-Pagination-Item-Count"); totalHeader != "" {
+		totalCount, _ = strconv.Atoi(totalHeader)
+	}
+
+	var items []FavoriteItem
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, 0, fmt.Errorf("decode response: %w", err)
+	}
+
+	return items, totalCount, nil
+}
+
+// GetAllFavorites retrieves all favorites (movies and shows)
+func (c *Client) GetAllFavorites(accessToken string) ([]FavoriteItem, error) {
+	var allItems []FavoriteItem
+
+	// Get movie favorites
+	page := 1
+	limit := 100
+	for {
+		items, totalCount, err := c.GetFavorites(accessToken, "movies", page, limit)
+		if err != nil {
+			return nil, fmt.Errorf("get movie favorites: %w", err)
+		}
+		allItems = append(allItems, items...)
+		if len(allItems) >= totalCount || len(items) == 0 {
+			break
+		}
+		page++
+	}
+
+	// Get show favorites
+	page = 1
+	movieCount := len(allItems)
+	for {
+		items, totalCount, err := c.GetFavorites(accessToken, "shows", page, limit)
+		if err != nil {
+			return nil, fmt.Errorf("get show favorites: %w", err)
+		}
+		allItems = append(allItems, items...)
+		if len(allItems)-movieCount >= totalCount || len(items) == 0 {
+			break
+		}
+		page++
+	}
+
+	return allItems, nil
+}
+
+// GetUserLists retrieves all custom lists for the authenticated user
+func (c *Client) GetUserLists(accessToken string) ([]UserList, error) {
+	url := fmt.Sprintf("%s/users/me/lists", traktAPIBaseURL)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt user lists failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	var lists []UserList
+	if err := json.NewDecoder(resp.Body).Decode(&lists); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return lists, nil
+}
+
+// GetListItems retrieves items from a specific user list
+func (c *Client) GetListItems(accessToken string, listID string, page, limit int) ([]ListItem, int, error) {
+	url := fmt.Sprintf("%s/users/me/lists/%s/items?page=%d&limit=%d", traktAPIBaseURL, listID, page, limit)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("trakt list items failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	totalCount := 0
+	if totalHeader := resp.Header.Get("X-Pagination-Item-Count"); totalHeader != "" {
+		totalCount, _ = strconv.Atoi(totalHeader)
+	}
+
+	var items []ListItem
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, 0, fmt.Errorf("decode response: %w", err)
+	}
+
+	return items, totalCount, nil
+}
+
+// GetAllListItems retrieves all items from a specific user list
+func (c *Client) GetAllListItems(accessToken string, listID string) ([]ListItem, error) {
+	var allItems []ListItem
+	page := 1
+	limit := 100
+
+	for {
+		items, totalCount, err := c.GetListItems(accessToken, listID, page, limit)
+		if err != nil {
+			return nil, err
+		}
+
+		allItems = append(allItems, items...)
+
+		if len(allItems) >= totalCount || len(items) == 0 {
+			break
+		}
+
+		page++
+	}
+
+	return allItems, nil
+}
+
+// AddToWatchlist adds movies and/or shows to the user's Trakt watchlist
+func (c *Client) AddToWatchlist(accessToken string, movies []SyncMovie, shows []SyncShow) error {
+	payload := map[string]interface{}{}
+	if len(movies) > 0 {
+		payload["movies"] = movies
+	}
+	if len(shows) > 0 {
+		payload["shows"] = shows
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, traktAPIBaseURL+"/sync/watchlist", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("trakt add to watchlist failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	return nil
+}
+
+// RemoveFromWatchlist removes movies and/or shows from the user's Trakt watchlist
+func (c *Client) RemoveFromWatchlist(accessToken string, movies []SyncMovie, shows []SyncShow) error {
+	payload := map[string]interface{}{}
+	if len(movies) > 0 {
+		payload["movies"] = movies
+	}
+	if len(shows) > 0 {
+		payload["shows"] = shows
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, traktAPIBaseURL+"/sync/watchlist/remove", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("trakt remove from watchlist failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	return nil
+}

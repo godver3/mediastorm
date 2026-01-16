@@ -408,6 +408,7 @@ type ScheduledTaskType string
 
 const (
 	ScheduledTaskTypePlexWatchlistSync ScheduledTaskType = "plex_watchlist_sync"
+	ScheduledTaskTypeTraktListSync     ScheduledTaskType = "trakt_list_sync"
 )
 
 // ScheduledTaskFrequency defines how often a task runs

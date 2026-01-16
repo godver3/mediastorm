@@ -725,6 +725,69 @@ func (h *TraktAccountsHandler) ensureValidAccountToken(account *config.TraktAcco
 	return account.AccessToken, nil
 }
 
+// GetLists retrieves custom lists for a specific Trakt account.
+// GET /api/trakt/accounts/{accountID}/lists
+func (h *TraktAccountsHandler) GetLists(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		jsonError(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.Trakt.GetAccountByID(accountID)
+	if account == nil {
+		jsonError(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	accessToken, err := h.ensureValidAccountToken(account)
+	if err != nil {
+		jsonError(w, "Failed to validate token: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if accessToken == "" {
+		jsonError(w, "Account not connected", http.StatusUnauthorized)
+		return
+	}
+
+	// Update client with account credentials
+	h.traktClient.UpdateCredentials(account.ClientID, account.ClientSecret)
+
+	lists, err := h.traktClient.GetUserLists(accessToken)
+	if err != nil {
+		jsonError(w, "Failed to fetch lists: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to normalized format
+	normalizedLists := make([]map[string]interface{}, 0, len(lists))
+	for _, list := range lists {
+		normalized := map[string]interface{}{
+			"id":          list.IDs.Slug,
+			"traktId":     list.IDs.Trakt,
+			"name":        list.Name,
+			"description": list.Description,
+			"privacy":     list.Privacy,
+			"itemCount":   list.ItemCount,
+			"createdAt":   list.CreatedAt,
+			"updatedAt":   list.UpdatedAt,
+		}
+		normalizedLists = append(normalizedLists, normalized)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lists": normalizedLists,
+		"count": len(normalizedLists),
+	})
+}
+
 // Helper for JSON error responses
 func jsonError(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")

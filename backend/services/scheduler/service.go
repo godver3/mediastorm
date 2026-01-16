@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/plex"
+	"novastream/services/trakt"
 	"novastream/services/watchlist"
 )
 
@@ -18,6 +21,7 @@ import (
 type Service struct {
 	configManager    *config.Manager
 	plexClient       *plex.Client
+	traktClient      *trakt.Client
 	watchlistService *watchlist.Service
 
 	// Runtime state
@@ -44,11 +48,13 @@ type SyncResult struct {
 func NewService(
 	configManager *config.Manager,
 	plexClient *plex.Client,
+	traktClient *trakt.Client,
 	watchlistService *watchlist.Service,
 ) *Service {
 	return &Service{
 		configManager:    configManager,
 		plexClient:       plexClient,
+		traktClient:      traktClient,
 		watchlistService: watchlistService,
 		taskRunning:      make(map[string]bool),
 	}
@@ -223,6 +229,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 	switch task.Type {
 	case config.ScheduledTaskTypePlexWatchlistSync:
 		result, err = s.executePlexWatchlistSync(task)
+	case config.ScheduledTaskTypeTraktListSync:
+		result, err = s.executeTraktListSync(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -798,6 +806,692 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 	// This is tricky because we need to track "what was previously synced"
 	// For now, bidirectional + delete/mirror means union of both lists (no deletions)
 	// TODO: Implement proper deletion tracking for bidirectional sync
+
+	if deleteBehavior != "additive" {
+		log.Printf("[scheduler] Note: delete/mirror behavior in bidirectional mode currently only adds items (deletion tracking not yet implemented)")
+	}
+
+	result.Count = synced
+	return result, nil
+}
+
+// executeTraktListSync syncs a Trakt list to/from a profile
+func (s *Service) executeTraktListSync(task config.ScheduledTask) (SyncResult, error) {
+	traktAccountID := task.Config["traktAccountId"]
+	profileID := task.Config["profileId"]
+	listType := task.Config["listType"] // watchlist, collection, favorites, custom
+
+	if traktAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing traktAccountId or profileId in task config")
+	}
+
+	if listType == "" {
+		listType = "watchlist"
+	}
+
+	// Read sync options with defaults
+	syncDirection := task.Config["syncDirection"]
+	if syncDirection == "" {
+		syncDirection = "source_to_target"
+	}
+	deleteBehavior := task.Config["deleteBehavior"]
+	if deleteBehavior == "" {
+		deleteBehavior = "additive"
+	}
+	conflictResolution := task.Config["conflictResolution"]
+	if conflictResolution == "" {
+		conflictResolution = "source_wins"
+	}
+	dryRun := task.Config["dryRun"] == "true"
+
+	if dryRun {
+		log.Printf("[scheduler] DRY RUN mode enabled - no changes will be made")
+	}
+
+	// Load settings to get Trakt account
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	traktAccount := settings.Trakt.GetAccountByID(traktAccountID)
+	if traktAccount == nil {
+		return SyncResult{}, errors.New("trakt account not found")
+	}
+
+	if traktAccount.AccessToken == "" {
+		return SyncResult{}, errors.New("trakt account not authenticated")
+	}
+
+	// Update client with account credentials
+	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
+
+	// Check token expiry and refresh if needed
+	if time.Now().Unix() >= traktAccount.ExpiresAt {
+		log.Printf("[scheduler] Trakt token expired, refreshing...")
+		tokenResp, err := s.traktClient.RefreshAccessToken(traktAccount.RefreshToken)
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("refresh trakt token: %w", err)
+		}
+		traktAccount.AccessToken = tokenResp.AccessToken
+		traktAccount.RefreshToken = tokenResp.RefreshToken
+		traktAccount.ExpiresAt = tokenResp.CreatedAt + int64(tokenResp.ExpiresIn)
+		settings.Trakt.UpdateAccount(*traktAccount)
+		if err := s.configManager.Save(settings); err != nil {
+			log.Printf("[scheduler] Warning: failed to save refreshed Trakt token: %v", err)
+		}
+	}
+
+	// Build sync source identifier for tracking
+	syncSource := fmt.Sprintf("trakt:%s:%s:%s", traktAccountID, listType, task.ID)
+
+	switch syncDirection {
+	case "source_to_target":
+		return s.syncTraktToLocal(traktAccount, profileID, listType, task.Config["customListId"], syncSource, deleteBehavior, dryRun)
+	case "target_to_source":
+		return s.syncLocalToTrakt(traktAccount, profileID, syncSource, deleteBehavior, dryRun)
+	case "bidirectional":
+		return s.syncTraktBidirectional(traktAccount, profileID, listType, task.Config["customListId"], syncSource, deleteBehavior, conflictResolution, dryRun)
+	default:
+		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", syncDirection)
+	}
+}
+
+// TraktListItem is a unified representation of items from different Trakt list types
+type TraktListItem struct {
+	Title     string
+	Year      int
+	MediaType string // "movie" or "series"
+	IDs       map[string]string
+}
+
+// getTraktListItems fetches items from the specified Trakt list type
+func (s *Service) getTraktListItems(accessToken string, listType string, customListID string) ([]TraktListItem, error) {
+	var items []TraktListItem
+
+	switch listType {
+	case "watchlist":
+		watchlistItems, err := s.traktClient.GetAllWatchlist(accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("get trakt watchlist: %w", err)
+		}
+		for _, item := range watchlistItems {
+			if item.Movie != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Movie.Title,
+					Year:      item.Movie.Year,
+					MediaType: "movie",
+					IDs:       trakt.IDsToMap(item.Movie.IDs),
+				})
+			} else if item.Show != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Show.Title,
+					Year:      item.Show.Year,
+					MediaType: "series",
+					IDs:       trakt.IDsToMap(item.Show.IDs),
+				})
+			}
+		}
+
+	case "collection":
+		collectionItems, err := s.traktClient.GetAllCollection(accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("get trakt collection: %w", err)
+		}
+		for _, item := range collectionItems {
+			if item.Movie != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Movie.Title,
+					Year:      item.Movie.Year,
+					MediaType: "movie",
+					IDs:       trakt.IDsToMap(item.Movie.IDs),
+				})
+			} else if item.Show != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Show.Title,
+					Year:      item.Show.Year,
+					MediaType: "series",
+					IDs:       trakt.IDsToMap(item.Show.IDs),
+				})
+			}
+		}
+
+	case "favorites":
+		favoriteItems, err := s.traktClient.GetAllFavorites(accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("get trakt favorites: %w", err)
+		}
+		for _, item := range favoriteItems {
+			if item.Movie != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Movie.Title,
+					Year:      item.Movie.Year,
+					MediaType: "movie",
+					IDs:       trakt.IDsToMap(item.Movie.IDs),
+				})
+			} else if item.Show != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Show.Title,
+					Year:      item.Show.Year,
+					MediaType: "series",
+					IDs:       trakt.IDsToMap(item.Show.IDs),
+				})
+			}
+		}
+
+	case "custom":
+		if customListID == "" {
+			return nil, errors.New("custom list ID is required for custom list sync")
+		}
+		listItems, err := s.traktClient.GetAllListItems(accessToken, customListID)
+		if err != nil {
+			return nil, fmt.Errorf("get trakt custom list: %w", err)
+		}
+		for _, item := range listItems {
+			if item.Movie != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Movie.Title,
+					Year:      item.Movie.Year,
+					MediaType: "movie",
+					IDs:       trakt.IDsToMap(item.Movie.IDs),
+				})
+			} else if item.Show != nil {
+				items = append(items, TraktListItem{
+					Title:     item.Show.Title,
+					Year:      item.Show.Year,
+					MediaType: "series",
+					IDs:       trakt.IDsToMap(item.Show.IDs),
+				})
+			}
+		}
+
+	default:
+		return nil, fmt.Errorf("unknown list type: %s", listType)
+	}
+
+	return items, nil
+}
+
+// syncTraktToLocal imports items from a Trakt list to local watchlist
+func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID, listType, customListID, syncSource, deleteBehavior string, dryRun bool) (SyncResult, error) {
+	now := time.Now().UTC()
+	result := SyncResult{DryRun: dryRun}
+
+	// Fetch items from Trakt list
+	items, err := s.getTraktListItems(traktAccount.AccessToken, listType, customListID)
+	if err != nil {
+		return result, err
+	}
+
+	// Build a set of Trakt item keys for deletion checking
+	traktItemKeys := make(map[string]bool)
+
+	// Get existing local items to check what's new
+	existingItems, _ := s.watchlistService.List(profileID)
+	existingKeys := make(map[string]bool)
+	for _, item := range existingItems {
+		existingKeys[item.Key()] = true
+	}
+
+	imported := 0
+
+	for _, item := range items {
+		// Prefer TMDB ID, then IMDB, then Trakt ID
+		itemID := item.IDs["trakt"]
+		if tmdbID, ok := item.IDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.IDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		itemKey := item.MediaType + ":" + itemID
+
+		// Track this item key for deletion checking
+		traktItemKeys[itemKey] = true
+
+		// Check if this is a new item (not already in local)
+		isNew := !existingKeys[itemKey]
+
+		if dryRun {
+			if isNew {
+				log.Printf("[scheduler] DRY RUN: Would import from Trakt %s: %s (%s)", listType, item.Title, item.MediaType)
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{
+					Name:      item.Title,
+					MediaType: item.MediaType,
+					ID:        itemID,
+				})
+			}
+			imported++
+			continue
+		}
+
+		input := models.WatchlistUpsert{
+			ID:          itemID,
+			MediaType:   item.MediaType,
+			Name:        item.Title,
+			Year:        item.Year,
+			ExternalIDs: item.IDs,
+			SyncSource:  syncSource,
+			SyncedAt:    &now,
+		}
+
+		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
+			log.Printf("[scheduler] Failed to import Trakt item %s: %v", item.Title, err)
+			continue
+		}
+
+		imported++
+	}
+
+	// Handle deletions for delete/mirror modes
+	if deleteBehavior != "additive" {
+		removed := 0
+		localItems, err := s.watchlistService.List(profileID)
+		if err != nil {
+			log.Printf("[scheduler] Failed to list local items for deletion check: %v", err)
+		} else {
+			for _, localItem := range localItems {
+				localKey := localItem.Key()
+
+				// Check if item still exists in Trakt list
+				if traktItemKeys[localKey] {
+					continue // Item still in Trakt, keep it
+				}
+
+				// For "delete" mode: only remove items that were synced by this task
+				if deleteBehavior == "delete" {
+					if localItem.SyncSource != syncSource {
+						continue // Not synced by this task, preserve it
+					}
+				}
+				// For "mirror" mode: remove all items not in Trakt (regardless of source)
+
+				if dryRun {
+					log.Printf("[scheduler] DRY RUN: Would remove from local: %s", localItem.Name)
+					result.ToRemove = append(result.ToRemove, config.DryRunItem{
+						Name:      localItem.Name,
+						MediaType: localItem.MediaType,
+						ID:        localItem.ID,
+					})
+					removed++
+					continue
+				}
+
+				// Remove from local watchlist
+				if ok, err := s.watchlistService.Remove(profileID, localItem.MediaType, localItem.ID); err != nil {
+					log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
+				} else if ok {
+					removed++
+					log.Printf("[scheduler] Removed watchlist item no longer in Trakt %s: %s", listType, localItem.Name)
+				}
+			}
+		}
+
+		if removed > 0 {
+			log.Printf("[scheduler] Removed %d items no longer in Trakt %s", removed, listType)
+		}
+	}
+
+	result.Count = imported
+	return result, nil
+}
+
+// syncLocalToTrakt exports items from local watchlist to Trakt watchlist
+// Note: Trakt only supports adding to watchlist via API, not to collection/favorites/custom lists
+func (s *Service) syncLocalToTrakt(traktAccount *config.TraktAccount, profileID, syncSource, deleteBehavior string, dryRun bool) (SyncResult, error) {
+	result := SyncResult{DryRun: dryRun}
+
+	// Get local watchlist items
+	localItems, err := s.watchlistService.List(profileID)
+	if err != nil {
+		return result, fmt.Errorf("list local items: %w", err)
+	}
+
+	// Get current Trakt watchlist to check what's already there
+	traktItems, err := s.traktClient.GetAllWatchlist(traktAccount.AccessToken)
+	if err != nil {
+		return result, fmt.Errorf("fetch trakt watchlist: %w", err)
+	}
+
+	// Build set of Trakt item keys for quick lookup
+	traktItemKeys := make(map[string]bool)
+	for _, item := range traktItems {
+		var key string
+		if item.Movie != nil {
+			if item.Movie.IDs.TMDB != 0 {
+				key = "movie:" + strconv.Itoa(item.Movie.IDs.TMDB)
+			} else if item.Movie.IDs.IMDB != "" {
+				key = "movie:" + item.Movie.IDs.IMDB
+			}
+		} else if item.Show != nil {
+			if item.Show.IDs.TMDB != 0 {
+				key = "series:" + strconv.Itoa(item.Show.IDs.TMDB)
+			} else if item.Show.IDs.IMDB != "" {
+				key = "series:" + item.Show.IDs.IMDB
+			}
+		}
+		if key != "" {
+			traktItemKeys[key] = true
+		}
+	}
+
+	// Build set of local item keys for deletion checking
+	localItemKeys := make(map[string]bool)
+
+	var moviesToAdd []trakt.SyncMovie
+	var showsToAdd []trakt.SyncShow
+	exported := 0
+
+	for _, localItem := range localItems {
+		localKey := localItem.Key()
+		localItemKeys[localKey] = true
+
+		// Check if already in Trakt
+		if traktItemKeys[localKey] {
+			continue // Already in Trakt
+		}
+
+		// Get IDs for Trakt API
+		var tmdbID int
+		var imdbID string
+		if localItem.ExternalIDs != nil {
+			if tmdbStr, ok := localItem.ExternalIDs["tmdb"]; ok {
+				tmdbID, _ = strconv.Atoi(tmdbStr)
+			}
+			imdbID = localItem.ExternalIDs["imdb"]
+		}
+
+		// Fall back to trying to parse the ID as TMDB ID
+		if tmdbID == 0 && imdbID == "" {
+			tmdbID, _ = strconv.Atoi(localItem.ID)
+		}
+
+		if tmdbID == 0 && imdbID == "" {
+			log.Printf("[scheduler] Skipping item %s: no valid IDs for Trakt", localItem.Name)
+			continue
+		}
+
+		if dryRun {
+			log.Printf("[scheduler] DRY RUN: Would add to Trakt watchlist: %s", localItem.Name)
+			result.ToAdd = append(result.ToAdd, config.DryRunItem{
+				Name:      localItem.Name,
+				MediaType: localItem.MediaType,
+				ID:        localItem.ID,
+			})
+			exported++
+			continue
+		}
+
+		if localItem.MediaType == "movie" {
+			moviesToAdd = append(moviesToAdd, trakt.SyncMovie{
+				IDs: trakt.SyncIDs{
+					TMDB: tmdbID,
+					IMDB: imdbID,
+				},
+			})
+		} else if localItem.MediaType == "series" {
+			showsToAdd = append(showsToAdd, trakt.SyncShow{
+				IDs: trakt.SyncIDs{
+					TMDB: tmdbID,
+					IMDB: imdbID,
+				},
+			})
+		}
+		exported++
+	}
+
+	// Add items to Trakt
+	if !dryRun && (len(moviesToAdd) > 0 || len(showsToAdd) > 0) {
+		if err := s.traktClient.AddToWatchlist(traktAccount.AccessToken, moviesToAdd, showsToAdd); err != nil {
+			return result, fmt.Errorf("add to trakt watchlist: %w", err)
+		}
+		log.Printf("[scheduler] Added %d movies and %d shows to Trakt watchlist", len(moviesToAdd), len(showsToAdd))
+	}
+
+	// Handle deletions from Trakt for delete/mirror modes
+	if deleteBehavior != "additive" {
+		var moviesToRemove []trakt.SyncMovie
+		var showsToRemove []trakt.SyncShow
+		removed := 0
+
+		for _, traktItem := range traktItems {
+			var key string
+			var movie *trakt.Movie
+			var show *trakt.Show
+
+			if traktItem.Movie != nil {
+				movie = traktItem.Movie
+				if movie.IDs.TMDB != 0 {
+					key = "movie:" + strconv.Itoa(movie.IDs.TMDB)
+				} else if movie.IDs.IMDB != "" {
+					key = "movie:" + movie.IDs.IMDB
+				}
+			} else if traktItem.Show != nil {
+				show = traktItem.Show
+				if show.IDs.TMDB != 0 {
+					key = "series:" + strconv.Itoa(show.IDs.TMDB)
+				} else if show.IDs.IMDB != "" {
+					key = "series:" + show.IDs.IMDB
+				}
+			}
+
+			if key == "" {
+				continue
+			}
+
+			// Check if item exists in local watchlist
+			if localItemKeys[key] {
+				continue // Item in local, keep in Trakt
+			}
+
+			// For "delete" mode: we can't reliably track what was synced TO Trakt
+			// So we skip deletion in delete mode for target_to_source
+			if deleteBehavior == "delete" {
+				continue
+			}
+
+			// For "mirror" mode: remove from Trakt if not in local
+			if dryRun {
+				name := ""
+				if movie != nil {
+					name = movie.Title
+				} else if show != nil {
+					name = show.Title
+				}
+				log.Printf("[scheduler] DRY RUN: Would remove from Trakt watchlist: %s", name)
+				result.ToRemove = append(result.ToRemove, config.DryRunItem{
+					Name:      name,
+					MediaType: key[:strings.Index(key, ":")],
+					ID:        key[strings.Index(key, ":")+1:],
+				})
+				removed++
+				continue
+			}
+
+			if movie != nil {
+				moviesToRemove = append(moviesToRemove, trakt.SyncMovie{
+					IDs: trakt.SyncIDs{
+						TMDB: movie.IDs.TMDB,
+						IMDB: movie.IDs.IMDB,
+					},
+				})
+				removed++
+				log.Printf("[scheduler] Will remove from Trakt watchlist: %s", movie.Title)
+			} else if show != nil {
+				showsToRemove = append(showsToRemove, trakt.SyncShow{
+					IDs: trakt.SyncIDs{
+						TMDB: show.IDs.TMDB,
+						IMDB: show.IDs.IMDB,
+					},
+				})
+				removed++
+				log.Printf("[scheduler] Will remove from Trakt watchlist: %s", show.Title)
+			}
+		}
+
+		if !dryRun && (len(moviesToRemove) > 0 || len(showsToRemove) > 0) {
+			if err := s.traktClient.RemoveFromWatchlist(traktAccount.AccessToken, moviesToRemove, showsToRemove); err != nil {
+				log.Printf("[scheduler] Failed to remove items from Trakt watchlist: %v", err)
+			} else {
+				log.Printf("[scheduler] Removed %d items from Trakt watchlist", removed)
+			}
+		}
+	}
+
+	result.Count = exported
+	return result, nil
+}
+
+// syncTraktBidirectional syncs items in both directions between Trakt and local
+func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, profileID, listType, customListID, syncSource, deleteBehavior, conflictResolution string, dryRun bool) (SyncResult, error) {
+	now := time.Now().UTC()
+	result := SyncResult{DryRun: dryRun}
+
+	// Get both lists
+	traktItems, err := s.getTraktListItems(traktAccount.AccessToken, listType, customListID)
+	if err != nil {
+		return result, err
+	}
+
+	localItems, err := s.watchlistService.List(profileID)
+	if err != nil {
+		return result, fmt.Errorf("list local items: %w", err)
+	}
+
+	// Build maps for quick lookup
+	traktByKey := make(map[string]TraktListItem)
+	for _, item := range traktItems {
+		itemID := item.IDs["trakt"]
+		if tmdbID, ok := item.IDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.IDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+		key := item.MediaType + ":" + itemID
+		traktByKey[key] = item
+	}
+
+	localByKey := make(map[string]models.WatchlistItem)
+	for _, item := range localItems {
+		localByKey[item.Key()] = item
+	}
+
+	synced := 0
+
+	// Step 1: Sync Trakt → Local (items in Trakt not in local)
+	for key, traktItem := range traktByKey {
+		if _, exists := localByKey[key]; exists {
+			continue // Already in local
+		}
+
+		itemID := traktItem.IDs["trakt"]
+		if tmdbID, ok := traktItem.IDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := traktItem.IDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		if dryRun {
+			log.Printf("[scheduler] DRY RUN: Would import from Trakt: %s (%s)", traktItem.Title, traktItem.MediaType)
+			result.ToAdd = append(result.ToAdd, config.DryRunItem{
+				Name:      traktItem.Title + " (from Trakt)",
+				MediaType: traktItem.MediaType,
+				ID:        itemID,
+			})
+			synced++
+			continue
+		}
+
+		input := models.WatchlistUpsert{
+			ID:          itemID,
+			MediaType:   traktItem.MediaType,
+			Name:        traktItem.Title,
+			Year:        traktItem.Year,
+			ExternalIDs: traktItem.IDs,
+			SyncSource:  syncSource,
+			SyncedAt:    &now,
+		}
+
+		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
+			log.Printf("[scheduler] Failed to import %s from Trakt: %v", traktItem.Title, err)
+			continue
+		}
+
+		log.Printf("[scheduler] Imported from Trakt: %s", traktItem.Title)
+		synced++
+	}
+
+	// Step 2: Sync Local → Trakt (items in local not in Trakt)
+	// Note: Only supported for watchlist list type
+	if listType == "watchlist" {
+		var moviesToAdd []trakt.SyncMovie
+		var showsToAdd []trakt.SyncShow
+
+		for key, localItem := range localByKey {
+			if _, exists := traktByKey[key]; exists {
+				continue // Already in Trakt
+			}
+
+			// Get IDs for Trakt API
+			var tmdbID int
+			var imdbID string
+			if localItem.ExternalIDs != nil {
+				if tmdbStr, ok := localItem.ExternalIDs["tmdb"]; ok {
+					tmdbID, _ = strconv.Atoi(tmdbStr)
+				}
+				imdbID = localItem.ExternalIDs["imdb"]
+			}
+
+			if tmdbID == 0 && imdbID == "" {
+				tmdbID, _ = strconv.Atoi(localItem.ID)
+			}
+
+			if tmdbID == 0 && imdbID == "" {
+				log.Printf("[scheduler] Skipping export of %s: no valid IDs for Trakt", localItem.Name)
+				continue
+			}
+
+			if dryRun {
+				log.Printf("[scheduler] DRY RUN: Would export to Trakt: %s", localItem.Name)
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{
+					Name:      localItem.Name + " (to Trakt)",
+					MediaType: localItem.MediaType,
+					ID:        localItem.ID,
+				})
+				synced++
+				continue
+			}
+
+			if localItem.MediaType == "movie" {
+				moviesToAdd = append(moviesToAdd, trakt.SyncMovie{
+					IDs: trakt.SyncIDs{
+						TMDB: tmdbID,
+						IMDB: imdbID,
+					},
+				})
+			} else if localItem.MediaType == "series" {
+				showsToAdd = append(showsToAdd, trakt.SyncShow{
+					IDs: trakt.SyncIDs{
+						TMDB: tmdbID,
+						IMDB: imdbID,
+					},
+				})
+			}
+
+			log.Printf("[scheduler] Will export to Trakt: %s", localItem.Name)
+			synced++
+		}
+
+		if !dryRun && (len(moviesToAdd) > 0 || len(showsToAdd) > 0) {
+			if err := s.traktClient.AddToWatchlist(traktAccount.AccessToken, moviesToAdd, showsToAdd); err != nil {
+				log.Printf("[scheduler] Failed to add items to Trakt watchlist: %v", err)
+			} else {
+				log.Printf("[scheduler] Exported %d movies and %d shows to Trakt watchlist", len(moviesToAdd), len(showsToAdd))
+			}
+		}
+	} else {
+		log.Printf("[scheduler] Note: Bidirectional sync to Trakt only supported for watchlist type (current: %s)", listType)
+	}
 
 	if deleteBehavior != "additive" {
 		log.Printf("[scheduler] Note: delete/mirror behavior in bidirectional mode currently only adds items (deletion tracking not yet implemented)")

@@ -405,7 +405,7 @@ func main() {
 	plexAccountsHandler := handlers.NewPlexAccountsHandler(cfgManager, plexClient, userService, accountsService)
 
 	// Create scheduler service for background tasks
-	schedulerService := scheduler.NewService(cfgManager, plexClient, watchlistService)
+	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
 	// Register admin UI routes
@@ -530,6 +530,7 @@ func main() {
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/scrobbling", adminUIHandler.RequireAuth(traktAccountsHandler.SetScrobbling)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/history", adminUIHandler.RequireAuth(traktAccountsHandler.GetHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/watchlist", adminUIHandler.RequireAuth(traktAccountsHandler.GetWatchlist)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/trakt/accounts/{accountID}/lists", adminUIHandler.RequireAuth(traktAccountsHandler.GetLists)).Methods(http.MethodGet)
 
 	// Profile Trakt linking (admin routes)
 	r.HandleFunc("/admin/api/users/{userID}/trakt", adminUIHandler.RequireAuth(usersHandler.SetTraktAccount)).Methods(http.MethodPut)
