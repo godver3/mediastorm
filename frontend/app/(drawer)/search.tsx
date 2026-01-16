@@ -30,6 +30,7 @@ import {
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { responsiveSize } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
 
@@ -652,6 +653,16 @@ export default function SearchScreen() {
                 <View style={styles.filtersRow}>
                   {filterOptions.map((option) => {
                     const isFilterActive = filter === option.key;
+                    // Responsive sizes matching watchlist NativeFilterButton
+                    const iconSize = responsiveSize(36, 20);
+                    const paddingH = responsiveSize(28, 14);
+                    const paddingV = responsiveSize(16, 8);
+                    const borderRadius = responsiveSize(12, 6);
+                    const fontSize = responsiveSize(24, 14);
+                    const lineHeight = responsiveSize(32, 18);
+                    const gap = responsiveSize(12, 6);
+                    const borderWidth = responsiveSize(6, 2);
+
                     return (
                       <SpatialNavigationFocusableView
                         key={option.key}
@@ -659,23 +670,36 @@ export default function SearchScreen() {
                       >
                         {({ isFocused }: { isFocused: boolean }) => (
                           <View
-                            style={[
-                              styles.filterButton,
-                              isFilterActive && styles.filterButtonActive,
-                              isFocused && styles.filterButtonFocused,
-                            ]}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap,
+                              paddingHorizontal: paddingH,
+                              paddingVertical: paddingV,
+                              borderRadius,
+                              backgroundColor: isFocused
+                                ? theme.colors.accent.primary
+                                : theme.colors.overlay.button,
+                              borderWidth,
+                              borderColor: isFocused
+                                ? theme.colors.accent.primary
+                                : isFilterActive
+                                  ? theme.colors.accent.primary
+                                  : 'transparent',
+                            }}
                           >
                             <Ionicons
                               name={option.icon}
-                              size={24}
+                              size={iconSize}
                               color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
-                              style={styles.filterButtonIcon}
                             />
                             <Text
-                              style={[
-                                styles.filterButtonText,
-                                isFocused && styles.filterButtonTextFocused,
-                              ]}
+                              style={{
+                                color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
+                                fontSize,
+                                lineHeight,
+                                fontWeight: '500',
+                              }}
                             >
                               {option.label}
                             </Text>
@@ -747,34 +771,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       gap: theme.spacing.sm,
       flexShrink: 0,
     },
-    filterButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
-      paddingHorizontal: isCompact ? theme.spacing.lg : theme.spacing['2xl'],
-      paddingVertical: isCompact ? theme.spacing.sm : theme.spacing.md,
-      backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.md,
-      borderWidth: 2,
-      borderColor: theme.colors.border.subtle,
-    },
-    filterButtonActive: {
-      borderColor: theme.colors.accent.primary,
-    },
-    filterButtonFocused: {
-      backgroundColor: theme.colors.accent.primary,
-      borderColor: theme.colors.accent.primary,
-    },
-    filterButtonIcon: {
-      // Icon styles if needed
-    },
-    filterButtonText: {
-      ...theme.typography.label.md,
-      color: theme.colors.text.primary,
-    },
-    filterButtonTextFocused: {
-      color: theme.colors.text.inverse,
-    },
     searchInputWrapper: {
       justifyContent: 'center',
     },
@@ -800,14 +796,13 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
-      borderWidth: 2,
+      borderWidth: 3,
       borderColor: 'transparent',
       // Android TV renders larger than tvOS, so use smaller minHeight
       minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
     },
     searchInputFocused: {
       borderColor: theme.colors.accent.primary,
-      borderWidth: 3,
       ...(Platform.isTV && Platform.OS === 'ios'
         ? {
             shadowColor: theme.colors.accent.primary,
