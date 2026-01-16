@@ -373,11 +373,21 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     const isPortrait = containerSize ? containerSize.height > containerSize.width : false;
     const isMobilePortrait = isMobile && isPortrait;
 
+    // Mobile portrait uses extra padding for better visibility
+    const mobilePortraitPadding = basePadding + 30;
+
+    // Calculate mobile portrait controls offset (controls are at bottom in portrait)
+    let mobilePortraitControlsOffset = 0;
+    if (isMobilePortrait && controlsVisible) {
+      // Position subtitles above portrait controls
+      mobilePortraitControlsOffset = 210;
+    }
+
     // Use letterboxBottom from player when available (accurate measurement from screen dimensions)
     if (letterboxBottom !== undefined) {
       // Mobile portrait: position near bottom of screen (ignore letterbox)
-      if (isMobilePortrait && !controlsVisible) {
-        return basePadding;
+      if (isMobilePortrait) {
+        return controlsVisible ? mobilePortraitControlsOffset : mobilePortraitPadding;
       }
       // When controls are visible, position above controls (which are at screen bottom)
       // When controls are hidden, position above letterbox bars
@@ -390,9 +400,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       return basePadding + controlsOffset;
     }
 
-    // Mobile portrait without controls: position near bottom of screen
-    if (isMobilePortrait && !controlsVisible) {
-      return basePadding;
+    // Mobile portrait: position near bottom of screen
+    if (isMobilePortrait) {
+      return controlsVisible ? mobilePortraitControlsOffset : mobilePortraitPadding;
     }
 
     const { width: containerWidth, height: containerHeight } = containerSize;
