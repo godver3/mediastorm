@@ -223,7 +223,7 @@
 
             <!-- Add Task Modal -->
             <div id="addScheduledTaskModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
-                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
                     <h3 style="margin-bottom: 1rem;">Add Scheduled Task</h3>
 
                     <div class="form-group">
@@ -258,6 +258,38 @@
                         </div>
                     </div>
 
+                    <!-- Sync Options (shown for sync-type tasks) -->
+                    <div id="syncOptionsConfig" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="newTaskSyncDirection" class="form-select" onchange="onSyncDirectionChange()">
+                                <option value="source_to_target" selected>Plex → strmr (Import from Plex)</option>
+                                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                            <small class="text-muted">Direction of data flow during sync</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Delete Behavior</label>
+                            <select id="newTaskDeleteBehavior" class="form-select">
+                                <option value="additive" selected>Additive (only add, never remove)</option>
+                                <option value="delete">Delete (remove synced items, keep manually added)</option>
+                                <option value="mirror">Mirror (exact copy, removes everything not in source)</option>
+                            </select>
+                            <small class="text-muted">How to handle items removed from source</small>
+                        </div>
+
+                        <div class="form-group" id="conflictResolutionGroup" style="display: none;">
+                            <label class="form-label">Conflict Resolution</label>
+                            <select id="newTaskConflictResolution" class="form-select">
+                                <option value="source_wins" selected>Source wins</option>
+                                <option value="target_wins">Target wins</option>
+                            </select>
+                            <small class="text-muted">How to resolve conflicts in bidirectional sync</small>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="newTaskFrequency" class="form-select">
@@ -279,6 +311,14 @@
                         </label>
                     </div>
 
+                    <div class="form-group" id="dryRunGroup">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" id="newTaskDryRun">
+                            Dry run (test without making changes)
+                        </label>
+                        <small class="text-muted">When enabled, the task will log what it would do without actually syncing</small>
+                    </div>
+
                     <div class="btn-group" style="margin-top: 1.5rem;">
                         <button class="btn btn-secondary" onclick="hideAddScheduledTaskModal()">Cancel</button>
                         <button class="btn btn-primary" onclick="createScheduledTask()">Create Task</button>
@@ -288,7 +328,7 @@
 
             <!-- Edit Task Modal -->
             <div id="editScheduledTaskModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
-                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
                     <h3 style="margin-bottom: 1rem;">Edit Scheduled Task</h3>
                     <input type="hidden" id="editTaskId">
 
@@ -324,6 +364,38 @@
                         </div>
                     </div>
 
+                    <!-- Sync Options (shown for sync-type tasks) -->
+                    <div id="editSyncOptionsConfig" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="editTaskSyncDirection" class="form-select" onchange="onEditSyncDirectionChange()">
+                                <option value="source_to_target">Plex → strmr (Import from Plex)</option>
+                                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                            <small class="text-muted">Direction of data flow during sync</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Delete Behavior</label>
+                            <select id="editTaskDeleteBehavior" class="form-select">
+                                <option value="additive">Additive (only add, never remove)</option>
+                                <option value="delete">Delete (remove synced items, keep manually added)</option>
+                                <option value="mirror">Mirror (exact copy, removes everything not in source)</option>
+                            </select>
+                            <small class="text-muted">How to handle items removed from source</small>
+                        </div>
+
+                        <div class="form-group" id="editConflictResolutionGroup" style="display: none;">
+                            <label class="form-label">Conflict Resolution</label>
+                            <select id="editTaskConflictResolution" class="form-select">
+                                <option value="source_wins">Source wins</option>
+                                <option value="target_wins">Target wins</option>
+                            </select>
+                            <small class="text-muted">How to resolve conflicts in bidirectional sync</small>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="editTaskFrequency" class="form-select">
@@ -338,9 +410,56 @@
                         </select>
                     </div>
 
+                    <div class="form-group" id="editDryRunGroup">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" id="editTaskDryRun">
+                            Dry run (test without making changes)
+                        </label>
+                        <small class="text-muted">When enabled, the task will log what it would do without actually syncing</small>
+                    </div>
+
                     <div class="btn-group" style="margin-top: 1.5rem;">
                         <button class="btn btn-secondary" onclick="hideEditScheduledTaskModal()">Cancel</button>
                         <button class="btn btn-primary" onclick="updateScheduledTask()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dry Run Results Modal -->
+            <div id="dryRunResultsModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h3 style="margin: 0;">Dry Run Results</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="hideDryRunResultsModal()" style="padding: 0.25rem 0.5rem;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="text-muted" style="margin-bottom: 1rem;">These changes would be made if the task runs without dry run mode:</p>
+
+                    <div id="dryRunToAddSection" style="margin-bottom: 1.5rem;">
+                        <h4 style="color: var(--success); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Items to Add (<span id="dryRunToAddCount">0</span>)
+                        </h4>
+                        <div id="dryRunToAddList" style="max-height: 200px; overflow-y: auto; background: var(--bg-surface); border-radius: 8px; padding: 0.5rem;"></div>
+                    </div>
+
+                    <div id="dryRunToRemoveSection">
+                        <h4 style="color: var(--danger); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Items to Remove (<span id="dryRunToRemoveCount">0</span>)
+                        </h4>
+                        <div id="dryRunToRemoveList" style="max-height: 200px; overflow-y: auto; background: var(--bg-surface); border-radius: 8px; padding: 0.5rem;"></div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top: 1.5rem;">
+                        <button class="btn btn-secondary" onclick="hideDryRunResultsModal()">Close</button>
                     </div>
                 </div>
             </div>
@@ -3241,6 +3360,7 @@
                             <span class="text-muted" style="font-size: 0.8125rem;">Last: ${lastRunLabel}</span>
                             ${task.enabled ? `<span class="text-muted" style="font-size: 0.8125rem;">Next: ${getNextRunLabel(task)}</span>` : ''}
                             ${task.itemsImported > 0 ? `<span class="text-muted" style="font-size: 0.8125rem;">${task.itemsImported} items synced</span>` : ''}
+                            ${task.dryRunDetails ? `<button class="btn btn-sm" onclick="showDryRunResults('${task.id}')" style="padding: 0.15rem 0.5rem; font-size: 0.75rem; background: rgba(99, 102, 241, 0.2); color: var(--accent);">View Dry Run Results</button>` : ''}
                             ${task.lastError ? `<span style="color: var(--danger); font-size: 0.8125rem;">${escapeHtml(task.lastError)}</span>` : ''}
                         </div>
                         <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
@@ -3388,15 +3508,18 @@
         document.getElementById('newTaskEnabled').checked = true;
 
         document.getElementById('addScheduledTaskModal').style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     }
 
     function hideAddScheduledTaskModal() {
         document.getElementById('addScheduledTaskModal').style.display = 'none';
+        document.body.style.overflow = '';
     }
 
     function onTaskTypeChange() {
         const taskType = document.getElementById('newTaskType').value;
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
+        const syncOptions = document.getElementById('syncOptionsConfig');
 
         // Show/hide config sections based on task type
         if (taskType === 'plex_watchlist_sync') {
@@ -3404,6 +3527,23 @@
         } else {
             plexConfig.style.display = 'none';
         }
+
+        // Show sync options and dry run for any sync-type task
+        const isSyncTask = taskType.includes('sync');
+        syncOptions.style.display = isSyncTask ? 'block' : 'none';
+        document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
+    }
+
+    function onSyncDirectionChange() {
+        const direction = document.getElementById('newTaskSyncDirection').value;
+        const conflictGroup = document.getElementById('conflictResolutionGroup');
+        conflictGroup.style.display = direction === 'bidirectional' ? 'block' : 'none';
+    }
+
+    function onEditSyncDirectionChange() {
+        const direction = document.getElementById('editTaskSyncDirection').value;
+        const conflictGroup = document.getElementById('editConflictResolutionGroup');
+        conflictGroup.style.display = direction === 'bidirectional' ? 'block' : 'none';
     }
 
     async function createScheduledTask() {
@@ -3421,6 +3561,19 @@
             if (!config.plexAccountId || !config.profileId) {
                 showToast('Please select a Plex account and profile', 'error');
                 return;
+            }
+        }
+
+        // Add sync options for sync-type tasks
+        if (taskType.includes('sync')) {
+            config.syncDirection = document.getElementById('newTaskSyncDirection').value;
+            config.deleteBehavior = document.getElementById('newTaskDeleteBehavior').value;
+            if (config.syncDirection === 'bidirectional') {
+                config.conflictResolution = document.getElementById('newTaskConflictResolution').value;
+            }
+            // Add dry run option
+            if (document.getElementById('newTaskDryRun').checked) {
+                config.dryRun = 'true';
             }
         }
 
@@ -3554,11 +3707,86 @@
             document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         }
 
+        // Set sync options for sync-type tasks
+        const isSyncTask = task.type.includes('sync');
+        document.getElementById('editSyncOptionsConfig').style.display = isSyncTask ? 'block' : 'none';
+
+        if (isSyncTask && task.config) {
+            document.getElementById('editTaskSyncDirection').value = task.config.syncDirection || 'source_to_target';
+            document.getElementById('editTaskDeleteBehavior').value = task.config.deleteBehavior || 'additive';
+            document.getElementById('editTaskConflictResolution').value = task.config.conflictResolution || 'source_wins';
+            document.getElementById('editTaskDryRun').checked = task.config.dryRun === 'true';
+
+            // Show/hide conflict resolution based on sync direction
+            const conflictGroup = document.getElementById('editConflictResolutionGroup');
+            conflictGroup.style.display = (task.config.syncDirection === 'bidirectional') ? 'block' : 'none';
+        }
+
+        // Show dry run option for sync tasks
+        document.getElementById('editDryRunGroup').style.display = isSyncTask ? 'block' : 'none';
+
         document.getElementById('editScheduledTaskModal').style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     }
 
     function hideEditScheduledTaskModal() {
         document.getElementById('editScheduledTaskModal').style.display = 'none';
+        document.body.style.overflow = '';
+    }
+
+    function showDryRunResults(taskId) {
+        const task = scheduledTasks.find(t => t.id === taskId);
+        if (!task || !task.dryRunDetails) {
+            showToast('No dry run results available', 'error');
+            return;
+        }
+
+        const details = task.dryRunDetails;
+        const toAdd = details.toAdd || [];
+        const toRemove = details.toRemove || [];
+
+        // Update counts
+        document.getElementById('dryRunToAddCount').textContent = toAdd.length;
+        document.getElementById('dryRunToRemoveCount').textContent = toRemove.length;
+
+        // Render add list
+        const addList = document.getElementById('dryRunToAddList');
+        if (toAdd.length === 0) {
+            addList.innerHTML = '<p class="text-muted" style="margin: 0.5rem;">No items to add</p>';
+        } else {
+            addList.innerHTML = toAdd.map(item => `
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid var(--border);">
+                    <span class="type-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent); font-size: 0.7rem; text-transform: uppercase;">${escapeHtml(item.mediaType)}</span>
+                    <span>${escapeHtml(item.name)}</span>
+                </div>
+            `).join('');
+        }
+
+        // Render remove list
+        const removeList = document.getElementById('dryRunToRemoveList');
+        if (toRemove.length === 0) {
+            removeList.innerHTML = '<p class="text-muted" style="margin: 0.5rem;">No items to remove</p>';
+        } else {
+            removeList.innerHTML = toRemove.map(item => `
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid var(--border);">
+                    <span class="type-badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); font-size: 0.7rem; text-transform: uppercase;">${escapeHtml(item.mediaType)}</span>
+                    <span>${escapeHtml(item.name)}</span>
+                </div>
+            `).join('');
+        }
+
+        // Always show both sections (with appropriate content)
+        document.getElementById('dryRunToAddSection').style.display = 'block';
+        document.getElementById('dryRunToRemoveSection').style.display = 'block';
+
+        // Show modal
+        document.getElementById('dryRunResultsModal').style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    }
+
+    function hideDryRunResultsModal() {
+        document.getElementById('dryRunResultsModal').style.display = 'none';
+        document.body.style.overflow = '';
     }
 
     async function updateScheduledTask() {
@@ -3576,6 +3804,19 @@
             if (!config.plexAccountId || !config.profileId) {
                 showToast('Please select a Plex account and profile', 'error');
                 return;
+            }
+        }
+
+        // Add sync options for sync-type tasks
+        if (taskType.includes('sync')) {
+            config.syncDirection = document.getElementById('editTaskSyncDirection').value;
+            config.deleteBehavior = document.getElementById('editTaskDeleteBehavior').value;
+            if (config.syncDirection === 'bidirectional') {
+                config.conflictResolution = document.getElementById('editTaskConflictResolution').value;
+            }
+            // Add dry run option
+            if (document.getElementById('editTaskDryRun').checked) {
+                config.dryRun = 'true';
             }
         }
 
