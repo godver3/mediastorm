@@ -13,6 +13,8 @@ type WatchlistItem struct {
 	BackdropURL string            `json:"backdropUrl,omitempty"`
 	AddedAt     time.Time         `json:"addedAt"`
 	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	SyncSource  string            `json:"syncSource,omitempty"` // e.g., "plex:<accountId>:<taskId>" for synced items
+	SyncedAt    *time.Time        `json:"syncedAt,omitempty"`   // when last synced from external source
 }
 
 // WatchlistUpsert captures data required to insert or update a watchlist item.
@@ -25,6 +27,8 @@ type WatchlistUpsert struct {
 	PosterURL   string            `json:"posterUrl,omitempty"`
 	BackdropURL string            `json:"backdropUrl,omitempty"`
 	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	SyncSource  string            `json:"syncSource,omitempty"` // sync source identifier for tracking origin
+	SyncedAt    *time.Time        `json:"syncedAt,omitempty"`   // sync timestamp
 }
 
 // Key returns a stable identifier for the watchlist item combining media type and ID.

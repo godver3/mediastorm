@@ -80,6 +80,28 @@ func (s *Service) List(userID string) ([]models.WatchlistItem, error) {
 	return items, nil
 }
 
+// ListBySyncSource returns all watchlist items that were synced from a specific source.
+func (s *Service) ListBySyncSource(userID, syncSource string) ([]models.WatchlistItem, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, ErrUserIDRequired
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]models.WatchlistItem, 0)
+	if perUser, ok := s.items[userID]; ok {
+		for _, item := range perUser {
+			if item.SyncSource == syncSource {
+				items = append(items, item)
+			}
+		}
+	}
+
+	return items, nil
+}
+
 // AddOrUpdate inserts a new item or updates metadata for an existing one.
 func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (models.WatchlistItem, error) {
 	userID = strings.TrimSpace(userID)
@@ -138,6 +160,14 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 			}
 			item.ExternalIDs = copyIDs
 		}
+	}
+
+	// Update sync tracking fields if provided
+	if strings.TrimSpace(input.SyncSource) != "" {
+		item.SyncSource = input.SyncSource
+	}
+	if input.SyncedAt != nil {
+		item.SyncedAt = input.SyncedAt
 	}
 
 	perUser[key] = item

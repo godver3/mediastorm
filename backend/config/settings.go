@@ -434,6 +434,19 @@ const (
 	ScheduledTaskStatusError   ScheduledTaskStatus = "error"
 )
 
+// DryRunDetails contains the results of a dry run sync operation
+type DryRunDetails struct {
+	ToAdd    []DryRunItem `json:"toAdd,omitempty"`
+	ToRemove []DryRunItem `json:"toRemove,omitempty"`
+}
+
+// DryRunItem represents a single item in dry run results
+type DryRunItem struct {
+	Name      string `json:"name"`
+	MediaType string `json:"mediaType"`
+	ID        string `json:"id"`
+}
+
 // ScheduledTask represents a single scheduled task configuration
 type ScheduledTask struct {
 	ID            string                 `json:"id"`
@@ -446,6 +459,7 @@ type ScheduledTask struct {
 	LastStatus    ScheduledTaskStatus    `json:"lastStatus"`
 	LastError     string                 `json:"lastError,omitempty"`
 	ItemsImported int                    `json:"itemsImported,omitempty"`
+	DryRunDetails *DryRunDetails         `json:"dryRunDetails,omitempty"`   // Results from dry run (what would be added/removed)
 	CreatedAt     time.Time              `json:"createdAt"`
 }
 

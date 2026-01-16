@@ -402,6 +402,58 @@ func (c *Client) GetItemDetails(authToken string, ratingKey string) (map[string]
 	return ids, nil
 }
 
+// AddToWatchlist adds an item to the user's Plex watchlist
+func (c *Client) AddToWatchlist(authToken string, ratingKey string) error {
+	actionURL := fmt.Sprintf("%s/actions/addToWatchlist?ratingKey=%s", plexDiscoverBaseURL, ratingKey)
+
+	req, err := http.NewRequest(http.MethodPut, actionURL, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("plex api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to add to watchlist: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// RemoveFromWatchlist removes an item from the user's Plex watchlist
+func (c *Client) RemoveFromWatchlist(authToken string, ratingKey string) error {
+	actionURL := fmt.Sprintf("%s/actions/removeFromWatchlist?ratingKey=%s", plexDiscoverBaseURL, ratingKey)
+
+	req, err := http.NewRequest(http.MethodPut, actionURL, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("plex api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to remove from watchlist: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // NormalizeMediaType converts Plex media type to strmr media type
 func NormalizeMediaType(plexType string) string {
 	switch strings.ToLower(plexType) {
