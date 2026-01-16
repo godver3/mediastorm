@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"novastream/config"
@@ -208,7 +209,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 	// For movies, check if we should use released-only source (MDBList)
 	if normalized == "movie" && trendingMovieSource == config.TrendingMovieSourceReleased {
 		// Use MDBList directly for released movies only
-		fallbackKey := cacheKey("mdblist", "trending", "movie")
+		// v2: includes release data enrichment
+		fallbackKey := cacheKey("mdblist", "trending", "movie", "v2")
 		var cached []models.TrendingItem
 		if ok, _ := s.cache.get(fallbackKey, &cached); ok && len(cached) > 0 {
 			return cached, nil
@@ -218,6 +220,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		if err != nil {
 			return nil, err
 		}
+		// Enrich movies with release data (theatrical/home release)
+		s.enrichTrendingMovieReleases(ctx, items)
 		if len(items) > 0 {
 			_ = s.cache.set(fallbackKey, items)
 		}
@@ -226,7 +230,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 
 	// Use TMDB for "all" trending (includes unreleased) or for TV shows
 	if s.tmdb != nil && s.tmdb.isConfigured() {
-		key := cacheKey("tmdb", "trending", normalized)
+		// v2: includes release data enrichment for movies
+		key := cacheKey("tmdb", "trending", normalized, "v2")
 		var cached []models.TrendingItem
 		if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
 			return cached, nil
@@ -236,6 +241,10 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		if err == nil && len(items) > 0 {
 			// Enrich with IMDB IDs using cached lookups
 			s.enrichTrendingIMDBIDs(ctx, items, normalized)
+			// Enrich movies with release data (theatrical/home release)
+			if normalized == "movie" {
+				s.enrichTrendingMovieReleases(ctx, items)
+			}
 			_ = s.cache.set(key, items)
 			return items, nil
 		}
@@ -252,7 +261,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
 	}
 
-	fallbackKey := cacheKey("mdblist", "trending", fallbackLabel)
+	// v2: includes release data enrichment for movies
+	fallbackKey := cacheKey("mdblist", "trending", fallbackLabel, "v2")
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(fallbackKey, &cached); ok && len(cached) > 0 {
 		return cached, nil
@@ -261,6 +271,10 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 	items, err := fallbackFetcher()
 	if err != nil {
 		return nil, err
+	}
+	// Enrich movies with release data (theatrical/home release)
+	if normalized == "movie" {
+		s.enrichTrendingMovieReleases(ctx, items)
 	}
 	if len(items) > 0 {
 		_ = s.cache.set(fallbackKey, items)
@@ -342,6 +356,47 @@ func (s *Service) enrichTrendingIMDBIDs(ctx context.Context, items []models.Tren
 		}(idx)
 	}
 	wg.Wait()
+}
+
+// enrichTrendingMovieReleases adds release data (theatrical/home release) to trending movie items.
+// This runs concurrently for performance. Release data is cached by enrichMovieReleases.
+func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []models.TrendingItem) {
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var enrichedCount int32
+
+	for idx := range items {
+		// Skip non-movies
+		if items[idx].Title.MediaType != "movie" {
+			continue
+		}
+		// Skip if already has release data
+		if items[idx].Title.HomeRelease != nil || items[idx].Title.Theatrical != nil {
+			continue
+		}
+		// Need TMDB ID to fetch releases
+		tmdbID := items[idx].Title.TMDBID
+		if tmdbID <= 0 {
+			continue
+		}
+
+		wg.Add(1)
+		go func(i int, tmdbID int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if s.enrichMovieReleases(ctx, &items[i].Title, tmdbID) {
+				atomic.AddInt32(&enrichedCount, 1)
+			}
+		}(idx, tmdbID)
+	}
+	wg.Wait()
+
+	if enrichedCount > 0 {
+		log.Printf("[metadata] enriched %d trending movies with release data", enrichedCount)
+	}
 }
 
 // searchDemo searches the demo public domain content for matching titles
