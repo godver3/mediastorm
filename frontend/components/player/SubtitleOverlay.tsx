@@ -368,8 +368,17 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       }
     }
 
+    // Check if we're on mobile in portrait mode
+    const isMobile = !Platform.isTV;
+    const isPortrait = containerSize ? containerSize.height > containerSize.width : false;
+    const isMobilePortrait = isMobile && isPortrait;
+
     // Use letterboxBottom from player when available (accurate measurement from screen dimensions)
     if (letterboxBottom !== undefined) {
+      // Mobile portrait: position near bottom of screen (ignore letterbox)
+      if (isMobilePortrait && !controlsVisible) {
+        return basePadding;
+      }
       // When controls are visible, position above controls (which are at screen bottom)
       // When controls are hidden, position above letterbox bars
       const effectiveBottom = controlsVisible ? Math.max(letterboxBottom, controlsOffset) : letterboxBottom;
@@ -379,6 +388,11 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     // Fall back to calculation based on video dimensions and container size
     if (!containerSize) {
       return basePadding + controlsOffset;
+    }
+
+    // Mobile portrait without controls: position near bottom of screen
+    if (isMobilePortrait && !controlsVisible) {
+      return basePadding;
     }
 
     const { width: containerWidth, height: containerHeight } = containerSize;
