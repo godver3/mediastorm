@@ -349,8 +349,25 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Use DefaultUserSettings as defaults
+	// Build defaults from global settings, falling back to hardcoded defaults
 	defaults := models.DefaultUserSettings()
+	if h.configManager != nil {
+		if globalSettings, err := h.configManager.Load(); err == nil {
+			// Merge global playback preferences into defaults
+			if globalSettings.Playback.PreferredAudioLanguage != "" {
+				defaults.Playback.PreferredAudioLanguage = globalSettings.Playback.PreferredAudioLanguage
+			}
+			if globalSettings.Playback.PreferredSubtitleLanguage != "" {
+				defaults.Playback.PreferredSubtitleLanguage = globalSettings.Playback.PreferredSubtitleLanguage
+			}
+			if globalSettings.Playback.PreferredSubtitleMode != "" {
+				defaults.Playback.PreferredSubtitleMode = globalSettings.Playback.PreferredSubtitleMode
+			}
+			if globalSettings.Playback.SubtitleSize != 0 {
+				defaults.Playback.SubtitleSize = globalSettings.Playback.SubtitleSize
+			}
+		}
+	}
 
 	userSettings, err := h.userSettingsService.GetWithDefaults(profileID, defaults)
 	if err != nil {
