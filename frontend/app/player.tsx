@@ -385,10 +385,35 @@ export default function PlayerScreen() {
   // External subtitle search state
   const [subtitleSearchModalVisible, setSubtitleSearchModalVisible] = useState<boolean>(false);
   const [externalSubtitleUrl, setExternalSubtitleUrl] = useState<string | null>(null);
+  const externalSubtitleUrlRef = useRef<string | null>(null);
   const [subtitleSearchResults, setSubtitleSearchResults] = useState<SubtitleSearchResult[]>([]);
   const [subtitleSearchLoading, setSubtitleSearchLoading] = useState<boolean>(false);
   const [subtitleSearchError, setSubtitleSearchError] = useState<string | null>(null);
   const [subtitleSearchLanguage, setSubtitleSearchLanguage] = useState<string>('en');
+  const subtitleSearchLanguageInitializedRef = useRef(false);
+
+  // Initialize subtitle search language from user's preferred subtitle language
+  // Settings use ISO 639-2 (3-letter) codes, but subtitle search uses ISO 639-1 (2-letter) codes
+  useEffect(() => {
+    if (subtitleSearchLanguageInitializedRef.current) return;
+    const preferredLang =
+      userSettings?.playback?.preferredSubtitleLanguage ||
+      settings?.playback?.preferredSubtitleLanguage;
+    if (preferredLang) {
+      // Map ISO 639-2 (3-letter) to ISO 639-1 (2-letter) codes
+      const iso639_2_to_1: Record<string, string> = {
+        eng: 'en', spa: 'es', fra: 'fr', fre: 'fr', deu: 'de', ger: 'de',
+        ita: 'it', por: 'pt', nld: 'nl', dut: 'nl', pol: 'pl', rus: 'ru',
+        jpn: 'ja', kor: 'ko', zho: 'zh', chi: 'zh', ara: 'ar', heb: 'he',
+        swe: 'sv', nor: 'no', nob: 'no', nno: 'no', dan: 'da', fin: 'fi',
+        hrv: 'hr', srp: 'sr', bos: 'bs',
+      };
+      const twoLetterCode = iso639_2_to_1[preferredLang.toLowerCase()] || preferredLang;
+      setSubtitleSearchLanguage(twoLetterCode);
+      subtitleSearchLanguageInitializedRef.current = true;
+    }
+  }, [userSettings?.playback?.preferredSubtitleLanguage, settings?.playback?.preferredSubtitleLanguage]);
+
   // Subtitle timing offset (positive = subtitles appear later, negative = earlier)
   // Applies to all sidecar subtitles (HLS, extracted, and external)
   const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
@@ -493,6 +518,8 @@ export default function PlayerScreen() {
         language: subtitleSearchLanguage,
       });
       console.log('[player] external subtitle URL:', url);
+      // Update ref synchronously before setting state to prevent race conditions
+      externalSubtitleUrlRef.current = url;
       setExternalSubtitleUrl(url);
       // Set subtitle track to a special external ID
       setSelectedSubtitleTrackId('external');
@@ -501,7 +528,14 @@ export default function PlayerScreen() {
     [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, subtitleSearchLanguage, handleCloseSubtitleSearch],
   );
 
+  // Helper to check if a language code is English
+  const isEnglishLanguage = useCallback((lang: string) => {
+    const normalized = lang.toLowerCase();
+    return ['en', 'eng', 'english'].includes(normalized);
+  }, []);
+
   // Auto-subtitle search: automatically search for subtitles when no embedded tracks match preference
+  // Fallback order: preferred language online -> English embedded -> none
   const performAutoSubtitleSearch = useCallback(async (language: string) => {
     console.log('[player] starting auto-subtitle search for language:', language);
     setAutoSubtitleStatus('searching');
@@ -520,6 +554,27 @@ export default function PlayerScreen() {
       console.log('[player] auto-subtitle search returned', results.length, 'results');
 
       if (results.length === 0) {
+        // If no results and preferred language is not English, try English embedded track
+        if (!isEnglishLanguage(language)) {
+          console.log('[player] no results for preferred language, trying English embedded fallback');
+
+          if (subtitleStreamMetadata && subtitleStreamMetadata.length > 0) {
+            const englishEmbeddedIndex = findSubtitleTrackByPreference(
+              subtitleStreamMetadata,
+              'eng',
+              'on',
+            );
+            if (englishEmbeddedIndex !== null) {
+              console.log('[player] found English embedded track:', englishEmbeddedIndex);
+              setSelectedSubtitleTrackId(String(englishEmbeddedIndex));
+              setAutoSubtitleStatus('ready');
+              setAutoSubtitleMessage('Using English subtitles');
+              setTimeout(() => setAutoSubtitleMessage(null), 2000);
+              return;
+            }
+          }
+        }
+
         setAutoSubtitleStatus('no-results');
         setAutoSubtitleMessage('No subtitles found');
         setTimeout(() => setAutoSubtitleMessage(null), 3000);
@@ -543,19 +598,44 @@ export default function PlayerScreen() {
         language,
       });
 
+      // Update ref synchronously before setting state to prevent race conditions
+      externalSubtitleUrlRef.current = url;
       setExternalSubtitleUrl(url);
       setSelectedSubtitleTrackId('external');
       setAutoSubtitleStatus('ready');
       setAutoSubtitleMessage('Subtitles ready');
+      console.log('[player] external subtitle URL set:', url);
       setTimeout(() => setAutoSubtitleMessage(null), 2000);
 
     } catch (error) {
       console.error('[player] auto-subtitle search error:', error);
+
+      // If search failed and preferred language is not English, try English embedded track
+      if (!isEnglishLanguage(language)) {
+        console.log('[player] search failed, trying English embedded fallback');
+
+        if (subtitleStreamMetadata && subtitleStreamMetadata.length > 0) {
+          const englishEmbeddedIndex = findSubtitleTrackByPreference(
+            subtitleStreamMetadata,
+            'eng',
+            'on',
+          );
+          if (englishEmbeddedIndex !== null) {
+            console.log('[player] found English embedded track:', englishEmbeddedIndex);
+            setSelectedSubtitleTrackId(String(englishEmbeddedIndex));
+            setAutoSubtitleStatus('ready');
+            setAutoSubtitleMessage('Using English subtitles');
+            setTimeout(() => setAutoSubtitleMessage(null), 2000);
+            return;
+          }
+        }
+      }
+
       setAutoSubtitleStatus('failed');
       setAutoSubtitleMessage('Subtitle search failed');
       setTimeout(() => setAutoSubtitleMessage(null), 3000);
     }
-  }, [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, releaseName]);
+  }, [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, releaseName, isEnglishLanguage, subtitleStreamMetadata]);
 
   // Check conditions and trigger auto-subtitle search if needed
   const triggerAutoSubtitleSearchIfNeeded = useCallback(() => {
@@ -619,6 +699,11 @@ export default function PlayerScreen() {
 
   // Check if external subtitles are active
   const isUsingExternalSubtitles = selectedSubtitleTrackId === 'external' && externalSubtitleUrl !== null;
+
+  // Keep ref in sync with state for use in closures
+  useEffect(() => {
+    externalSubtitleUrlRef.current = externalSubtitleUrl;
+  }, [externalSubtitleUrl]);
 
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hasStartedPlaying, setHasStartedPlaying] = useState<boolean>(false);
@@ -3934,11 +4019,19 @@ export default function PlayerScreen() {
         validMode,
       );
 
+      // Check if external subtitles are already active
+      if (externalSubtitleUrlRef.current) {
+        console.log('[player] preserving external subtitle selection');
+        return;
+      }
+
       if (selectedIndex !== null) {
         setSelectedSubtitleTrackId(String(selectedIndex));
-      } else {
+      } else if (validMode === 'off') {
         setSelectedSubtitleTrackId('off');
-        // No matching embedded track - trigger auto-search
+      } else {
+        // Preferred language not found - trigger auto-search
+        setSelectedSubtitleTrackId('off');
         triggerAutoSubtitleSearchIfNeeded();
       }
       return;
@@ -4010,24 +4103,28 @@ export default function PlayerScreen() {
             validMode,
           );
 
+          // Check if external subtitles are already active
+          if (externalSubtitleUrlRef.current) {
+            console.log('[player] preserving external subtitle selection');
+            return;
+          }
+
           if (selectedIndex !== null) {
             setSelectedSubtitleTrackId(String(selectedIndex));
           } else if (validMode === 'off') {
             setSelectedSubtitleTrackId('off');
           } else {
-            // No preferred language set - check if current selection is valid
-            // This handles the race condition where the player set an invalid track id
-            setSelectedSubtitleTrackId((current) => {
-              if (current && validTrackIds.has(current)) {
-                return current; // Current selection is valid, keep it
-              }
-              // Current selection is invalid, default to first track or off
-              const firstTrackId = response.tracks[0] ? String(response.tracks[0].index) : 'off';
-              return firstTrackId;
-            });
+            // Preferred language not found - trigger auto-search
+            setSelectedSubtitleTrackId('off');
+            triggerAutoSubtitleSearchIfNeeded();
           }
         } else {
           // No text-based subtitle tracks found (e.g., only PGS bitmap subs)
+          // Check if external subtitles are already active
+          if (externalSubtitleUrlRef.current) {
+            console.log('[player] preserving external subtitle selection');
+            return;
+          }
           // Clear any player-reported tracks and show only "Off" option
           console.log('[player] no text-based subtitle tracks found, clearing player-reported tracks');
           setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
@@ -4749,8 +4846,13 @@ export default function PlayerScreen() {
               preferredSubtitleLanguage,
               preferredSubtitleMode,
             );
-            if (preferredSubtitleIndex !== null || preferredSubtitleMode === 'off') {
-              selectedSubtitleIndex = preferredSubtitleIndex ?? undefined;
+            if (preferredSubtitleIndex !== null) {
+              selectedSubtitleIndex = preferredSubtitleIndex;
+            } else if (preferredSubtitleMode === 'off') {
+              selectedSubtitleIndex = undefined;
+            } else {
+              // Preferred language not found - set to off and trigger auto-search
+              selectedSubtitleIndex = undefined;
             }
           }
 
@@ -4765,11 +4867,17 @@ export default function PlayerScreen() {
             preferredSubtitleIndex:
               selectedSubtitleIndex !== metadata.selectedSubtitleIndex ? selectedSubtitleIndex : undefined,
           });
-          setSelectedSubtitleTrackId(resolvedSubtitleSelection);
 
-          // Trigger auto-search if no suitable embedded track was found
-          if (resolvedSubtitleSelection === 'off' && preferredSubtitleMode !== 'off') {
-            triggerAutoSubtitleSearchIfNeeded();
+          // Don't overwrite external subtitle selection if auto-search already found subtitles
+          if (externalSubtitleUrlRef.current) {
+            console.log('[player] preserving external subtitle selection');
+          } else {
+            setSelectedSubtitleTrackId(resolvedSubtitleSelection);
+
+            // Trigger auto-search if no suitable embedded track was found
+            if (resolvedSubtitleSelection === 'off' && preferredSubtitleMode !== 'off') {
+              triggerAutoSubtitleSearchIfNeeded();
+            }
           }
         } else {
           console.log('[player] skipping subtitle options from metadata - backend probe will set correct indices');
@@ -5246,6 +5354,7 @@ export default function PlayerScreen() {
                                 setSelectedSubtitleTrackId(id);
                                 // Clear external subtitle when switching to embedded track
                                 if (id !== 'external') {
+                                  externalSubtitleUrlRef.current = null;
                                   setExternalSubtitleUrl(null);
                                 }
                                 // Save per-content language preference
@@ -5371,6 +5480,7 @@ export default function PlayerScreen() {
                             setSelectedSubtitleTrackId(id);
                             // Clear external subtitle when switching to embedded track
                             if (id !== 'external') {
+                              externalSubtitleUrlRef.current = null;
                               setExternalSubtitleUrl(null);
                             }
                             // Save per-content language preference

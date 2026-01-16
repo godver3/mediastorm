@@ -233,7 +233,6 @@ export const findSubtitleTrackByPreference = (
     }
 
     // No matching language found - return null to trigger auto-search
-    // Don't fall back to a random language the user didn't ask for
     return null;
   }
 

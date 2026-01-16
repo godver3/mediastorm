@@ -14,6 +14,70 @@ from subliminal.video import Episode, Movie
 region.configure('dogpile.cache.memory')
 
 
+def ass_to_vtt(ass_content: str) -> str:
+    """Convert ASS/SSA subtitle format to WebVTT format."""
+    vtt_lines = ["WEBVTT", ""]
+
+    in_events = False
+    format_line = None
+
+    for line in ass_content.split('\n'):
+        line = line.strip()
+
+        if line.lower() == '[events]':
+            in_events = True
+            continue
+        elif line.startswith('[') and in_events:
+            # New section, stop processing events
+            break
+
+        if in_events:
+            if line.lower().startswith('format:'):
+                format_line = line[7:].strip().split(',')
+                format_line = [f.strip().lower() for f in format_line]
+            elif line.lower().startswith('dialogue:'):
+                if not format_line:
+                    continue
+
+                # Parse dialogue line
+                parts = line[9:].split(',', len(format_line) - 1)
+                if len(parts) < len(format_line):
+                    continue
+
+                dialogue = dict(zip(format_line, parts))
+
+                start = dialogue.get('start', '')
+                end = dialogue.get('end', '')
+                text = dialogue.get('text', '')
+
+                if not start or not end or not text:
+                    continue
+
+                # Convert ASS timestamp (H:MM:SS.cc) to VTT (HH:MM:SS.mmm)
+                def convert_timestamp(ts):
+                    # ASS format: H:MM:SS.cc (centiseconds)
+                    match = re.match(r'(\d+):(\d{2}):(\d{2})\.(\d{2})', ts)
+                    if match:
+                        h, m, s, cs = match.groups()
+                        return f"{int(h):02d}:{m}:{s}.{cs}0"
+                    return ts
+
+                vtt_start = convert_timestamp(start)
+                vtt_end = convert_timestamp(end)
+
+                # Remove ASS styling tags like {\pos(x,y)} {\an8} etc
+                text = re.sub(r'\{[^}]*\}', '', text)
+                # Convert \N to newline
+                text = text.replace('\\N', '\n').replace('\\n', '\n')
+
+                if text.strip():
+                    vtt_lines.append(f"{vtt_start} --> {vtt_end}")
+                    vtt_lines.append(text.strip())
+                    vtt_lines.append("")
+
+    return '\n'.join(vtt_lines)
+
+
 def srt_to_vtt(srt_content: str) -> str:
     """Convert SRT subtitle format to WebVTT format."""
     if not srt_content:
@@ -59,6 +123,19 @@ def srt_to_vtt(srt_content: str) -> str:
         vtt_lines.append("")
 
     return '\n'.join(vtt_lines)
+
+
+def convert_to_vtt(content: str) -> str:
+    """Detect subtitle format and convert to WebVTT."""
+    if not content:
+        return "WEBVTT\n\n"
+
+    # Detect ASS/SSA format
+    if '[Script Info]' in content or '[V4+ Styles]' in content or '[Events]' in content:
+        return ass_to_vtt(content)
+
+    # Assume SRT format
+    return srt_to_vtt(content)
 
 
 def main():
@@ -169,7 +246,7 @@ def main():
             sys.exit(1)
 
         # Convert to VTT
-        vtt_content = srt_to_vtt(content)
+        vtt_content = convert_to_vtt(content)
 
         # Output raw VTT (not JSON)
         print(vtt_content)

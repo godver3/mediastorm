@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -167,6 +168,7 @@ type SubtitleDownloadParams struct {
 
 // Download downloads a specific subtitle and returns VTT content
 func (h *SubtitlesHandler) Download(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[subtitles] Download request: %s", r.URL.String())
 	q := r.URL.Query()
 	subtitleID := q.Get("subtitleId")
 	provider := q.Get("provider")
@@ -176,6 +178,7 @@ func (h *SubtitlesHandler) Download(w http.ResponseWriter, r *http.Request) {
 	if language == "" {
 		language = "en"
 	}
+	log.Printf("[subtitles] Download params: subtitleID=%s provider=%s imdbID=%s title=%s language=%s", subtitleID, provider, imdbID, title, language)
 
 	if subtitleID == "" || provider == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -234,20 +237,24 @@ func (h *SubtitlesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[subtitles] Running Python script: %s with params: %s", scriptPath, string(paramsJSON))
 	cmd := exec.Command(pythonPath, scriptPath, string(paramsJSON))
 	output, err := cmd.Output()
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			log.Printf("[subtitles] Python script error: %s", string(exitErr.Stderr))
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": string(exitErr.Stderr)})
 			return
 		}
+		log.Printf("[subtitles] Python script exec error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	log.Printf("[subtitles] Python script output: %d bytes", len(output))
 	// Output is VTT content
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Write(output)
