@@ -391,6 +391,8 @@ export default function PlayerScreen() {
   const [subtitleSearchError, setSubtitleSearchError] = useState<string | null>(null);
   const [subtitleSearchLanguage, setSubtitleSearchLanguage] = useState<string>('en');
   const subtitleSearchLanguageInitializedRef = useRef(false);
+  // Track the language of the current search request to ignore stale results
+  const currentSubtitleSearchLanguageRef = useRef<string | null>(null);
 
   // Initialize subtitle search language from user's preferred subtitle language
   // Settings use ISO 639-2 (3-letter) codes, but subtitle search uses ISO 639-1 (2-letter) codes
@@ -478,6 +480,8 @@ export default function PlayerScreen() {
 
   const handleSubtitleSearch = useCallback(
     async (language: string) => {
+      // Track this search request to ignore stale results if user switches language mid-search
+      currentSubtitleSearchLanguageRef.current = language;
       setSubtitleSearchLanguage(language);
       setSubtitleSearchLoading(true);
       setSubtitleSearchError(null);
@@ -491,14 +495,22 @@ export default function PlayerScreen() {
           episode: episodeNumber,
           language,
         });
-        console.log('[player] subtitle search results:', results.length);
-        setSubtitleSearchResults(results);
+        // Only update results if this is still the current search (user hasn't switched language)
+        if (currentSubtitleSearchLanguageRef.current === language) {
+          console.log('[player] subtitle search results:', results.length);
+          setSubtitleSearchResults(results);
+          setSubtitleSearchLoading(false);
+        } else {
+          console.log('[player] ignoring stale subtitle search results for', language);
+        }
       } catch (error) {
-        console.error('[player] subtitle search error:', error);
-        setSubtitleSearchError('Failed to search for subtitles');
-        setSubtitleSearchResults([]);
-      } finally {
-        setSubtitleSearchLoading(false);
+        // Only update error if this is still the current search
+        if (currentSubtitleSearchLanguageRef.current === language) {
+          console.error('[player] subtitle search error:', error);
+          setSubtitleSearchError('Failed to search for subtitles');
+          setSubtitleSearchResults([]);
+          setSubtitleSearchLoading(false);
+        }
       }
     },
     [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber],

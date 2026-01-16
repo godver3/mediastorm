@@ -70,6 +70,14 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage || 'en');
   const scrollViewRef = useRef<ScrollView>(null);
 
+  // Sync selectedLanguage with currentLanguage prop when it changes
+  // This handles the case where settings load after the component mounts
+  useEffect(() => {
+    if (currentLanguage) {
+      setSelectedLanguage(currentLanguage);
+    }
+  }, [currentLanguage]);
+
   // Sort results by similarity to media release name
   const sortedResults = useMemo(() => {
     if (!mediaReleaseName || searchResults.length === 0) {
@@ -490,9 +498,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
       fontWeight: '600',
-      backgroundColor: theme.colors.background.surface,
       paddingRight: theme.spacing.md,
-      zIndex: 1,
     },
     languageScrollView: {
       flex: 1,
