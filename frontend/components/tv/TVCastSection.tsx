@@ -20,15 +20,16 @@ import type { NovaTheme } from '@/theme';
 import type { Credits, CastMember } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
+import MarqueeText from './MarqueeText';
 
 const isAppleTV = Platform.isTV && Platform.OS === 'ios';
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Card dimensions - scaled for TV viewing distance
-const CARD_WIDTH = tvScale(140);
-const CARD_HEIGHT = tvScale(210);
-const PHOTO_HEIGHT = tvScale(160);
-const CARD_GAP = tvScale(16);
+const CARD_WIDTH = tvScale(170);
+const CARD_HEIGHT = tvScale(260);
+const PHOTO_HEIGHT = tvScale(195);
+const CARD_GAP = tvScale(18);
 
 interface TVCastSectionProps {
   credits: Credits | null | undefined;
@@ -128,16 +129,19 @@ const TVCastSection = memo(function TVCastSection({
                 </View>
               )}
               <View style={styles.textContainer}>
-                <Text
+                <MarqueeText
                   style={[styles.actorName, focused && styles.textFocused]}
-                  numberOfLines={2}
+                  focused={focused}
                 >
                   {actor.name}
-                </Text>
+                </MarqueeText>
                 {actor.character && (
-                  <Text style={styles.characterName} numberOfLines={2}>
+                  <MarqueeText
+                    style={styles.characterName}
+                    focused={focused}
+                  >
                     {actor.character}
-                  </Text>
+                  </MarqueeText>
                 )}
               </View>
             </>
@@ -275,23 +279,23 @@ const createStyles = (theme: NovaTheme) =>
     },
     textContainer: {
       flex: 1,
-      padding: tvScale(8),
+      padding: tvScale(10),
       justifyContent: 'flex-start',
     },
     actorName: {
-      fontSize: tvScale(13),
+      fontSize: tvScale(17),
       fontWeight: '600',
       color: theme.colors.text.primary,
-      lineHeight: tvScale(16),
+      lineHeight: tvScale(20),
     },
     textFocused: {
       color: theme.colors.text.primary,
     },
     characterName: {
-      fontSize: tvScale(11),
+      fontSize: tvScale(15),
       color: theme.colors.text.secondary,
-      marginTop: tvScale(2),
-      lineHeight: tvScale(14),
+      marginTop: tvScale(3),
+      lineHeight: tvScale(18),
     },
   });
 
