@@ -1958,7 +1958,7 @@ function IndexScreen() {
   // Note: focusedShelfIndex computation removed - was unused (_shouldShowTopGradient)
   // The ref focusedShelfKeyRef.current can be read synchronously if needed
 
-  // Spatial navigation: open drawer when user tries to navigate left but there's nowhere to go
+  // Spatial navigation: active when screen focused, menu closed, and no modals open
   const isSpatialNavActive = focused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible && !isVersionMismatchVisible;
   const onDirectionHandledWithoutMovement = useCallback(
     (direction: Direction) => {

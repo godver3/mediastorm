@@ -200,19 +200,7 @@ export default function DrawerLayout() {
             href: null,
           }}
         />
-        <Tabs.Screen
-          name="debug"
-          options={{
-            href: null,
-          }}
-        />
-        <Tabs.Screen
-          name="debug2"
-          options={{
-            href: null,
-          }}
-        />
-      </Tabs>
+        </Tabs>
     );
   }
 
@@ -239,8 +227,6 @@ export default function DrawerLayout() {
           <Stack.Screen name="nav-test-flatlist" />
           <Stack.Screen name="nav-test-native" />
           <Stack.Screen name="modal-test" />
-          <Stack.Screen name="debug" />
-          <Stack.Screen name="debug2" />
         </Stack>
       </TVBackground>
 
