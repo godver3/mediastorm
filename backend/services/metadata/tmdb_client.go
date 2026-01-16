@@ -314,7 +314,13 @@ func buildTMDBImage(imagePath, size, imageType string) *models.Image {
 }
 
 func normalizeLanguage(lang string) string {
-	lang = strings.ReplaceAll(lang, "_", "-")
+	lang = strings.TrimSpace(strings.ReplaceAll(lang, "_", "-"))
+
+	// Convert 3-letter ISO 639-2 codes to 2-letter ISO 639-1 codes
+	if len(lang) == 3 {
+		lang = iso639_2to1(lang)
+	}
+
 	if len(lang) == 2 {
 		return strings.ToLower(lang) + "-US"
 	}
@@ -322,6 +328,65 @@ func normalizeLanguage(lang string) string {
 		return strings.ToLower(lang[:2]) + "-" + strings.ToUpper(lang[3:])
 	}
 	return "en-US"
+}
+
+// iso639_2to1 converts 3-letter ISO 639-2 language codes to 2-letter ISO 639-1 codes
+func iso639_2to1(code string) string {
+	code = strings.ToLower(code)
+	switch code {
+	case "eng":
+		return "en"
+	case "spa":
+		return "es"
+	case "fra":
+		return "fr"
+	case "deu":
+		return "de"
+	case "ita":
+		return "it"
+	case "por":
+		return "pt"
+	case "jpn":
+		return "ja"
+	case "kor":
+		return "ko"
+	case "zho":
+		return "zh"
+	case "rus":
+		return "ru"
+	case "ara":
+		return "ar"
+	case "hin":
+		return "hi"
+	case "nld":
+		return "nl"
+	case "swe":
+		return "sv"
+	case "nor":
+		return "no"
+	case "dan":
+		return "da"
+	case "fin":
+		return "fi"
+	case "pol":
+		return "pl"
+	case "tur":
+		return "tr"
+	case "heb":
+		return "he"
+	case "ces":
+		return "cs"
+	case "hun":
+		return "hu"
+	case "ron":
+		return "ro"
+	case "tha":
+		return "th"
+	case "vie":
+		return "vi"
+	default:
+		return "en"
+	}
 }
 
 func scoreFallback(popularity, voteAverage float64) float64 {

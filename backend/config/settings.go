@@ -475,7 +475,7 @@ func DefaultSettings() Settings {
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
-		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "en"},
+		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "eng"},
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
