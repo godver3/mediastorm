@@ -11,9 +11,6 @@ type Direction = 'right' | 'left' | 'up' | 'down' | 'enter' | 'long_enter' | '*'
 // Global flag to ensure we only configure once
 let isConfigured = false;
 
-// Android TV uses native focus - skip SpatialNavigation remote control to avoid double event handling
-const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
-
 export default function ConfigureRemoteControl() {
   const configuredRef = useRef(false);
 
@@ -23,8 +20,8 @@ export default function ConfigureRemoteControl() {
       return;
     }
 
-    // Skip SpatialNavigation remote control on Android TV - uses native focus
-    if (isAndroidTV) {
+    // Skip on non-TV platforms
+    if (!Platform.isTV) {
       isConfigured = true;
       configuredRef.current = true;
       return;
@@ -33,6 +30,7 @@ export default function ConfigureRemoteControl() {
     isConfigured = true;
     configuredRef.current = true;
 
+    // Configure remote control for spatial navigation on all TV platforms
     SpatialNavigation.configureRemoteControl({
       remoteControlSubscriber: (callback: (direction: Direction | null) => void) => {
         const mapping: { [key in SupportedKeys]: Direction | null } = {
