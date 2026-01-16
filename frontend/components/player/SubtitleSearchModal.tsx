@@ -499,10 +499,10 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     languageScrollView: {
       flex: 1,
-      height: 36,
-      overflow: 'hidden',
+      minHeight: 36,
     },
     languageList: {
+      alignItems: 'center',
       paddingRight: theme.spacing.md,
     },
     languageChip: {
