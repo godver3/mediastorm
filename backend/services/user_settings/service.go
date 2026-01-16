@@ -94,7 +94,7 @@ func (s *Service) GetUsersWithOverrides() map[string]bool {
 
 // GetWithDefaults returns the user's settings merged with defaults.
 // If the user has no custom settings, returns the defaults.
-// If the user has settings but is missing new sections, those are filled from defaults.
+// If the user has settings but is missing fields, those are filled from defaults.
 func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (models.UserSettings, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -105,8 +105,26 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	defer s.mu.RUnlock()
 
 	if settings, ok := s.settings[userID]; ok {
-		// Fill in any missing sections from defaults
-		// This handles cases where new sections are added after user settings were created
+		// Fill in missing Playback fields from defaults
+		// Empty strings indicate "not set" and should inherit from defaults
+		if settings.Playback.PreferredPlayer == "" {
+			settings.Playback.PreferredPlayer = defaults.Playback.PreferredPlayer
+		}
+		if settings.Playback.PreferredAudioLanguage == "" {
+			settings.Playback.PreferredAudioLanguage = defaults.Playback.PreferredAudioLanguage
+		}
+		if settings.Playback.PreferredSubtitleLanguage == "" {
+			settings.Playback.PreferredSubtitleLanguage = defaults.Playback.PreferredSubtitleLanguage
+		}
+		if settings.Playback.PreferredSubtitleMode == "" {
+			settings.Playback.PreferredSubtitleMode = defaults.Playback.PreferredSubtitleMode
+		}
+		// SubtitleSize of 0 means "use default"
+		if settings.Playback.SubtitleSize == 0 {
+			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
+		}
+
+		// Fill in missing Display section from defaults
 		if settings.Display.BadgeVisibility == nil {
 			settings.Display = defaults.Display
 		}
