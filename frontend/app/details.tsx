@@ -3990,6 +3990,8 @@ export default function DetailsScreen() {
               flexWrap: 'wrap',
               gap: 8 * tvScale,
               marginTop: 8 * tvScale,
+              marginBottom: 8 * tvScale,
+              marginLeft: tvScale * 48,
             }}>
             {contentPreference.audioLanguage && (
               <View
@@ -4439,7 +4441,7 @@ export default function DetailsScreen() {
           </View>
         )}
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
             {contentPreference.audioLanguage && (
               <View style={{
                 flexDirection: 'row',
