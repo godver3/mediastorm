@@ -2895,11 +2895,18 @@ function VirtualizedShelf({
   );
 
   // Early return for collapsed shelves - must be after all hooks
+  // For TV: wrap in SpatialNavigationNode even when collapsed to maintain navigation order
+  // (nodes register in DOM order, so late-loading shelves would otherwise end up at the end)
   if (shouldCollapse) {
-    return (
+    const collapsedView = (
       <View ref={containerRef} style={[styles.shelf, styles.shelfCollapsed]} accessibilityElementsHidden>
         {/* Empty collapsed shelf */}
       </View>
+    );
+    return Platform.isTV ? (
+      <SpatialNavigationNode orientation="horizontal">{collapsedView}</SpatialNavigationNode>
+    ) : (
+      collapsedView
     );
   }
 
@@ -2929,25 +2936,24 @@ function VirtualizedShelf({
     </View>
   );
 
-  // TV: SpatialNavigationVirtualizedList
+  // TV: SpatialNavigationVirtualizedList (without outer SpatialNavigationNode - that's added at shelf level)
   // Render all items (max 20 + explore card = 21) to ensure onDirectionHandledWithoutMovement
   // only fires at actual list boundaries, not when items aren't yet rendered
   const tvShelfContent = (
-    <SpatialNavigationNode orientation="horizontal">
-      <View style={{ height: rowHeight }}>
-        <SpatialNavigationVirtualizedList
-          data={cards}
-          renderItem={renderTVItem}
-          itemSize={itemSize}
-          orientation="horizontal"
-          numberOfRenderedItems={21}
-          numberOfItemsVisibleOnScreen={isAndroidTV ? 6 : 8}
-        />
-      </View>
-    </SpatialNavigationNode>
+    <View style={{ height: rowHeight }}>
+      <SpatialNavigationVirtualizedList
+        data={cards}
+        renderItem={renderTVItem}
+        itemSize={itemSize}
+        orientation="horizontal"
+        numberOfRenderedItems={21}
+        numberOfItemsVisibleOnScreen={isAndroidTV ? 6 : 8}
+      />
+    </View>
   );
 
-  return (
+  // Shelf content - same structure for TV and non-TV
+  const shelfView = (
     <View ref={containerRef} style={styles.shelf} renderToHardwareTextureAndroid={isAndroidTV}>
       <View style={styles.shelfTitleWrapper}>
         <Text style={styles.shelfTitle}>{title}</Text>
@@ -2962,6 +2968,13 @@ function VirtualizedShelf({
         nonTVShelfContent
       )}
     </View>
+  );
+
+  // For TV: wrap entire shelf in SpatialNavigationNode for consistent registration order
+  return Platform.isTV ? (
+    <SpatialNavigationNode orientation="horizontal">{shelfView}</SpatialNavigationNode>
+  ) : (
+    shelfView
   );
 }
 
