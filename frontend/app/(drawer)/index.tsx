@@ -1453,13 +1453,13 @@ function IndexScreen() {
   }, []);
 
   // Track focused card index within shelf for edge detection (uses ref to avoid re-renders)
+  // Note: closeMenu() is safe to call unconditionally - it's a no-op if already closed
+  // This avoids depending on isMenuOpen which would cause callback recreation on menu state changes
   const handleCardIndexFocus = useCallback((_shelfKey: string, index: number) => {
     focusedCardIndexRef.current = index;
-    // Close menu if it's open - focus has transferred to the shelf
-    if (isMenuOpen) {
-      closeMenu();
-    }
-  }, [isMenuOpen, closeMenu]);
+    // Close menu - focus has transferred to the shelf
+    closeMenu();
+  }, [closeMenu]);
 
   // Create array of hero items for mobile rotation
   // Uses stable ordering - only shuffles new items, doesn't reshuffle on data reload
@@ -1835,30 +1835,7 @@ function IndexScreen() {
     [scrollToShelf],
   );
 
-  const handleSafeAreaLayout = useCallback((event: LayoutChangeEvent) => {
-    if (__DEV__ && Platform.OS === 'ios') {
-      console.log('[SafeArea] Home SafeAreaView layout', event.nativeEvent.layout);
-    }
-  }, []);
-
-  const handleMobileScrollLayout = useCallback((event: LayoutChangeEvent) => {
-    if (__DEV__ && Platform.OS === 'ios') {
-      console.log('[SafeArea] Home mobile ScrollView layout', event.nativeEvent.layout);
-    }
-  }, []);
-
-  const handleMobileContentSizeChange = useCallback((width: number, height: number) => {
-    if (__DEV__ && Platform.OS === 'ios') {
-      console.log('[SafeArea] Home mobile ScrollView content size', { width, height });
-    }
-  }, []);
-
-  const handleDesktopLayout = useCallback((event: LayoutChangeEvent) => {
-    if (__DEV__ && Platform.OS === 'ios') {
-      console.log('[SafeArea] Home desktop layout', event.nativeEvent.layout);
-    }
-  }, []);
-
+  // These callbacks do actual work in production, not just logging
   const handleDesktopScrollLayout = useCallback(
     (event: LayoutChangeEvent) => {
       if (__DEV__ && Platform.OS === 'ios') {
@@ -2060,14 +2037,12 @@ function IndexScreen() {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
-        <FixedSafeAreaView style={mobileStyles.safeArea} edges={['top']} onLayout={handleSafeAreaLayout}>
+        <FixedSafeAreaView style={mobileStyles.safeArea} edges={['top']}>
           <ScrollView
             style={mobileStyles.container}
             contentContainerStyle={mobileStyles.content}
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
-            onLayout={handleMobileScrollLayout}
-            onContentSizeChange={handleMobileContentSizeChange}
           >
             <View style={mobileStyles.heroContainer}>
               {mobileHeroItems.length > 1 ? (
@@ -2246,7 +2221,7 @@ function IndexScreen() {
 
   // Wrap content in SpatialNavigationRoot for TV platforms
   const desktopContent = (
-    <View ref={pageRef} style={desktopStyles?.styles.page} onLayout={handleDesktopLayout}>
+    <View ref={pageRef} style={desktopStyles?.styles.page}>
       {Platform.isTV && (
           <View
             style={desktopStyles?.styles.topSpacer}
@@ -2576,11 +2551,12 @@ function VirtualizedShelf({
   const lastItemIndexRef = React.useRef<number>(cards.length - 1);
   lastItemIndexRef.current = cards.length - 1;
 
-  // Create card lookup map for O(1) access by ID
-  const cardMap = useMemo(() => {
-    const map = new Map<string | number, CardData>();
-    cards.forEach((card) => map.set(card.id, card));
-    return map;
+  // Store card lookup map in ref for O(1) access by ID without causing callback recreation
+  // Using ref instead of useMemo so shelfHandlers doesn't need to depend on cardMap
+  const cardMapRef = React.useRef(new Map<string | number, CardData>());
+  React.useEffect(() => {
+    cardMapRef.current.clear();
+    cards.forEach((card) => cardMapRef.current.set(card.id, card));
   }, [cards]);
 
   // Store callbacks in refs to avoid recreating renderItem
@@ -2634,10 +2610,11 @@ function VirtualizedShelf({
   const scrollToFocusedItemRef = React.useRef(scrollToFocusedItem);
   scrollToFocusedItemRef.current = scrollToFocusedItem;
 
-  // Stable context handlers that use refs - never recreated
+  // Stable context handlers that use refs - never recreated when cards change
+  // Uses cardMapRef (ref) instead of cardMap (useMemo) to avoid recreation on card updates
   const shelfHandlers = useMemo<ShelfCardHandlers>(() => ({
     onSelect: (cardId: string | number) => {
-      const card = cardMap.get(cardId);
+      const card = cardMapRef.current.get(cardId);
       if (card) callbacksRef.current.onCardSelect(card);
     },
     onFocus: (cardId: string | number, index: number) => {
@@ -2650,7 +2627,7 @@ function VirtualizedShelf({
       }
 
       lastFocusTimeRef.current = now;
-      const card = cardMap.get(cardId);
+      const card = cardMapRef.current.get(cardId);
       if (card) {
         callbacksRef.current.onCardFocus(card);
         callbacksRef.current.onCardIndexFocus(shelfKey, index);
@@ -2658,7 +2635,7 @@ function VirtualizedShelf({
       }
       scrollToFocusedItemRef.current(index);
     },
-  }), [cardMap, shelfKey]);
+  }), [shelfKey]);
 
   // Render item callback for FlatList - uses stable handlers via shelfHandlers
   // Dependencies minimized to avoid recreating this callback
@@ -2814,13 +2791,14 @@ function VirtualizedShelf({
 
   // TV: Render function for SpatialNavigationVirtualizedList
   // Must be defined before early returns to maintain consistent hook order
+  // Uses lastItemIndexRef instead of cards.length to avoid recreation when card count changes
   const renderTVItem = useCallback(
     ({ item, index }: { item: CardData; index: number }) => {
       const card = item;
       const rawId = String(card.id ?? index);
       const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
       const shouldAutoFocusItem = autoFocus && index === 0;
-      const isLastItem = index === cards.length - 1;
+      const isLastItem = index === lastItemIndexRef.current;
 
       const releaseIcon = card.mediaType === 'movie' ? getMovieReleaseIcon({
         id: String(card.id),
@@ -2929,7 +2907,7 @@ function VirtualizedShelf({
       }
       return cardElement;
     },
-    [autoFocus, cards.length, shelfHandlers, styles, badgeVisibility],
+    [autoFocus, shelfHandlers, styles, badgeVisibility],
   );
 
   // Early return for collapsed shelves - must be after all hooks
