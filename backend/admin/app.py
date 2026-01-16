@@ -164,9 +164,7 @@ SETTINGS_SCHEMA = {
         "icon": "layout",
         "group": "experience",
         "order": 1,
-        "fields": {
-            "trendingMovieSource": {"type": "select", "label": "Trending Source", "options": ["all", "released"], "description": "Trending movies source"},
-        }
+        "fields": {}
     },
     "homeShelves.shelves": {
         "label": "Shelf Configuration",
