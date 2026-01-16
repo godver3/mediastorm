@@ -230,6 +230,31 @@ function IndexScreen() {
   const router = useRouter();
   const focused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu, closeMenu, setFirstContentFocusableTag } = useMenuContext();
+
+  // Backend settings - must come before trending hooks so we can extract hideUnreleased settings
+  const {
+    loading: settingsLoading,
+    error: settingsError,
+    settings,
+    userSettings,
+    lastLoadedAt: settingsLastLoadedAt,
+    isBackendReachable,
+    retryCountdown,
+  } = useBackendSettings();
+
+  // Extract hideUnreleased settings for trending shelves from settings
+  const trendingMoviesHideUnreleased = useMemo(() => {
+    const allShelves = userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
+    const shelf = allShelves.find((s) => s.id === 'trending-movies');
+    return shelf?.hideUnreleased ?? false;
+  }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
+
+  const trendingTVHideUnreleased = useMemo(() => {
+    const allShelves = userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
+    const shelf = allShelves.find((s) => s.id === 'trending-tv');
+    return shelf?.hideUnreleased ?? false;
+  }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
+
   const {
     items: watchlistItems,
     loading: watchlistLoading,
@@ -248,12 +273,12 @@ function IndexScreen() {
     data: trendingMovies,
     error: trendingMoviesError,
     refetch: refetchTrendingMovies,
-  } = useTrendingMovies(activeUserId ?? undefined);
+  } = useTrendingMovies(activeUserId ?? undefined, true, trendingMoviesHideUnreleased);
   const {
     data: trendingTVShows,
     error: trendingTVShowsError,
     refetch: refetchTrendingTVShows,
-  } = useTrendingTVShows(activeUserId ?? undefined);
+  } = useTrendingTVShows(activeUserId ?? undefined, true, trendingTVHideUnreleased);
   const safeAreaInsets = useSafeAreaInsets();
   // Use Reanimated's animated ref for UI thread scrolling
   const scrollViewRef = useAnimatedRef<Animated.ScrollView>();
@@ -283,15 +308,6 @@ function IndexScreen() {
   const isInitialLoadRef = React.useRef(true);
   // Track if we've been focused before (to detect navigation returns vs initial load)
   const hasBeenFocusedRef = React.useRef(false);
-  const {
-    loading: settingsLoading,
-    error: settingsError,
-    settings,
-    userSettings,
-    lastLoadedAt: settingsLastLoadedAt,
-    isBackendReachable,
-    retryCountdown,
-  } = useBackendSettings();
   const { showToast } = useToast();
   const hasAuthFailureRef = React.useRef(false);
   const previousSettingsLoadedAtRef = React.useRef<number | null>(null);
@@ -299,6 +315,7 @@ function IndexScreen() {
   // Custom list data storage (for MDBList shelves)
   const [customListData, setCustomListData] = useState<Record<string, TrendingItem[]>>({});
   const [customListTotals, setCustomListTotals] = useState<Record<string, number>>({});
+  const [customListUnfilteredTotals, setCustomListUnfilteredTotals] = useState<Record<string, number>>({});
   const [customListLoading, setCustomListLoading] = useState<Record<string, boolean>>({});
   const fetchedListUrlsRef = React.useRef<Set<string>>(new Set());
 
@@ -353,18 +370,25 @@ function IndexScreen() {
         if (!shelf.listUrl) continue;
         // Use shelf's configured limit if set, otherwise use default
         const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
-        // Create cache key that includes URL and limit so changes to either trigger a re-fetch
-        const cacheKey = `${shelf.listUrl}:${itemLimit}`;
-        // Skip if we've already fetched this URL with this limit
+        // Create cache key that includes URL, limit, and hideUnreleased so changes trigger re-fetch
+        const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}`;
+        // Skip if we've already fetched this URL with these parameters
         if (fetchedListUrlsRef.current.has(cacheKey)) continue;
 
         fetchedListUrlsRef.current.add(cacheKey);
         setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
 
         try {
-          const { items, total } = await apiService.getCustomList(shelf.listUrl, itemLimit);
+          const { items, total, unfilteredTotal } = await apiService.getCustomList(
+            shelf.listUrl,
+            itemLimit,
+            undefined, // offset
+            shelf.hideUnreleased,
+          );
           setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
           setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
+          // Store unfilteredTotal for explore card logic (falls back to total if not filtering)
+          setCustomListUnfilteredTotals((prev) => ({ ...prev, [shelf.id]: unfilteredTotal ?? total }));
         } catch (err) {
           console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
         } finally {
@@ -1059,24 +1083,32 @@ function IndexScreen() {
     const result: Record<string, CardData[]> = {};
     for (const [shelfId, items] of Object.entries(customListData)) {
       const allCards = mapTrendingToCards(items, movieReleases);
-      // Use shelf's configured limit if set, otherwise use total from API
       const shelf = customShelves.find((s) => s.id === shelfId);
-      const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : (customListTotals[shelfId] ?? allCards.length);
+      // Use filtered total for display, unfiltered total for explore card decision
+      const filteredTotal = customListTotals[shelfId] ?? allCards.length;
+      const unfilteredTotal = customListUnfilteredTotals[shelfId] ?? filteredTotal;
+      // Use shelf's configured limit if set, otherwise use filtered total
+      const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : filteredTotal;
 
-      // Show explore card only if there are more than 20 items to show
-      if (shelfLimit <= MAX_SHELF_ITEMS_ON_HOME) {
-        // 20 or fewer items - just show them all, no explore card
+      // Calculate how many items are displayed and how many more exist
+      const displayedCount = Math.min(MAX_SHELF_ITEMS_ON_HOME, allCards.length);
+      const remainingCount = Math.max(0, filteredTotal - displayedCount);
+
+      // Show explore card only if:
+      // 1. Unfiltered total exceeds home screen limit (there was enough content originally), AND
+      // 2. There are actually more filtered items to explore (remainingCount > 0)
+      if (unfilteredTotal <= MAX_SHELF_ITEMS_ON_HOME || remainingCount === 0) {
+        // Not enough items or all filtered items already fit - no explore card
         result[shelfId] = allCards.slice(0, shelfLimit);
       } else {
-        // More than 20 items - show 20 + explore card with remainder
-        const remainingCount = shelfLimit - MAX_SHELF_ITEMS_ON_HOME;
+        // Show explore card with remaining filtered items count
         const exploreCard = createExploreCard(shelfId, allCards, remainingCount);
         const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
         result[shelfId] = exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
       }
     }
     return result;
-  }, [customListData, customListTotals, movieReleases, exploreCardPosition, customShelves]);
+  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves]);
 
   // Generate titles for each custom list shelf (mobile)
   const customListTitles = useMemo(() => {
@@ -1092,23 +1124,31 @@ function IndexScreen() {
           homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
         };
       });
-      // Use shelf's configured limit if set, otherwise use total from API
       const shelf = customShelves.find((s) => s.id === shelfId);
-      const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : (customListTotals[shelfId] ?? allTitles.length);
+      // Use filtered total for display, unfiltered total for explore card decision
+      const filteredTotal = customListTotals[shelfId] ?? allTitles.length;
+      const unfilteredTotal = customListUnfilteredTotals[shelfId] ?? filteredTotal;
+      // Use shelf's configured limit if set, otherwise use filtered total
+      const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : filteredTotal;
 
-      // Show explore card only if there are more than 20 items to show
-      if (shelfLimit <= MAX_SHELF_ITEMS_ON_HOME) {
-        // 20 or fewer items - just show them all, no explore card
+      // Calculate how many items are displayed and how many more exist
+      const displayedCount = Math.min(MAX_SHELF_ITEMS_ON_HOME, allTitles.length);
+      const remainingCount = Math.max(0, filteredTotal - displayedCount);
+
+      // Show explore card only if:
+      // 1. Unfiltered total exceeds home screen limit (there was enough content originally), AND
+      // 2. There are actually more filtered items to explore (remainingCount > 0)
+      if (unfilteredTotal <= MAX_SHELF_ITEMS_ON_HOME || remainingCount === 0) {
+        // Not enough items or all filtered items already fit - no explore card
         result[shelfId] = allTitles.slice(0, shelfLimit);
       } else {
-        // More than 20 items - show 20 + explore card with remainder
-        const remainingCount = shelfLimit - MAX_SHELF_ITEMS_ON_HOME;
+        // Show explore card with remaining filtered items count
         // Pick random posters from displayed items
         const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
         const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
           id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
           name: 'Explore',
-          overview: `View all ${shelfLimit} items`,
+          overview: `View all ${filteredTotal} items`,
           year: remainingCount,
           language: 'en',
           mediaType: 'explore',
@@ -1126,7 +1166,7 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals, movieReleases, exploreCardPosition, customShelves]);
+  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);

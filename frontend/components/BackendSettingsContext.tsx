@@ -117,6 +117,8 @@ export interface BackendShelfConfig {
   order: number;
   type?: 'builtin' | 'mdblist'; // Type of shelf - builtin or custom MDBList
   listUrl?: string; // MDBList URL for custom lists
+  limit?: number; // Optional limit on number of items returned (0 = unlimited)
+  hideUnreleased?: boolean; // Filter out unreleased/in-theaters content
 }
 
 export type TrendingMovieSource = 'all' | 'released';

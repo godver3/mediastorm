@@ -595,6 +595,7 @@ export interface UserShelfConfig {
   type?: 'builtin' | 'mdblist'; // Type of shelf - builtin or custom MDBList
   listUrl?: string; // MDBList URL for custom lists
   limit?: number; // Optional limit on number of items returned (0 = unlimited)
+  hideUnreleased?: boolean; // Filter out unreleased/in-theaters content
 }
 
 export interface UserHomeShelvesSettings {
@@ -945,11 +946,13 @@ class ApiService {
   // Discover trending movies
   // If limit is provided, returns paginated results with total count
   // If no limit, returns all items for backward compatibility
+  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
   async getTrendingMovies(
     userId?: string,
     limit?: number,
     offset?: number,
-  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number }> {
+    hideUnreleased?: boolean,
+  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ type: 'movie' });
     if (userId) {
       params.set('userId', userId);
@@ -960,8 +963,11 @@ class ApiService {
     if (offset && offset > 0) {
       params.set('offset', offset.toString());
     }
-    // New API returns { items, total }, but we need backward compatibility
-    const response = await this.request<{ items: TrendingItem[]; total: number }>(
+    if (hideUnreleased) {
+      params.set('hideUnreleased', 'true');
+    }
+    // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
+    const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/discover/new?${params.toString()}`,
     );
     // If limit was specified, return full response for pagination
@@ -975,11 +981,13 @@ class ApiService {
   // Discover trending TV shows
   // If limit is provided, returns paginated results with total count
   // If no limit, returns all items for backward compatibility
+  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
   async getTrendingTVShows(
     userId?: string,
     limit?: number,
     offset?: number,
-  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number }> {
+    hideUnreleased?: boolean,
+  ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ type: 'series' });
     if (userId) {
       params.set('userId', userId);
@@ -990,8 +998,11 @@ class ApiService {
     if (offset && offset > 0) {
       params.set('offset', offset.toString());
     }
-    // New API returns { items, total }, but we need backward compatibility
-    const response = await this.request<{ items: TrendingItem[]; total: number }>(
+    if (hideUnreleased) {
+      params.set('hideUnreleased', 'true');
+    }
+    // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
+    const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/discover/new?${params.toString()}`,
     );
     // If limit was specified, return full response for pagination
@@ -1005,11 +1016,13 @@ class ApiService {
   // Get custom MDBList items
   // If limit is provided, only that many items will be enriched with metadata
   // Returns items and total count for pagination
+  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
   async getCustomList(
     listUrl: string,
     limit?: number,
     offset?: number,
-  ): Promise<{ items: TrendingItem[]; total: number }> {
+    hideUnreleased?: boolean,
+  ): Promise<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ url: listUrl });
     if (limit && limit > 0) {
       params.set('limit', limit.toString());
@@ -1017,7 +1030,10 @@ class ApiService {
     if (offset && offset > 0) {
       params.set('offset', offset.toString());
     }
-    return this.request<{ items: TrendingItem[]; total: number }>(
+    if (hideUnreleased) {
+      params.set('hideUnreleased', 'true');
+    }
+    return this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/lists/custom?${params.toString()}`,
     );
   }

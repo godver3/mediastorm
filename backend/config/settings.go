@@ -210,13 +210,14 @@ type LiveSettings struct {
 
 // ShelfConfig represents a configurable home screen shelf.
 type ShelfConfig struct {
-	ID      string `json:"id"`                // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
-	Name    string `json:"name"`              // Display name
-	Enabled bool   `json:"enabled"`           // Whether the shelf is visible
-	Order   int    `json:"order"`             // Sort order (lower numbers appear first)
-	Type    string `json:"type,omitempty"`    // "builtin" (default) or "mdblist" for custom lists
-	ListURL string `json:"listUrl,omitempty"` // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
-	Limit   int    `json:"limit,omitempty"`   // Optional limit on number of items returned (0 = no limit)
+	ID             string `json:"id"`                       // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
+	Name           string `json:"name"`                     // Display name
+	Enabled        bool   `json:"enabled"`                  // Whether the shelf is visible
+	Order          int    `json:"order"`                    // Sort order (lower numbers appear first)
+	Type           string `json:"type,omitempty"`           // "builtin" (default) or "mdblist" for custom lists
+	ListURL        string `json:"listUrl,omitempty"`        // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	Limit          int    `json:"limit,omitempty"`          // Optional limit on number of items returned (0 = no limit)
+	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content
 }
 
 // TrendingMovieSource determines which source to use for trending movies.

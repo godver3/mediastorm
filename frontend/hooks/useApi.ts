@@ -26,7 +26,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 // Hook for trending movies
-export function useTrendingMovies(userId?: string | null, enabled = true): UseApiState<TrendingItem[]> {
+export function useTrendingMovies(userId?: string | null, enabled = true, hideUnreleased = false): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
@@ -39,14 +39,15 @@ export function useTrendingMovies(userId?: string | null, enabled = true): UseAp
     try {
       setLoading(true);
       setError(null);
-      const result = await apiService.getTrendingMovies(userId ?? undefined);
-      setData(result);
+      // Without limit, getTrendingMovies returns TrendingItem[]
+      const result = await apiService.getTrendingMovies(userId ?? undefined, undefined, undefined, hideUnreleased);
+      setData(result as TrendingItem[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trending movies');
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId, enabled]);
+  }, [isReady, userId, enabled, hideUnreleased]);
 
   useEffect(() => {
     if (!isReady || !enabled) {
@@ -64,7 +65,7 @@ export function useTrendingMovies(userId?: string | null, enabled = true): UseAp
 }
 
 // Hook for trending TV shows
-export function useTrendingTVShows(userId?: string | null, enabled = true): UseApiState<TrendingItem[]> {
+export function useTrendingTVShows(userId?: string | null, enabled = true, hideUnreleased = false): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
@@ -77,14 +78,15 @@ export function useTrendingTVShows(userId?: string | null, enabled = true): UseA
     try {
       setLoading(true);
       setError(null);
-      const result = await apiService.getTrendingTVShows(userId ?? undefined);
-      setData(result);
+      // Without limit, getTrendingTVShows returns TrendingItem[]
+      const result = await apiService.getTrendingTVShows(userId ?? undefined, undefined, undefined, hideUnreleased);
+      setData(result as TrendingItem[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId, enabled]);
+  }, [isReady, userId, enabled, hideUnreleased]);
 
   useEffect(() => {
     if (!isReady || !enabled) {

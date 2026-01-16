@@ -25,7 +25,7 @@ type metadataService interface {
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
 	StreamTrailer(context.Context, string, io.Writer) error
 	StreamTrailerWithRange(context.Context, string, string, io.Writer) error
-	GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error)
+	GetCustomList(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, int, error)
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -52,13 +52,15 @@ func (h *MetadataHandler) SetUserSettingsProvider(provider userSettingsProvider)
 
 // DiscoverNewResponse wraps trending items with total count for pagination
 type DiscoverNewResponse struct {
-	Items []models.TrendingItem `json:"items"`
-	Total int                   `json:"total"`
+	Items           []models.TrendingItem `json:"items"`
+	Total           int                   `json:"total"`
+	UnfilteredTotal int                   `json:"unfilteredTotal,omitempty"` // Pre-filter total (only set when hideUnreleased is used)
 }
 
 func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 
 	// Parse optional pagination parameters
 	limit := 0
@@ -106,6 +108,14 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track pre-filter total for explore card logic
+	unfilteredTotal := len(items)
+
+	// Apply unreleased filter if requested
+	if hideUnreleased {
+		items = filterUnreleasedItems(items)
+	}
+
 	// Apply pagination
 	total := len(items)
 	if offset > 0 {
@@ -120,7 +130,11 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
+	resp := DiscoverNewResponse{Items: items, Total: total}
+	if hideUnreleased {
+		resp.UnfilteredTotal = unfilteredTotal
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -398,8 +412,48 @@ func (h *MetadataHandler) TrailerProxy(w http.ResponseWriter, r *http.Request) {
 
 // CustomListResponse wraps custom list items with total count for pagination
 type CustomListResponse struct {
-	Items []models.TrendingItem `json:"items"`
-	Total int                   `json:"total"`
+	Items           []models.TrendingItem `json:"items"`
+	Total           int                   `json:"total"`
+	UnfilteredTotal int                   `json:"unfilteredTotal,omitempty"` // Pre-filter total (only set when hideUnreleased is used)
+}
+
+// filterUnreleasedItems removes items that haven't been released for home viewing.
+// For movies: filters out items where HomeRelease is nil or HomeRelease.Released is false.
+// For series: filters out items where Status is "upcoming" or "in production" (case-insensitive).
+func filterUnreleasedItems(items []models.TrendingItem) []models.TrendingItem {
+	result := make([]models.TrendingItem, 0, len(items))
+	filteredCount := 0
+	for _, item := range items {
+		if item.Title.MediaType == "movie" {
+			// Movies: keep only if home release exists and is released
+			if item.Title.HomeRelease != nil && item.Title.HomeRelease.Released {
+				result = append(result, item)
+			} else {
+				filteredCount++
+				if filteredCount <= 3 {
+					hasRelease := item.Title.HomeRelease != nil
+					released := hasRelease && item.Title.HomeRelease.Released
+					log.Printf("[hideUnreleased] filtered movie: %s (hasHomeRelease=%v, released=%v)", item.Title.Name, hasRelease, released)
+				}
+			}
+		} else if item.Title.MediaType == "series" {
+			// Series: filter out "upcoming" or "in production" statuses
+			status := strings.ToLower(item.Title.Status)
+			if status != "upcoming" && status != "in production" {
+				result = append(result, item)
+			} else {
+				filteredCount++
+				if filteredCount <= 3 {
+					log.Printf("[hideUnreleased] filtered series: %s (status=%s)", item.Title.Name, item.Title.Status)
+				}
+			}
+		} else {
+			// Unknown type - include by default
+			result = append(result, item)
+		}
+	}
+	log.Printf("[hideUnreleased] filter result: %d/%d items kept (filtered %d)", len(result), len(items), filteredCount)
+	return result
 }
 
 // CustomList fetches items from a custom MDBList URL
@@ -411,6 +465,8 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
 		return
 	}
+
+	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 
 	// Parse optional pagination parameters (0 = no limit/offset)
 	limit := 0
@@ -440,21 +496,32 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		listURL = listURL + "/json"
 	}
 
-	// Fetch all items (service handles caching), then apply offset
-	// We need limit+offset items to apply pagination correctly
-	fetchLimit := 0 // fetch all for pagination
-	if limit > 0 && offset > 0 {
-		fetchLimit = limit + offset
-	} else if limit > 0 {
-		fetchLimit = limit
+	// When hideUnreleased is true, we need ALL items to get accurate filtered count
+	// Otherwise, fetch only what we need for pagination
+	fetchLimit := 0 // 0 = fetch all
+	if !hideUnreleased {
+		if limit > 0 && offset > 0 {
+			fetchLimit = limit + offset
+		} else if limit > 0 {
+			fetchLimit = limit
+		}
 	}
 
-	items, total, err := h.Service.GetCustomList(listURL, fetchLimit)
+	items, total, err := h.Service.GetCustomList(r.Context(), listURL, fetchLimit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Track pre-filter total for explore card logic
+	unfilteredTotal := total
+
+	// Apply unreleased filter if requested (before pagination)
+	if hideUnreleased {
+		items = filterUnreleasedItems(items)
+		total = len(items) // This is now accurate since we fetched all items
 	}
 
 	// Apply offset
@@ -472,5 +539,9 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CustomListResponse{Items: items, Total: total})
+	resp := CustomListResponse{Items: items, Total: total}
+	if hideUnreleased {
+		resp.UnfilteredTotal = unfilteredTotal
+	}
+	json.NewEncoder(w).Encode(resp)
 }

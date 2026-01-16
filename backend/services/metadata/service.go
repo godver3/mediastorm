@@ -3158,9 +3158,10 @@ func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType str
 // GetCustomList fetches items from a custom MDBList URL and returns them as TrendingItems.
 // If limit > 0, only that many items will be enriched with TVDB metadata.
 // Returns the items, total count, and any error.
-func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingItem, int, error) {
+func (s *Service) GetCustomList(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, int, error) {
 	// Check cache first - cache stores all enriched items
-	cacheID := cacheKey("mdblist", "custom", listURL)
+	// v3: includes release data (with IMDB→TMDB resolution) and series status enrichment
+	cacheID := cacheKey("mdblist", "custom", "v3", listURL)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] custom list cache hit for %s (%d items)", listURL, len(cached))
@@ -3356,6 +3357,33 @@ func (s *Service) GetCustomList(listURL string, limit int) ([]models.TrendingIte
 
 		if !found {
 			log.Printf("[metadata] no tvdb match for custom list item title=%q year=%d type=%s imdbId=%q", item.Title, item.ReleaseYear, mediaType, item.IMDBID)
+		}
+
+		// Enrich movies with release data from TMDB (needed for hideUnreleased filter)
+		if mediaType == "movie" {
+			tmdbID := title.TMDBID
+			// Resolve IMDB to TMDB if we don't have TMDB ID
+			if tmdbID <= 0 && title.IMDBID != "" {
+				if resolved := s.getTMDBIDForIMDB(ctx, title.IMDBID); resolved > 0 {
+					tmdbID = resolved
+					title.TMDBID = resolved
+				}
+			}
+			if tmdbID > 0 {
+				if s.enrichMovieReleases(ctx, &title, tmdbID) {
+					log.Printf("[metadata] custom list movie release data enriched title=%q tmdbId=%d hasHomeRelease=%v released=%v",
+						title.Name, tmdbID, title.HomeRelease != nil, title.HomeRelease != nil && title.HomeRelease.Released)
+				}
+			}
+		}
+
+		// For series, try to get status from TVDB extended info if we have a TVDB ID
+		if mediaType == "series" && title.TVDBID > 0 && title.Status == "" {
+			if ext, err := s.client.seriesExtended(title.TVDBID, nil); err == nil {
+				if ext.Status.Name != "" {
+					title.Status = ext.Status.Name
+				}
+			}
 		}
 
 		items = append(items, models.TrendingItem{

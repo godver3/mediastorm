@@ -170,6 +170,7 @@ export default function WatchlistScreen() {
             activeUserId ?? undefined,
             limit,
             offset,
+            shelfConfig?.hideUnreleased,
           );
           if ('items' in response) {
             items = response.items;
@@ -180,13 +181,14 @@ export default function WatchlistScreen() {
             activeUserId ?? undefined,
             limit,
             offset,
+            shelfConfig?.hideUnreleased,
           );
           if ('items' in response) {
             items = response.items;
             total = response.total;
           }
         } else if (isCustomList && shelfConfig?.listUrl) {
-          const response = await apiService.getCustomList(shelfConfig.listUrl, limit, offset);
+          const response = await apiService.getCustomList(shelfConfig.listUrl, limit, offset, shelfConfig?.hideUnreleased);
           items = response.items;
           total = response.total;
         }
@@ -206,7 +208,7 @@ export default function WatchlistScreen() {
         isLoadingMoreRef.current = false;
       }
     },
-    [needsProgressiveLoading, isTrendingMovies, isTrendingTV, isCustomList, shelfConfig?.listUrl, activeUserId],
+    [needsProgressiveLoading, isTrendingMovies, isTrendingTV, isCustomList, shelfConfig?.listUrl, shelfConfig?.hideUnreleased, activeUserId],
   );
 
   // Initial fetch when explore mode changes
