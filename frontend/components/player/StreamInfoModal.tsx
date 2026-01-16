@@ -1,12 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -272,6 +266,9 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     withSelectGuard(onClose);
   }, [onClose, withSelectGuard]);
 
+  // Track focused state for TV - using native focus
+  const [isCloseFocused, setIsCloseFocused] = useState(false);
+
   if (!visible) {
     return null;
   }
@@ -285,94 +282,92 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
       hardwareAccelerated
     >
-      <SpatialNavigationRoot isActive={visible}>
-        <View style={styles.overlay}>
-          <Pressable style={styles.backdrop} onPress={handleClose} tvParallaxProperties={{ enabled: false }} />
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Stream Information</Text>
-            </View>
+      <View style={styles.overlay}>
+        <Pressable
+          style={styles.backdrop}
+          onPress={handleClose}
+          tvParallaxProperties={{ enabled: false }}
+          focusable={false}
+        />
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Stream Information</Text>
+          </View>
 
-            <ScrollView
-              style={styles.contentScrollView}
-              contentContainerStyle={styles.contentContainer}
-              scrollEnabled={!Platform.isTV}
+          <ScrollView
+            style={styles.contentScrollView}
+            contentContainerStyle={styles.contentContainer}
+            scrollEnabled={!Platform.isTV}
+          >
+            {/* Media Info Section */}
+            {mediaTitle && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Media</Text>
+                <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
+                {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
+              </View>
+            )}
+
+            {/* File Info Section */}
+            {info.filename && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>File</Text>
+                <InfoRow label="Filename" value={info.filename} styles={styles} fullText />
+              </View>
+            )}
+
+            {/* Video Info Section */}
+            {(info.resolution || info.videoCodec || videoBitrateStr || info.frameRate) && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Video</Text>
+                <InfoRow label="Resolution" value={info.resolution} styles={styles} />
+                <InfoRow label="Codec" value={info.videoCodec} styles={styles} />
+                <InfoRow label="Bitrate" value={videoBitrateStr} styles={styles} />
+                <InfoRow label="Frame Rate" value={info.frameRate} styles={styles} />
+              </View>
+            )}
+
+            {/* Audio Info Section */}
+            {(info.audioCodec || info.audioChannels || audioBitrateStr) && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Audio</Text>
+                <InfoRow label="Codec" value={info.audioCodec} styles={styles} />
+                <InfoRow label="Channels" value={info.audioChannels} styles={styles} />
+                <InfoRow label="Bitrate" value={audioBitrateStr} styles={styles} />
+              </View>
+            )}
+
+            {/* Color Info Section */}
+            {colorInfo && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Color</Text>
+                <InfoRow label="Format" value={colorInfo} styles={styles} />
+              </View>
+            )}
+
+            {/* Player Info Section */}
+            {info.playerImplementation && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Playback</Text>
+                <InfoRow label="Player" value={info.playerImplementation} styles={styles} />
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={styles.modalFooter}>
+            <Pressable
+              onPress={handleClose}
+              onFocus={() => setIsCloseFocused(true)}
+              onBlur={() => setIsCloseFocused(false)}
+              style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
+              hasTVPreferredFocus={Platform.isTV}
+              tvParallaxProperties={{ enabled: false }}
             >
-              {/* Media Info Section */}
-              {mediaTitle && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Media</Text>
-                  <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
-                  {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
-                </View>
-              )}
-
-              {/* File Info Section */}
-              {info.filename && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>File</Text>
-                  <InfoRow label="Filename" value={info.filename} styles={styles} fullText />
-                </View>
-              )}
-
-              {/* Video Info Section */}
-              {(info.resolution || info.videoCodec || videoBitrateStr || info.frameRate) && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Video</Text>
-                  <InfoRow label="Resolution" value={info.resolution} styles={styles} />
-                  <InfoRow label="Codec" value={info.videoCodec} styles={styles} />
-                  <InfoRow label="Bitrate" value={videoBitrateStr} styles={styles} />
-                  <InfoRow label="Frame Rate" value={info.frameRate} styles={styles} />
-                </View>
-              )}
-
-              {/* Audio Info Section */}
-              {(info.audioCodec || info.audioChannels || audioBitrateStr) && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Audio</Text>
-                  <InfoRow label="Codec" value={info.audioCodec} styles={styles} />
-                  <InfoRow label="Channels" value={info.audioChannels} styles={styles} />
-                  <InfoRow label="Bitrate" value={audioBitrateStr} styles={styles} />
-                </View>
-              )}
-
-              {/* Color Info Section */}
-              {colorInfo && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Color</Text>
-                  <InfoRow label="Format" value={colorInfo} styles={styles} />
-                </View>
-              )}
-
-              {/* Player Info Section */}
-              {info.playerImplementation && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Playback</Text>
-                  <InfoRow label="Player" value={info.playerImplementation} styles={styles} />
-                </View>
-              )}
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <SpatialNavigationNode orientation="vertical">
-                <DefaultFocus>
-                  <SpatialNavigationFocusableView focusKey="stream-info-close" onSelect={handleClose}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <Pressable
-                        onPress={handleClose}
-                        style={[styles.closeButton, isFocused && styles.closeButtonFocused]}
-                        tvParallaxProperties={{ enabled: false }}
-                      >
-                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                      </Pressable>
-                    )}
-                  </SpatialNavigationFocusableView>
-                </DefaultFocus>
-              </SpatialNavigationNode>
-            </View>
+              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+            </Pressable>
           </View>
         </View>
-      </SpatialNavigationRoot>
+      </View>
     </Modal>
   );
 };
