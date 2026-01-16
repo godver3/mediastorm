@@ -1820,8 +1820,8 @@
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
                 '<span class="shelf-name">'+s.name+typeLabel+filterBadge+'</span>'+
-                '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
                 actionsHtml+
+                '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
             '</div>';
         }).join('');
 
@@ -1836,7 +1836,7 @@
             '.shelf-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;}'+
             '.shelf-type-badge{font-size:10px;padding:2px 6px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;font-weight:normal;}'+
             '.shelf-filter-badge{font-size:12px;margin-left:4px;opacity:0.8;}'+
-            '.shelf-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;}'+
+            '.shelf-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;margin-left:12px;}'+
             '.shelf-toggle input{opacity:0;width:0;height:0;}'+
             '.toggle-slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#444;border-radius:22px;transition:0.3s;}'+
             '.toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:0.3s;}'+
@@ -1848,9 +1848,9 @@
             '.shelf-delete-btn:hover{color:#e94560;background:rgba(233,69,96,0.15);}'+
             '.shelf-actions{display:flex;align-items:center;}'+
             '@media(max-width:768px){'+
-                '.shelf-row{flex-wrap:wrap;}'+
-                '.shelf-actions{width:100%;margin-top:8px;padding-left:28px;gap:8px;}'+
-                '.shelf-edit-btn,.shelf-delete-btn{min-width:44px;min-height:44px;font-size:20px;padding:10px 12px;margin-left:0;}'+
+                '.shelf-name{flex-wrap:wrap;}'+
+                '.shelf-type-badge,.shelf-filter-badge{margin-top:4px;}'+
+                '.shelf-edit-btn,.shelf-delete-btn{min-width:44px;min-height:44px;font-size:20px;padding:10px 12px;}'+
                 '.add-custom-list-form .form-row{flex-wrap:wrap;}'+
                 '.add-custom-list-form .form-group{flex:none !important;width:100%;}'+
                 '.add-custom-list-form button{width:100%;margin-bottom:0;margin-top:4px;}'+
@@ -1894,13 +1894,13 @@
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Limit</label>'+
                     '<input type="number" id="newShelfLimit" placeholder="0" min="0" max="500" value="0">'+
                 '</div>'+
-                '<div class="form-group" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;">'+
+                '<div class="form-group" style="flex:0 0 auto;">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Hide Unreleased</label>'+
-                    '<label style="display:flex;align-items:center;cursor:pointer;margin-bottom:1rem;" title="Filter out movies not yet available for home viewing, and upcoming/in-production series"><input type="checkbox" id="newShelfHideUnreleased" style="margin-right:6px;"><span style="font-size:12px;color:#888;">🎬</span></label>'+
+                    '<div style="display:flex;align-items:center;height:38px;" title="Filter out movies not yet available for home viewing, and upcoming/in-production series"><input type="checkbox" id="newShelfHideUnreleased"></div>'+
                 '</div>'+
-                '<button onclick="addCustomShelf()" style="margin-bottom:1rem;">Add</button>'+
+                '<button onclick="addCustomShelf()" style="align-self:center;height:38px;margin-top:18px;">Add</button>'+
             '</div>'+
-            '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json<br><span style="color:#9b9b9b;">🎬 Hide Unreleased: Only show movies available for home viewing (streaming/digital/physical) and exclude upcoming series.</span></p>'+
+            '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json<br><span style="color:#9b9b9b;">Hide Unreleased: Only show movies available for home viewing (streaming/digital/physical) and exclude upcoming series.</span></p>'+
         '</div>';
 
         // Add inherited class to wrapper when inheriting from global

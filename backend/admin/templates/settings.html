@@ -246,8 +246,17 @@
             basePath = sectionKey;
         }
 
+        // Special handling for home shelves - move enabled toggle to header
+        const isShelvesSection = sectionKey === 'homeShelves.shelves';
+
         const itemsHtml = items.map((item, index) => {
-            const fieldsHtml = Object.entries(sectionDef.fields).map(([fieldKey, fieldDef]) => `
+            // Filter out 'enabled' field for shelves - it goes in header
+            const fieldsToRender = Object.entries(sectionDef.fields).filter(([fieldKey]) => {
+                if (isShelvesSection && fieldKey === 'enabled') return false;
+                return true;
+            });
+
+            const fieldsHtml = fieldsToRender.map(([fieldKey, fieldDef]) => `
                 <div class="form-group">
                     <label class="form-label">${fieldDef.label}</label>
                     ${renderInput(fieldKey, fieldDef, item[fieldKey], `${basePath}.${index}`)}
@@ -255,18 +264,28 @@
                 </div>
             `).join('');
 
+            // For shelves, add enabled toggle after delete button in header
+            const enabledToggleHtml = isShelvesSection && sectionDef.fields.enabled ? `
+                <label class="toggle" style="margin-left: 0.5rem;">
+                    <input type="checkbox" ${item.enabled ? 'checked' : ''}
+                           onchange="handleArrayFieldChange('${basePath}', ${index}, 'enabled', this.checked); renderSettings();">
+                    <span class="toggle-slider"></span>
+                </label>
+            ` : '';
+
             return `
                 <div class="array-item">
                     <div class="array-item-header">
                         <div class="array-item-title">
                             ${item.name || item.id || `Item ${index + 1}`}
                         </div>
-                        <div class="array-item-actions">
+                        <div class="array-item-actions" style="display: flex; align-items: center; gap: 0.5rem;">
                             <button class="btn btn-sm btn-danger" onclick="removeArrayItem('${sectionKey}', ${index})">
                                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                 </svg>
                             </button>
+                            ${enabledToggleHtml}
                         </div>
                     </div>
                     <div class="grid grid-2">
