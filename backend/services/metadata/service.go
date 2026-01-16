@@ -321,7 +321,10 @@ func (s *Service) enrichDemoArtwork(ctx context.Context, items []models.Trending
 
 // enrichTrendingIMDBIDs adds IMDB IDs to trending items using cached lookups.
 // This runs concurrently for performance but uses the ID cache to minimize API calls.
+// Uses a semaphore to limit concurrent TMDB API calls and prevent thundering herd.
 func (s *Service) enrichTrendingIMDBIDs(ctx context.Context, items []models.TrendingItem, mediaType string) {
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
 	for idx := range items {
 		if items[idx].Title.IMDBID != "" || items[idx].Title.TMDBID <= 0 {
@@ -330,6 +333,8 @@ func (s *Service) enrichTrendingIMDBIDs(ctx context.Context, items []models.Tren
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			imdbID := s.getIMDBIDForTMDB(ctx, mediaType, items[i].Title.TMDBID)
 			if imdbID != "" {
 				items[i].Title.IMDBID = imdbID
@@ -1530,7 +1535,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v3", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v4", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
@@ -1595,7 +1600,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("failed to fetch series details: %w", err)
 	}
 
-	extended, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons"})
+	extended, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
 	if err != nil {
 
 		log.Printf("[metadata] series details extended fetch error tvdbId=%d err=%v", tvdbID, err)
@@ -1603,13 +1608,12 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("failed to fetch extended series metadata: %w", err)
 	}
 
-	// Fetch translations, artworks, and localized episodes in parallel
+	// Fetch translations and localized episodes in parallel
 	type translationResult struct {
 		name     string
 		overview string
 	}
 	translationChan := make(chan translationResult, 1)
-	artworksChan := make(chan []tvdbArtwork, 1)
 	localizedEpsChan := make(chan map[int64]tvdbEpisode, 1)
 
 	// Fetch series translations in background
@@ -1620,15 +1624,6 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			result.overview = strings.TrimSpace(translation.Overview)
 		}
 		translationChan <- result
-	}()
-
-	// Fetch artworks in background
-	go func() {
-		if artworksExtended, err := s.client.seriesExtended(tvdbID, []string{"artworks"}); err == nil {
-			artworksChan <- artworksExtended.Artworks
-		} else {
-			artworksChan <- nil
-		}
 	}()
 
 	// Fetch localized episodes in background
@@ -1716,10 +1711,10 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		seriesTitle.Backdrop = backdrop
 	}
 
-	// Apply artworks from parallel fetch
-	if artworks := <-artworksChan; artworks != nil {
-		log.Printf("[metadata] received %d artworks for tvdbId=%d", len(artworks), tvdbID)
-		applyTVDBArtworks(&seriesTitle, artworks)
+	// Apply artworks from extended response (fetched in single combined call)
+	if len(extended.Artworks) > 0 {
+		log.Printf("[metadata] received %d artworks for tvdbId=%d", len(extended.Artworks), tvdbID)
+		applyTVDBArtworks(&seriesTitle, extended.Artworks)
 		if seriesTitle.Backdrop != nil {
 			log.Printf("[metadata] series backdrop URL: %s", seriesTitle.Backdrop.URL)
 		}
@@ -1928,7 +1923,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 			continue
 		}
 
-		cacheID := cacheKey("tvdb", "series", "details", "v3", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v4", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 			log.Printf("[metadata] batch series cache hit index=%d tvdbId=%d name=%q", i, tvdbID, query.Name)
