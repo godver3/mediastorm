@@ -259,6 +259,7 @@ export default function PlayerScreen() {
   const safeAreaInsets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useTVDimensions();
   const isPortrait = windowHeight >= windowWidth;
+
   const shouldPreferSystemPlayer = useMemo(() => parseBooleanParam(preferSystemPlayerParam), [preferSystemPlayerParam]);
   const isLiveTV = useMemo(() => shouldPreferSystemPlayer, [shouldPreferSystemPlayer]);
 
@@ -649,6 +650,25 @@ export default function PlayerScreen() {
   const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
   // Video dimensions for subtitle positioning (relative to video content, not screen)
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+
+  // Calculate letterbox bottom height for accurate subtitle positioning
+  // Uses actual screen dimensions and video natural size for precise placement
+  const letterboxBottom = useMemo(() => {
+    if (!videoSize?.width || !videoSize?.height) return undefined;
+
+    const videoAspectRatio = videoSize.width / videoSize.height;
+    const screenAspectRatio = windowWidth / windowHeight;
+
+    // Video is wider than screen: letterboxing on top/bottom
+    if (videoAspectRatio > screenAspectRatio) {
+      const actualVideoHeight = windowWidth / videoAspectRatio;
+      return (windowHeight - actualVideoHeight) / 2;
+    }
+
+    // No letterboxing (video fills screen height or is pillarboxed)
+    return 0;
+  }, [videoSize?.width, videoSize?.height, windowWidth, windowHeight]);
+
   // Next episode prequeue state (triggered at 90% of current episode)
   const [nextEpisodePrequeueReady, setNextEpisodePrequeueReady] = useState(false);
   const nextEpisodePrequeueRef = useRef<{
@@ -5071,6 +5091,7 @@ export default function PlayerScreen() {
               controlsVisible={controlsVisible}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
               onDebugInfo={subtitleDebugEnabled ? handleSubtitleDebugInfo : undefined}
+              letterboxBottom={letterboxBottom}
             />
           )}
 
@@ -5091,6 +5112,7 @@ export default function PlayerScreen() {
               controlsVisible={controlsVisible}
               onCuesRangeChange={handleSubtitleCuesRangeChange}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
+              letterboxBottom={letterboxBottom}
             />
           )}
 
@@ -5108,6 +5130,7 @@ export default function PlayerScreen() {
               sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               controlsVisible={controlsVisible}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
+              letterboxBottom={letterboxBottom}
             />
           )}
 

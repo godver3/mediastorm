@@ -63,6 +63,8 @@ interface SubtitleOverlayProps {
   isHDRContent?: boolean;
   /** Callback for debug info (adjusted time, active cue, etc) */
   onDebugInfo?: (info: SubtitleDebugInfo) => void;
+  /** Height of the bottom letterbox bar in pixels (passed from player for accurate positioning) */
+  letterboxBottom?: number;
 }
 
 /**
@@ -248,6 +250,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   onCuesRangeChange,
   isHDRContent = false,
   onDebugInfo,
+  letterboxBottom,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -304,91 +307,98 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Effective time to use for subtitle matching
   const effectiveTime = externalTimeRef ? polledTime : currentTime;
 
-  // Calculate subtitle positioning based on orientation:
-  // - Landscape: bottom of screen (in letterbox bars for widescreen content)
-  // - Portrait: bottom of video content (above any letterbox bars)
+  // Calculate subtitle positioning:
+  // - Use letterboxBottom from player when available (accurate measurement)
+  // - Fall back to calculation based on video dimensions
+  // - Account for control bar height when controls are visible
   const subtitleBottomOffset = useMemo(() => {
     const basePadding = isAndroidTV ? 12 : Platform.isTV ? 20 : 10;
-
-    if (!containerSize) {
-      return basePadding;
-    }
-
-    const { width: containerWidth, height: containerHeight } = containerSize;
-    const isLandscape = containerWidth > containerHeight;
 
     // Calculate control bar height based on actual component dimensions
     // This mirrors the styling in Controls.tsx and FocusablePressable.tsx
     let controlsOffset = 0;
-    if (controlsVisible && isLandscape) {
-      if (Platform.isTV) {
-        // TV control bar calculation:
-        // - Theme spacing uses legacy scale factors: tvOS 0.85, Android TV 0.5
-        // - FocusablePressable uses: scale = (android ? 1.71875 : 1.375) * getTVScaleMultiplier()
-        const themeScaleFactor = isAndroidTV ? 0.5 : 0.85;
-        const buttonScale = (isAndroidTV ? 1.71875 : 1.375) * getTVScaleMultiplier();
+    if (controlsVisible && containerSize) {
+      const { width: containerWidth, height: containerHeight } = containerSize;
+      const isLandscape = containerWidth > containerHeight;
 
-        // Base spacing values (before theme scaling)
-        const baseSpacingSm = 8;
-        const baseSpacingMd = 12;
-        const baseSpacingLg = 16;
+      if (isLandscape) {
+        if (Platform.isTV) {
+          // TV control bar calculation:
+          // - Theme spacing uses legacy scale factors: tvOS 0.85, Android TV 0.5
+          // - FocusablePressable uses: scale = (android ? 1.71875 : 1.375) * getTVScaleMultiplier()
+          const themeScaleFactor = isAndroidTV ? 0.5 : 0.85;
+          const buttonScale = (isAndroidTV ? 1.71875 : 1.375) * getTVScaleMultiplier();
 
-        // Scaled spacing (as theme would provide)
-        const spacingSm = baseSpacingSm * themeScaleFactor;
-        const spacingMd = baseSpacingMd * themeScaleFactor;
-        const spacingLg = baseSpacingLg * themeScaleFactor;
+          // Base spacing values (before theme scaling)
+          const baseSpacingSm = 8;
+          const baseSpacingMd = 12;
+          const baseSpacingLg = 16;
 
-        // Button dimensions (icon button in FocusablePressable)
-        // Icon size: tvScale(24 * 1.375, 24) - designed for tvOS, auto-scaled for Android TV
-        const tvosIconSize = 24 * 1.375; // 33
-        const iconSize = isAndroidTV ? Math.round(tvosIconSize * ANDROID_TV_TO_TVOS_RATIO) : tvosIconSize;
-        const buttonPaddingVertical = spacingSm * buttonScale;
-        const buttonHeight = iconSize + buttonPaddingVertical * 2;
+          // Scaled spacing (as theme would provide)
+          const spacingSm = baseSpacingSm * themeScaleFactor;
+          const spacingMd = baseSpacingMd * themeScaleFactor;
+          const spacingLg = baseSpacingLg * themeScaleFactor;
 
-        // Control bar: container padding + main row + secondary row + bottom offset
-        const containerPadding = spacingMd * 2;
-        const secondaryRowMargin = spacingSm;
-        const bottomOffset = spacingLg;
+          // Button dimensions (icon button in FocusablePressable)
+          // Icon size: tvScale(24 * 1.375, 24) - designed for tvOS, auto-scaled for Android TV
+          const tvosIconSize = 24 * 1.375; // 33
+          const iconSize = isAndroidTV ? Math.round(tvosIconSize * ANDROID_TV_TO_TVOS_RATIO) : tvosIconSize;
+          const buttonPaddingVertical = spacingSm * buttonScale;
+          const buttonHeight = iconSize + buttonPaddingVertical * 2;
 
-        // Total: bottom offset + container padding + two rows of buttons + secondary row margin + extra padding
-        const extraPadding = isAndroidTV ? 8 : 16; // Buffer between subtitle and controls
-        controlsOffset = bottomOffset + containerPadding + buttonHeight * 2 + secondaryRowMargin + extraPadding;
-      } else {
-        // Mobile landscape: single row with track selection + seek bar
-        // bottomControlsMobile: paddingVertical = 8 (theme.spacing.sm)
-        // bottomControlsMobileLandscape: bottom = 4 (theme.spacing.xs)
-        // Content height includes SeekBar (~40px with touch targets) + track buttons
-        const containerPadding = 8 * 2; // theme.spacing.sm top + bottom
-        const bottomOffset = 4; // theme.spacing.xs
-        const contentHeight = 48; // seek bar with touch targets and track buttons
-        const extraPadding = 12; // buffer between subtitle and controls
-        controlsOffset = bottomOffset + containerPadding + contentHeight + extraPadding;
+          // Control bar: container padding + main row + secondary row + bottom offset
+          const containerPadding = spacingMd * 2;
+          const secondaryRowMargin = spacingSm;
+          const bottomOffset = spacingLg;
+
+          // Total: bottom offset + container padding + two rows of buttons + secondary row margin + extra padding
+          const extraPadding = isAndroidTV ? 8 : 16; // Buffer between subtitle and controls
+          controlsOffset = bottomOffset + containerPadding + buttonHeight * 2 + secondaryRowMargin + extraPadding;
+        } else {
+          // Mobile landscape: single row with track selection + seek bar
+          // bottomControlsMobile: paddingVertical = 8 (theme.spacing.sm)
+          // bottomControlsMobileLandscape: bottom = 4 (theme.spacing.xs)
+          // Content height includes SeekBar (~40px with touch targets) + track buttons
+          const containerPadding = 8 * 2; // theme.spacing.sm top + bottom
+          const bottomOffset = 4; // theme.spacing.xs
+          const contentHeight = 48; // seek bar with touch targets and track buttons
+          const extraPadding = 12; // buffer between subtitle and controls
+          controlsOffset = bottomOffset + containerPadding + contentHeight + extraPadding;
+        }
       }
     }
 
-    // Landscape: position at screen bottom (subtitles in letterbox bars)
-    if (isLandscape) {
+    // Use letterboxBottom from player when available (accurate measurement from screen dimensions)
+    if (letterboxBottom !== undefined) {
+      // When controls are visible, position above controls (which are at screen bottom)
+      // When controls are hidden, position above letterbox bars
+      const effectiveBottom = controlsVisible ? Math.max(letterboxBottom, controlsOffset) : letterboxBottom;
+      return effectiveBottom + basePadding;
+    }
+
+    // Fall back to calculation based on video dimensions and container size
+    if (!containerSize) {
       return basePadding + controlsOffset;
     }
 
-    // Portrait: position at video content bottom (above letterbox bars)
-    if (!videoWidth || !videoHeight) {
-      return basePadding;
+    const { width: containerWidth, height: containerHeight } = containerSize;
+
+    // Calculate letterbox height if we have video dimensions
+    let letterboxHeight = 0;
+    if (videoWidth && videoHeight) {
+      const videoAspectRatio = videoWidth / videoHeight;
+      const containerAspectRatio = containerWidth / containerHeight;
+
+      // Video is wider than container: letterboxing on top/bottom
+      if (videoAspectRatio > containerAspectRatio) {
+        const actualVideoHeight = containerWidth / videoAspectRatio;
+        letterboxHeight = (containerHeight - actualVideoHeight) / 2;
+      }
     }
 
-    const videoAspectRatio = videoWidth / videoHeight;
-    const containerAspectRatio = containerWidth / containerHeight;
-
-    // Video is wider than container: letterboxing on top/bottom
-    if (videoAspectRatio > containerAspectRatio) {
-      const actualVideoHeight = containerWidth / videoAspectRatio;
-      const letterboxHeight = (containerHeight - actualVideoHeight) / 2;
-      return letterboxHeight + basePadding;
-    }
-
-    // Video fills height or is taller - no bottom letterbox
-    return basePadding;
-  }, [videoWidth, videoHeight, containerSize, controlsVisible]);
+    // Position subtitles just above the letterbox bars (or screen bottom if no letterbox)
+    return letterboxHeight + basePadding + controlsOffset;
+  }, [videoWidth, videoHeight, containerSize, controlsVisible, letterboxBottom]);
 
   // Fetch and parse VTT file
   const fetchVTT = useCallback(async () => {
@@ -573,19 +583,6 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     console.log('[SubtitleOverlay] === End VTT Debug Dump ===');
   }, [enabled, cues, adjustedTime, timeOffset, activeCues, vttUrl, effectiveTime]);
 
-  // Render subtitle text with outline effect by layering
-  // Multiple offset black text layers create the outline, white text on top
-  const outlineOffsets = [
-    { x: -1, y: -1 },
-    { x: 1, y: -1 },
-    { x: -1, y: 1 },
-    { x: 1, y: 1 },
-    { x: 0, y: -1 },
-    { x: 0, y: 1 },
-    { x: -1, y: 0 },
-    { x: 1, y: 0 },
-  ];
-
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setContainerSize({ width, height });
@@ -625,25 +622,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         <View style={[styles.subtitlePositioner, { bottom: subtitleBottomOffset }]}>
           {activeCues.map((cue, index) => (
             <View key={`${cue.startTime}-${index}`} style={styles.cueContainer}>
-              {/* Black outline layers */}
-              {outlineOffsets.map((offset, i) => (
-                <Text
-                  key={`outline-${i}`}
-                  style={[
-                    styles.subtitleTextOutline,
-                    scaledTextStyles,
-                    { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
-                  ]}>
-                  {cue.segments.map((segment, segIndex) => (
-                    <Text
-                      key={`seg-${segIndex}`}
-                      style={segment.italic ? styles.italicText : undefined}>
-                      {segment.text}
-                    </Text>
-                  ))}
-                </Text>
-              ))}
-              {/* White text on top (or grey for HDR content) */}
+              {/* White text (or grey for HDR content) */}
               {/* Note: hdrTextColor is applied to both outer and inner Text elements because
                   TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
               <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
@@ -663,9 +642,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   );
 };
 
-// Styling to match VLC's default subtitle appearance:
-// - White text with black outline (no background box)
-// - VLC uses freetype renderer with outline for visibility
+// Subtitle styling with semi-transparent background box for readability
 // - tvOS: --sub-text-scale=60, --freetype-rel-fontsize=10
 // - Android TV: half size of tvOS for better readability
 // Note: isAndroidTV is defined above the component for use in useMemo
@@ -686,11 +663,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: Platform.isTV ? 60 : 20,
   },
   cueContainer: {
-    // Container for layered text (outline + foreground)
     // Subtitles grow upward from bottom (anchor at bottom line)
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    // Semi-transparent background for better readability
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: Platform.isTV ? 16 : 8,
+    paddingVertical: Platform.isTV ? 6 : 3,
+    borderRadius: Platform.isTV ? 6 : 4,
+    marginBottom: 2,
   },
   subtitleText: {
     color: '#FFFFFF',
@@ -702,28 +684,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
-    // VLC-style black outline effect
-    // React Native only supports single shadow, so we use a tight radius
-    // to approximate the outline effect VLC uses with freetype
-    textShadowColor: '#000000',
-    textShadowOffset: isAndroidTV
-      ? { width: 1, height: 1 }
-      : Platform.isTV
-        ? { width: 2, height: 2 }
-        : { width: 1, height: 1 },
-    textShadowRadius: isAndroidTV ? 2 : Platform.isTV ? 4 : 1.5,
     // Additional padding for multi-line subtitles
-    paddingVertical: 2,
-  },
-  // For a more authentic VLC outline, we layer the text
-  // This is handled in the component by rendering shadow layers
-  subtitleTextOutline: {
-    position: 'absolute',
-    color: '#000000',
-    fontSize: isAndroidTV ? 26 : Platform.isTV ? 62 : 24,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
     paddingVertical: 2,
   },
   // Italic text style for <i> tags in VTT

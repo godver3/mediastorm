@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 export type AutoSubtitleStatus = 'idle' | 'searching' | 'downloading' | 'ready' | 'failed' | 'no-results';
 
@@ -14,13 +14,19 @@ export const SubtitleStatusOverlay: React.FC<SubtitleStatusOverlayProps> = ({
 }) => {
   if (!message || status === 'idle') return null;
 
+  const isTvPlatform = Platform.isTV;
+
   return (
     <View style={styles.container}>
-      <View style={styles.messageBox}>
+      <View style={[styles.messageBox, isTvPlatform && styles.messageBoxTV]}>
         {(status === 'searching' || status === 'downloading') && (
-          <ActivityIndicator size="small" color="#fff" style={styles.spinner} />
+          <ActivityIndicator
+            size="small"
+            color="#fff"
+            style={[styles.spinner, isTvPlatform && styles.spinnerTV]}
+          />
         )}
-        <Text style={styles.text}>{message}</Text>
+        <Text style={[styles.text, isTvPlatform && styles.textTV]}>{message}</Text>
       </View>
     </View>
   );
@@ -43,11 +49,26 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 4,
   },
+  messageBoxTV: {
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 8,
+  },
   spinner: {
     marginRight: 12,
+  },
+  spinnerTV: {
+    marginRight: 24,
   },
   text: {
     color: '#fff',
     fontSize: 14,
+  },
+  textTV: {
+    fontSize: 28,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 4,
   },
 });
