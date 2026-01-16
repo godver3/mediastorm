@@ -1337,9 +1337,8 @@ function IndexScreen() {
   const heroItemKeysRef = useRef<Set<string>>(new Set());
   const isUserScrolling = useRef(false);
 
-  // Use refs instead of state for focus tracking to avoid re-renders on every focus change
+  // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
-  const focusedCardIndexRef = useRef<number>(0);
   const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [shelfResetCounter, setShelfResetCounter] = useState(0);
 
@@ -1437,29 +1436,8 @@ function IndexScreen() {
     }
   }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards, focusedDesktopCard]);
 
-  // Debounce hero updates - only update after focus settles
+  // Debounce ref for hero updates
   const focusDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleCardFocus = useCallback((card: CardData) => {
-    // Clear any pending update
-    if (focusDebounceRef.current) {
-      clearTimeout(focusDebounceRef.current);
-    }
-    // Wait for focus to settle before updating hero
-    // Use shorter debounce on Android TV for snappier feel
-    const debounceMs = isAndroidTV ? 150 : 500;
-    focusDebounceRef.current = setTimeout(() => {
-      setFocusedDesktopCard(card);
-    }, debounceMs);
-  }, []);
-
-  // Track focused card index within shelf for edge detection (uses ref to avoid re-renders)
-  // Note: closeMenu() is safe to call unconditionally - it's a no-op if already closed
-  // This avoids depending on isMenuOpen which would cause callback recreation on menu state changes
-  const handleCardIndexFocus = useCallback((_shelfKey: string, index: number) => {
-    focusedCardIndexRef.current = index;
-    // Close menu - focus has transferred to the shelf
-    closeMenu();
-  }, [closeMenu]);
 
   // Create array of hero items for mobile rotation
   // Uses stable ordering - only shuffles new items, doesn't reshuffle on data reload
@@ -1825,14 +1803,27 @@ function IndexScreen() {
     };
   }, [focused, focusedDesktopCard]);
 
-  // Optimized: Direct shelf scrolling - uses ref to avoid re-renders entirely
-  const handleRowFocus = useCallback(
-    (shelfKey: string): void => {
-      // Update ref (no re-render) and scroll
+  // Consolidated focus handler - called when any shelf card receives focus
+  // Combines: menu close, shelf tracking, vertical scroll, and debounced hero update
+  const handleShelfItemFocus = useCallback(
+    (card: CardData, shelfKey: string): void => {
+      // Close menu if open (no-op if already closed)
+      closeMenu();
+
+      // Update shelf tracking and scroll vertically to shelf
       focusedShelfKeyRef.current = shelfKey;
       scrollToShelf(shelfKey);
+
+      // Debounced hero update - only update after focus settles
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
+      const debounceMs = isAndroidTV ? 150 : 500;
+      focusDebounceRef.current = setTimeout(() => {
+        setFocusedDesktopCard(card);
+      }, debounceMs);
     },
-    [scrollToShelf],
+    [closeMenu, scrollToShelf],
   );
 
   // These callbacks do actual work in production, not just logging
@@ -2379,9 +2370,7 @@ function IndexScreen() {
                     cardSpacing={desktopStyles!.cardSpacing}
                     shelfPadding={desktopStyles!.shelfPadding}
                     onCardSelect={handleCardSelect}
-                    onCardFocus={handleCardFocus}
-                    onCardIndexFocus={handleCardIndexFocus}
-                    onRowFocus={handleRowFocus}
+                    onShelfItemFocus={handleShelfItemFocus}
                     autoFocus={shelf.autoFocus && shelf.cards.length > 0}
                     collapseIfEmpty={shelf.collapseIfEmpty}
                     showEmptyState={shelf.showEmptyState}
@@ -2494,9 +2483,7 @@ type VirtualizedShelfProps = {
   cards: CardData[];
   styles: ReturnType<typeof createDesktopStyles>['styles'];
   onCardSelect: (card: CardData) => void;
-  onCardFocus: (card: CardData) => void;
-  onCardIndexFocus: (shelfKey: string, index: number) => void;
-  onRowFocus: (shelfKey: string) => void;
+  onShelfItemFocus: (card: CardData, shelfKey: string) => void;
   autoFocus?: boolean;
   collapseIfEmpty?: boolean;
   showEmptyState?: boolean;
@@ -2521,9 +2508,7 @@ function VirtualizedShelf({
   cards,
   styles,
   onCardSelect,
-  onCardFocus,
-  onCardIndexFocus,
-  onRowFocus,
+  onShelfItemFocus,
   autoFocus,
   collapseIfEmpty,
   showEmptyState,
@@ -2560,8 +2545,8 @@ function VirtualizedShelf({
   }, [cards]);
 
   // Store callbacks in refs to avoid recreating renderItem
-  const callbacksRef = React.useRef({ onCardSelect, onCardFocus, onCardIndexFocus, onRowFocus });
-  callbacksRef.current = { onCardSelect, onCardFocus, onCardIndexFocus, onRowFocus };
+  const callbacksRef = React.useRef({ onCardSelect, onShelfItemFocus });
+  callbacksRef.current = { onCardSelect, onShelfItemFocus };
 
   // Set the ref for the parent component
   React.useEffect(() => {
@@ -2629,9 +2614,8 @@ function VirtualizedShelf({
       lastFocusTimeRef.current = now;
       const card = cardMapRef.current.get(cardId);
       if (card) {
-        callbacksRef.current.onCardFocus(card);
-        callbacksRef.current.onCardIndexFocus(shelfKey, index);
-        callbacksRef.current.onRowFocus(shelfKey);
+        // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update
+        callbacksRef.current.onShelfItemFocus(card, shelfKey);
       }
       scrollToFocusedItemRef.current(index);
     },
@@ -2946,6 +2930,8 @@ function VirtualizedShelf({
   );
 
   // TV: SpatialNavigationVirtualizedList
+  // Render all items (max 20 + explore card = 21) to ensure onDirectionHandledWithoutMovement
+  // only fires at actual list boundaries, not when items aren't yet rendered
   const tvShelfContent = (
     <SpatialNavigationNode orientation="horizontal">
       <View style={{ height: rowHeight }}>
@@ -2954,7 +2940,7 @@ function VirtualizedShelf({
           renderItem={renderTVItem}
           itemSize={itemSize}
           orientation="horizontal"
-          numberOfRenderedItems={isAndroidTV ? 9 : 13}
+          numberOfRenderedItems={21}
           numberOfItemsVisibleOnScreen={isAndroidTV ? 6 : 8}
         />
       </View>
@@ -2988,9 +2974,7 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.cards === next.cards &&
     prev.styles === next.styles &&
     prev.onCardSelect === next.onCardSelect &&
-    prev.onCardFocus === next.onCardFocus &&
-    prev.onCardIndexFocus === next.onCardIndexFocus &&
-    prev.onRowFocus === next.onRowFocus &&
+    prev.onShelfItemFocus === next.onShelfItemFocus &&
     prev.autoFocus === next.autoFocus &&
     prev.collapseIfEmpty === next.collapseIfEmpty &&
     prev.showEmptyState === next.showEmptyState &&
