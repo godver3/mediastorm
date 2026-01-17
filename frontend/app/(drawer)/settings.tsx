@@ -87,7 +87,7 @@ interface TextInputFieldProps {
   styles: CompatibleStyles;
 }
 
-function TextInputField({ label, value, onChange, options, errorMessage, styles }: TextInputFieldProps) {
+function _TextInputField({ label, value, onChange, options, errorMessage, styles }: TextInputFieldProps) {
   const theme = useTheme();
   const inputRef = useRef<TextInput | null>(null);
 
@@ -140,7 +140,7 @@ interface DropdownFieldProps {
   styles: CompatibleStyles;
 }
 
-function DropdownField({ label, value, options, onChange, styles }: DropdownFieldProps) {
+function _DropdownField({ label, value, options, onChange, styles }: DropdownFieldProps) {
   return (
     <View style={styles.fieldRow as ViewStyle}>
       <Text style={styles.fieldLabel as TextStyle}>{label}</Text>
