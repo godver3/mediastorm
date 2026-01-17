@@ -325,11 +325,31 @@ var SettingsSchema = map[string]interface{}{
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip strmr filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
 		},
 	},
+	"ranking": map[string]interface{}{
+		"label":  "Result Ranking",
+		"icon":   "list",
+		"group":  "sources",
+		"order":  1,
+		"fields": map[string]interface{}{},
+	},
+	"ranking.criteria": map[string]interface{}{
+		"label":    "Ranking Criteria",
+		"icon":     "shuffle",
+		"is_array": true,
+		"parent":   "ranking",
+		"key":      "criteria",
+		"fields": map[string]interface{}{
+			"id":      map[string]interface{}{"type": "text", "label": "ID", "description": "Criterion identifier", "readonly": true, "order": 0},
+			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Criterion name", "readonly": true, "order": 1},
+			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Use this criterion for ranking", "order": 2},
+			"order":   map[string]interface{}{"type": "number", "label": "Order", "description": "Sort priority (lower = higher priority)", "order": 3},
+		},
+	},
 	"live": map[string]interface{}{
 		"label": "Live TV",
 		"icon":  "tv",
 		"group": "sources",
-		"order": 1,
+		"order": 2,
 		"fields": map[string]interface{}{
 			"playlistUrl":           map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL"},
 			"playlistCacheTtlHours": map[string]interface{}{"type": "number", "label": "Cache TTL (hours)", "description": "Playlist cache duration"},
@@ -342,7 +362,7 @@ var SettingsSchema = map[string]interface{}{
 		"label":    "Indexers",
 		"icon":     "search",
 		"group":    "sources",
-		"order":    2,
+		"order":    3,
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":       map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name", "order": 0},
@@ -357,7 +377,7 @@ var SettingsSchema = map[string]interface{}{
 		"label":    "Torrent Scrapers",
 		"icon":     "magnet",
 		"group":    "sources",
-		"order":    3,
+		"order":    4,
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},

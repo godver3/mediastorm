@@ -18,6 +18,9 @@ type ClientFilterSettings struct {
 	HomeWifiSSID     *string `json:"homeWifiSSID,omitempty"`
 	HomeBackendUrl   *string `json:"homeBackendUrl,omitempty"`
 	RemoteBackendUrl *string `json:"remoteBackendUrl,omitempty"`
+
+	// Ranking criteria overrides
+	RankingCriteria *[]ClientRankingCriterion `json:"rankingCriteria,omitempty"`
 }
 
 // IsEmpty returns true if no settings are configured
@@ -32,5 +35,6 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.BypassFilteringForAIOStreamsOnly == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&
-		c.RemoteBackendUrl == nil
+		c.RemoteBackendUrl == nil &&
+		c.RankingCriteria == nil
 }

@@ -38,6 +38,7 @@ type Settings struct {
 	Log             LogConfig              `json:"log"`
 	ScheduledTasks  ScheduledTasksSettings `json:"scheduledTasks,omitempty"`
 	Network         NetworkSettings        `json:"network,omitempty"`
+	Ranking         RankingSettings        `json:"ranking,omitempty"`
 }
 
 type ServerSettings struct {
@@ -481,6 +482,43 @@ type NetworkSettings struct {
 	RemoteBackendUrl string `json:"remoteBackendUrl"` // Backend URL when on mobile/other networks (e.g., "https://myserver.com:7777/api")
 }
 
+// RankingCriterionID identifies a ranking criterion.
+type RankingCriterionID string
+
+const (
+	RankingServicePriority RankingCriterionID = "service-priority"
+	RankingPreferredTerms  RankingCriterionID = "preferred-terms"
+	RankingResolution      RankingCriterionID = "resolution"
+	RankingHDR             RankingCriterionID = "hdr"
+	RankingLanguage        RankingCriterionID = "language"
+	RankingSize            RankingCriterionID = "size"
+)
+
+// RankingCriterion represents a single ranking criterion with its configuration.
+type RankingCriterion struct {
+	ID      RankingCriterionID `json:"id"`
+	Name    string             `json:"name"`
+	Enabled bool               `json:"enabled"`
+	Order   int                `json:"order"`
+}
+
+// RankingSettings holds the ordered list of ranking criteria.
+type RankingSettings struct {
+	Criteria []RankingCriterion `json:"criteria"`
+}
+
+// DefaultRankingCriteria returns the default ranking criteria in their default order.
+func DefaultRankingCriteria() []RankingCriterion {
+	return []RankingCriterion{
+		{ID: RankingServicePriority, Name: "Service Priority", Enabled: true, Order: 0},
+		{ID: RankingPreferredTerms, Name: "Preferred Terms", Enabled: true, Order: 1},
+		{ID: RankingResolution, Name: "Resolution", Enabled: true, Order: 2},
+		{ID: RankingHDR, Name: "HDR/Dolby Vision", Enabled: true, Order: 3},
+		{ID: RankingLanguage, Name: "Language", Enabled: true, Order: 4},
+		{ID: RankingSize, Name: "File Size", Enabled: true, Order: 5},
+	}
+}
+
 // DefaultSettings returns sane defaults for a fresh install.
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
@@ -550,6 +588,9 @@ func DefaultSettings() Settings {
 			HomeWifiSSID:     "",
 			HomeBackendUrl:   "",
 			RemoteBackendUrl: "",
+		},
+		Ranking: RankingSettings{
+			Criteria: DefaultRankingCriteria(),
 		},
 	}
 }
@@ -881,6 +922,11 @@ func (m *Manager) Load() (Settings, error) {
 	}
 	if s.ScheduledTasks.Tasks == nil {
 		s.ScheduledTasks.Tasks = []ScheduledTask{}
+	}
+
+	// Backfill Ranking settings
+	if len(s.Ranking.Criteria) == 0 {
+		s.Ranking.Criteria = DefaultRankingCriteria()
 	}
 
 	// Legacy AltMount configuration is ignored going forward.

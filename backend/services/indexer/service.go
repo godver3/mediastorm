@@ -22,6 +22,7 @@ import (
 	"novastream/models"
 	"novastream/services/debrid"
 	"novastream/utils/filter"
+	"novastream/utils/language"
 
 	"github.com/mozillazg/go-unidecode"
 )
@@ -208,6 +209,193 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 	return filterSettings
 }
 
+// getEffectiveRankingCriteria returns the ranking criteria to use for sorting search results.
+// Settings cascade: Global -> Profile -> Client (most specific wins)
+func (s *Service) getEffectiveRankingCriteria(userID, clientID string, globalSettings config.Settings) []config.RankingCriterion {
+	// Start with global settings
+	criteria := make([]config.RankingCriterion, len(globalSettings.Ranking.Criteria))
+	copy(criteria, globalSettings.Ranking.Criteria)
+
+	// If no criteria configured, use defaults
+	if len(criteria) == 0 {
+		criteria = config.DefaultRankingCriteria()
+	}
+
+	// Layer 2: Profile settings override global
+	if userID != "" && s.userSettings != nil {
+		userSettings, err := s.userSettings.Get(userID)
+		if err != nil {
+			log.Printf("[indexer] failed to get user settings for ranking %s: %v", userID, err)
+		} else if userSettings != nil && userSettings.Ranking != nil && len(userSettings.Ranking.Criteria) > 0 {
+			log.Printf("[indexer] applying per-user ranking settings for user %s", userID)
+			criteria = applyUserRankingOverrides(criteria, userSettings.Ranking.Criteria)
+		}
+	}
+
+	// Layer 3: Client settings override profile
+	if clientID != "" && s.clientSettings != nil {
+		clientSettings, err := s.clientSettings.Get(clientID)
+		if err != nil {
+			log.Printf("[indexer] failed to get client settings for ranking %s: %v", clientID, err)
+		} else if clientSettings != nil && clientSettings.RankingCriteria != nil && len(*clientSettings.RankingCriteria) > 0 {
+			log.Printf("[indexer] applying per-client ranking settings for client %s", clientID)
+			criteria = applyClientRankingOverrides(criteria, *clientSettings.RankingCriteria)
+		}
+	}
+
+	// Sort by Order field
+	sort.SliceStable(criteria, func(i, j int) bool {
+		return criteria[i].Order < criteria[j].Order
+	})
+
+	return criteria
+}
+
+// applyUserRankingOverrides applies user-level ranking overrides to the base criteria.
+func applyUserRankingOverrides(base []config.RankingCriterion, overrides []models.UserRankingCriterion) []config.RankingCriterion {
+	result := make([]config.RankingCriterion, len(base))
+	copy(result, base)
+
+	overrideMap := make(map[config.RankingCriterionID]models.UserRankingCriterion)
+	for _, o := range overrides {
+		overrideMap[o.ID] = o
+	}
+
+	for i := range result {
+		if override, ok := overrideMap[result[i].ID]; ok {
+			if override.Enabled != nil {
+				result[i].Enabled = *override.Enabled
+			}
+			if override.Order != nil {
+				result[i].Order = *override.Order
+			}
+		}
+	}
+
+	return result
+}
+
+// applyClientRankingOverrides applies client-level ranking overrides to the base criteria.
+func applyClientRankingOverrides(base []config.RankingCriterion, overrides []models.ClientRankingCriterion) []config.RankingCriterion {
+	result := make([]config.RankingCriterion, len(base))
+	copy(result, base)
+
+	overrideMap := make(map[config.RankingCriterionID]models.ClientRankingCriterion)
+	for _, o := range overrides {
+		overrideMap[o.ID] = o
+	}
+
+	for i := range result {
+		if override, ok := overrideMap[result[i].ID]; ok {
+			if override.Enabled != nil {
+				result[i].Enabled = *override.Enabled
+			}
+			if override.Order != nil {
+				result[i].Order = *override.Order
+			}
+		}
+	}
+
+	return result
+}
+
+// Comparison functions return -1 if i wins, 0 if tie, 1 if j wins.
+
+func compareServicePriority(i, j models.NZBResult, priority config.StreamingServicePriority) int {
+	if priority == config.StreamingServicePriorityNone {
+		return 0
+	}
+	iIsPrioritized := (priority == config.StreamingServicePriorityUsenet && i.ServiceType == models.ServiceTypeUsenet) ||
+		(priority == config.StreamingServicePriorityDebrid && i.ServiceType == models.ServiceTypeDebrid)
+	jIsPrioritized := (priority == config.StreamingServicePriorityUsenet && j.ServiceType == models.ServiceTypeUsenet) ||
+		(priority == config.StreamingServicePriorityDebrid && j.ServiceType == models.ServiceTypeDebrid)
+
+	if iIsPrioritized && !jIsPrioritized {
+		return -1
+	}
+	if !iIsPrioritized && jIsPrioritized {
+		return 1
+	}
+	return 0
+}
+
+func comparePreferredTerms(i, j models.NZBResult, terms []string) int {
+	if len(terms) == 0 {
+		return 0
+	}
+	iHas := containsPreferredTerm(i.Title, terms)
+	jHas := containsPreferredTerm(j.Title, terms)
+	if iHas && !jHas {
+		return -1
+	}
+	if !iHas && jHas {
+		return 1
+	}
+	return 0
+}
+
+func compareResolution(i, j models.NZBResult) int {
+	resI := extractResolutionFromResult(i)
+	resJ := extractResolutionFromResult(j)
+	if resI > resJ {
+		return -1
+	}
+	if resI < resJ {
+		return 1
+	}
+	return 0
+}
+
+func compareHDR(i, j models.NZBResult, prioritizeHdr bool) int {
+	if !prioritizeHdr {
+		return 0
+	}
+	iHasHDR := i.Attributes["hdr"] != ""
+	jHasHDR := j.Attributes["hdr"] != ""
+	iHasDV := i.Attributes["hasDV"] == "true"
+	jHasDV := j.Attributes["hasDV"] == "true"
+
+	// DV > HDR > SDR
+	if iHasDV && !jHasDV {
+		return -1
+	}
+	if !iHasDV && jHasDV {
+		return 1
+	}
+	if iHasHDR && !jHasHDR {
+		return -1
+	}
+	if !iHasHDR && jHasHDR {
+		return 1
+	}
+	return 0
+}
+
+func compareLanguage(i, j models.NZBResult, preferredLang string) int {
+	if preferredLang == "" {
+		return 0
+	}
+	iHas := language.HasPreferredLanguage(i.Attributes["languages"], preferredLang)
+	jHas := language.HasPreferredLanguage(j.Attributes["languages"], preferredLang)
+	if iHas && !jHas {
+		return -1
+	}
+	if !iHas && jHas {
+		return 1
+	}
+	return 0
+}
+
+func compareSize(i, j models.NZBResult) int {
+	if i.SizeBytes > j.SizeBytes {
+		return -1
+	}
+	if i.SizeBytes < j.SizeBytes {
+		return 1
+	}
+	return 0
+}
+
 type SearchOptions struct {
 	Query               string
 	Categories          []string
@@ -346,56 +534,43 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	if bypassRanking {
 		log.Printf("[indexer] Bypassing strmr ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	} else {
-		log.Printf("[indexer] Sorting %d results with ServicePriority=%q", len(aggregated), settings.Streaming.ServicePriority)
+		// Get effective ranking criteria (cascade: global -> profile -> client)
+		rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
+		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q", len(aggregated), len(rankingCriteria), settings.Streaming.ServicePriority)
+
+		// Cache settings needed for comparison functions
+		servicePriority := settings.Streaming.ServicePriority
+		preferredTerms := filterSettings.PreferredTerms
+		prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
+		preferredLang := settings.Metadata.Language
+
 		sort.SliceStable(aggregated, func(i, j int) bool {
-			// 1. Apply service priority FIRST - prioritized service type always comes before non-prioritized
-			priority := settings.Streaming.ServicePriority
-			if priority != config.StreamingServicePriorityNone {
-				iIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[i].ServiceType == models.ServiceTypeUsenet) ||
-					(priority == config.StreamingServicePriorityDebrid && aggregated[i].ServiceType == models.ServiceTypeDebrid)
-				jIsPrioritized := (priority == config.StreamingServicePriorityUsenet && aggregated[j].ServiceType == models.ServiceTypeUsenet) ||
-					(priority == config.StreamingServicePriorityDebrid && aggregated[j].ServiceType == models.ServiceTypeDebrid)
+			for _, criterion := range rankingCriteria {
+				if !criterion.Enabled {
+					continue
+				}
 
-				if iIsPrioritized != jIsPrioritized {
-					return iIsPrioritized
+				var result int
+				switch criterion.ID {
+				case config.RankingServicePriority:
+					result = compareServicePriority(aggregated[i], aggregated[j], servicePriority)
+				case config.RankingPreferredTerms:
+					result = comparePreferredTerms(aggregated[i], aggregated[j], preferredTerms)
+				case config.RankingResolution:
+					result = compareResolution(aggregated[i], aggregated[j])
+				case config.RankingHDR:
+					result = compareHDR(aggregated[i], aggregated[j], prioritizeHdr)
+				case config.RankingLanguage:
+					result = compareLanguage(aggregated[i], aggregated[j], preferredLang)
+				case config.RankingSize:
+					result = compareSize(aggregated[i], aggregated[j])
+				}
+
+				if result != 0 {
+					return result < 0
 				}
 			}
-
-			// 2. Prioritize results containing preferred terms
-			if len(filterSettings.PreferredTerms) > 0 {
-				iHasPreferred := containsPreferredTerm(aggregated[i].Title, filterSettings.PreferredTerms)
-				jHasPreferred := containsPreferredTerm(aggregated[j].Title, filterSettings.PreferredTerms)
-				if iHasPreferred != jHasPreferred {
-					return iHasPreferred
-				}
-			}
-
-			// 3. Sort by resolution (2160p > 1080p > 720p > etc.)
-			resI := extractResolutionFromResult(aggregated[i])
-			resJ := extractResolutionFromResult(aggregated[j])
-
-			if resI != resJ {
-				return resI > resJ
-			}
-
-			// 4. Within same resolution, prioritize HDR/DV content if enabled
-			if models.BoolVal(filterSettings.PrioritizeHdr, false) {
-				iHasHDR := aggregated[i].Attributes["hdr"] != ""
-				jHasHDR := aggregated[j].Attributes["hdr"] != ""
-				iHasDV := aggregated[i].Attributes["hasDV"] == "true"
-				jHasDV := aggregated[j].Attributes["hasDV"] == "true"
-
-				// DV > HDR > SDR (within same resolution)
-				if iHasDV != jHasDV {
-					return iHasDV
-				}
-				if iHasHDR != jHasHDR {
-					return iHasHDR
-				}
-			}
-
-			// 5. Finally, tiebreak by size (larger = better quality)
-			return aggregated[i].SizeBytes > aggregated[j].SizeBytes
+			return false
 		})
 	}
 

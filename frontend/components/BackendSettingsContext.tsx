@@ -153,6 +153,17 @@ export interface BackendNetworkSettings {
   remoteBackendUrl: string; // Backend URL when on mobile/other networks
 }
 
+export interface BackendRankingCriterion {
+  id: string;
+  name: string;
+  enabled: boolean;
+  order: number;
+}
+
+export interface BackendRankingSettings {
+  criteria: BackendRankingCriterion[];
+}
+
 export interface BackendSettings {
   server: BackendServerSettings;
   usenet: BackendUsenetSettings[];
@@ -170,6 +181,7 @@ export interface BackendSettings {
   display?: BackendDisplaySettings;
   network?: BackendNetworkSettings;
   subtitles?: BackendSubtitleSettings;
+  ranking?: BackendRankingSettings;
   demoMode?: boolean;
 }
 

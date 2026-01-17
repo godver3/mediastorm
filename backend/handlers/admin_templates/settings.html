@@ -98,7 +98,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display', 'network'];
+    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -2284,13 +2284,156 @@
         renderSettings();
     }
 
+    // Render ranking criteria UI with drag-and-drop (similar to shelves)
+    function renderRankingCriteriaUI() {
+        let criteria;
+        let isInherited = false;
+
+        if (selectedUserId && userSettings) {
+            const profileCriteria = userSettings.ranking?.criteria;
+            const globalCriteria = currentSettings.ranking?.criteria || [];
+
+            if (profileCriteria && profileCriteria.length > 0) {
+                criteria = profileCriteria;
+                isInherited = false;
+            } else {
+                criteria = globalCriteria;
+                isInherited = true;
+            }
+        } else {
+            criteria = currentSettings.ranking?.criteria || [];
+        }
+
+        if (!criteria.length) return '<p class="form-hint">No ranking criteria configured.</p>';
+
+        // Build inheritance badge
+        let inheritanceBadgeHtml = '';
+        if (selectedUserId) {
+            if (isInherited) {
+                inheritanceBadgeHtml = '<span class="inheritance-badge inherited" title="Using global default" style="margin-left:8px;font-size:11px;padding:2px 8px;background:rgba(100,100,100,0.3);border-radius:4px;color:#aaa;">From Global</span>';
+            } else {
+                inheritanceBadgeHtml = '<span class="inheritance-badge overridden" title="Profile has custom configuration" style="margin-left:8px;font-size:11px;padding:2px 8px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;">Profile</span>' +
+                    '<button type="button" class="inheritance-reset" onclick="resetRankingToGlobal()" title="Reset to global defaults" style="margin-left:4px;background:none;border:none;color:#888;cursor:pointer;font-size:14px;">↩</button>';
+            }
+        }
+
+        // Sort by order for display
+        const sortedCriteria = [...criteria].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        const rows = sortedCriteria.map((c, i) => {
+            const enabledClass = c.enabled ? '' : ' disabled';
+            const toggleChecked = c.enabled ? 'checked' : '';
+
+            return '<div class="ranking-row'+enabledClass+'" data-index="'+i+'" data-id="'+c.id+'">'+
+                '<span class="ranking-handle">☰</span>'+
+                '<span class="ranking-name">'+c.name+'</span>'+
+                '<label class="ranking-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleRankingCriterionEnabled(\''+c.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
+            '</div>';
+        }).join('');
+
+        const styles = '<style>'+
+            '.ranking-container{position:relative;}'+
+            '.ranking-row{display:flex;align-items:center;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:6px;margin-bottom:6px;user-select:none;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease,opacity 0.15s ease;}'+
+            '.ranking-row.dragging{background:rgba(138,43,226,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;transform:scale(1.02);}'+
+            '.ranking-row.drag-over{border-top:2px solid #8a2be2;margin-top:-2px;}'+
+            '.ranking-row.disabled{opacity:0.5;}'+
+            '.ranking-handle{color:#666;margin-right:12px;font-size:16px;cursor:grab;touch-action:none;padding:8px;margin:-8px;margin-right:4px;}'+
+            '.ranking-handle:active{cursor:grabbing;}'+
+            '.ranking-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;}'+
+            '.ranking-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;margin-left:12px;}'+
+            '.ranking-toggle input{opacity:0;width:0;height:0;}'+
+            '.ranking-toggle .toggle-slider{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#444;border-radius:22px;transition:0.3s;}'+
+            '.ranking-toggle .toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:0.3s;}'+
+            '.ranking-toggle input:checked + .toggle-slider{background-color:#8a2be2;}'+
+            '.ranking-toggle input:checked + .toggle-slider:before{transform:translateX(18px);}'+
+            '.ranking-inherited .ranking-row{opacity:0.6;background:rgba(100,116,139,0.08);border:1px solid rgba(100,116,139,0.25);}'+
+            '.ranking-inherited .ranking-handle{color:#555;}'+
+            '.ranking-inherited .ranking-name{color:#888;}'+
+            '.ranking-inherited .toggle-slider{opacity:0.6;background:rgba(100,116,139,0.2);}'+
+            '.ranking-inherited .ranking-toggle input:checked + .toggle-slider{opacity:0.6;background:rgba(99,102,241,0.5);}'+
+            '</style>';
+
+        const containerClass = isInherited && selectedUserId ? 'ranking-container ranking-inherited' : 'ranking-container';
+        return styles + '<div class="'+containerClass+'" id="rankingContainer">'+rows+'</div>' + inheritanceBadgeHtml;
+    }
+
+    // Toggle ranking criterion enabled state
+    function toggleRankingCriterionEnabled(criterionId, enabled) {
+        let criteria;
+        if (selectedUserId && userSettings) {
+            ensureProfileRanking();
+            criteria = userSettings.ranking?.criteria || [];
+        } else {
+            criteria = currentSettings.ranking?.criteria || [];
+        }
+
+        const criterion = criteria.find(c => c.id === criterionId);
+        if (criterion) {
+            criterion.enabled = enabled;
+        }
+        renderSettings();
+    }
+
+    // Ensure profile has its own ranking criteria (copy from global if needed)
+    function ensureProfileRanking() {
+        if (!selectedUserId || !userSettings) return;
+
+        if (!userSettings.ranking) {
+            userSettings.ranking = {};
+        }
+        if (!userSettings.ranking.criteria || userSettings.ranking.criteria.length === 0) {
+            const globalCriteria = currentSettings.ranking?.criteria || [];
+            userSettings.ranking.criteria = JSON.parse(JSON.stringify(globalCriteria));
+        }
+    }
+
+    // Reset ranking to global defaults
+    function resetRankingToGlobal() {
+        if (!selectedUserId || !userSettings) return;
+        if (userSettings.ranking) {
+            delete userSettings.ranking.criteria;
+        }
+        renderSettings();
+    }
+
+    // Reorder ranking criteria
+    function reorderRankingCriteria(fromIndex, toIndex) {
+        let criteria;
+        if (selectedUserId && userSettings) {
+            ensureProfileRanking();
+            criteria = userSettings.ranking?.criteria || [];
+        } else {
+            criteria = currentSettings.ranking?.criteria || [];
+        }
+
+        // Sort criteria by current order to get display order
+        const sortedCriteria = [...criteria].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        // Get the criterion being moved based on display position
+        const movedCriterion = sortedCriteria[fromIndex];
+        if (!movedCriterion) return;
+
+        // Remove from sorted list and insert at new position
+        sortedCriteria.splice(fromIndex, 1);
+        sortedCriteria.splice(toIndex, 0, movedCriterion);
+
+        // Update order values based on new positions
+        sortedCriteria.forEach((criterion, i) => {
+            const originalCriterion = criteria.find(c => c.id === criterion.id);
+            if (originalCriterion) {
+                originalCriterion.order = i;
+            }
+        });
+    }
+
     // Drag and drop state
     let dragState = null;
-    let dragType = null; // 'priority' or 'shelves'
+    let dragType = null; // 'priority', 'shelves', or 'ranking'
 
     function initDragDrop() {
         initPriorityDragDrop();
         initShelvesDragDrop();
+        initRankingDragDrop();
     }
 
     function initPriorityDragDrop() {
@@ -2313,6 +2456,16 @@
         container.addEventListener('mousedown', (e) => handleDragStart(e, 'shelves'));
     }
 
+    function initRankingDragDrop() {
+        const container = document.getElementById('rankingContainer');
+        if (!container) return;
+
+        container.addEventListener('touchstart', (e) => handleDragStart(e, 'ranking'), {passive: false});
+        container.addEventListener('touchmove', handleDragMove, {passive: false});
+        container.addEventListener('touchend', handleDragEnd);
+        container.addEventListener('mousedown', (e) => handleDragStart(e, 'ranking'));
+    }
+
     // Shared mouse event listeners (added once)
     let dragListenersAdded = false;
     function ensureDragListeners() {
@@ -2323,8 +2476,8 @@
     }
 
     function handleDragStart(e, type) {
-        const rowClass = type === 'priority' ? '.priority-row' : '.shelf-row';
-        const handleClass = type === 'priority' ? '.priority-handle' : '.shelf-handle';
+        const rowClass = type === 'priority' ? '.priority-row' : (type === 'ranking' ? '.ranking-row' : '.shelf-row');
+        const handleClass = type === 'priority' ? '.priority-handle' : (type === 'ranking' ? '.ranking-handle' : '.shelf-handle');
         const row = e.target.closest(rowClass);
         if (!row) return;
 
@@ -2332,7 +2485,7 @@
         if (!e.target.closest(handleClass)) return;
 
         // Don't start drag if clicking on interactive elements
-        if (e.target.closest('.shelf-toggle') || e.target.closest('.shelf-edit-btn') || e.target.closest('.shelf-delete-btn')) return;
+        if (e.target.closest('.shelf-toggle') || e.target.closest('.shelf-edit-btn') || e.target.closest('.shelf-delete-btn') || e.target.closest('.ranking-toggle')) return;
 
         e.preventDefault();
         ensureDragListeners();
@@ -2356,8 +2509,8 @@
         if (!dragState) return;
         e.preventDefault();
 
-        const containerId = dragType === 'priority' ? 'priorityContainer' : 'shelvesContainer';
-        const rowClass = dragType === 'priority' ? '.priority-row' : '.shelf-row';
+        const containerId = dragType === 'priority' ? 'priorityContainer' : (dragType === 'ranking' ? 'rankingContainer' : 'shelvesContainer');
+        const rowClass = dragType === 'priority' ? '.priority-row' : (dragType === 'ranking' ? '.ranking-row' : '.shelf-row');
 
         const touch = e.touches ? e.touches[0] : e;
         const container = document.getElementById(containerId);
@@ -2385,8 +2538,8 @@
     function handleDragEnd(e) {
         if (!dragState) return;
 
-        const containerId = dragType === 'priority' ? 'priorityContainer' : 'shelvesContainer';
-        const rowClass = dragType === 'priority' ? '.priority-row' : '.shelf-row';
+        const containerId = dragType === 'priority' ? 'priorityContainer' : (dragType === 'ranking' ? 'rankingContainer' : 'shelvesContainer');
+        const rowClass = dragType === 'priority' ? '.priority-row' : (dragType === 'ranking' ? '.ranking-row' : '.shelf-row');
 
         const container = document.getElementById(containerId);
         if (container) {
@@ -2402,6 +2555,8 @@
                 providers.splice(dragState.newIndex, 0, moved);
             } else if (dragType === 'shelves') {
                 reorderShelves(dragState.index, dragState.newIndex);
+            } else if (dragType === 'ranking') {
+                reorderRankingCriteria(dragState.index, dragState.newIndex);
             }
             renderSettings();
         }
@@ -2582,7 +2737,7 @@
             if (nestedDef.parent === sectionKey && !nestedDef.group) {
                 if (selectedUserId && !perUserSections.includes(nestedKey)) continue;
                 // Use custom shelves UI for home shelves configuration
-                const nestedContent = nestedKey === 'homeShelves.shelves' ? renderShelvesOrderUI() : renderArraySection(nestedKey, nestedDef);
+                const nestedContent = nestedKey === 'homeShelves.shelves' ? renderShelvesOrderUI() : (nestedKey === 'ranking.criteria' ? renderRankingCriteriaUI() : renderArraySection(nestedKey, nestedDef));
                 nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+nestedContent+'</div>';
             }
         }

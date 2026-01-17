@@ -22,12 +22,13 @@ func BoolVal(p *bool, def bool) bool {
 // UserSettings contains per-user customizable settings.
 // These override global defaults when set.
 type UserSettings struct {
-	Playback    PlaybackSettings    `json:"playback"`
-	HomeShelves HomeShelvesSettings `json:"homeShelves"`
-	Filtering   FilterSettings      `json:"filtering"`
-	LiveTV      LiveTVSettings      `json:"liveTV"`
-	Display     DisplaySettings     `json:"display"`
-	Network     NetworkSettings     `json:"network"`
+	Playback    PlaybackSettings     `json:"playback"`
+	HomeShelves HomeShelvesSettings  `json:"homeShelves"`
+	Filtering   FilterSettings       `json:"filtering"`
+	LiveTV      LiveTVSettings       `json:"liveTV"`
+	Display     DisplaySettings      `json:"display"`
+	Network     NetworkSettings      `json:"network"`
+	Ranking     *UserRankingSettings `json:"ranking,omitempty"`
 }
 
 // NetworkSettings configures network-aware backend URL switching.
