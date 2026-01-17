@@ -26,6 +26,10 @@ type metadataService interface {
 	StreamTrailer(context.Context, string, io.Writer) error
 	StreamTrailerWithRange(context.Context, string, string, io.Writer) error
 	GetCustomList(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, int, error)
+	// Trailer prequeue methods for 1080p YouTube trailers
+	PrequeueTrailer(videoURL string) (string, error)
+	GetTrailerPrequeueStatus(id string) (*metadatapkg.TrailerPrequeueItem, error)
+	ServePrequeuedTrailer(id string, w http.ResponseWriter, r *http.Request) error
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -407,6 +411,95 @@ func (h *MetadataHandler) TrailerProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		log.Printf("[trailer-proxy] stream completed successfully for: %s", videoURL)
+	}
+}
+
+// TrailerPrequeueRequest is the request body for starting a trailer prequeue
+type TrailerPrequeueRequest struct {
+	URL string `json:"url"`
+}
+
+// TrailerPrequeueResponse is the response for trailer prequeue operations
+type TrailerPrequeueResponse struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+	FileSize int64  `json:"fileSize,omitempty"`
+}
+
+// TrailerPrequeue starts downloading a trailer in the background
+func (h *MetadataHandler) TrailerPrequeue(w http.ResponseWriter, r *http.Request) {
+	var req TrailerPrequeueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	videoURL := strings.TrimSpace(req.URL)
+	if videoURL == "" {
+		http.Error(w, "url parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate it's a YouTube URL
+	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+		http.Error(w, "only YouTube URLs are supported", http.StatusBadRequest)
+		return
+	}
+
+	id, err := h.Service.PrequeueTrailer(videoURL)
+	if err != nil {
+		log.Printf("[trailer-prequeue] error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(TrailerPrequeueResponse{
+		ID:     id,
+		Status: "pending",
+	})
+}
+
+// TrailerPrequeueStatus returns the status of a prequeued trailer
+func (h *MetadataHandler) TrailerPrequeueStatus(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+
+	item, err := h.Service.GetTrailerPrequeueStatus(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(TrailerPrequeueResponse{
+		ID:       item.ID,
+		Status:   string(item.Status),
+		Error:    item.Error,
+		FileSize: item.FileSize,
+	})
+}
+
+// TrailerPrequeueServe serves a downloaded trailer file
+func (h *MetadataHandler) TrailerPrequeueServe(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[trailer-prequeue] serving trailer: %s", id)
+
+	if err := h.Service.ServePrequeuedTrailer(id, w, r); err != nil {
+		log.Printf("[trailer-prequeue] serve error: %v", err)
+		// Only write error if headers haven't been sent
+		if w.Header().Get("Content-Type") == "" {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		}
 	}
 }
 

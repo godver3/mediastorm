@@ -175,6 +175,12 @@ func Register(
 	protected.HandleFunc("/metadata/trailers/stream", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/metadata/trailers/proxy", metadataHandler.TrailerProxy).Methods(http.MethodGet)
 	protected.HandleFunc("/metadata/trailers/proxy", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/trailers/prequeue", metadataHandler.TrailerPrequeue).Methods(http.MethodPost)
+	protected.HandleFunc("/metadata/trailers/prequeue", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/trailers/prequeue/status", metadataHandler.TrailerPrequeueStatus).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/trailers/prequeue/status", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/trailers/prequeue/serve", metadataHandler.TrailerPrequeueServe).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/trailers/prequeue/serve", handleOptions).Methods(http.MethodOptions)
 
 	protected.HandleFunc("/indexers/search", indexerHandler.Search).Methods(http.MethodGet)
 	protected.HandleFunc("/indexers/search", indexerHandler.Options).Methods(http.MethodOptions)

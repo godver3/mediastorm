@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -40,6 +41,9 @@ type Service struct {
 	// In-flight request deduplication for TVDB ID resolution
 	inflightMu       sync.Mutex
 	inflightRequests map[string]*inflightRequest
+
+	// Trailer prequeue manager for 1080p YouTube trailers
+	trailerPrequeue *TrailerPrequeueManager
 }
 
 type inflightRequest struct {
@@ -65,6 +69,14 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
 	idCacheDir := filepath.Join(cacheDir, "metadata", "ids")
+
+	// Initialize trailer prequeue manager
+	trailerTempDir := filepath.Join(os.TempDir(), "strmr-trailers")
+	trailerMgr, err := NewTrailerPrequeueManager(trailerTempDir)
+	if err != nil {
+		log.Printf("[metadata] WARNING: failed to initialize trailer prequeue manager: %v", err)
+	}
+
 	return &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}),
@@ -74,6 +86,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		demo:             demo,
 		ttlHours:         ttlHours,
 		inflightRequests: make(map[string]*inflightRequest),
+		trailerPrequeue:  trailerMgr,
 	}
 }
 
@@ -3602,4 +3615,34 @@ func (s *Service) StreamTrailerWithRange(ctx context.Context, videoURL string, r
 	}
 
 	return nil
+}
+
+// PrequeueTrailer starts downloading a YouTube trailer in the background
+// Returns the prequeue ID that can be used to check status and serve the file
+func (s *Service) PrequeueTrailer(videoURL string) (string, error) {
+	if s.trailerPrequeue == nil {
+		return "", fmt.Errorf("trailer prequeue manager not initialized")
+	}
+	id := s.trailerPrequeue.Prequeue(videoURL)
+	return id, nil
+}
+
+// GetTrailerPrequeueStatus returns the status of a prequeued trailer
+func (s *Service) GetTrailerPrequeueStatus(id string) (*TrailerPrequeueItem, error) {
+	if s.trailerPrequeue == nil {
+		return nil, fmt.Errorf("trailer prequeue manager not initialized")
+	}
+	item, ok := s.trailerPrequeue.GetStatus(id)
+	if !ok {
+		return nil, fmt.Errorf("trailer not found: %s", id)
+	}
+	return item, nil
+}
+
+// ServePrequeuedTrailer serves a downloaded trailer file with proper range request support
+func (s *Service) ServePrequeuedTrailer(id string, w http.ResponseWriter, r *http.Request) error {
+	if s.trailerPrequeue == nil {
+		return fmt.Errorf("trailer prequeue manager not initialized")
+	}
+	return s.trailerPrequeue.ServeTrailer(id, w, r)
 }

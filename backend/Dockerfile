@@ -53,6 +53,23 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     && rm -rf "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl" "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz" \
     && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
 
+# Install yt-dlp nightly (required for YouTube trailer support, handles SABR streaming)
+RUN wget -q "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp" -O /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp
+
+# Install deno (JavaScript runtime required by yt-dlp for YouTube challenge solving)
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        DENO_ARCH="aarch64-unknown-linux-gnu"; \
+    else \
+        DENO_ARCH="x86_64-unknown-linux-gnu"; \
+    fi && \
+    wget -q "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}.zip" -O /tmp/deno.zip \
+    && apt-get update && apt-get install -y --no-install-recommends unzip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin/ \
+    && rm /tmp/deno.zip \
+    && chmod +x /usr/local/bin/deno \
+    && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /root/
 
 # Copy the binary from builder stage

@@ -202,6 +202,15 @@ export interface TrailerQuery {
   season?: number; // Season number for season-specific trailers (0 or undefined = show-level)
 }
 
+export type TrailerPrequeueStatus = 'pending' | 'downloading' | 'ready' | 'failed';
+
+export interface TrailerPrequeueResponse {
+  id: string;
+  status: TrailerPrequeueStatus;
+  error?: string;
+  fileSize?: number;
+}
+
 export interface NZBResult {
   title: string;
   indexer: string;
@@ -1208,6 +1217,30 @@ class ApiService {
       searchParams.set('token', token);
     }
     return `${this.baseUrl}/metadata/trailers/proxy?${searchParams.toString()}`;
+  }
+
+  // Start prequeue download for a YouTube trailer (1080p merged video+audio)
+  async prequeueTrailer(videoUrl: string): Promise<TrailerPrequeueResponse> {
+    return this.request<TrailerPrequeueResponse>('/metadata/trailers/prequeue', {
+      method: 'POST',
+      body: JSON.stringify({ url: videoUrl }),
+    });
+  }
+
+  // Check status of a prequeued trailer download
+  async getTrailerPrequeueStatus(id: string): Promise<TrailerPrequeueResponse> {
+    return this.request<TrailerPrequeueResponse>(`/metadata/trailers/prequeue/status?id=${encodeURIComponent(id)}`);
+  }
+
+  // Get URL to serve a prequeued trailer (for video player)
+  getTrailerPrequeueServeUrl(id: string): string {
+    const searchParams = new URLSearchParams();
+    searchParams.set('id', id);
+    const token = this.authToken;
+    if (token) {
+      searchParams.set('token', token);
+    }
+    return `${this.baseUrl}/metadata/trailers/prequeue/serve?${searchParams.toString()}`;
   }
 
   // Get settings
