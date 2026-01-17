@@ -800,15 +800,17 @@ const MediaGrid = React.memo(
           contentContainerStyle={styles.grid}
           bounces={false}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={!Platform.isTV}
+          scrollEnabled={true}
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
           removeClippedSubviews={Platform.isTV}
           scrollEventThrottle={16}
-          // Android TV: prevent native focus-based scrolling
+          // TV: prevent native focus-based scrolling and gestures
           focusable={false}
           // @ts-ignore - TV-specific prop
-          isTVSelectable={false}>
+          isTVSelectable={false}
+          // @ts-ignore - TV-specific prop
+          tvRemoveGestureEnabled={Platform.isTV}>
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;
@@ -855,7 +857,11 @@ const MediaGrid = React.memo(
     ];
 
     return (
-      <View style={containerStyle}>
+      <View
+        style={containerStyle}
+        // @ts-ignore - TV-specific props to prevent native focus handling
+        focusable={false}
+        isTVSelectable={false}>
         <Text style={styles.title}>{title}</Text>
         {renderContent()}
       </View>

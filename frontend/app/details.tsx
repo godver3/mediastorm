@@ -4407,57 +4407,65 @@ export default function DetailsScreen() {
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
-          {/* TV Episode Carousel - uses native Pressable focus with FlatList */}
-          {Platform.isTV && isSeries && seasons.length > 0 && TVEpisodeCarousel ? (
-            <TVEpisodeCarousel
-              seasons={seasons}
-              selectedSeason={selectedSeason}
-              episodes={selectedSeason?.episodes ?? []}
-              activeEpisode={activeEpisode}
-              onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
-              onEpisodeSelect={handleEpisodeSelect}
-              onEpisodePlay={handlePlayEpisode}
-              isEpisodeWatched={isEpisodeWatched}
-              getEpisodeProgress={(episode: SeriesEpisode) => {
-                const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
-                return episodeProgressMap.get(key) ?? 0;
-              }}
-              onFocusRowChange={handleTVFocusAreaChange}
-            />
-          ) : (
-            Platform.isTV &&
-            isSeries && (
-              <SpatialNavigationNode
-                orientation="horizontal"
-                focusKey="episode-strip-wrapper"
-                onActive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper ACTIVE')}
-                onInactive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper INACTIVE')}>
-                {activeEpisode ? (
-                  <TVEpisodeStrip
-                    activeEpisode={activeEpisode}
-                    allEpisodes={allEpisodes}
-                    selectedSeason={selectedSeason}
-                    percentWatched={displayProgress}
-                    onSelect={handleWatchNow}
-                    onFocus={handleEpisodeStripFocus}
-                    onBlur={handleEpisodeStripBlur}
-                  />
-                ) : (
-                  <View />
-                )}
-              </SpatialNavigationNode>
-            )
+          {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
+              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
+          {Platform.isTV && isSeries && (
+            <SpatialNavigationNode
+              orientation="vertical"
+              focusKey="episode-section-wrapper"
+              onActive={() => console.log('[Details NAV DEBUG] episode-section-wrapper ACTIVE')}
+              onInactive={() => console.log('[Details NAV DEBUG] episode-section-wrapper INACTIVE')}>
+              {seasons.length > 0 && TVEpisodeCarousel ? (
+                <TVEpisodeCarousel
+                  seasons={seasons}
+                  selectedSeason={selectedSeason}
+                  episodes={selectedSeason?.episodes ?? []}
+                  activeEpisode={activeEpisode}
+                  onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
+                  onEpisodeSelect={handleEpisodeSelect}
+                  onEpisodePlay={handlePlayEpisode}
+                  isEpisodeWatched={isEpisodeWatched}
+                  getEpisodeProgress={(episode: SeriesEpisode) => {
+                    const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
+                    return episodeProgressMap.get(key) ?? 0;
+                  }}
+                  onFocusRowChange={handleTVFocusAreaChange}
+                />
+              ) : activeEpisode ? (
+                <TVEpisodeStrip
+                  activeEpisode={activeEpisode}
+                  allEpisodes={allEpisodes}
+                  selectedSeason={selectedSeason}
+                  percentWatched={displayProgress}
+                  onSelect={handleWatchNow}
+                  onFocus={handleEpisodeStripFocus}
+                  onBlur={handleEpisodeStripBlur}
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
           )}
-          {/* TV Cast Section - shows cast with D-pad navigation */}
-          {/* Show while loading to reserve space and prevent layout shift */}
-          {Platform.isTV && TVCastSection && (isMetadataLoadingForSkeleton || credits) && (
-            <TVCastSection
-              credits={credits}
-              isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-              maxCast={10}
-              onFocus={() => handleTVFocusAreaChange('cast')}
-              compactMargin
-            />
+          {/* TV Cast Section - always render wrapper node to maintain navigation order
+              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
+          {Platform.isTV && TVCastSection && (
+            <SpatialNavigationNode
+              orientation="horizontal"
+              focusKey="cast-section-wrapper"
+              onActive={() => console.log('[Details NAV DEBUG] cast-section-wrapper ACTIVE')}
+              onInactive={() => console.log('[Details NAV DEBUG] cast-section-wrapper INACTIVE')}>
+              {isMetadataLoadingForSkeleton || credits ? (
+                <TVCastSection
+                  credits={credits}
+                  isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+                  maxCast={10}
+                  onFocus={() => handleTVFocusAreaChange('cast')}
+                  compactMargin
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
           )}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>

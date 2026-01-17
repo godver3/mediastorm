@@ -203,33 +203,58 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     return null;
   }
 
+  // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
+  // For small lists (< 3 items), render directly without virtualization
+  const useVirtualizedSeasons = seasons.length >= 3;
+  const useVirtualizedEpisodes = episodes.length >= 3;
+
   return (
     <View style={styles.container}>
       {/* Season Selector Row - wrapped in SpatialNavigationNode for vertical nav */}
       <SpatialNavigationNode orientation="horizontal">
         <View style={styles.seasonRow}>
-          <SpatialNavigationVirtualizedList
-            data={seasons}
-            renderItem={renderSeasonItem}
-            itemSize={seasonItemSize}
-            orientation="horizontal"
-            numberOfRenderedItems={seasons.length}
-            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(seasons.length - 2, isAndroidTV ? 6 : 8))}
-          />
+          {useVirtualizedSeasons ? (
+            <SpatialNavigationVirtualizedList
+              data={seasons}
+              renderItem={renderSeasonItem}
+              itemSize={seasonItemSize}
+              orientation="horizontal"
+              numberOfRenderedItems={seasons.length}
+              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(seasons.length - 2, isAndroidTV ? 6 : 8))}
+            />
+          ) : (
+            <View style={styles.smallListRow}>
+              {seasons.map((season) => (
+                <React.Fragment key={`season-${season.number}`}>
+                  {renderSeasonItem({ item: season })}
+                </React.Fragment>
+              ))}
+            </View>
+          )}
         </View>
       </SpatialNavigationNode>
 
       {/* Episode Carousel - wrapped in SpatialNavigationNode for vertical nav */}
       <SpatialNavigationNode orientation="horizontal">
         <View style={styles.episodeRow}>
-          <SpatialNavigationVirtualizedList
-            data={episodes}
-            renderItem={renderEpisodeItem}
-            itemSize={episodeItemSize}
-            orientation="horizontal"
-            numberOfRenderedItems={episodes.length}
-            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(episodes.length - 2, isAndroidTV ? 4 : 5))}
-          />
+          {useVirtualizedEpisodes ? (
+            <SpatialNavigationVirtualizedList
+              data={episodes}
+              renderItem={renderEpisodeItem}
+              itemSize={episodeItemSize}
+              orientation="horizontal"
+              numberOfRenderedItems={episodes.length}
+              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(episodes.length - 2, isAndroidTV ? 4 : 5))}
+            />
+          ) : (
+            <View style={styles.smallListRow}>
+              {episodes.map((episode) => (
+                <React.Fragment key={`ep-${episode.seasonNumber}-${episode.episodeNumber}`}>
+                  {renderEpisodeItem({ item: episode })}
+                </React.Fragment>
+              ))}
+            </View>
+          )}
         </View>
       </SpatialNavigationNode>
 
@@ -263,6 +288,10 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: tvScale(24),
       width: '100%',
       overflow: 'hidden',
+    },
+    smallListRow: {
+      flexDirection: 'row',
+      gap: tvScale(12),
     },
 
     // Season row

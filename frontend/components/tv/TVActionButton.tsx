@@ -46,6 +46,12 @@ const TVActionButton = memo(function TVActionButton({
 
   const scaledIconSize = tvScale(iconSize * 1.375, iconSize);
 
+  // Primary variant uses accent color when unfocused (outlined style)
+  const getIconColor = (isFocused: boolean) => {
+    if (isFocused) return theme.colors.text.inverse;
+    return variant === 'primary' ? theme.colors.accent.primary : theme.colors.text.primary;
+  };
+
   const buttonContent = (
     <SpatialNavigationFocusableView
       onSelect={disabled || loading ? undefined : onSelect}
@@ -64,7 +70,7 @@ const TVActionButton = memo(function TVActionButton({
                   <Ionicons
                     name={icon}
                     size={scaledIconSize}
-                    color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+                    color={getIconColor(isFocused)}
                   />
                 ) : loading && icon ? (
                   <View style={{ width: scaledIconSize, height: scaledIconSize }} />
@@ -72,7 +78,10 @@ const TVActionButton = memo(function TVActionButton({
                 {text && (
                   <Text
                     numberOfLines={1}
-                    style={[isFocused ? styles.textFocused : styles.text, loading && { opacity: 0 }]}>
+                    style={[
+                      isFocused ? styles.textFocused : variant === 'primary' ? styles.textPrimary : styles.text,
+                      loading && { opacity: 0 },
+                    ]}>
                     {text}
                   </Text>
                 )}
@@ -107,13 +116,15 @@ const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | '
 
   return StyleSheet.create({
     button: {
-      backgroundColor: variant === 'primary' ? theme.colors.accent.primary : theme.colors.overlay.button,
+      // Primary variant: outlined style when unfocused, filled when focused
+      // Secondary variant: subtle background when unfocused, filled when focused
+      backgroundColor: variant === 'primary' ? 'transparent' : theme.colors.overlay.button,
       paddingVertical: basePaddingVertical * scale,
       paddingHorizontal: basePaddingHorizontal * scale,
       borderRadius: theme.radius.md * scale,
       alignItems: 'center',
       alignSelf: 'flex-start',
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: variant === 'primary' ? 2 * scale : StyleSheet.hairlineWidth,
       borderColor: variant === 'primary' ? theme.colors.accent.primary : theme.colors.border.subtle,
     },
     buttonFocused: {
@@ -126,6 +137,12 @@ const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | '
     text: {
       ...theme.typography.label.md,
       color: theme.colors.text.primary,
+      fontSize: theme.typography.label.md.fontSize * scale,
+      lineHeight: theme.typography.label.md.lineHeight * scale,
+    },
+    textPrimary: {
+      ...theme.typography.label.md,
+      color: theme.colors.accent.primary,
       fontSize: theme.typography.label.md.fontSize * scale,
       lineHeight: theme.typography.label.md.lineHeight * scale,
     },

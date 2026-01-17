@@ -24,20 +24,97 @@ import { useMultiscreen } from '@/components/MultiscreenContext';
 import LoadingIndicator from '@/components/LoadingIndicator';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
-import { TvModal } from '@/components/TvModal';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
-// Native TV focus - no longer using spatial navigation library
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV as isTVDevice } from '@/theme/tokens/tvScale';
+import { isTV as isTVDevice, responsiveSize } from '@/theme/tokens/tvScale';
+import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useLiveChannels, type LiveChannel } from '@/hooks/useLiveChannels';
 import apiService from '@/services/api';
+
+// Spatial navigation header button for TV - matches TVActionButton styling
+const SpatialHeaderButton = ({
+  text,
+  icon,
+  onSelect,
+  loading,
+  disabled,
+  isActive,
+  theme,
+}: {
+  text?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onSelect: () => void;
+  loading?: boolean;
+  disabled?: boolean;
+  isActive?: boolean;
+  theme: NovaTheme;
+}) => {
+  // TVActionButton scale: 1.375 for tvOS, 1.71875 for Android TV
+  const scale = Platform.OS === 'android' ? 1.71875 : 1.375;
+  const iconSize = 24 * scale;
+  const paddingH = theme.spacing.sm * scale;
+  const paddingV = theme.spacing.sm * scale;
+  const borderRadius = theme.radius.md * scale;
+  const fontSize = theme.typography.label.md.fontSize * scale;
+  const lineHeight = theme.typography.label.md.lineHeight * scale;
+  const gap = theme.spacing.sm;
+
+  return (
+    <SpatialNavigationFocusableView onSelect={disabled || loading ? undefined : onSelect}>
+      {({ isFocused }: { isFocused: boolean }) => (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap,
+            paddingHorizontal: paddingH,
+            paddingVertical: paddingV,
+            borderRadius,
+            backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
+            borderWidth: isActive && !isFocused ? 2 * scale : StyleSheet.hairlineWidth,
+            borderColor: isFocused
+              ? theme.colors.accent.primary
+              : isActive
+                ? theme.colors.accent.primary
+                : theme.colors.border.subtle,
+            opacity: disabled || loading ? 0.5 : 1,
+            alignSelf: 'flex-start',
+          }}>
+          <Ionicons
+            name={icon}
+            size={iconSize}
+            color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+          />
+          {text && (
+            <Text
+              style={{
+                ...theme.typography.label.md,
+                color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
+                fontSize,
+                lineHeight,
+              }}>
+              {text}
+            </Text>
+          )}
+        </View>
+      )}
+    </SpatialNavigationFocusableView>
+  );
+};
 
 interface ChannelCardProps {
   channel: LiveChannel;
@@ -283,23 +360,21 @@ const TVChannelGridCard = React.memo(
   function TVChannelGridCard({
     channel,
     isFavorite,
-    isFirstItem,
     rowIndex,
     cardWidth,
   }: {
     channel: LiveChannel;
     isFavorite: boolean;
-    isFirstItem: boolean;
     rowIndex: number;
     cardWidth: number;
   }) {
     const handlers = React.useContext(TVGridHandlersContext);
 
-    const handlePress = useCallback(() => {
+    const handleSelect = useCallback(() => {
       handlers?.onSelect(channel.id);
     }, [handlers, channel.id]);
 
-    const handleLongPress = useCallback(() => {
+    const handleLongSelect = useCallback(() => {
       handlers?.onLongPress(channel.id);
     }, [handlers, channel.id]);
 
@@ -308,46 +383,43 @@ const TVChannelGridCard = React.memo(
     }, [handlers, channel.id, rowIndex]);
 
     return (
-      <Pressable
-        onPress={handlePress}
-        onLongPress={handleLongPress}
-        delayLongPress={500}
-        onFocus={handleFocus}
-        hasTVPreferredFocus={isFirstItem}
-        tvParallaxProperties={{ enabled: false }}
-        style={({ focused }) => [focused ? tvGridCardStyles.cardFocused : tvGridCardStyles.card, { width: cardWidth }]}>
-        <View style={tvGridCardStyles.imageContainer}>
-          {channel.logo ? (
-            <Image
-              source={{ uri: channel.logo }}
-              style={tvGridCardStyles.image}
-              contentFit="contain"
-              transition={0}
-              cachePolicy="disk"
-              recyclingKey={`ch-${channel.id}`}
-            />
-          ) : (
-            <View style={tvGridCardStyles.placeholder}>
-              <Text style={tvGridCardStyles.placeholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
+      <SpatialNavigationFocusableView onSelect={handleSelect} onLongSelect={handleLongSelect} onFocus={handleFocus}>
+        {({ isFocused }: { isFocused: boolean }) => (
+          <View style={[isFocused ? tvGridCardStyles.cardFocused : tvGridCardStyles.card, { width: cardWidth }]}>
+            <View style={tvGridCardStyles.imageContainer}>
+              {channel.logo ? (
+                <Image
+                  source={{ uri: channel.logo }}
+                  style={tvGridCardStyles.image}
+                  contentFit="contain"
+                  transition={0}
+                  cachePolicy="disk"
+                  recyclingKey={`ch-${channel.id}`}
+                />
+              ) : (
+                <View style={tvGridCardStyles.placeholder}>
+                  <Text style={tvGridCardStyles.placeholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
+                </View>
+              )}
+              {isFavorite && (
+                <View style={tvGridCardStyles.badge}>
+                  <Text style={tvGridCardStyles.badgeText}>★</Text>
+                </View>
+              )}
+              <LinearGradient
+                pointerEvents="none"
+                colors={['transparent', 'rgba(0,0,0,0.85)']}
+                style={tvGridCardStyles.gradient}
+              />
+              <View style={tvGridCardStyles.textContainer}>
+                <Text style={tvGridCardStyles.text} numberOfLines={2}>
+                  {channel.name}
+                </Text>
+              </View>
             </View>
-          )}
-          {isFavorite && (
-            <View style={tvGridCardStyles.badge}>
-              <Text style={tvGridCardStyles.badgeText}>★</Text>
-            </View>
-          )}
-          <LinearGradient
-            pointerEvents="none"
-            colors={['transparent', 'rgba(0,0,0,0.85)']}
-            style={tvGridCardStyles.gradient}
-          />
-          <View style={tvGridCardStyles.textContainer}>
-            <Text style={tvGridCardStyles.text} numberOfLines={2}>
-              {channel.name}
-            </Text>
           </View>
-        </View>
-      </Pressable>
+        )}
+      </SpatialNavigationFocusableView>
     );
   },
   (prevProps, nextProps) =>
@@ -355,7 +427,6 @@ const TVChannelGridCard = React.memo(
     prevProps.channel.logo === nextProps.channel.logo &&
     prevProps.channel.name === nextProps.channel.name &&
     prevProps.isFavorite === nextProps.isFavorite &&
-    prevProps.isFirstItem === nextProps.isFirstItem &&
     prevProps.rowIndex === nextProps.rowIndex &&
     prevProps.cardWidth === nextProps.cardWidth,
 );
@@ -603,21 +674,15 @@ function LiveScreen() {
     [hasMoreChannels, regularChannels.length],
   );
 
-  // Handle left key press to open menu on TV
-  useEffect(() => {
-    if (!isTVDevice || !isActive) {
-      return;
-    }
-    const handleKeyDown = (key: SupportedKeys) => {
-      if (key === SupportedKeys.Left) {
+  // Handle left navigation at edge to open menu (spatial navigation)
+  const onDirectionHandledWithoutMovement = useCallback(
+    (direction: Direction) => {
+      if (direction === 'left') {
         openMenu();
       }
-    };
-    RemoteControlManager.addKeydownListener(handleKeyDown);
-    return () => {
-      RemoteControlManager.removeKeydownListener(handleKeyDown);
-    };
-  }, [isActive, openMenu]);
+    },
+    [openMenu],
+  );
 
   const handleChannelSelect = useCallback(
     async (channel: LiveChannel) => {
@@ -941,6 +1006,10 @@ function LiveScreen() {
     };
   }, [isActionModalVisible]);
 
+  // Refs for selection confirm modal back interceptor (initialized later after handleSelectionConfirmClose is defined)
+  const selectionConfirmCloseRef = useRef<(() => void) | null>(null);
+  const selectionConfirmInterceptorRef = useRef<(() => void) | null>(null);
+
   // Register back interceptor for selection mode
   const selectionModeInterceptorRef = useRef<(() => void) | null>(null);
 
@@ -1006,6 +1075,48 @@ function LiveScreen() {
     // Just close modal, keep selection mode active
     setIsSelectionConfirmVisible(false);
   }, []);
+
+  // Register back interceptor for selection confirm modal (same pattern as CategoryFilterModal)
+  useEffect(() => {
+    selectionConfirmCloseRef.current = handleSelectionConfirmClose;
+  }, [handleSelectionConfirmClose]);
+
+  useEffect(() => {
+    if (!isSelectionConfirmVisible) {
+      if (selectionConfirmInterceptorRef.current) {
+        selectionConfirmInterceptorRef.current();
+        selectionConfirmInterceptorRef.current = null;
+      }
+      return;
+    }
+
+    let isHandling = false;
+    let cleanupScheduled = false;
+
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      if (isHandling) return true;
+      isHandling = true;
+      selectionConfirmCloseRef.current?.();
+
+      if (!cleanupScheduled) {
+        cleanupScheduled = true;
+        setTimeout(() => {
+          if (selectionConfirmInterceptorRef.current) {
+            selectionConfirmInterceptorRef.current();
+            selectionConfirmInterceptorRef.current = null;
+          }
+          isHandling = false;
+        }, 750);
+      }
+      return true;
+    });
+
+    selectionConfirmInterceptorRef.current = removeInterceptor;
+
+    return () => {
+      // Cleanup handled by delayed cleanup
+    };
+  }, [isSelectionConfirmVisible]);
 
   const _handleOpenSettings = useCallback(() => {
     router.push('/settings');
@@ -1314,60 +1425,184 @@ function LiveScreen() {
 
   const actionChannelIsFavorite = actionChannel ? isFavorite(actionChannel.id) : false;
 
-  return (
+  // TV header buttons using spatial navigation
+  const renderTVHeaderButtons = () => (
+    <SpatialNavigationNode orientation="horizontal">
+      <View style={styles.actionsRow}>
+        <DefaultFocus>
+          <SpatialHeaderButton
+            text="Refresh"
+            icon="refresh-outline"
+            onSelect={handleRefreshPlaylist}
+            loading={isRefreshingPlaylist}
+            theme={theme}
+          />
+        </DefaultFocus>
+        <SpatialHeaderButton
+          text="Categories"
+          icon="albums-outline"
+          onSelect={handleOpenCategoryModal}
+          disabled={availableCategories.length === 0}
+          theme={theme}
+        />
+        <SpatialHeaderButton
+          text={isFilterActive ? 'Close Filter' : 'Filter'}
+          icon={isFilterActive ? 'close-outline' : 'filter-outline'}
+          onSelect={handleToggleFilter}
+          theme={theme}
+        />
+        {hasSavedSession && !isSelectionMode && (
+          <SpatialHeaderButton
+            text="Resume"
+            icon="play-circle-outline"
+            onSelect={handleResumePress}
+            theme={theme}
+          />
+        )}
+        <SpatialHeaderButton
+          text={isSelectionMode ? `Start (${selectedChannels.length})` : 'Multiscreen'}
+          icon={isSelectionMode ? 'checkmark-circle-outline' : 'grid-outline'}
+          onSelect={handleMultiscreenPress}
+          isActive={isSelectionMode}
+          theme={theme}
+        />
+      </View>
+    </SpatialNavigationNode>
+  );
+
+  // Mobile header buttons using native focus
+  const renderMobileHeaderButtons = () => (
+    <View style={styles.actionsRow}>
+      <FocusablePressable
+        icon="refresh-outline"
+        onSelect={handleRefreshPlaylist}
+        loading={isRefreshingPlaylist}
+        style={styles.headerActionButton}
+      />
+      <FocusablePressable
+        icon="albums-outline"
+        onSelect={handleOpenCategoryModal}
+        disabled={availableCategories.length === 0}
+        style={styles.headerActionButton}
+      />
+      <FocusablePressable
+        icon={isFilterActive ? 'close-outline' : 'filter-outline'}
+        onSelect={handleToggleFilter}
+        style={styles.headerActionButton}
+      />
+      {hasSavedSession && !isSelectionMode && (
+        <FocusablePressable
+          icon="play-circle-outline"
+          onSelect={handleResumePress}
+          style={styles.headerActionButton}
+        />
+      )}
+      <FocusablePressable
+        icon={isSelectionMode ? 'checkmark-circle-outline' : 'grid-outline'}
+        onSelect={handleMultiscreenPress}
+        style={[styles.headerActionButton, isSelectionMode && styles.headerActionButtonActive]}
+      />
+      {isSelectionMode && selectedChannels.length > 0 && (
+        <View style={styles.selectionCountBadge}>
+          <Text style={styles.selectionCountText}>{selectedChannels.length}</Text>
+        </View>
+      )}
+    </View>
+  );
+
+  const pageContent = (
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          {/* Fixed header with title and action buttons */}
-          <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
-            <Text style={styles.title}>Live TV</Text>
-            <View style={styles.actionsRow}>
-              <FocusablePressable
-                autoFocus
-                text={Platform.isTV ? 'Refresh' : undefined}
-                icon="refresh-outline"
-                onSelect={handleRefreshPlaylist}
-                loading={isRefreshingPlaylist}
-                style={styles.headerActionButton}
-              />
-              <FocusablePressable
-                text={Platform.isTV ? 'Categories' : undefined}
-                icon="albums-outline"
-                onSelect={handleOpenCategoryModal}
-                disabled={availableCategories.length === 0}
-                style={styles.headerActionButton}
-              />
-              <FocusablePressable
-                text={Platform.isTV ? (isFilterActive ? 'Close Filter' : 'Filter') : undefined}
-                icon={isFilterActive ? 'close-outline' : 'filter-outline'}
-                onSelect={handleToggleFilter}
-                style={styles.headerActionButton}
-              />
-              {hasSavedSession && !isSelectionMode && (
-                <FocusablePressable
-                  text={Platform.isTV ? 'Resume' : undefined}
-                  icon="play-circle-outline"
-                  onSelect={handleResumePress}
-                  style={styles.headerActionButton}
-                />
-              )}
-              <FocusablePressable
-                text={
-                  Platform.isTV ? (isSelectionMode ? `Start (${selectedChannels.length})` : 'Multiscreen') : undefined
-                }
-                icon={isSelectionMode ? 'checkmark-circle-outline' : 'grid-outline'}
-                onSelect={handleMultiscreenPress}
-                style={[styles.headerActionButton, isSelectionMode && styles.headerActionButtonActive]}
-              />
-              {/* Show selection count badge on mobile when in selection mode */}
-              {!Platform.isTV && isSelectionMode && selectedChannels.length > 0 && (
-                <View style={styles.selectionCountBadge}>
-                  <Text style={styles.selectionCountText}>{selectedChannels.length}</Text>
+          {Platform.isTV ? (
+            /* TV: Wrap header and content in single vertical node for proper navigation */
+            <SpatialNavigationNode orientation="vertical">
+              {/* Fixed header with title and action buttons */}
+              <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
+                <Text style={styles.title}>Live TV</Text>
+                {renderTVHeaderButtons()}
+              </View>
+
+              {/* Content area for TV */}
+              {!hasPlaylistUrl ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
+                  <Text style={styles.emptyMessage}>
+                    Provide an M3U playlist URL in Settings to load channels for Live TV playback.
+                  </Text>
+                </View>
+              ) : loading ? (
+                <LoadingIndicator />
+              ) : error ? (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : favoriteChannels.length === 0 && regularChannels.length === 0 ? (
+                <View style={styles.emptyPlaylist}>
+                  <Text style={styles.emptyMessage}>
+                    {filterText
+                      ? `No channels match "${filterText}"`
+                      : 'No channels found in the configured playlist.'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.scrollWrapper}>
+                  <TVGridHandlersContext.Provider value={tvGridHandlers}>
+                    <ScrollView
+                      ref={tvGridScrollRef}
+                      style={styles.virtualizedGrid}
+                      showsVerticalScrollIndicator={false}
+                      scrollEnabled={true}
+                      bounces={false}
+                      contentInsetAdjustmentBehavior="never"
+                      automaticallyAdjustContentInsets={false}
+                      removeClippedSubviews={true}
+                      scrollEventThrottle={16}
+                      onScroll={handleGridScroll}
+                      // @ts-ignore - TV-specific prop
+                      focusable={false}
+                      // @ts-ignore - TV-specific prop
+                      isTVSelectable={false}
+                      // @ts-ignore - TV-specific prop
+                      tvRemoveGestureEnabled={true}>
+                      <SpatialNavigationNode
+                        orientation="vertical"
+                        alignInGrid
+                        key={`grid-${favoriteChannels.map((c) => c.id).join(',')}`}>
+                        {visibleRows.map((rowChannels, rowIndex) => (
+                          <View
+                            key={`row-${rowIndex}`}
+                            ref={(ref) => {
+                              tvRowRefs.current[`row-${rowIndex}`] = ref;
+                            }}
+                            style={styles.gridRowContainer}>
+                            <SpatialNavigationNode orientation="horizontal">
+                              {rowChannels.map((channel) => (
+                                <TVChannelGridCard
+                                  key={channel.id}
+                                  channel={channel}
+                                  isFavorite={isFavorite(channel.id)}
+                                  rowIndex={rowIndex}
+                                  cardWidth={tvCardWidth}
+                                />
+                              ))}
+                            </SpatialNavigationNode>
+                          </View>
+                        ))}
+                      </SpatialNavigationNode>
+                    </ScrollView>
+                  </TVGridHandlersContext.Provider>
                 </View>
               )}
+            </SpatialNavigationNode>
+          ) : (
+            /* Mobile: Fixed header with title and action buttons */
+            <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
+              <Text style={styles.title}>Live TV</Text>
+              {renderMobileHeaderButtons()}
             </View>
-          </View>
+          )}
 
           {isFilterActive && !Platform.isTV && (
             <View style={styles.filterContainer}>
@@ -1386,80 +1621,34 @@ function LiveScreen() {
             </View>
           )}
 
-          {/* Content area */}
-          {!hasPlaylistUrl ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
-              <Text style={styles.emptyMessage}>
-                Provide an M3U playlist URL in Settings to load channels for Live TV playback.
-              </Text>
-              <FocusablePressable
-                text="Refresh"
-                onSelect={handleRefreshSettings}
-                loading={isRefreshing}
-                wrapperStyle={{ alignSelf: 'center' }}
-              />
-            </View>
-          ) : (
+          {/* Content area - Mobile only (TV content is rendered above in the SpatialNavigationNode) */}
+          {!Platform.isTV && (
             <>
-              {loading ? <LoadingIndicator /> : null}
-              {error ? (
-                <View style={styles.errorContainer}>
-                  <Text style={styles.errorText}>{error}</Text>
-                  <FocusablePressable text="Try again" onSelect={() => refresh()} />
+              {!hasPlaylistUrl ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
+                  <Text style={styles.emptyMessage}>
+                    Provide an M3U playlist URL in Settings to load channels for Live TV playback.
+                  </Text>
+                  <FocusablePressable
+                    text="Refresh"
+                    onSelect={handleRefreshSettings}
+                    loading={isRefreshing}
+                    wrapperStyle={{ alignSelf: 'center' }}
+                  />
                 </View>
-              ) : null}
-              {!loading && !error ? (
-                <View style={styles.scrollWrapper}>
-                  {Platform.isTV ? (
-                    // tvOS: Virtualized grid for performance
-                    favoriteChannels.length === 0 && regularChannels.length === 0 ? (
-                      <View style={styles.emptyPlaylist}>
-                        <Text style={styles.emptyMessage}>
-                          {filterText
-                            ? `No channels match "${filterText}"`
-                            : 'No channels found in the configured playlist.'}
-                        </Text>
-                      </View>
-                    ) : (
-                      // Single combined grid - favorites first, then regular channels
-                      // Row-based layout with memoized cards and programmatic scroll
-                      <TVGridHandlersContext.Provider value={tvGridHandlers}>
-                        <ScrollView
-                          ref={tvGridScrollRef}
-                          style={styles.virtualizedGrid}
-                          showsVerticalScrollIndicator={false}
-                          scrollEnabled={!Platform.isTV}
-                          onScroll={handleGridScroll}
-                          scrollEventThrottle={100}>
-                          {visibleRows.map((rowChannels, rowIndex) => (
-                            <View
-                              key={`row-${rowIndex}`}
-                              ref={(ref) => {
-                                tvRowRefs.current[`row-${rowIndex}`] = ref;
-                              }}
-                              style={styles.gridRowContainer}>
-                              {rowChannels.map((channel, colIndex) => {
-                                const globalIndex = rowIndex * TV_COLUMNS + colIndex;
-                                return (
-                                  <TVChannelGridCard
-                                    key={channel.id}
-                                    channel={channel}
-                                    isFavorite={isFavorite(channel.id)}
-                                    isFirstItem={globalIndex === 0}
-                                    rowIndex={rowIndex}
-                                    cardWidth={tvCardWidth}
-                                  />
-                                );
-                              })}
-                            </View>
-                          ))}
-                        </ScrollView>
-                      </TVGridHandlersContext.Provider>
-                    )
-                  ) : (
-                    // Mobile/web: existing vertical list
-                    <ScrollView
+              ) : (
+                <>
+                  {loading ? <LoadingIndicator /> : null}
+                  {error ? (
+                    <View style={styles.errorContainer}>
+                      <Text style={styles.errorText}>{error}</Text>
+                      <FocusablePressable text="Try again" onSelect={() => refresh()} />
+                    </View>
+                  ) : null}
+                  {!loading && !error ? (
+                    <View style={styles.scrollWrapper}>
+                      <ScrollView
                       ref={scrollViewRef}
                       style={styles.scrollView}
                       contentContainerStyle={styles.channelList}
@@ -1528,17 +1717,18 @@ function LiveScreen() {
                         </View>
                       ) : null}
                     </ScrollView>
-                  )}
-                </View>
-              ) : null}
+                  </View>
+                ) : null}
+                </>
+              )}
             </>
           )}
         </View>
       </FixedSafeAreaView>
-      {/* Action Modal */}
-      {isActionModalVisible && (
+      {/* Action Modal - Mobile only, TV version rendered outside SpatialNavigationRoot */}
+      {isActionModalVisible && !Platform.isTV && (
         <View style={styles.actionsOverlay}>
-          {!Platform.isTV && <Pressable style={styles.actionsBackdrop} onPress={handleCloseActionModal} />}
+          <Pressable style={styles.actionsBackdrop} onPress={handleCloseActionModal} />
           <View style={styles.actionsContainer}>
             <View style={styles.actionsHeader}>
               <Text style={styles.actionsTitle}>{actionChannel?.name ?? 'Channel options'}</Text>
@@ -1554,109 +1744,22 @@ function LiveScreen() {
                 autoFocus
                 text="Play channel"
                 onSelect={handleActionPlay}
-                style={Platform.isTV ? styles.actionsButton : styles.actionsButtonMobile}
-                focusedStyle={Platform.isTV ? styles.actionsButtonFocused : undefined}
-                textStyle={Platform.isTV ? styles.actionsButtonText : undefined}
-                focusedTextStyle={Platform.isTV ? styles.actionsButtonTextFocused : undefined}
+                style={styles.actionsButtonMobile}
               />
               <FocusablePressable
                 text={actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
                 onSelect={handleActionToggleFavorite}
-                style={Platform.isTV ? styles.actionsButton : styles.actionsButtonMobile}
-                focusedStyle={Platform.isTV ? styles.actionsButtonFocused : undefined}
-                textStyle={Platform.isTV ? styles.actionsButtonText : undefined}
-                focusedTextStyle={Platform.isTV ? styles.actionsButtonTextFocused : undefined}
+                style={styles.actionsButtonMobile}
               />
               <FocusablePressable
                 text="Hide channel"
                 onSelect={handleActionHide}
-                style={
-                  Platform.isTV
-                    ? [styles.actionsButton, styles.actionsDangerButton]
-                    : [styles.actionsButtonMobile, styles.actionsDangerButtonMobile]
-                }
-                focusedStyle={
-                  Platform.isTV ? [styles.actionsButtonFocused, styles.actionsDangerButtonFocused] : undefined
-                }
-                textStyle={Platform.isTV ? [styles.actionsButtonText, styles.actionsDangerButtonText] : undefined}
-                focusedTextStyle={
-                  Platform.isTV ? [styles.actionsButtonTextFocused, styles.actionsDangerButtonTextFocused] : undefined
-                }
+                style={[styles.actionsButtonMobile, styles.actionsDangerButtonMobile]}
               />
               <FocusablePressable
                 text="Cancel"
                 onSelect={handleCloseActionModal}
-                style={Platform.isTV ? styles.actionsButton : styles.actionsButtonMobile}
-                focusedStyle={Platform.isTV ? styles.actionsButtonFocused : undefined}
-                textStyle={Platform.isTV ? styles.actionsButtonText : undefined}
-                focusedTextStyle={Platform.isTV ? styles.actionsButtonTextFocused : undefined}
-              />
-            </View>
-          </View>
-        </View>
-      )}
-      {/* Text Filter Modal for tvOS */}
-      {Platform.isTV && isFilterActive && (
-        <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalContainer}>
-            <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>Filter Channels</Text>
-              <Text style={styles.filterModalSubtitle}>Enter a channel name to filter</Text>
-            </View>
-
-            <View style={styles.filterModalInputContainer}>
-              <Pressable
-                onPress={() => {
-                  if (isFilterActive) {
-                    filterInputRef.current?.focus();
-                  }
-                }}
-                onBlur={() => {
-                  // Blur the TextInput when focus moves away
-                  filterInputRef.current?.blur();
-                }}
-                hasTVPreferredFocus={true}
-                tvParallaxProperties={{ enabled: false }}>
-                {({ focused: inputFocused }: { focused: boolean }) => (
-                  <TextInput
-                    ref={filterInputRef}
-                    style={[styles.filterModalInput, inputFocused && styles.filterModalInputFocused]}
-                    placeholder="Type to filter channels..."
-                    placeholderTextColor={theme.colors.text.muted}
-                    {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
-                    onChangeText={handleFilterChangeText}
-                    onFocus={handleFocus}
-                    onBlur={handleBlur}
-                    autoCorrect={false}
-                    autoCapitalize="none"
-                    autoComplete="off"
-                    textContentType="none"
-                    spellCheck={false}
-                    clearButtonMode="never"
-                    enablesReturnKeyAutomatically={false}
-                    multiline={false}
-                    numberOfLines={1}
-                    underlineColorAndroid="transparent"
-                    importantForAutofill="no"
-                    disableFullscreenUI={true}
-                    editable={inputFocused}
-                    {...(Platform.OS === 'ios' &&
-                      Platform.isTV && {
-                        keyboardAppearance: 'dark',
-                      })}
-                  />
-                )}
-              </Pressable>
-            </View>
-
-            <View style={styles.filterModalFooter}>
-              <FocusablePressable
-                text="Close"
-                onSelect={handleCloseFilter}
-                style={styles.filterModalCloseButton}
-                focusedStyle={styles.filterModalCloseButtonFocused}
-                textStyle={styles.filterModalCloseButtonText}
-                focusedTextStyle={styles.filterModalCloseButtonTextFocused}
+                style={styles.actionsButtonMobile}
               />
             </View>
           </View>
@@ -1671,52 +1774,235 @@ function LiveScreen() {
         onSelectAll={handleSelectAllCategories}
         onClearAll={handleClearAllCategories}
       />
-      {/* Selection Confirmation Modal (TV) */}
-      <TvModal visible={isSelectionConfirmVisible} onRequestClose={handleSelectionConfirmClose}>
-        <View style={styles.tvModalContainer}>
-          <Text style={styles.tvModalTitle}>
-            {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
-          </Text>
-          <Text style={styles.tvModalSubtitle}>
-            {selectedChannels.length >= 2
-              ? `You have ${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected. Launch multiscreen or continue selecting?`
-              : selectedChannels.length === 1
-                ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
-                : 'No channels selected. Cancel selection mode?'}
-          </Text>
-          <View style={styles.tvModalActions}>
-            <FocusablePressable
-              text="Cancel Selection"
-              onSelect={handleSelectionConfirmCancel}
-              style={[styles.tvModalButton, styles.tvModalButtonDanger]}
-              focusedStyle={[styles.tvModalButtonFocused, styles.tvModalButtonDangerFocused]}
-              textStyle={styles.tvModalButtonText}
-              focusedTextStyle={styles.tvModalButtonTextFocused}
-            />
-            {selectedChannels.length >= 2 ? (
-              <FocusablePressable
-                autoFocus
-                text={`Launch (${selectedChannels.length})`}
-                onSelect={handleSelectionConfirmLaunch}
-                style={[styles.tvModalButton, styles.tvModalButtonPrimary]}
-                focusedStyle={[styles.tvModalButtonFocused, styles.tvModalButtonPrimaryFocused]}
-                textStyle={[styles.tvModalButtonText, styles.tvModalButtonPrimaryText]}
-                focusedTextStyle={styles.tvModalButtonTextFocused}
-              />
-            ) : (
-              <FocusablePressable
-                autoFocus
-                text="Continue Selecting"
-                onSelect={handleSelectionConfirmClose}
-                style={styles.tvModalButton}
-                focusedStyle={styles.tvModalButtonFocused}
-                textStyle={styles.tvModalButtonText}
-                focusedTextStyle={styles.tvModalButtonTextFocused}
+    </>
+  );
+
+  // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus
+  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  const selectionConfirmModal = isSelectionConfirmVisible ? (
+    <View style={styles.selectionModalOverlay}>
+      <View style={styles.tvModalContainer}>
+        <Text style={styles.tvModalTitle}>
+          {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
+        </Text>
+        <Text style={styles.tvModalSubtitle}>
+          {selectedChannels.length >= 2
+            ? `You have ${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected. Launch multiscreen or continue selecting?`
+            : selectedChannels.length === 1
+              ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
+              : 'No channels selected. Cancel selection mode?'}
+        </Text>
+        <View style={styles.tvModalActions}>
+          <Pressable
+            onPress={handleSelectionConfirmCancel}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [
+              styles.tvModalButton,
+              styles.tvModalButtonDanger,
+              focused && styles.tvModalButtonFocused,
+              focused && styles.tvModalButtonDangerFocused,
+            ]}>
+            {({ focused }) => (
+              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
+                Cancel Selection
+              </Text>
+            )}
+          </Pressable>
+          {selectedChannels.length >= 2 ? (
+            <Pressable
+              onPress={handleSelectionConfirmLaunch}
+              hasTVPreferredFocus={true}
+              tvParallaxProperties={{ enabled: false }}
+              style={({ focused }) => [
+                styles.tvModalButton,
+                styles.tvModalButtonPrimary,
+                focused && styles.tvModalButtonFocused,
+                focused && styles.tvModalButtonPrimaryFocused,
+              ]}>
+              {({ focused }) => (
+                <Text
+                  style={[
+                    styles.tvModalButtonText,
+                    styles.tvModalButtonPrimaryText,
+                    focused && styles.tvModalButtonTextFocused,
+                  ]}>
+                  {`Launch (${selectedChannels.length})`}
+                </Text>
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={handleSelectionConfirmClose}
+              hasTVPreferredFocus={true}
+              tvParallaxProperties={{ enabled: false }}
+              style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
+              {({ focused }) => (
+                <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
+                  Continue Selecting
+                </Text>
+              )}
+            </Pressable>
+          )}
+        </View>
+      </View>
+    </View>
+  ) : null;
+
+  // Text Filter Modal for tvOS - rendered outside SpatialNavigationRoot for native focus
+  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  const textFilterModal = Platform.isTV && isFilterActive ? (
+    <View style={styles.filterModalOverlay}>
+      <View style={styles.filterModalContainer}>
+        <View style={styles.filterModalHeader}>
+          <Text style={styles.filterModalTitle}>Filter Channels</Text>
+          <Text style={styles.filterModalSubtitle}>Enter a channel name to filter</Text>
+        </View>
+
+        <View style={styles.filterModalInputContainer}>
+          <Pressable
+            onPress={() => {
+              filterInputRef.current?.focus();
+            }}
+            hasTVPreferredFocus={true}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [
+              styles.filterModalInputWrapper,
+              focused && styles.filterModalInputWrapperFocused,
+            ]}>
+            {({ focused: inputFocused }: { focused: boolean }) => (
+              <TextInput
+                ref={filterInputRef}
+                style={[styles.filterModalInput, inputFocused && styles.filterModalInputFocused]}
+                placeholder="Type to filter channels..."
+                placeholderTextColor={theme.colors.text.muted}
+                {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
+                onChangeText={handleFilterChangeText}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                autoCorrect={false}
+                autoCapitalize="none"
+                autoComplete="off"
+                textContentType="none"
+                spellCheck={false}
+                clearButtonMode="never"
+                enablesReturnKeyAutomatically={false}
+                multiline={false}
+                numberOfLines={1}
+                underlineColorAndroid="transparent"
+                importantForAutofill="no"
+                disableFullscreenUI={true}
+                editable={true}
+                {...(Platform.OS === 'ios' &&
+                  Platform.isTV && {
+                    keyboardAppearance: 'dark',
+                  })}
               />
             )}
-          </View>
+          </Pressable>
         </View>
-      </TvModal>
+
+        <View style={styles.filterModalFooter}>
+          <Pressable
+            onPress={handleCloseFilter}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.filterModalCloseButton, focused && styles.filterModalCloseButtonFocused]}>
+            {({ focused }) => (
+              <Text style={[styles.filterModalCloseButtonText, focused && styles.filterModalCloseButtonTextFocused]}>
+                Close
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  ) : null;
+
+  // Action Modal for TV - rendered outside SpatialNavigationRoot for native focus
+  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  const tvActionModal = Platform.isTV && isActionModalVisible ? (
+    <View style={styles.actionsOverlay}>
+      <View style={styles.tvActionModalContainer}>
+        <View style={styles.tvActionModalHeader}>
+          <Text style={styles.tvActionModalTitle}>{actionChannel?.name ?? 'Channel options'}</Text>
+          {actionChannel?.group ? (
+            <Text style={styles.tvActionModalSubtitle}>{actionChannel.group}</Text>
+          ) : null}
+        </View>
+        <View style={styles.tvActionModalButtons}>
+          <Pressable
+            onPress={handleActionPlay}
+            hasTVPreferredFocus={true}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
+            {({ focused }) => (
+              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
+                Play channel
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleActionToggleFavorite}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
+            {({ focused }) => (
+              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
+                {actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleActionHide}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [
+              styles.tvActionModalButton,
+              styles.tvActionModalButtonDanger,
+              focused && styles.tvActionModalButtonFocused,
+              focused && styles.tvActionModalButtonDangerFocused,
+            ]}>
+            {({ focused }) => (
+              <Text
+                style={[
+                  styles.tvActionModalButtonText,
+                  styles.tvActionModalButtonDangerText,
+                  focused && styles.tvActionModalButtonTextFocused,
+                ]}>
+                Hide channel
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleCloseActionModal}
+            tvParallaxProperties={{ enabled: false }}
+            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
+            {({ focused }) => (
+              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
+                Cancel
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  ) : null;
+
+  // Wrap in SpatialNavigationRoot for TV
+  if (Platform.isTV) {
+    return (
+      <>
+        <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+          {pageContent}
+        </SpatialNavigationRoot>
+        {selectionConfirmModal}
+        {textFilterModal}
+        {tvActionModal}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {pageContent}
+      {selectionConfirmModal}
     </>
   );
 }
@@ -2239,6 +2525,76 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       borderColor: theme.colors.status.danger,
       backgroundColor: theme.colors.status.danger + '1A',
     },
+    // TV Action Modal styles (channel options on long press)
+    tvActionModalContainer: {
+      width: '50%',
+      maxWidth: 700,
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.xl,
+      borderWidth: 2,
+      borderColor: theme.colors.border.subtle,
+      overflow: 'hidden',
+    },
+    tvActionModalHeader: {
+      padding: theme.spacing['2xl'],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border.subtle,
+      alignItems: 'center',
+    },
+    tvActionModalTitle: {
+      ...theme.typography.title.xl,
+      fontSize: Math.round(theme.typography.title.xl.fontSize * 1.4),
+      lineHeight: Math.round(theme.typography.title.xl.lineHeight * 1.4),
+      color: theme.colors.text.primary,
+      textAlign: 'center',
+    },
+    tvActionModalSubtitle: {
+      ...theme.typography.body.md,
+      fontSize: Math.round(theme.typography.body.md.fontSize * 1.2),
+      color: theme.colors.text.secondary,
+      marginTop: theme.spacing.sm,
+      textAlign: 'center',
+    },
+    tvActionModalButtons: {
+      padding: theme.spacing.xl,
+      gap: theme.spacing.md,
+    },
+    tvActionModalButton: {
+      // TVActionButton scale: 1.375 for tvOS, 1.71875 for Android TV
+      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      backgroundColor: theme.colors.overlay.button,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+      alignItems: 'center',
+      alignSelf: 'center',
+      width: '60%',
+    },
+    tvActionModalButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary,
+    },
+    tvActionModalButtonText: {
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      color: theme.colors.text.primary,
+    },
+    tvActionModalButtonTextFocused: {
+      color: theme.colors.text.inverse,
+    },
+    tvActionModalButtonDanger: {
+      backgroundColor: theme.colors.status.danger + '20',
+      borderColor: theme.colors.status.danger + '40',
+    },
+    tvActionModalButtonDangerFocused: {
+      backgroundColor: theme.colors.status.danger,
+      borderColor: theme.colors.status.danger,
+    },
+    tvActionModalButtonDangerText: {
+      color: theme.colors.status.danger,
+    },
     // Filter Modal styles for tvOS
     filterModalOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -2273,6 +2629,14 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     filterModalInputContainer: {
       padding: theme.spacing.xl,
     },
+    filterModalInputWrapper: {
+      borderRadius: theme.radius.md,
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    filterModalInputWrapperFocused: {
+      borderColor: theme.colors.accent.primary,
+    },
     // Match search page input styling
     filterModalInput: {
       fontSize: 32,
@@ -2281,13 +2645,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       paddingVertical: theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
-      borderWidth: 2,
+      borderWidth: 3,
       borderColor: 'transparent',
       minHeight: 60,
     },
     filterModalInputFocused: {
       borderColor: theme.colors.accent.primary,
-      borderWidth: 3,
       shadowColor: theme.colors.accent.primary,
       shadowOpacity: 0.4,
       shadowOffset: { width: 0, height: 4 },
@@ -2299,62 +2662,60 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
     },
-    // Match watchlist filter button styling
+    // TVActionButton styling for filter modal close button
     filterModalCloseButton: {
-      minWidth: 280,
-      minHeight: 64,
-      justifyContent: 'center',
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing['2xl'],
-      borderWidth: 3,
-      borderRadius: theme.radius.md,
-      backgroundColor: theme.colors.background.surface,
+      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      backgroundColor: theme.colors.overlay.button,
+      borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
+      width: '60%',
       alignItems: 'center',
     },
     filterModalCloseButtonFocused: {
       borderColor: theme.colors.accent.primary,
-      backgroundColor: theme.colors.background.elevated,
+      backgroundColor: theme.colors.accent.primary,
     },
     filterModalCloseButtonText: {
-      ...theme.typography.title.md,
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
       color: theme.colors.text.primary,
-      textAlign: 'center',
     },
     filterModalCloseButtonTextFocused: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
+      color: theme.colors.text.inverse,
     },
-    // TV Modal styles (for selection confirmation)
+    // TV Modal styles (for selection confirmation) - TVActionButton styling
+    selectionModalOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.85)',
+      zIndex: 1000,
+    },
     tvModalContainer: {
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.lg,
+      borderRadius: theme.radius.xl,
+      borderWidth: 2,
+      borderColor: theme.colors.border.subtle,
       padding: theme.spacing['2xl'],
-      minWidth: 400,
+      minWidth: 500,
       maxWidth: 700,
       gap: theme.spacing.xl,
       alignItems: 'center',
     },
     tvModalTitle: {
-      ...theme.typography.title.lg,
-      fontSize: isTV
-        ? Math.round(theme.typography.title.lg.fontSize * 1.5 * scaleFactor)
-        : theme.typography.title.lg.fontSize,
-      lineHeight: isTV
-        ? Math.round(theme.typography.title.lg.lineHeight * 1.5 * scaleFactor)
-        : theme.typography.title.lg.lineHeight,
+      ...theme.typography.title.xl,
+      fontSize: theme.typography.title.xl.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      lineHeight: theme.typography.title.xl.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
     tvModalSubtitle: {
       ...theme.typography.body.md,
-      fontSize: isTV
-        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
-        : theme.typography.body.md.fontSize,
-      lineHeight: isTV
-        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
-        : theme.typography.body.md.lineHeight,
+      fontSize: theme.typography.body.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      lineHeight: theme.typography.body.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
       color: theme.colors.text.secondary,
       textAlign: 'center',
     },
@@ -2362,56 +2723,48 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       flexDirection: 'row',
       justifyContent: 'center',
       gap: theme.spacing.xl,
+      width: '100%',
     },
     tvModalButton: {
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing['2xl'],
-      borderRadius: theme.radius.md,
-      backgroundColor: theme.colors.background.surface,
-      borderWidth: 3,
-      borderColor: 'transparent',
+      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      backgroundColor: theme.colors.overlay.button,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+      flex: 1,
+      alignItems: 'center',
     },
     tvModalButtonFocused: {
       borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary,
     },
     tvModalButtonDanger: {
-      backgroundColor: theme.colors.status.danger + '30',
-      borderColor: theme.colors.status.danger,
+      backgroundColor: theme.colors.status.danger + '20',
+      borderColor: theme.colors.status.danger + '40',
     },
     tvModalButtonDangerFocused: {
       borderColor: theme.colors.status.danger,
-      backgroundColor: theme.colors.status.danger + '50',
+      backgroundColor: theme.colors.status.danger,
     },
     tvModalButtonPrimary: {
       backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
     },
     tvModalButtonPrimaryFocused: {
-      borderColor: theme.colors.text.primary,
+      borderColor: theme.colors.text.inverse,
     },
     tvModalButtonPrimaryText: {
       color: theme.colors.text.inverse,
     },
     tvModalButtonText: {
-      ...theme.typography.body.md,
-      fontSize: isTV
-        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
-        : theme.typography.body.md.fontSize,
-      lineHeight: isTV
-        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
-        : theme.typography.body.md.lineHeight,
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
       color: theme.colors.text.primary,
-      fontWeight: '600',
     },
     tvModalButtonTextFocused: {
-      ...theme.typography.body.md,
-      fontSize: isTV
-        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
-        : theme.typography.body.md.fontSize,
-      lineHeight: isTV
-        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
-        : theme.typography.body.md.lineHeight,
-      color: theme.colors.text.primary,
-      fontWeight: '600',
+      color: theme.colors.text.inverse,
     },
     // Virtualized grid styles for TV
     virtualizedGrid: {

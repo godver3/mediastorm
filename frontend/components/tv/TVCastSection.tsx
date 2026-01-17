@@ -13,7 +13,6 @@ import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
 import {
   SpatialNavigationFocusableView,
-  SpatialNavigationNode,
   SpatialNavigationVirtualizedList,
 } from '@/services/tv-navigation';
 import MarqueeText from './MarqueeText';
@@ -106,26 +105,38 @@ const TVCastSection = memo(function TVCastSection({
     return null;
   }
 
+  // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
+  // For small cast lists (< 3 items), render directly without virtualization
+  const useVirtualizedList = castToShow.length >= 3;
+
+  // Note: This component should be wrapped in a SpatialNavigationNode at the parent level
+  // to maintain consistent navigation order (see details.tsx)
   return (
-    <SpatialNavigationNode orientation="horizontal">
-      <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
-        <Text style={styles.heading}>Cast</Text>
-        {isLoading ? (
-          renderSkeletonCards()
-        ) : (
-          <View style={styles.listContainer}>
-            <SpatialNavigationVirtualizedList
-              data={castToShow}
-              renderItem={renderCastCard}
-              itemSize={itemSize}
-              orientation="horizontal"
-              numberOfRenderedItems={castToShow.length}
-              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(castToShow.length - 2, isAndroidTV ? 5 : 6))}
-            />
-          </View>
-        )}
-      </View>
-    </SpatialNavigationNode>
+    <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
+      <Text style={styles.heading}>Cast</Text>
+      {isLoading ? (
+        renderSkeletonCards()
+      ) : useVirtualizedList ? (
+        <View style={styles.listContainer}>
+          <SpatialNavigationVirtualizedList
+            data={castToShow}
+            renderItem={renderCastCard}
+            itemSize={itemSize}
+            orientation="horizontal"
+            numberOfRenderedItems={castToShow.length}
+            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(castToShow.length - 2, isAndroidTV ? 5 : 6))}
+          />
+        </View>
+      ) : (
+        <View style={[styles.listContainer, styles.smallCastRow]}>
+          {castToShow.map((actor) => (
+            <React.Fragment key={actor.name + actor.character}>
+              {renderCastCard({ item: actor })}
+            </React.Fragment>
+          ))}
+        </View>
+      )}
+    </View>
   );
 });
 
@@ -144,6 +155,10 @@ const createStyles = (theme: NovaTheme) =>
     listContainer: {
       height: CARD_HEIGHT + tvScale(8),
       paddingLeft: tvScale(48),
+    },
+    smallCastRow: {
+      flexDirection: 'row',
+      gap: CARD_GAP,
     },
     skeletonRow: {
       flexDirection: 'row',

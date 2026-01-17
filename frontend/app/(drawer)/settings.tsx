@@ -40,10 +40,16 @@ import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
 import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { isTV } from '@/theme/tokens/tvScale';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationScrollView,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import { useIsFocused } from '@react-navigation/native';
 import { APP_VERSION } from '@/version';
 import { Stack } from 'expo-router';
@@ -767,8 +773,9 @@ function SettingsScreen() {
     fieldKey: string;
     options?: TextInputOptions;
   }>({ visible: false, label: '', value: '', fieldKey: '' });
+  const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
   const { pendingPinUserId } = useUserProfiles();
-  const isActive = isFocused && !isMenuOpen && !textInputModal.visible && !pendingPinUserId;
+  const isActive = isFocused && !isMenuOpen && !textInputModal.visible && !pendingPinUserId && !logUrlModalVisible;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -868,27 +875,70 @@ function SettingsScreen() {
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmittingLogs, setIsSubmittingLogs] = useState(false);
-  const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
   const [logUrl, setLogUrl] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'downloading' | 'ready'>('idle');
   const [githubRelease, setGithubRelease] = useState<{ version: string; url: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Handle left key to open menu on TV
-  useEffect(() => {
-    if (!isTV || !isActive) {
-      return;
-    }
-    const handleKeyDown = (key: SupportedKeys) => {
-      if (key === SupportedKeys.Left) {
+  // Handle left key to open menu when spatial nav can't move further left
+  const handleDirectionWithoutMovement = useCallback(
+    (direction: string) => {
+      if (direction === 'left' && !isMenuOpen) {
         openMenu();
       }
-    };
-    RemoteControlManager.addKeydownListener(handleKeyDown);
+    },
+    [isMenuOpen, openMenu],
+  );
+
+  // Back button interceptor for log URL modal
+  const logModalCloseRef = useRef(() => {
+    setLogUrlModalVisible(false);
+    setLogUrl(null);
+  });
+  const logModalInterceptorRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (!logUrlModalVisible) {
+      // Clean up interceptor when modal is hidden
+      if (logModalInterceptorRef.current) {
+        logModalInterceptorRef.current();
+        logModalInterceptorRef.current = null;
+      }
+      return;
+    }
+
+    // Install interceptor when modal is shown
+    let isHandling = false;
+    let cleanupScheduled = false;
+
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      if (isHandling) {
+        return true;
+      }
+
+      isHandling = true;
+      logModalCloseRef.current();
+
+      if (!cleanupScheduled) {
+        cleanupScheduled = true;
+        setTimeout(() => {
+          if (logModalInterceptorRef.current) {
+            logModalInterceptorRef.current();
+            logModalInterceptorRef.current = null;
+          }
+          isHandling = false;
+        }, 750);
+      }
+
+      return true;
+    });
+
+    logModalInterceptorRef.current = removeInterceptor;
+
     return () => {
-      RemoteControlManager.removeKeydownListener(handleKeyDown);
+      // Cleanup on unmount
     };
-  }, [isActive, openMenu]);
+  }, [logUrlModalVisible]);
 
   const clearFieldError = useCallback((key: string) => {
     setFieldErrors((current) => {
@@ -1435,12 +1485,7 @@ function SettingsScreen() {
         case 'text-field': {
           // Inline text input configuration for backend URL field
           if (item.fieldKey === 'backendUrl') {
-            const handleInlineFocus = () => {
-              // Native focus handles navigation locking automatically
-            };
-
             const handleInlineBlur = () => {
-              // Native focus handles navigation unlocking automatically
               if (Platform.isTV) {
                 setBackendUrlInput(tempBackendUrlRef.current);
               }
@@ -1455,143 +1500,181 @@ function SettingsScreen() {
             };
 
             return (
-              <Pressable
-                style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
-                onPress={() => {
-                  backendUrlInputRef.current?.focus();
-                }}
-                onBlur={() => {
-                  backendUrlInputRef.current?.blur();
-                  Keyboard.dismiss();
-                }}
-                tvParallaxProperties={{ enabled: false }}>
-                {({ focused }: { focused: boolean }) => (
-                  <View style={[styles.tvGridInlineInputRow, focused && styles.tvGridInlineInputRowFocused]}>
-                    <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
-                    <TextInput
-                      ref={backendUrlInputRef}
-                      style={[styles.tvGridInlineInput, focused && styles.tvGridInlineInputFocused]}
-                      {...(Platform.isTV ? { defaultValue: item.value } : { value: item.value })}
-                      onChangeText={handleInlineChangeText}
-                      onFocus={handleInlineFocus}
-                      onBlur={handleInlineBlur}
-                      placeholder={item.options?.placeholder}
-                      placeholderTextColor={theme.colors.text.muted}
-                      keyboardType={item.options?.keyboardType ?? 'default'}
-                      secureTextEntry={item.options?.secureTextEntry}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      autoComplete="off"
-                      textContentType="none"
-                      spellCheck={false}
-                      editable={focused}
-                      underlineColorAndroid="transparent"
-                      importantForAutofill="no"
-                      disableFullscreenUI={true}
-                      {...(Platform.OS === 'ios' &&
-                        Platform.isTV && {
-                          keyboardAppearance: 'dark',
-                        })}
-                    />
-                  </View>
-                )}
-              </Pressable>
+              <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
+                <SpatialNavigationFocusableView
+                  onSelect={() => {
+                    backendUrlInputRef.current?.focus();
+                  }}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.tvGridInlineInputRow, isFocused && styles.tvGridInlineInputRowFocused]}>
+                      <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
+                      <TextInput
+                        ref={backendUrlInputRef}
+                        style={[styles.tvGridInlineInput, isFocused && styles.tvGridInlineInputFocused]}
+                        {...(Platform.isTV ? { defaultValue: item.value } : { value: item.value })}
+                        onChangeText={handleInlineChangeText}
+                        onBlur={handleInlineBlur}
+                        placeholder={item.options?.placeholder}
+                        placeholderTextColor={theme.colors.text.muted}
+                        keyboardType={item.options?.keyboardType ?? 'default'}
+                        secureTextEntry={item.options?.secureTextEntry}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        spellCheck={false}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                        disableFullscreenUI={true}
+                        {...(Platform.OS === 'ios' &&
+                          Platform.isTV && {
+                            keyboardAppearance: 'dark',
+                          })}
+                      />
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              </View>
             );
           }
 
           // For other text fields, keep the modal approach
           return (
-            <Pressable
-              style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
-              onPress={() => openTextInputModal(item.label, item.value, item.fieldKey, item.options)}
-              tvParallaxProperties={{ enabled: false }}>
-              {({ focused }: { focused: boolean }) => (
-                <View style={[styles.tvGridFieldRow, focused && styles.tvGridFieldRowFocused]}>
-                  <Text style={styles.tvGridFieldLabel}>{item.label}</Text>
-                  <Text
-                    style={[styles.tvGridFieldValue, !item.value && styles.tvGridFieldValuePlaceholder]}
-                    numberOfLines={1}>
-                    {item.value || item.options?.placeholder || 'Not set'}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
+            <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
+              <SpatialNavigationFocusableView
+                onSelect={() => openTextInputModal(item.label, item.value, item.fieldKey, item.options)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvGridFieldRow, isFocused && styles.tvGridFieldRowFocused]}>
+                    <Text style={styles.tvGridFieldLabel}>{item.label}</Text>
+                    <Text
+                      style={[styles.tvGridFieldValue, !item.value && styles.tvGridFieldValuePlaceholder]}
+                      numberOfLines={1}>
+                      {item.value || item.options?.placeholder || 'Not set'}
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
           );
         }
 
         case 'toggle':
           return (
-            <Pressable
-              style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
-              onPress={() => handleGridFieldUpdate(item.fieldKey, !item.value)}
-              tvParallaxProperties={{ enabled: false }}>
-              {({ focused }: { focused: boolean }) => (
-                <View style={[styles.tvGridToggleRow, focused && styles.tvGridToggleRowFocused]}>
-                  <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
-                  <View
-                    style={[
-                      styles.tvGridCustomToggle,
-                      {
-                        backgroundColor: item.value ? theme.colors.accent.primary : theme.colors.border.emphasis,
-                      },
-                      focused && {
-                        transform: [{ scale: 1.1 }],
-                        borderWidth: 2,
-                        borderColor: theme.colors.text.primary,
-                      },
-                    ]}>
+            <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
+              <SpatialNavigationFocusableView
+                onSelect={() => handleGridFieldUpdate(item.fieldKey, !item.value)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvGridToggleRow, isFocused && styles.tvGridToggleRowFocused]}>
+                    <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
                     <View
-                      style={[styles.tvGridCustomToggleThumb, { alignSelf: item.value ? 'flex-end' : 'flex-start' }]}
-                    />
+                      style={[
+                        styles.tvGridCustomToggle,
+                        {
+                          backgroundColor: item.value ? theme.colors.accent.primary : theme.colors.border.emphasis,
+                        },
+                        isFocused && {
+                          transform: [{ scale: 1.1 }],
+                          borderWidth: 2,
+                          borderColor: theme.colors.text.primary,
+                        },
+                      ]}>
+                      <View
+                        style={[styles.tvGridCustomToggleThumb, { alignSelf: item.value ? 'flex-end' : 'flex-start' }]}
+                      />
+                    </View>
                   </View>
-                </View>
-              )}
-            </Pressable>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
           );
 
         case 'dropdown':
           return (
             <View style={[styles.tvGridDropdownRowInline, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
               <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
-              <View style={styles.tvGridDropdownOptionsInline}>
-                {item.options.map((option) => (
-                  <FocusablePressable
-                    key={option.value}
-                    text={option.label}
-                    onSelect={() => handleGridFieldUpdate(item.fieldKey, option.value)}
-                    style={[styles.dropdownOption, item.value === option.value && styles.dropdownOptionSelected]}
-                    textStyle={styles.dropdownOptionText as TextStyle}
-                    focusedTextStyle={styles.dropdownOptionTextFocused as TextStyle}
-                  />
-                ))}
-              </View>
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.tvGridDropdownOptionsInline}>
+                  {item.options.map((option) => (
+                    <SpatialNavigationFocusableView
+                      key={option.value}
+                      onSelect={() => handleGridFieldUpdate(item.fieldKey, option.value)}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View
+                          style={[
+                            styles.dropdownOption,
+                            item.value === option.value && styles.dropdownOptionSelected,
+                            isFocused && styles.dropdownOptionFocused,
+                          ]}>
+                          <Text
+                            style={[
+                              styles.dropdownOptionText,
+                              isFocused && styles.dropdownOptionTextFocused,
+                            ]}>
+                            {option.label}
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  ))}
+                </View>
+              </SpatialNavigationNode>
             </View>
           );
 
         case 'button':
           return (
             <View style={[styles.tvGridButtonRow, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
-              <FocusablePressable
-                text={item.label}
-                onSelect={() => handleGridAction(item.action)}
-                disabled={item.disabled}
-              />
+              <SpatialNavigationFocusableView
+                onSelect={() => !item.disabled && handleGridAction(item.action)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View
+                    style={[
+                      styles.spatialButton,
+                      isFocused && styles.spatialButtonFocused,
+                      item.disabled && styles.spatialButtonDisabled,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.spatialButtonText,
+                        isFocused && styles.spatialButtonTextFocused,
+                      ]}>
+                      {item.label}
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
             </View>
           );
 
         case 'button-row':
           return (
             <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
-              <View style={styles.tvGridButtonRow}>
-                {item.buttons.map((btn) => (
-                  <FocusablePressable
-                    key={btn.action}
-                    text={btn.label}
-                    onSelect={() => handleGridAction(btn.action)}
-                    disabled={btn.disabled}
-                  />
-                ))}
-              </View>
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.tvGridButtonRow}>
+                  {item.buttons.map((btn) => (
+                    <SpatialNavigationFocusableView
+                      key={btn.action}
+                      onSelect={() => !btn.disabled && handleGridAction(btn.action)}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View
+                          style={[
+                            styles.spatialButton,
+                            isFocused && styles.spatialButtonFocused,
+                            btn.disabled && styles.spatialButtonDisabled,
+                          ]}>
+                          <Text
+                            style={[
+                              styles.spatialButtonText,
+                              isFocused && styles.spatialButtonTextFocused,
+                            ]}>
+                            {btn.label}
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  ))}
+                </View>
+              </SpatialNavigationNode>
             </View>
           );
 
@@ -1637,12 +1720,32 @@ function SettingsScreen() {
                 </Text>
               </View>
               <View style={styles.versionButtonContainer}>
-                <FocusablePressable
-                  text={updateButtonText}
-                  onSelect={handleUpdatePress}
-                  disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
-                  style={styles.debugButton}
-                />
+                <DefaultFocus>
+                  <SpatialNavigationFocusableView
+                    onSelect={() => {
+                      if (updateStatus !== 'checking' && updateStatus !== 'downloading') {
+                        handleUpdatePress();
+                      }
+                    }}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View
+                        style={[
+                          styles.spatialButton,
+                          styles.debugButton,
+                          isFocused && styles.spatialButtonFocused,
+                          (updateStatus === 'checking' || updateStatus === 'downloading') && styles.spatialButtonDisabled,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.spatialButtonText,
+                            isFocused && styles.spatialButtonTextFocused,
+                          ]}>
+                          {updateButtonText}
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                </DefaultFocus>
                 <View style={styles.backendInfoNote}>
                   <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.muted} />
                   <Text style={styles.backendInfoNoteText}>
@@ -1698,27 +1801,29 @@ function SettingsScreen() {
       />
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
-        {/* TV Layout: Header at top, then grid below */}
+        {/* TV Layout: Header at top, then grid below - wrapped in SpatialNavigationRoot */}
         {Platform.isTV && (
-          <View style={styles.tvLayoutContainer}>
-            {/* Header Section - at top of screen */}
-            <View style={styles.tvHeader}>
-              <Text style={styles.tvScreenTitle}>Settings</Text>
-            </View>
+          <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={handleDirectionWithoutMovement}>
+            <View style={styles.tvLayoutContainer}>
+              {/* Header Section - at top of screen */}
+              <View style={styles.tvHeader}>
+                <Text style={styles.tvScreenTitle}>Settings</Text>
+              </View>
 
-            {/* Grid Content - with edge buffer */}
-            <View style={styles.tvContentArea}>
-              {currentTabGridData.length > 0 && (
-                <ScrollView style={styles.tvGridContainer} contentContainerStyle={styles.tvScrollContent}>
-                  <View style={styles.tvGridRowContainer}>
-                    {currentTabGridData.map((item) => (
-                      <View key={item.id}>{renderGridItem({ item })}</View>
-                    ))}
-                  </View>
-                </ScrollView>
-              )}
+              {/* Grid Content - with edge buffer */}
+              <View style={styles.tvContentArea}>
+                {currentTabGridData.length > 0 && (
+                  <SpatialNavigationScrollView horizontal={false} style={styles.tvGridContainer}>
+                    <SpatialNavigationNode orientation="vertical">
+                      {currentTabGridData.map((item) => (
+                        <View key={item.id}>{renderGridItem({ item })}</View>
+                      ))}
+                    </SpatialNavigationNode>
+                  </SpatialNavigationScrollView>
+                )}
+              </View>
             </View>
-          </View>
+          </SpatialNavigationRoot>
         )}
         {/* Mobile Layout: ScrollView with all content */}
         {!Platform.isTV && (
@@ -2467,6 +2572,37 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       borderWidth: isNonTvosTV ? 1.5 : 2,
       borderColor: theme.colors.accent.primary,
       backgroundColor: theme.colors.background.elevated,
+    },
+    dropdownOptionFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary,
+    },
+    // Spatial navigation button styles (matching TVActionButton)
+    spatialButton: {
+      paddingHorizontal: theme.spacing.lg * (isNonTvosTV ? 1.71875 : 1.375),
+      paddingVertical: theme.spacing.md * (isNonTvosTV ? 1.71875 : 1.375),
+      borderRadius: theme.radius.md * (isNonTvosTV ? 1.71875 : 1.375),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+      backgroundColor: theme.colors.overlay.button,
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+    },
+    spatialButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary,
+    },
+    spatialButtonDisabled: {
+      opacity: 0.6,
+    },
+    spatialButtonText: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.primary,
+      fontSize: theme.typography.label.md.fontSize * (isNonTvosTV ? 1.71875 : 1.375),
+      lineHeight: theme.typography.label.md.lineHeight * (isNonTvosTV ? 1.71875 : 1.375),
+    },
+    spatialButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     shelfManagementRow: {
       flexDirection: 'row',

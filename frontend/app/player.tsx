@@ -3293,7 +3293,9 @@ export default function PlayerScreen() {
           const relativeTime = time - sessionStart;
           const bufferPadding = 0.5;
           const hasBufferedWindow = sessionEnd > sessionStart;
-          const withinSession = hasBufferedWindow && relativeTime >= 0 && time <= sessionEnd - bufferPadding;
+          const isBackwardsSeek = time < currentTimeRef.current;
+          // Force session recreation for any backwards seek to ensure clean segment boundaries
+          const withinSession = hasBufferedWindow && relativeTime >= 0 && time <= sessionEnd - bufferPadding && !isBackwardsSeek;
 
           if (!withinSession) {
             // Pause playback and update seek bar to target position immediately
@@ -4875,6 +4877,20 @@ export default function PlayerScreen() {
               preselectedSubtitleTrack,
               subtitleId,
             });
+          }
+
+          // Even in the early return path, check if auto-search is needed for files with no embedded subtitles
+          // This handles the case where hasAppliedInitialTracksRef was set before settings loaded
+          const noEmbeddedSubs = !metadata.subtitleStreams || metadata.subtitleStreams.length === 0;
+          const currentSubtitleSelection =
+            lastHlsTrackSelectionRef.current.subtitle !== null
+              ? String(lastHlsTrackSelectionRef.current.subtitle)
+              : preselectedSubtitleTrack !== undefined
+                ? String(preselectedSubtitleTrack)
+                : 'off';
+          if (noEmbeddedSubs && currentSubtitleSelection === 'off') {
+            console.log('[player] no embedded subtitles in early return path, triggering auto-search');
+            triggerAutoSubtitleSearchIfNeeded();
           }
 
           // Skip the rest - track selections are already preserved from reset effect

@@ -34,8 +34,8 @@ import { responsiveSize } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
 
-// Calculate similarity score between search query and title name
-function calculateSimilarity(query: string, title: string): number {
+// Calculate similarity score between search query and a single title string
+function calculateSingleSimilarity(query: string, title: string): number {
   const queryLower = query.toLowerCase().trim();
   const titleLower = title.toLowerCase().trim();
 
@@ -83,6 +83,37 @@ function calculateSimilarity(query: string, title: string): number {
   const sequenceBonus = (charIndex / queryLower.length) * 100;
 
   return wordMatchScore + sequenceBonus;
+}
+
+// Calculate similarity score checking name, originalName, and alternateTitles
+// Returns the best (highest) similarity score found
+function calculateSimilarity(
+  query: string,
+  name: string,
+  originalName?: string,
+  alternateTitles?: string[],
+): number {
+  let bestScore = calculateSingleSimilarity(query, name);
+
+  // Check originalName (e.g., "Moana" when display name is "Vaiana")
+  if (originalName) {
+    const originalScore = calculateSingleSimilarity(query, originalName);
+    if (originalScore > bestScore) {
+      bestScore = originalScore;
+    }
+  }
+
+  // Check alternate titles (all translations)
+  if (alternateTitles && alternateTitles.length > 0) {
+    for (const alt of alternateTitles) {
+      const altScore = calculateSingleSimilarity(query, alt);
+      if (altScore > bestScore) {
+        bestScore = altScore;
+      }
+    }
+  }
+
+  return bestScore;
 }
 
 export default function SearchScreen() {
@@ -176,9 +207,9 @@ export default function SearchScreen() {
         if (hasPosterA && !hasPosterB) return -1;
         if (!hasPosterA && hasPosterB) return 1;
 
-        // Second priority: sort by similarity score
-        const scoreA = calculateSimilarity(searchQuery, a.name || '');
-        const scoreB = calculateSimilarity(searchQuery, b.name || '');
+        // Second priority: sort by similarity score (checks name, originalName, and alternateTitles)
+        const scoreA = calculateSimilarity(searchQuery, a.name || '', a.originalName, a.alternateTitles);
+        const scoreB = calculateSimilarity(searchQuery, b.name || '', b.originalName, b.alternateTitles);
         return scoreB - scoreA; // Higher scores first
       });
 

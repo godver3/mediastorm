@@ -2,6 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -277,6 +283,186 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     return null;
   }
 
+  // Helper to render a section - returns plain JSX, not a component
+  const renderSection = (title: string, content: React.ReactNode) => (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {content}
+    </View>
+  );
+
+  // Ref for manual scroll control on TV
+  const tvScrollViewRef = useRef<ScrollView>(null);
+
+  // Approximate section height for scroll calculations
+  const APPROX_SECTION_HEIGHT = 120;
+
+  // Handle section focus - scroll to keep focused item in view
+  const handleSectionFocus = useCallback((index: number) => {
+    const scrollOffset = Math.max(0, (index - 1) * APPROX_SECTION_HEIGHT);
+    tvScrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
+  }, []);
+
+  // Build sections array for TV (focusable) and non-TV (plain)
+  const sections: Array<{ key: string; title: string; content: React.ReactNode; show: boolean }> = [
+    {
+      key: 'media',
+      title: 'Media',
+      show: !!mediaTitle,
+      content: (
+        <>
+          <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
+          {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
+        </>
+      ),
+    },
+    {
+      key: 'source',
+      title: 'Source',
+      show: !!(info.passthroughName || info.passthroughDescription),
+      content: (
+        <>
+          {info.passthroughName && <InfoRow label="Name" value={info.passthroughName} styles={styles} fullText />}
+          {info.passthroughDescription && (
+            <InfoRow label="Details" value={info.passthroughDescription} styles={styles} fullText />
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'file',
+      title: 'File',
+      show: !!info.filename,
+      content: <InfoRow label="Filename" value={info.filename} styles={styles} fullText />,
+    },
+    {
+      key: 'video',
+      title: 'Video',
+      show: !!(info.resolution || info.videoCodec || videoBitrateStr || info.frameRate),
+      content: (
+        <>
+          <InfoRow label="Resolution" value={info.resolution} styles={styles} />
+          <InfoRow label="Codec" value={info.videoCodec} styles={styles} />
+          <InfoRow label="Bitrate" value={videoBitrateStr} styles={styles} />
+          <InfoRow label="Frame Rate" value={info.frameRate} styles={styles} />
+        </>
+      ),
+    },
+    {
+      key: 'audio',
+      title: 'Audio',
+      show: !!(info.audioCodec || info.audioChannels || audioBitrateStr),
+      content: (
+        <>
+          <InfoRow label="Codec" value={info.audioCodec} styles={styles} />
+          <InfoRow label="Channels" value={info.audioChannels} styles={styles} />
+          <InfoRow label="Bitrate" value={audioBitrateStr} styles={styles} />
+        </>
+      ),
+    },
+    {
+      key: 'color',
+      title: 'Color',
+      show: !!colorInfo,
+      content: <InfoRow label="Format" value={colorInfo} styles={styles} />,
+    },
+    {
+      key: 'playback',
+      title: 'Playback',
+      show: !!info.playerImplementation,
+      content: <InfoRow label="Player" value={info.playerImplementation} styles={styles} />,
+    },
+  ];
+
+  const visibleSections = sections.filter((s) => s.show);
+
+  // Non-TV scroll content with plain sections
+  const scrollContent = visibleSections.map((s) => (
+    <View key={s.key}>{renderSection(s.title, s.content)}</View>
+  ));
+
+  // TV version with spatial navigation and manual scroll control
+  const tvModalContent = (
+    <SpatialNavigationRoot isActive={visible}>
+      <View style={styles.modalContainer}>
+        <View style={styles.tvModalHeader}>
+          <Text style={styles.modalTitle}>Stream Information</Text>
+        </View>
+
+        {/* Vertical node for navigating between sections and close button */}
+        <SpatialNavigationNode orientation="vertical">
+          {/* Scrollable sections list with manual scroll on focus */}
+          <ScrollView
+            ref={tvScrollViewRef}
+            style={styles.tvListContainer}
+            contentContainerStyle={styles.tvListContent}
+            scrollEnabled={false}
+            showsVerticalScrollIndicator={false}>
+            {visibleSections.map((section, index) => {
+              const sectionItem = (
+                <SpatialNavigationFocusableView
+                  key={section.key}
+                  onFocus={() => handleSectionFocus(index)}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
+                      <Text style={styles.sectionTitle}>{section.title}</Text>
+                      {section.content}
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              );
+
+              // Give first section default focus
+              return index === 0 ? (
+                <DefaultFocus key={section.key}>{sectionItem}</DefaultFocus>
+              ) : (
+                sectionItem
+              );
+            })}
+          </ScrollView>
+
+          {/* Close button in its own horizontal node */}
+          <SpatialNavigationNode orientation="horizontal">
+            <View style={styles.tvModalFooter}>
+              <SpatialNavigationFocusableView onSelect={onClose}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvCloseButton, isFocused && styles.tvCloseButtonFocused]}>
+                    <Text style={[styles.tvCloseButtonText, isFocused && styles.tvCloseButtonTextFocused]}>
+                      Close
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
+          </SpatialNavigationNode>
+        </SpatialNavigationNode>
+      </View>
+    </SpatialNavigationRoot>
+  );
+
+  // Non-TV version with regular ScrollView
+  const nonTvModalContent = (
+    <View style={styles.modalContainer}>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>Stream Information</Text>
+      </View>
+
+      <ScrollView style={styles.contentScrollView} contentContainerStyle={styles.contentContainer}>
+        {scrollContent}
+      </ScrollView>
+
+      <View style={styles.modalFooter}>
+        <Pressable
+          onPress={handleClose}
+          onFocus={() => setIsCloseFocused(true)}
+          onBlur={() => setIsCloseFocused(false)}
+          style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
+          <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
   return (
     <Modal
       visible={visible}
@@ -292,93 +478,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           tvParallaxProperties={{ enabled: false }}
           focusable={false}
         />
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Stream Information</Text>
-          </View>
-
-          <ScrollView
-            style={styles.contentScrollView}
-            contentContainerStyle={styles.contentContainer}
-            scrollEnabled={!Platform.isTV}>
-            {/* Media Info Section */}
-            {mediaTitle && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Media</Text>
-                <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
-                {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
-              </View>
-            )}
-
-            {/* AIOStreams Source Section (passthrough format) */}
-            {(info.passthroughName || info.passthroughDescription) && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Source</Text>
-                {info.passthroughName && <InfoRow label="Name" value={info.passthroughName} styles={styles} fullText />}
-                {info.passthroughDescription && (
-                  <InfoRow label="Details" value={info.passthroughDescription} styles={styles} fullText />
-                )}
-              </View>
-            )}
-
-            {/* File Info Section */}
-            {info.filename && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>File</Text>
-                <InfoRow label="Filename" value={info.filename} styles={styles} fullText />
-              </View>
-            )}
-
-            {/* Video Info Section */}
-            {(info.resolution || info.videoCodec || videoBitrateStr || info.frameRate) && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Video</Text>
-                <InfoRow label="Resolution" value={info.resolution} styles={styles} />
-                <InfoRow label="Codec" value={info.videoCodec} styles={styles} />
-                <InfoRow label="Bitrate" value={videoBitrateStr} styles={styles} />
-                <InfoRow label="Frame Rate" value={info.frameRate} styles={styles} />
-              </View>
-            )}
-
-            {/* Audio Info Section */}
-            {(info.audioCodec || info.audioChannels || audioBitrateStr) && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Audio</Text>
-                <InfoRow label="Codec" value={info.audioCodec} styles={styles} />
-                <InfoRow label="Channels" value={info.audioChannels} styles={styles} />
-                <InfoRow label="Bitrate" value={audioBitrateStr} styles={styles} />
-              </View>
-            )}
-
-            {/* Color Info Section */}
-            {colorInfo && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Color</Text>
-                <InfoRow label="Format" value={colorInfo} styles={styles} />
-              </View>
-            )}
-
-            {/* Player Info Section */}
-            {info.playerImplementation && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Playback</Text>
-                <InfoRow label="Player" value={info.playerImplementation} styles={styles} />
-              </View>
-            )}
-          </ScrollView>
-
-          <View style={styles.modalFooter}>
-            <Pressable
-              onPress={handleClose}
-              onFocus={() => setIsCloseFocused(true)}
-              onBlur={() => setIsCloseFocused(false)}
-              style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
-              hasTVPreferredFocus={Platform.isTV}
-              tvParallaxProperties={{ enabled: false }}>
-              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
+        {Platform.isTV ? tvModalContent : nonTvModalContent}
       </View>
     </Modal>
   );
@@ -386,6 +486,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
 
 const createStyles = (theme: NovaTheme) => {
   const isMobile = Platform.OS !== 'web' && !Platform.isTV;
+  const isTV = Platform.isTV;
 
   return StyleSheet.create({
     overlay: {
@@ -394,14 +495,16 @@ const createStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       backgroundColor: 'rgba(0, 0, 0, 0.85)',
       zIndex: 1000,
+      // Add horizontal padding for TV
+      paddingHorizontal: isTV ? 120 : 0,
     },
     backdrop: {
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: isMobile ? '92%' : '70%',
-      maxWidth: isMobile ? undefined : 600,
-      maxHeight: '85%',
+      width: isMobile ? '92%' : isTV ? '100%' : '70%',
+      maxWidth: isMobile ? undefined : isTV ? 700 : 600,
+      maxHeight: isTV ? '90%' : '85%',
       backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.xl,
       borderWidth: 2,
@@ -410,6 +513,12 @@ const createStyles = (theme: NovaTheme) => {
     },
     modalHeader: {
       paddingHorizontal: theme.spacing.xl,
+      paddingVertical: theme.spacing.xl,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border.subtle,
+    },
+    tvModalHeader: {
+      paddingHorizontal: theme.spacing['2xl'],
       paddingVertical: theme.spacing.xl,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
@@ -426,8 +535,33 @@ const createStyles = (theme: NovaTheme) => {
       paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.lg,
     },
+    tvContentContainer: {
+      paddingHorizontal: theme.spacing['2xl'],
+      paddingVertical: theme.spacing.xl,
+    },
+    tvListContainer: {
+      maxHeight: 450,
+      width: '100%',
+      overflow: 'hidden',
+    },
+    tvListContent: {
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      gap: theme.spacing.md,
+    },
     section: {
       marginBottom: theme.spacing.lg,
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.sm,
+      marginHorizontal: -theme.spacing.sm,
+    },
+    tvSection: {
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing.lg,
+      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    },
+    sectionFocused: {
+      backgroundColor: 'rgba(255, 255, 255, 0.1)',
     },
     sectionTitle: {
       ...theme.typography.body.md,
@@ -465,6 +599,33 @@ const createStyles = (theme: NovaTheme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
+    },
+    tvModalFooter: {
+      paddingHorizontal: theme.spacing['2xl'],
+      paddingVertical: theme.spacing.xl,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+      alignItems: 'center',
+    },
+    tvCloseButton: {
+      paddingVertical: theme.spacing.md * 1.5,
+      paddingHorizontal: theme.spacing['2xl'] * 1.5,
+      borderRadius: theme.radius.md * 1.5,
+      backgroundColor: theme.colors.overlay.button,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+    },
+    tvCloseButtonFocused: {
+      backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
+    },
+    tvCloseButtonText: {
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * 1.5,
+      color: theme.colors.text.primary,
+    },
+    tvCloseButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     closeButton: {
       minWidth: 200,

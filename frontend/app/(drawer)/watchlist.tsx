@@ -6,17 +6,22 @@ import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { apiService, type Title, type TrendingItem } from '@/services/api';
-import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { mapWatchlistToTitles } from '@/services/watchlist';
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { Direction } from '@bam.tech/lrud';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import { responsiveSize } from '@/theme/tokens/tvScale';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
@@ -24,23 +29,19 @@ type WatchlistTitle = Title & { uniqueKey?: string };
 const INITIAL_LOAD_COUNT = 30;
 const LOAD_MORE_COUNT = 30;
 
-// Native filter button for all TV platforms - uses Pressable with style function (no re-renders)
+// Spatial navigation filter button - uses SpatialNavigationFocusableView for D-pad navigation
 // Uses responsiveSize() for unified scaling across tvOS and Android TV
-const NativeFilterButton = ({
+const SpatialFilterButton = ({
   label,
   icon,
   isActive,
-  onPress,
-  onFocus,
-  autoFocus,
+  onSelect,
   theme,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   isActive: boolean;
-  onPress: () => void;
-  onFocus?: () => void;
-  autoFocus?: boolean;
+  onSelect: () => void;
   theme: NovaTheme;
 }) => {
   // Unified responsive sizing - design for 1920px width, scales automatically
@@ -51,45 +52,44 @@ const NativeFilterButton = ({
   const fontSize = responsiveSize(24, 14);
   const lineHeight = responsiveSize(32, 18);
   const gap = responsiveSize(12, 6);
+  const borderWidth = responsiveSize(6, 2);
 
   return (
-    <Pressable
-      onPress={onPress}
-      onFocus={onFocus}
-      hasTVPreferredFocus={autoFocus}
-      tvParallaxProperties={{ enabled: false }}
-      style={({ focused }) => [
-        {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap,
-          paddingHorizontal: paddingH,
-          paddingVertical: paddingV,
-          borderRadius,
-          backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
-          borderWidth: responsiveSize(6, 2),
-          borderColor: focused ? theme.colors.accent.primary : isActive ? theme.colors.accent.primary : 'transparent',
-        },
-      ]}>
-      {({ focused }) => (
-        <>
+    <SpatialNavigationFocusableView onSelect={onSelect}>
+      {({ isFocused }: { isFocused: boolean }) => (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap,
+            paddingHorizontal: paddingH,
+            paddingVertical: paddingV,
+            borderRadius,
+            backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
+            borderWidth,
+            borderColor: isFocused
+              ? theme.colors.accent.primary
+              : isActive
+                ? theme.colors.accent.primary
+                : 'transparent',
+          }}>
           <Ionicons
             name={icon}
             size={iconSize}
-            color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+            color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
           />
           <Text
             style={{
-              color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+              color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
               fontSize,
               lineHeight,
               fontWeight: '500',
             }}>
             {label}
           </Text>
-        </>
+        </View>
       )}
-    </Pressable>
+    </SpatialNavigationFocusableView>
   );
 };
 
@@ -97,13 +97,21 @@ export default function WatchlistScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { activeUserId } = useUserProfiles();
+  const { activeUserId, pendingPinUserId } = useUserProfiles();
   const { settings, userSettings } = useBackendSettings();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const isFocused = useIsFocused();
+  const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
-  // Track if focus is on a left-edge element (All button or leftmost grid column)
-  const isAtLeftEdgeRef = useRef(false);
+  // Handle left navigation at edge to open menu
+  const onDirectionHandledWithoutMovement = useCallback(
+    (direction: Direction) => {
+      if (direction === 'left') {
+        openMenu();
+      }
+    },
+    [openMenu],
+  );
 
   // Get shelf parameter - if present, we're exploring a non-watchlist shelf
   const { shelf: shelfId } = useLocalSearchParams<{ shelf?: string }>();
@@ -595,79 +603,54 @@ export default function WatchlistScreen() {
   // Number of columns in the grid (must match MediaGrid numColumns)
   const numColumns = 6;
 
-  // Handle focus on filter buttons - first button (index 0) is at left edge
-  const handleFilterFocus = useCallback((filterIndex: number) => {
-    isAtLeftEdgeRef.current = filterIndex === 0;
-  }, []);
-
-  // Handle focus on grid items - leftmost column (index % numColumns === 0) is at left edge
-  const handleGridItemFocus = useCallback(
-    (itemIndex: number) => {
-      isAtLeftEdgeRef.current = itemIndex % numColumns === 0;
-    },
-    [numColumns],
-  );
-
-  // Handle left key press to open menu when at left edge (TV)
-  const isActive = isFocused && !isMenuOpen;
-  useEffect(() => {
-    if (!isTV || !isActive) return;
-
-    const handleKeyDown = (key: SupportedKeys) => {
-      if (key === SupportedKeys.Left && isAtLeftEdgeRef.current) {
-        openMenu();
-      }
-    };
-
-    RemoteControlManager.addKeydownListener(handleKeyDown);
-    return () => {
-      RemoteControlManager.removeKeydownListener(handleKeyDown);
-    };
-  }, [isActive, openMenu]);
-
-  // Unified native focus for all TV platforms (tvOS and Android TV)
   return (
-    <>
+    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
-          <View style={styles.controlsRow}>
-            <View style={styles.filtersRow}>
-              {filterOptions.map((option, index) => (
-                <NativeFilterButton
-                  key={option.key}
-                  label={option.label}
-                  icon={option.icon}
-                  isActive={filter === option.key}
-                  onPress={() => setFilter(option.key)}
-                  onFocus={() => handleFilterFocus(index)}
-                  autoFocus={index === 0}
-                  theme={theme}
-                />
-              ))}
+          <SpatialNavigationNode orientation="vertical">
+            {/* Filter buttons row */}
+            <View style={styles.controlsRow}>
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.filtersRow}>
+                  {filterOptions.map((option, index) => {
+                    const button = (
+                      <SpatialFilterButton
+                        key={option.key}
+                        label={option.label}
+                        icon={option.icon}
+                        isActive={filter === option.key}
+                        onSelect={() => setFilter(option.key)}
+                        theme={theme}
+                      />
+                    );
+                    // Give first filter button default focus
+                    return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
+                  })}
+                </View>
+              </SpatialNavigationNode>
             </View>
-          </View>
 
-          <MediaGrid
-            title={`${pageTitle} · ${filterLabel}`}
-            items={filteredTitles}
-            loading={loading}
-            error={error}
-            onItemPress={handleTitlePress}
-            layout="grid"
-            numColumns={numColumns}
-            defaultFocusFirstItem={false}
-            badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
-            emptyMessage={emptyMessage}
-            useNativeFocus={true}
-            onEndReached={handleLoadMore}
-            loadingMore={exploreLoadingMore}
-            hasMoreItems={hasMoreItems}
-            onItemFocus={handleGridItemFocus}
-          />
+            {/* Grid content */}
+            <MediaGrid
+              title={`${pageTitle} · ${filterLabel}`}
+              items={filteredTitles}
+              loading={loading}
+              error={error}
+              onItemPress={handleTitlePress}
+              layout="grid"
+              numColumns={numColumns}
+              defaultFocusFirstItem={false}
+              badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+              emptyMessage={emptyMessage}
+              onEndReached={handleLoadMore}
+              loadingMore={exploreLoadingMore}
+              hasMoreItems={hasMoreItems}
+            />
+          </SpatialNavigationNode>
         </View>
       </FixedSafeAreaView>
-    </>
+    </SpatialNavigationRoot>
   );
 }
 
