@@ -7,9 +7,10 @@ import type { Trailer } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { SpatialNavigationRoot } from '@/services/tv-navigation';
 import { Ionicons } from '@expo/vector-icons';
-import { createElement, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Linking,
   Modal,
@@ -105,7 +106,12 @@ interface TrailerModalProps {
   theme: NovaTheme;
   /** Pre-loaded stream/proxy URL (for YouTube trailers, generated on details page load) */
   preloadedStreamUrl?: string | null;
+  /** Whether the trailer is currently being downloaded (prequeue in progress) */
+  isDownloading?: boolean;
 }
+
+const CONTROLS_FADE_DELAY = 2000; // 2 seconds before fading
+const CONTROLS_FADE_DURATION = 500; // 500ms fade animation
 
 export const TrailerModal = ({
   visible,
@@ -113,10 +119,16 @@ export const TrailerModal = ({
   onClose,
   theme,
   preloadedStreamUrl,
+  isDownloading,
 }: TrailerModalProps) => {
   const styles = useMemo(() => createTrailerStyles(theme), [theme]);
   const [error, setError] = useState<string | null>(null);
   const [isBuffering, setIsBuffering] = useState(true);
+
+  // Controls visibility (title + close button)
+  const controlsOpacity = useRef(new Animated.Value(1)).current;
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleOpenTrailerExternal = useCallback(() => {
     const url = trailer?.url;
@@ -126,13 +138,69 @@ export const TrailerModal = ({
     Linking.openURL(url).catch((err) => console.warn('Unable to open trailer URL', err));
   }, [trailer]);
 
+  // Fade out controls after delay
+  const startFadeTimer = useCallback(() => {
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current);
+    }
+    fadeTimeoutRef.current = setTimeout(() => {
+      Animated.timing(controlsOpacity, {
+        toValue: 0,
+        duration: CONTROLS_FADE_DURATION,
+        useNativeDriver: true,
+      }).start(() => setControlsVisible(false));
+    }, CONTROLS_FADE_DELAY);
+  }, [controlsOpacity]);
+
+  // Show controls with fade-in and restart fade timer
+  const showControls = useCallback(() => {
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current);
+    }
+    setControlsVisible(true);
+    Animated.timing(controlsOpacity, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => startFadeTimer());
+  }, [controlsOpacity, startFadeTimer]);
+
+  // Handle tap on video area - show controls if hidden
+  const handleVideoAreaPress = useCallback(() => {
+    if (!controlsVisible) {
+      showControls();
+    }
+  }, [controlsVisible, showControls]);
+
   // Reset state when visibility changes
   useEffect(() => {
     if (visible) {
       setError(null);
       setIsBuffering(true);
+      // Show controls with fade-in and start fade timer
+      setControlsVisible(true);
+      controlsOpacity.setValue(0);
+      Animated.timing(controlsOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => startFadeTimer());
+    } else {
+      // Clear timeout when modal closes
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current);
+      }
     }
-  }, [visible]);
+  }, [visible, controlsOpacity, startFadeTimer]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Determine the stream URL to use
   const streamUrl = useMemo(() => {
@@ -171,6 +239,13 @@ export const TrailerModal = ({
       allowFullScreen: true,
       title: trailerName,
     });
+  } else if (isDownloading && !streamUrl) {
+    // Downloading state - show loading indicator
+    playerContent = (
+      <View style={styles.errorContainer}>
+        <ActivityIndicator size="large" color="#ffffff" />
+      </View>
+    );
   } else if (error || !streamUrl) {
     // Error state with fallback to external player
     playerContent = (
@@ -222,23 +297,27 @@ export const TrailerModal = ({
       <SpatialNavigationRoot isActive={visible}>
         <StatusBar hidden />
         <View style={styles.fullscreenOverlay}>
-          {/* Top darkened area with title and close button (hidden on TV) */}
-          <View style={styles.topBar}>
-            <Text style={styles.trailerTitle} numberOfLines={1}>
-              {trailerName}
-            </Text>
-            {!Platform.isTV && (
-              <Pressable onPress={onClose} style={styles.closeButton} hitSlop={16}>
-                <Ionicons name="close" size={28} color="#ffffff" />
-              </Pressable>
-            )}
-          </View>
+          {/* Video player area - tap to show controls */}
+          <Pressable style={styles.playerContainer} onPress={handleVideoAreaPress}>
+            {playerContent}
+          </Pressable>
 
-          {/* Video player area */}
-          <View style={styles.playerContainer}>{playerContent}</View>
-
-          {/* Bottom darkened area */}
-          <Pressable style={styles.bottomBar} onPress={onClose} />
+          {/* Fading controls overlay - title and close button */}
+          {!Platform.isTV && (
+            <Animated.View
+              style={[styles.controlsOverlay, { opacity: controlsOpacity }]}
+              pointerEvents={controlsVisible ? 'box-none' : 'none'}
+            >
+              <View style={styles.topBar}>
+                <Text style={styles.trailerTitle} numberOfLines={1}>
+                  {trailerName}
+                </Text>
+                <Pressable onPress={onClose} style={styles.closeButton} hitSlop={16}>
+                  <Ionicons name="close" size={28} color="#ffffff" />
+                </Pressable>
+              </View>
+            </Animated.View>
+          )}
         </View>
       </SpatialNavigationRoot>
     </Modal>
@@ -254,20 +333,31 @@ const createTrailerStyles = (theme: NovaTheme) =>
       flex: 1,
       backgroundColor: '#000000',
     },
+    playerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: '#000000',
+    },
+    controlsOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'flex-start',
+    },
     topBar: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-end',
       paddingHorizontal: theme.spacing.lg,
-      paddingTop: Platform.OS === 'ios' ? 50 : theme.spacing.lg,
+      paddingTop: Platform.OS === 'ios' ? 70 : theme.spacing.xl * 2,
       paddingBottom: theme.spacing.md,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
     },
     trailerTitle: {
       ...theme.typography.body.lg,
       color: '#ffffff',
       flex: 1,
       marginRight: theme.spacing.md,
+      textAlign: 'right',
     },
     closeButton: {
       width: 44,
@@ -277,20 +367,9 @@ const createTrailerStyles = (theme: NovaTheme) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    playerContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: '#000000',
-    },
     videoPlayer: {
       width: SCREEN_WIDTH,
       height: VIDEO_HEIGHT,
-    },
-    bottomBar: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.xl,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
     },
     bufferingOverlay: {
       ...StyleSheet.absoluteFillObject,
