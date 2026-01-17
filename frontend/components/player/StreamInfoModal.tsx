@@ -34,6 +34,10 @@ export interface StreamInfoData {
 
   // Player info
   playerImplementation?: string;
+
+  // AIOStreams passthrough format
+  passthroughName?: string; // Raw display name from AIOStreams
+  passthroughDescription?: string; // Raw description from AIOStreams
 }
 
 interface StreamInfoModalProps {
@@ -305,6 +309,19 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
                 <Text style={styles.sectionTitle}>Media</Text>
                 <InfoRow label="Title" value={mediaTitle} styles={styles} fullText />
                 {info.episodeName && <InfoRow label="Episode" value={info.episodeName} styles={styles} fullText />}
+              </View>
+            )}
+
+            {/* AIOStreams Source Section (passthrough format) */}
+            {(info.passthroughName || info.passthroughDescription) && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Source</Text>
+                {info.passthroughName && (
+                  <InfoRow label="Name" value={info.passthroughName} styles={styles} fullText />
+                )}
+                {info.passthroughDescription && (
+                  <InfoRow label="Details" value={info.passthroughDescription} styles={styles} fullText />
+                )}
               </View>
             )}
 

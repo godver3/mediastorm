@@ -88,6 +88,10 @@ type PrequeueStatusResponse struct {
 	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
 	SubtitleSessions map[int]*models.SubtitleSessionInfo `json:"subtitleSessions,omitempty"`
 
+	// AIOStreams passthrough format
+	PassthroughName        string `json:"passthroughName,omitempty"`        // Raw display name from AIOStreams
+	PassthroughDescription string `json:"passthroughDescription,omitempty"` // Raw description from AIOStreams
+
 	// On failure:
 	Error string `json:"error,omitempty"`
 }
@@ -130,6 +134,10 @@ type PrequeueEntry struct {
 	// Subtitle track info for lazy extraction (SDR content)
 	// Stored during prequeue, extraction triggered later with correct offset
 	SubtitleTracks []SubtitleTrackInfo
+
+	// AIOStreams passthrough format
+	PassthroughName        string
+	PassthroughDescription string
 
 	Error     string
 	CreatedAt time.Time
@@ -375,6 +383,8 @@ func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 		SelectedAudioTrack:    e.SelectedAudioTrack,
 		SelectedSubtitleTrack: e.SelectedSubtitleTrack,
 		SubtitleSessions:      e.SubtitleSessions,
+		PassthroughName:       e.PassthroughName,
+		PassthroughDescription: e.PassthroughDescription,
 		Error:                 e.Error,
 	}
 }

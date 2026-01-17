@@ -45,6 +45,8 @@ export interface PlayerParams extends Record<string, any> {
   shuffleMode?: string; // Random episode playback mode
   preselectedAudioTrack?: string; // Track index already baked into HLS session by prequeue
   preselectedSubtitleTrack?: string; // Track index already baked into HLS session by prequeue
+  passthroughName?: string; // AIOStreams passthrough format: raw display name
+  passthroughDescription?: string; // AIOStreams passthrough format: raw description
 }
 
 export const parseBooleanParam = (value?: string | string[]): boolean => {

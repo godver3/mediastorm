@@ -446,6 +446,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 	// Try to resolve the best result using parallel health checks for usenet
 	var resolution *models.PlaybackResolution
 	var lastErr error
+	var selectedResult *models.NZBResult // Track which result was successfully resolved
 
 	// Only health check usenet results within the top N results (not top N usenet results)
 	// This way if top results are all debrid, we skip health checks entirely
@@ -521,6 +522,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					}
 					cachedProbeResult = probeResult
 				}
+				selectedResult = &result
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve debrid %s: %v", result.Title, lastErr)
@@ -569,6 +571,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					}
 					cachedProbeResult = probeResult
 				}
+				selectedResult = &result
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve usenet %s: %v", result.Title, lastErr)
@@ -615,6 +618,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 					}
 					cachedProbeResult = probeResult
 				}
+				selectedResult = &result
 				break
 			}
 			log.Printf("[prequeue] Failed to resolve %s: %v", result.Title, lastErr)
@@ -637,6 +641,11 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		e.StreamPath = resolution.WebDAVPath
 		e.FileSize = resolution.FileSize
 		e.HealthStatus = resolution.HealthStatus
+		// Copy passthrough format data from AIOStreams results
+		if selectedResult != nil && selectedResult.Attributes["passthrough_format"] == "true" {
+			e.PassthroughName = selectedResult.Attributes["raw_name"]
+			e.PassthroughDescription = selectedResult.Attributes["raw_description"]
+		}
 	})
 
 	// Select audio/subtitle tracks based on user preferences

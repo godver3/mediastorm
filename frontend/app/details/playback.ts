@@ -565,6 +565,8 @@ export const launchNativePlayer = (
     debugPlayer?: boolean;
     shuffleMode?: boolean;
     preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
+    passthroughName?: string; // AIOStreams passthrough format: raw display name
+    passthroughDescription?: string; // AIOStreams passthrough format: raw description
   } = {},
 ) => {
   const {
@@ -589,6 +591,8 @@ export const launchNativePlayer = (
     debugPlayer,
     shuffleMode,
     preExtractedSubtitles,
+    passthroughName,
+    passthroughDescription,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -624,6 +628,8 @@ export const launchNativePlayer = (
       ...(tvdbId ? { tvdbId } : {}),
       ...(shuffleMode ? { shuffleMode: '1' } : {}),
       ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
+      ...(passthroughName ? { passthroughName } : {}),
+      ...(passthroughDescription ? { passthroughDescription } : {}),
     },
   });
 };
@@ -981,6 +987,12 @@ export const initiatePlayback = async (
       ? JSON.stringify(Object.values(playback.subtitleSessions))
       : undefined;
 
+  // Extract passthrough format data from AIOStreams results
+  const passthroughName =
+    result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_name : undefined;
+  const passthroughDescription =
+    result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_description : undefined;
+
   launchNativePlayer(streamUrl, headerImage, title, router, {
     ...options,
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
@@ -992,6 +1004,8 @@ export const initiatePlayback = async (
     ...(hasHDR10 ? { hdr10: true } : {}),
     ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
     ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
+    ...(passthroughName ? { passthroughName } : {}),
+    ...(passthroughDescription ? { passthroughDescription } : {}),
   });
 };
 

@@ -2294,6 +2294,11 @@ export default function DetailsScreen() {
           ...(selectedSubtitleTrack !== undefined && selectedSubtitleTrack >= 0
             ? { preselectedSubtitleTrack: String(selectedSubtitleTrack) }
             : {}),
+          // AIOStreams passthrough format data for info modal
+          ...(prequeueStatus.passthroughName ? { passthroughName: prequeueStatus.passthroughName } : {}),
+          ...(prequeueStatus.passthroughDescription
+            ? { passthroughDescription: prequeueStatus.passthroughDescription }
+            : {}),
         },
       });
     },

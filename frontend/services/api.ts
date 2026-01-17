@@ -714,6 +714,10 @@ export interface PrequeueStatusResponse {
   // Pre-extracted subtitle sessions (for direct streaming/VLC path)
   subtitleSessions?: Record<number, SubtitleSessionInfo>;
 
+  // AIOStreams passthrough format
+  passthroughName?: string; // Raw display name from AIOStreams
+  passthroughDescription?: string; // Raw description from AIOStreams
+
   // On failure:
   error?: string;
 }

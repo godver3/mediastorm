@@ -127,6 +127,8 @@ export default function PlayerScreen() {
     subtitleDebug: subtitleDebugParam,
     preselectedAudioTrack: preselectedAudioTrackParam,
     preselectedSubtitleTrack: preselectedSubtitleTrackParam,
+    passthroughName: passthroughNameParam,
+    passthroughDescription: passthroughDescriptionParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -194,6 +196,14 @@ export default function PlayerScreen() {
     const raw = Array.isArray(releaseNameParam) ? releaseNameParam[0] : releaseNameParam;
     return raw || undefined;
   }, [releaseNameParam]);
+  const passthroughName = useMemo(() => {
+    const raw = Array.isArray(passthroughNameParam) ? passthroughNameParam[0] : passthroughNameParam;
+    return raw || undefined;
+  }, [passthroughNameParam]);
+  const passthroughDescription = useMemo(() => {
+    const raw = Array.isArray(passthroughDescriptionParam) ? passthroughDescriptionParam[0] : passthroughDescriptionParam;
+    return raw || undefined;
+  }, [passthroughDescriptionParam]);
   const routeDvProfile = useMemo(() => {
     const raw = Array.isArray(dvProfileParam) ? dvProfileParam[0] : dvProfileParam;
     return raw ? String(raw) : '';
@@ -2003,6 +2013,8 @@ export default function PlayerScreen() {
       colorTransfer: videoColorInfo?.colorTransfer,
       hdrFormat: hdrFormatStr,
       playerImplementation: playerImplementationLabel || undefined,
+      passthroughName,
+      passthroughDescription,
     };
   }, [
     title,
@@ -2019,6 +2031,8 @@ export default function PlayerScreen() {
     routeHasHDR10,
     routeDvProfile,
     playerImplementationLabel,
+    passthroughName,
+    passthroughDescription,
   ]);
 
   useEffect(() => {
