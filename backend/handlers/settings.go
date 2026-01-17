@@ -48,6 +48,18 @@ type SettingsResponse struct {
 	DemoMode bool `json:"demoMode"`
 }
 
+// LiveSettingsWithEffectiveURL wraps LiveSettings with a computed effective URL.
+type LiveSettingsWithEffectiveURL struct {
+	config.LiveSettings
+	EffectivePlaylistURL string `json:"effectivePlaylistUrl,omitempty"`
+}
+
+// SettingsResponseWithLive extends SettingsResponse with computed live URL.
+type SettingsResponseWithLive struct {
+	SettingsResponse
+	Live LiveSettingsWithEffectiveURL `json:"live"`
+}
+
 func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	s, err := h.Manager.Load()
 	if err != nil {
@@ -56,9 +68,16 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	resp := SettingsResponse{
-		Settings: s,
-		DemoMode: h.DemoMode,
+	// Build response with computed effective playlist URL
+	resp := SettingsResponseWithLive{
+		SettingsResponse: SettingsResponse{
+			Settings: s,
+			DemoMode: h.DemoMode,
+		},
+		Live: LiveSettingsWithEffectiveURL{
+			LiveSettings:         s.Live,
+			EffectivePlaylistURL: s.Live.GetEffectivePlaylistURL(),
+		},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

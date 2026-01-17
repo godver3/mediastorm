@@ -2598,9 +2598,26 @@
 
     function renderObjectSection(sectionKey, sectionDef) {
         // Use getValue for proper three-tier cascade (global → profile → client)
+        // Get section data for showWhen conditions
+        const sectionData = getValue(sectionKey) || {};
         const fieldsHtml = Object.entries(sectionDef.fields)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .map(([fieldKey, fieldDef]) => {
+                // Check showWhen condition (same logic as renderArraySection)
+                const showWhen = fieldDef.showWhen;
+                if (showWhen) {
+                    let shouldShow = false;
+                    if (typeof showWhen === 'string' && showWhen.includes('=')) {
+                        // Simple string format: "field=value"
+                        const [field, value] = showWhen.split('=');
+                        shouldShow = sectionData[field] === value;
+                    } else if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
+                        shouldShow = showWhen.conditions.some(cond => sectionData[cond.field] === cond.value);
+                    } else if (showWhen.field) {
+                        shouldShow = sectionData[showWhen.field] === showWhen.value;
+                    }
+                    if (!shouldShow) return '';
+                }
                 const fieldError = getFieldError(sectionKey, fieldKey);
                 const invalidClass = fieldError ? ' invalid' : '';
                 const errorHtml = fieldError ? '<div class="validation-message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'+fieldError+'</div>' : '';

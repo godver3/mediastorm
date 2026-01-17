@@ -3,7 +3,9 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,11 +204,26 @@ type PlaybackSettings struct {
 
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
-	PlaylistURL           string `json:"playlistUrl"`
+	Mode                  string `json:"mode"`                  // "m3u" or "xtream" - how to source the playlist
+	PlaylistURL           string `json:"playlistUrl"`           // M3U playlist URL (used when mode is "m3u")
+	XtreamHost            string `json:"xtreamHost"`            // Xtream Codes server URL (e.g., "http://example.com:8080")
+	XtreamUsername        string `json:"xtreamUsername"`        // Xtream Codes username
+	XtreamPassword        string `json:"xtreamPassword"`        // Xtream Codes password
 	PlaylistCacheTTLHours int    `json:"playlistCacheTtlHours"`
 	ProbeSizeMB           int    `json:"probeSizeMb"`           // FFmpeg probesize in MB (0 = default ~5MB)
 	AnalyzeDurationSec    int    `json:"analyzeDurationSec"`    // FFmpeg analyzeduration in seconds (0 = default ~5s)
 	LowLatency            bool   `json:"lowLatency"`            // Enable low-latency mode (nobuffer + low_delay flags)
+}
+
+// GetEffectivePlaylistURL returns the playlist URL based on the configured mode.
+// For Xtream Codes mode, it constructs the M3U URL from the credentials.
+func (ls *LiveSettings) GetEffectivePlaylistURL() string {
+	if ls.Mode == "xtream" && ls.XtreamHost != "" && ls.XtreamUsername != "" && ls.XtreamPassword != "" {
+		host := strings.TrimRight(ls.XtreamHost, "/")
+		return fmt.Sprintf("%s/get.php?username=%s&password=%s&type=m3u_plus&output=m3u8",
+			host, url.QueryEscape(ls.XtreamUsername), url.QueryEscape(ls.XtreamPassword))
+	}
+	return ls.PlaylistURL
 }
 
 // ShelfConfig represents a configurable home screen shelf.
@@ -539,7 +556,7 @@ func DefaultSettings() Settings {
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
 		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
-		Live:      LiveSettings{PlaylistURL: "", PlaylistCacheTTLHours: 24},
+		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{
 				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
@@ -859,7 +876,10 @@ func (m *Manager) Load() (Settings, error) {
 	if s.Live.PlaylistCacheTTLHours == 0 {
 		s.Live.PlaylistCacheTTLHours = 24
 	}
-	// PlaylistURL defaults to empty string, no backfill needed
+	// Backfill Mode to "m3u" for backward compatibility
+	if s.Live.Mode == "" {
+		s.Live.Mode = "m3u"
+	}
 
 	// Backfill Indexers: migrate torznab to newznab (usenet indexers use newznab)
 	for i := range s.Indexers {

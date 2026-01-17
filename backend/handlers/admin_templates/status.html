@@ -319,13 +319,13 @@
                     <tr>
                         <td>Live TV Playlist</td>
                         <td>
-                            {{if .Settings.Live.PlaylistURL}}
-                            <span class="status-badge online"><span class="status-dot"></span> Configured</span>
+                            {{if or .Settings.Live.PlaylistURL (and (eq .Settings.Live.Mode "xtream") .Settings.Live.XtreamHost .Settings.Live.XtreamUsername)}}
+                            <span class="status-badge online"><span class="status-dot"></span> {{if eq .Settings.Live.Mode "xtream"}}Xtream{{else}}M3U{{end}} Configured</span>
                             {{else}}
                             <span class="status-badge offline"><span class="status-dot"></span> Not Set</span>
                             {{end}}
                         </td>
-                        <td style="color: var(--text-muted);">M3U playlist for Live TV</td>
+                        <td style="color: var(--text-muted);">{{if eq .Settings.Live.Mode "xtream"}}Xtream Codes{{else}}M3U playlist{{end}} for Live TV</td>
                     </tr>
                     <tr>
                         <td>Indexers</td>
