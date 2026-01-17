@@ -78,6 +78,10 @@ func (f *fakeHistoryService) DeletePlaybackProgress(userID, mediaType, itemID st
 	return f.err
 }
 
+func (f *fakeHistoryService) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
+	return nil
+}
+
 func (f *fakeHistoryService) HideFromContinueWatching(userID, seriesID string) error {
 	return f.err
 }

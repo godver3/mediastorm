@@ -13,6 +13,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/metadata"
 )
 
 type fakeMetadataService struct {
@@ -91,7 +92,7 @@ func (f *fakeMetadataService) BatchMovieReleases(_ context.Context, queries []mo
 	return results
 }
 
-func (f *fakeMetadataService) GetCustomList(_ string, _ int) ([]models.TrendingItem, int, error) {
+func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ int) ([]models.TrendingItem, int, error) {
 	return nil, 0, nil
 }
 
@@ -104,6 +105,18 @@ func (f *fakeMetadataService) StreamTrailer(_ context.Context, _ string, _ io.Wr
 }
 
 func (f *fakeMetadataService) StreamTrailerWithRange(_ context.Context, _ string, _ string, _ io.Writer) error {
+	return nil
+}
+
+func (f *fakeMetadataService) PrequeueTrailer(_ string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeMetadataService) GetTrailerPrequeueStatus(_ string) (*metadata.TrailerPrequeueItem, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) ServePrequeuedTrailer(_ string, _ http.ResponseWriter, _ *http.Request) error {
 	return nil
 }
 
@@ -141,11 +154,11 @@ func TestMetadataHandler_DiscoverNew(t *testing.T) {
 		t.Fatalf("unexpected content-type %q", got)
 	}
 
-	var payload []models.TrendingItem
+	var payload DiscoverNewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	if len(payload) != 1 || payload[0].Title.Name != "Lost" {
+	if len(payload.Items) != 1 || payload.Items[0].Title.Name != "Lost" {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
