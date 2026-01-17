@@ -2025,6 +2025,14 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "DV_PROFILE_INCOMPATIBLE: profile 5 has no HDR fallback layer", http.StatusBadRequest)
 				return
 			}
+			// Strip DV metadata for profiles 7/8 when policy is "hdr"
+			// Use HDR10 base layer for safe playback on non-DV devices
+			if dvProfileNum == 7 || dvProfileNum == 8 {
+				log.Printf("[video] HDRDVPolicy 'hdr': stripping DV metadata for profile %d, using HDR10 base layer for path=%q", dvProfileNum, cleanPath)
+				hasDV = false
+				dvProfile = ""
+				hasHDR = true
+			}
 		}
 	}
 
@@ -2315,13 +2323,24 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 
 	log.Printf("[video] CreateHLSSession: creating session for path=%q hasDV=%v dvProfile=%s hasHDR=%v audioTrack=%d subtitleTrack=%d startOffset=%.2f", path, hasDV, dvProfile, hasHDR, audioTrackIndex, subtitleTrackIndex, startOffset)
 
-	// DV Profile 7 has enhancement layers that many devices can't decode
-	// Fall back to HDR10 base layer for better compatibility
-	if hasDV && isDolbyVisionProfile7(dvProfile) {
-		log.Printf("[video] CreateHLSSession: Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", path)
-		hasDV = false
-		dvProfile = ""
-		hasHDR = true // DV Profile 7 has HDR10 base layer
+	// Check HDR/DV policy and handle DV stripping
+	if hasDV && dvProfile != "" {
+		hdrDVPolicy := h.getHDRDVPolicy(profileID, "") // clientID not available in prequeue path
+		dvProfileNum := parseDVProfileNumber(dvProfile)
+
+		if hdrDVPolicy == models.HDRDVPolicyIncludeHDR && (dvProfileNum == 7 || dvProfileNum == 8) {
+			// Strip DV metadata when policy is "hdr" - use HDR10 base layer
+			log.Printf("[video] CreateHLSSession: HDRDVPolicy 'hdr': stripping DV metadata for profile %d, using HDR10 base layer for path=%q", dvProfileNum, path)
+			hasDV = false
+			dvProfile = ""
+			hasHDR = true
+		} else if isDolbyVisionProfile7(dvProfile) {
+			// Unconditional fallback for Profile 7 (enhancement layers incompatible with many devices)
+			log.Printf("[video] CreateHLSSession: Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", path)
+			hasDV = false
+			dvProfile = ""
+			hasHDR = true
+		}
 	}
 
 	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "")
