@@ -4771,8 +4771,13 @@ export default function PlayerScreen() {
         // The current track selections should be preserved from the previous session
         // Use the captured value from effect start to handle async timing - by the time this runs,
         // handleLoad may have already cleared skipTrackPreferencesRef, but we captured it earlier.
-        if (shouldSkipPreferencesAtStart) {
-          console.log('[player] HLS session recreation - skipping track preference application');
+        // Also skip if initial tracks have already been applied (prevents race condition when
+        // contentPreference loads and triggers effect re-run after user has changed tracks).
+        if (shouldSkipPreferencesAtStart || hasAppliedInitialTracksRef.current) {
+          console.log('[player] HLS session recreation - skipping track preference application', {
+            shouldSkipPreferencesAtStart,
+            hasAppliedInitialTracks: hasAppliedInitialTracksRef.current,
+          });
           // Still build and set audio options so the track menu shows correctly
           const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
           setAudioTrackOptions(audioOptions);
@@ -4785,6 +4790,30 @@ export default function PlayerScreen() {
             metadata.selectedSubtitleIndex,
           );
           setSubtitleTrackOptions(subtitleOptions);
+
+          // Set the UI track state so the menu shows the correct selection
+          // Priority: lastHlsTrackSelectionRef (has user's current selection after track changes) > preselected (initial from prequeue)
+          // This prevents preselected from overwriting user's manual track selection
+          if (lastHlsTrackSelectionRef.current.audio !== null) {
+            const audioId = resolveSelectedTrackId(audioOptions, lastHlsTrackSelectionRef.current.audio);
+            setSelectedAudioTrackId(audioId);
+            console.log('[player] set audio track UI state from lastHlsTrackSelection', { audio: lastHlsTrackSelectionRef.current.audio, audioId });
+          } else if (preselectedAudioTrack !== undefined) {
+            const audioId = resolveSelectedTrackId(audioOptions, preselectedAudioTrack);
+            setSelectedAudioTrackId(audioId);
+            console.log('[player] set audio track UI state from preselected', { preselectedAudioTrack, audioId });
+          }
+
+          if (lastHlsTrackSelectionRef.current.subtitle !== null) {
+            const subtitleId = resolveSelectedTrackId(subtitleOptions, lastHlsTrackSelectionRef.current.subtitle);
+            setSelectedSubtitleTrackId(subtitleId);
+            console.log('[player] set subtitle track UI state from lastHlsTrackSelection', { subtitle: lastHlsTrackSelectionRef.current.subtitle, subtitleId });
+          } else if (preselectedSubtitleTrack !== undefined) {
+            const subtitleId = resolveSelectedTrackId(subtitleOptions, preselectedSubtitleTrack);
+            setSelectedSubtitleTrackId(subtitleId);
+            console.log('[player] set subtitle track UI state from preselected', { preselectedSubtitleTrack, subtitleId });
+          }
+
           // Skip the rest - track selections are already preserved from reset effect
           hasAppliedInitialTracksRef.current = true;
           return;

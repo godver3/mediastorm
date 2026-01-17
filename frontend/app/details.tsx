@@ -13,10 +13,12 @@ import EpisodeCard from '@/components/EpisodeCard';
 import TVEpisodeStrip from '@/components/TVEpisodeStrip';
 
 // Safely import new TV components - fallback to TVEpisodeStrip if unavailable
+let TVActionButton: typeof import('@/components/tv').TVActionButton | null = null;
 let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
 let TVCastSection: typeof import('@/components/tv').TVCastSection | null = null;
 try {
   const tvComponents = require('@/components/tv');
+  TVActionButton = tvComponents.TVActionButton;
   TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
   TVCastSection = tvComponents.TVCastSection;
 } catch {
@@ -34,9 +36,9 @@ import {
   type SeriesSeason,
   type Title,
   type Trailer,
+  type TrailerPrequeueStatus,
 } from '@/services/api';
 import {
-  DefaultFocus,
   SpatialNavigationNode,
   SpatialNavigationRoot,
   useSpatialNavigator,
@@ -62,9 +64,6 @@ import {
   ScrollView,
   Text,
   View,
-  findNodeHandle,
-  // @ts-ignore - TVFocusGuideView is available on TV platforms
-  TVFocusGuideView,
 } from 'react-native';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
@@ -743,18 +742,12 @@ export default function DetailsScreen() {
   const [trailersError, setTrailersError] = useState<string | null>(null);
   const [trailerModalVisible, setTrailerModalVisible] = useState(false);
   const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
-  // Pre-loaded trailer stream URL (proxy URL for YouTube trailers on mobile)
+  // Pre-loaded trailer stream URL (served from backend prequeue for YouTube trailers)
   const [trailerStreamUrl, setTrailerStreamUrl] = useState<string | null>(null);
+  // Trailer prequeue state for 1080p YouTube trailers
+  const [trailerPrequeueId, setTrailerPrequeueId] = useState<string | null>(null);
+  const [trailerPrequeueStatus, setTrailerPrequeueStatus] = useState<TrailerPrequeueStatus | null>(null);
 
-  // Refs for action button focus trapping (Android TV)
-  const watchedButtonRef = useRef<View>(null);
-  const trailerButtonRef = useRef<View>(null);
-  const [watchedButtonTag, setWatchedButtonTag] = useState<number | undefined>(undefined);
-  const [trailerButtonTag, setTrailerButtonTag] = useState<number | undefined>(undefined);
-  // Track active episode tag for action buttons -> episode focus navigation
-  const [activeEpisodeTag, setActiveEpisodeTag] = useState<number | undefined>(undefined);
-  // Track selected season tag for action buttons -> season focus navigation
-  const [selectedSeasonTag, setSelectedSeasonTag] = useState<number | undefined>(undefined);
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
@@ -1456,32 +1449,93 @@ export default function DetailsScreen() {
     };
   }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber]);
 
-  // Generate proxy URL for YouTube trailers on mobile (streams through backend)
+  // Prequeue YouTube trailers for 1080p playback on mobile
   useEffect(() => {
     // Only needed on mobile platforms
     if (Platform.OS === 'web') {
       setTrailerStreamUrl(null);
+      setTrailerPrequeueId(null);
+      setTrailerPrequeueStatus(null);
       return;
     }
 
     const trailerUrl = primaryTrailer?.url;
     if (!trailerUrl) {
       setTrailerStreamUrl(null);
+      setTrailerPrequeueId(null);
+      setTrailerPrequeueStatus(null);
       return;
     }
 
-    // Only proxy YouTube URLs (direct media URLs can be played directly)
+    // Only prequeue YouTube URLs (direct media URLs can be played directly)
     const isYouTube = trailerUrl.includes('youtube.com') || trailerUrl.includes('youtu.be');
     if (!isYouTube) {
       // Use direct URL for non-YouTube trailers
       setTrailerStreamUrl(trailerUrl);
+      setTrailerPrequeueId(null);
+      setTrailerPrequeueStatus(null);
       return;
     }
 
-    // Generate proxy URL (synchronous - no loading state needed)
-    const proxyUrl = apiService.getTrailerProxyUrl(trailerUrl);
-    setTrailerStreamUrl(proxyUrl);
+    // Start prequeue download for YouTube trailer (1080p merged video+audio)
+    let cancelled = false;
+    setTrailerPrequeueStatus('pending');
+    setTrailerStreamUrl(null);
+
+    apiService
+      .prequeueTrailer(trailerUrl)
+      .then((response) => {
+        if (cancelled) return;
+        setTrailerPrequeueId(response.id);
+        setTrailerPrequeueStatus(response.status);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('[trailer-prequeue] failed to start prequeue:', err);
+        setTrailerPrequeueStatus('failed');
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [primaryTrailer?.url]);
+
+  // Poll for prequeue status until ready or failed
+  useEffect(() => {
+    if (!trailerPrequeueId || trailerPrequeueStatus === 'ready' || trailerPrequeueStatus === 'failed') {
+      return;
+    }
+
+    let cancelled = false;
+    const pollInterval = setInterval(async () => {
+      if (cancelled) return;
+
+      try {
+        const status = await apiService.getTrailerPrequeueStatus(trailerPrequeueId);
+        if (cancelled) return;
+
+        setTrailerPrequeueStatus(status.status);
+
+        if (status.status === 'ready') {
+          // Trailer is ready - set the serve URL
+          const serveUrl = apiService.getTrailerPrequeueServeUrl(trailerPrequeueId);
+          setTrailerStreamUrl(serveUrl);
+          clearInterval(pollInterval);
+        } else if (status.status === 'failed') {
+          console.warn('[trailer-prequeue] download failed:', status.error);
+          clearInterval(pollInterval);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[trailer-prequeue] status check failed:', err);
+      }
+    }, 1000); // Poll every second
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+    };
+  }, [trailerPrequeueId, trailerPrequeueStatus]);
 
   const findPreviousEpisode = useCallback(
     (episode: SeriesEpisode): SeriesEpisode | null => {
@@ -1636,21 +1690,6 @@ export default function DetailsScreen() {
     () => Boolean((primaryTrailer && primaryTrailer.url) || (trailers?.length ?? 0) > 0),
     [primaryTrailer, trailers],
   );
-
-  // Update native tags for action button focus trapping (Android TV)
-  // This allows the last button in the row to trap rightward focus
-  useEffect(() => {
-    if (Platform.OS !== 'android' || !Platform.isTV) return;
-    const timer = setTimeout(() => {
-      if (watchedButtonRef.current) {
-        setWatchedButtonTag(findNodeHandle(watchedButtonRef.current) ?? undefined);
-      }
-      if (trailerButtonRef.current) {
-        setTrailerButtonTag(findNodeHandle(trailerButtonRef.current) ?? undefined);
-      }
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [hasAvailableTrailer, trailersLoading]);
 
   const trailerButtonLabel = useMemo(() => (trailersLoading ? 'Loading trailer…' : 'Watch trailer'), [trailersLoading]);
 
@@ -2090,7 +2129,19 @@ export default function DetailsScreen() {
           hlsDuration = prequeueStatus.duration;
           console.log('[prequeue] Using duration from prequeue:', hlsDuration);
         }
-        console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl);
+        // Extract prequeue-selected tracks so player knows what's baked into the HLS session
+        selectedAudioTrack =
+          prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
+            ? prequeueStatus.selectedAudioTrack
+            : undefined;
+        selectedSubtitleTrack =
+          prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
+            ? prequeueStatus.selectedSubtitleTrack
+            : undefined;
+        console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl, {
+          selectedAudioTrack,
+          selectedSubtitleTrack,
+        });
       } else if (needsHLS && Platform.OS !== 'web') {
         // HDR/TrueHD content - create HLS session with start offset
         // This happens when: (a) backend didn't create session, or (b) we have a resume position
@@ -4145,129 +4196,202 @@ export default function DetailsScreen() {
               handleTVFocusAreaChange('actions');
             }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            <TVFocusGuideView
+            <View
               style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
             >
-              <FocusablePressable
-                focusKey="watch-now"
-                text={!useCompactActionLayout ? watchNowLabel : undefined}
-                icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
-                accessibilityLabel={watchNowLabel}
-                onSelect={handleWatchNow}
-                onFocus={() => handleTVFocusAreaChange('actions')}
-                disabled={isResolving || (isSeries && episodesLoading)}
-                loading={isResolving || (isSeries && episodesLoading)}
-                style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
-                showReadyPip={prequeueReady}
-                autoFocus={Platform.isTV}
-                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
-              />
-              <FocusablePressable
-                focusKey="manual-select"
-                text={!useCompactActionLayout ? manualSelectLabel : undefined}
-                icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
-                accessibilityLabel={manualSelectLabel}
-                onSelect={handleManualSelect}
-                onFocus={() => handleTVFocusAreaChange('actions')}
-                disabled={isSeries && episodesLoading}
-                style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
-              />
-              {shouldShowDebugPlayerButton && (
-                <FocusablePressable
-                  focusKey="debug-player"
-                  text={!useCompactActionLayout ? 'Debug Player' : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
-                  accessibilityLabel="Launch debug player overlay"
-                  onSelect={handleLaunchDebugPlayer}
+              {Platform.isTV && TVActionButton ? (
+                <TVActionButton
+                  text={watchNowLabel}
+                  icon="play"
+                  onSelect={handleWatchNow}
                   onFocus={() => handleTVFocusAreaChange('actions')}
                   disabled={isResolving || (isSeries && episodesLoading)}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
-                  nextFocusDown={isSeries ? selectedSeasonTag : undefined}
+                  loading={isResolving || (isSeries && episodesLoading)}
+                  showReadyPip={prequeueReady}
+                  autoFocus
+                  variant="primary"
                 />
+              ) : (
+                <FocusablePressable
+                  focusKey="watch-now"
+                  text={!useCompactActionLayout ? watchNowLabel : undefined}
+                  icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
+                  accessibilityLabel={watchNowLabel}
+                  onSelect={handleWatchNow}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  disabled={isResolving || (isSeries && episodesLoading)}
+                  loading={isResolving || (isSeries && episodesLoading)}
+                  style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
+                  showReadyPip={prequeueReady}
+                  autoFocus={Platform.isTV}
+                />
+              )}
+              {Platform.isTV && TVActionButton ? (
+                <TVActionButton
+                  text={manualSelectLabel}
+                  icon="search"
+                  onSelect={handleManualSelect}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  disabled={isSeries && episodesLoading}
+                />
+              ) : (
+                <FocusablePressable
+                  focusKey="manual-select"
+                  text={!useCompactActionLayout ? manualSelectLabel : undefined}
+                  icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
+                  accessibilityLabel={manualSelectLabel}
+                  onSelect={handleManualSelect}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  disabled={isSeries && episodesLoading}
+                  style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                />
+              )}
+              {shouldShowDebugPlayerButton && (
+                Platform.isTV && TVActionButton ? (
+                  <TVActionButton
+                    text="Debug Player"
+                    icon="bug"
+                    onSelect={handleLaunchDebugPlayer}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    disabled={isResolving || (isSeries && episodesLoading)}
+                  />
+                ) : (
+                  <FocusablePressable
+                    focusKey="debug-player"
+                    text={!useCompactActionLayout ? 'Debug Player' : undefined}
+                    icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
+                    accessibilityLabel="Launch debug player overlay"
+                    onSelect={handleLaunchDebugPlayer}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    disabled={isResolving || (isSeries && episodesLoading)}
+                    style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
+                  />
+                )
               )}
               {isSeries && (
-                <FocusablePressable
-                  focusKey="select-episode"
-                  text={!useCompactActionLayout ? 'Select' : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
-                  accessibilityLabel="Select Episode"
-                  onSelect={() => setSeasonSelectorVisible(true)}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                  nextFocusDown={selectedSeasonTag}
-                />
+                Platform.isTV && TVActionButton ? (
+                  <TVActionButton
+                    text="Select"
+                    icon="list"
+                    onSelect={() => setSeasonSelectorVisible(true)}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                  />
+                ) : (
+                  <FocusablePressable
+                    focusKey="select-episode"
+                    text={!useCompactActionLayout ? 'Select' : undefined}
+                    icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
+                    accessibilityLabel="Select Episode"
+                    onSelect={() => setSeasonSelectorVisible(true)}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                  />
+                )
               )}
               {isSeries && (
-                <FocusablePressable
-                  focusKey="shuffle-play"
-                  text={!useCompactActionLayout ? 'Shuffle' : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
-                  accessibilityLabel="Shuffle play random episode"
-                  onSelect={handleShufflePlay}
-                  onLongPress={handleShuffleSeasonPlay}
+                Platform.isTV && TVActionButton ? (
+                  <TVActionButton
+                    text="Shuffle"
+                    icon="shuffle"
+                    onSelect={handleShufflePlay}
+                    onLongSelect={handleShuffleSeasonPlay}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    disabled={episodesLoading || allEpisodes.length === 0}
+                  />
+                ) : (
+                  <FocusablePressable
+                    focusKey="shuffle-play"
+                    text={!useCompactActionLayout ? 'Shuffle' : undefined}
+                    icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
+                    accessibilityLabel="Shuffle play random episode"
+                    onSelect={handleShufflePlay}
+                    onLongPress={handleShuffleSeasonPlay}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+                    disabled={episodesLoading || allEpisodes.length === 0}
+                  />
+                )
+              )}
+              {Platform.isTV && TVActionButton ? (
+                <TVActionButton
+                  text={watchlistBusy ? 'Saving...' : watchlistButtonLabel}
+                  icon={isWatchlisted ? 'bookmark' : 'bookmark-outline'}
+                  onSelect={handleToggleWatchlist}
                   onFocus={() => handleTVFocusAreaChange('actions')}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                  disabled={episodesLoading || allEpisodes.length === 0}
-                  nextFocusDown={selectedSeasonTag}
+                  loading={watchlistBusy}
+                  disabled={!canToggleWatchlist || watchlistBusy}
+                />
+              ) : (
+                <FocusablePressable
+                  focusKey="toggle-watchlist"
+                  text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchlistButtonLabel) : undefined}
+                  icon={
+                    useCompactActionLayout || Platform.isTV
+                      ? isWatchlisted
+                        ? 'bookmark'
+                        : 'bookmark-outline'
+                      : undefined
+                  }
+                  accessibilityLabel={watchlistBusy ? 'Saving watchlist change' : watchlistButtonLabel}
+                  onSelect={handleToggleWatchlist}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  loading={watchlistBusy}
+                  style={[
+                    useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
+                    isWatchlisted && styles.watchlistActionButtonActive,
+                  ]}
+                  disabled={!canToggleWatchlist || watchlistBusy}
                 />
               )}
-              <FocusablePressable
-                focusKey="toggle-watchlist"
-                text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchlistButtonLabel) : undefined}
-                icon={
-                  useCompactActionLayout || Platform.isTV
-                    ? isWatchlisted
-                      ? 'bookmark'
-                      : 'bookmark-outline'
-                    : undefined
-                }
-                accessibilityLabel={watchlistBusy ? 'Saving watchlist change' : watchlistButtonLabel}
-                onSelect={handleToggleWatchlist}
-                onFocus={() => handleTVFocusAreaChange('actions')}
-                loading={watchlistBusy}
-                style={[
-                  useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
-                  isWatchlisted && styles.watchlistActionButtonActive,
-                ]}
-                disabled={!canToggleWatchlist || watchlistBusy}
-                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
-              />
-              <FocusablePressable
-                ref={watchedButtonRef}
-                focusKey="toggle-watched"
-                text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchStateButtonLabel) : undefined}
-                icon={useCompactActionLayout || Platform.isTV ? (isWatched ? 'eye' : 'eye-outline') : undefined}
-                accessibilityLabel={watchlistBusy ? 'Saving watched state' : watchStateButtonLabel}
-                onSelect={handleToggleWatched}
-                onFocus={() => handleTVFocusAreaChange('actions')}
-                loading={watchlistBusy}
-                style={[
-                  useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
-                  isWatched && styles.watchStateButtonActive,
-                ]}
-                disabled={watchlistBusy}
-                // Trap rightward focus when this is the last button (no trailer available)
-                nextFocusRight={!(trailersLoading || hasAvailableTrailer) ? watchedButtonTag : undefined}
-                nextFocusDown={isSeries ? selectedSeasonTag : undefined}
-              />
+              {Platform.isTV && TVActionButton ? (
+                <TVActionButton
+                  text={watchlistBusy ? 'Saving...' : watchStateButtonLabel}
+                  icon={isWatched ? 'eye' : 'eye-outline'}
+                  onSelect={handleToggleWatched}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  loading={watchlistBusy}
+                  disabled={watchlistBusy}
+                />
+              ) : (
+                <FocusablePressable
+                  focusKey="toggle-watched"
+                  text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchStateButtonLabel) : undefined}
+                  icon={useCompactActionLayout || Platform.isTV ? (isWatched ? 'eye' : 'eye-outline') : undefined}
+                  accessibilityLabel={watchlistBusy ? 'Saving watched state' : watchStateButtonLabel}
+                  onSelect={handleToggleWatched}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  loading={watchlistBusy}
+                  style={[
+                    useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
+                    isWatched && styles.watchStateButtonActive,
+                  ]}
+                  disabled={watchlistBusy}
+                />
+              )}
               {/* Trailer button */}
               {(trailersLoading || hasAvailableTrailer) && (
-                <FocusablePressable
-                  ref={trailerButtonRef}
-                  focusKey="watch-trailer"
-                  text={!useCompactActionLayout ? trailerButtonLabel : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
-                  accessibilityLabel={trailerButtonLabel}
-                  onSelect={handleWatchTrailer}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  loading={trailersLoading}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-                  disabled={trailerButtonDisabled}
-                  // Trap rightward focus - this is always the last button when shown
-                  nextFocusRight={trailerButtonTag}
-                  nextFocusDown={isSeries ? selectedSeasonTag : undefined}
-                />
+                Platform.isTV && TVActionButton ? (
+                  <TVActionButton
+                    text={trailerButtonLabel}
+                    icon="videocam"
+                    onSelect={handleWatchTrailer}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    loading={trailersLoading}
+                    disabled={trailerButtonDisabled}
+                  />
+                ) : (
+                  <FocusablePressable
+                    focusKey="watch-trailer"
+                    text={!useCompactActionLayout ? trailerButtonLabel : undefined}
+                    icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
+                    accessibilityLabel={trailerButtonLabel}
+                    onSelect={handleWatchTrailer}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    loading={trailersLoading}
+                    style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+                    disabled={trailerButtonDisabled}
+                  />
+                )
               )}
               {/* Show progress badge in action row only for movies (no episode card) */}
               {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
@@ -4281,7 +4405,7 @@ export default function DetailsScreen() {
                   </Text>
                 </View>
               )}
-            </TVFocusGuideView>
+            </View>
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
@@ -4331,7 +4455,6 @@ export default function DetailsScreen() {
               isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
               maxCast={10}
               onFocus={() => handleTVFocusAreaChange('cast')}
-              nextFocusUp={isSeries ? activeEpisodeTag : undefined}
               compactMargin
             />
           )}
@@ -4824,6 +4947,7 @@ export default function DetailsScreen() {
         onClose={handleCloseTrailer}
         theme={theme}
         preloadedStreamUrl={trailerStreamUrl}
+        isDownloading={trailerPrequeueStatus === 'pending' || trailerPrequeueStatus === 'downloading'}
       />
       <ResumePlaybackModal
         visible={resumeModalVisible}

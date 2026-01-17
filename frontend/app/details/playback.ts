@@ -860,17 +860,31 @@ export const initiatePlayback = async (
         setSelectionInfo('Preparing stream…');
       }
 
-      // Select audio/subtitle tracks based on user preferences
+      // Fetch content-specific language preference (overrides global settings)
+      let contentPreference: { audioLanguage?: string; subtitleLanguage?: string; subtitleMode?: string } | null = null;
+      if (options.profileId && options.titleId) {
+        try {
+          contentPreference = await apiService.getContentPreference(options.profileId, options.titleId);
+          if (contentPreference) {
+            console.log('🎬 Loaded content-specific language preference:', contentPreference);
+          }
+        } catch (error) {
+          console.warn('🎬 Failed to fetch content preference, using global settings:', error);
+        }
+      }
+
+      // Select audio/subtitle tracks based on user preferences (content-specific overrides global)
       if (metadata) {
-        const audioLang = playbackSettings?.preferredAudioLanguage || 'eng';
-        const subLang = playbackSettings?.preferredSubtitleLanguage || 'eng';
-        const subMode = playbackSettings?.preferredSubtitleMode || 'off';
+        const audioLang = contentPreference?.audioLanguage || playbackSettings?.preferredAudioLanguage || 'eng';
+        const subLang = contentPreference?.subtitleLanguage || playbackSettings?.preferredSubtitleLanguage || 'eng';
+        const subMode = contentPreference?.subtitleMode || playbackSettings?.preferredSubtitleMode || 'off';
+        const preferenceSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
 
         if (metadata.audioStreams && metadata.audioStreams.length > 0) {
           const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
           if (match !== null) {
             selectedAudioTrack = match;
-            console.log(`🎬 Selected audio track ${match} for language ${audioLang}`);
+            console.log(`🎬 Selected audio track ${match} for language ${audioLang} (source: ${preferenceSource})`);
           } else {
             selectedAudioTrack = metadata.audioStreams[0].index;
             console.log(`🎬 No ${audioLang} audio found, using first track: ${selectedAudioTrack}`);
