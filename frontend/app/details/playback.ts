@@ -567,6 +567,8 @@ export const launchNativePlayer = (
     preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
     passthroughName?: string; // AIOStreams passthrough format: raw display name
     passthroughDescription?: string; // AIOStreams passthrough format: raw description
+    preselectedAudioTrack?: number; // Track index baked into HLS session
+    preselectedSubtitleTrack?: number; // Track index baked into HLS session
   } = {},
 ) => {
   const {
@@ -593,6 +595,8 @@ export const launchNativePlayer = (
     preExtractedSubtitles,
     passthroughName,
     passthroughDescription,
+    preselectedAudioTrack,
+    preselectedSubtitleTrack,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -630,6 +634,12 @@ export const launchNativePlayer = (
       ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
       ...(passthroughName ? { passthroughName } : {}),
       ...(passthroughDescription ? { passthroughDescription } : {}),
+      ...(typeof preselectedAudioTrack === 'number' && preselectedAudioTrack >= 0
+        ? { preselectedAudioTrack: preselectedAudioTrack.toString() }
+        : {}),
+      ...(typeof preselectedSubtitleTrack === 'number' && preselectedSubtitleTrack >= 0
+        ? { preselectedSubtitleTrack: preselectedSubtitleTrack.toString() }
+        : {}),
     },
   });
 };
@@ -1020,6 +1030,9 @@ export const initiatePlayback = async (
     ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
     ...(passthroughName ? { passthroughName } : {}),
     ...(passthroughDescription ? { passthroughDescription } : {}),
+    // Pass selected tracks so player UI shows correct selection
+    ...(typeof selectedAudioTrack === 'number' ? { preselectedAudioTrack: selectedAudioTrack } : {}),
+    ...(typeof selectedSubtitleTrack === 'number' ? { preselectedSubtitleTrack: selectedSubtitleTrack } : {}),
   });
 };
 
