@@ -119,7 +119,11 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     };
   }, []);
 
-  const playlistUrl = useMemo(() => settings?.live?.playlistUrl ?? '', [settings?.live?.playlistUrl]);
+  // Use effectivePlaylistUrl (computed from Xtream credentials if in xtream mode), fallback to playlistUrl
+  const playlistUrl = useMemo(
+    () => settings?.live?.effectivePlaylistUrl || settings?.live?.playlistUrl || '',
+    [settings?.live?.effectivePlaylistUrl, settings?.live?.playlistUrl]
+  );
   const normalisedPlaylistUrl = useMemo(() => playlistUrl.trim(), [playlistUrl]);
   const hasPlaylistUrl = useMemo(() => !!normalisedPlaylistUrl, [normalisedPlaylistUrl]);
 

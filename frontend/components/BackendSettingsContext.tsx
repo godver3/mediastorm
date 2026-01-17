@@ -106,8 +106,13 @@ export interface BackendPlaybackSettings {
 }
 
 export interface BackendLiveSettings {
+  mode?: 'm3u' | 'xtream';
   playlistUrl: string;
+  xtreamHost?: string;
+  xtreamUsername?: string;
+  xtreamPassword?: string;
   playlistCacheTtlHours: number;
+  effectivePlaylistUrl?: string; // Computed URL (constructed from Xtream credentials if in xtream mode)
 }
 
 export interface BackendShelfConfig {
