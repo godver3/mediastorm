@@ -118,9 +118,9 @@ describe('NovaThemeProvider', () => {
     expect(capturedTheme!.spacing.md).toBe(12);
     expect(capturedTheme!.spacing.lg).toBe(16);
 
-    // Check that typography is not scaled for non-TV
-    // With width 800, we get 'cozy' breakpoint (1.05 multiplier)
-    expect(capturedTheme!.typography.body.md.fontSize).toBe(16.8); // 16 * 1.05
-    expect(capturedTheme!.typography.title.lg.fontSize).toBe(25.2); // 24 * 1.05
+    // Non-TV mobile devices (iOS/Android) always use 'compact' breakpoint
+    // regardless of screen width, so no multiplier is applied
+    expect(capturedTheme!.typography.body.md.fontSize).toBe(16); // 16 * 1.0 (compact)
+    expect(capturedTheme!.typography.title.lg.fontSize).toBe(24); // 24 * 1.0 (compact)
   });
 });

@@ -842,62 +842,6 @@ export default function PlayerScreen() {
   // Threshold for considering session potentially expired (slightly less than backend's 60s idle timeout)
   const SESSION_EXPIRY_THRESHOLD_MS = 50000;
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState) => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        // Record when we went to background
-        backgroundedAtRef.current = Date.now();
-        console.log('[player] App entering background, recording time');
-
-        // Don't pause if in PiP mode - the video should keep playing
-        if (isPipActiveRef.current) {
-          console.log('[player] Skipping auto-pause: PiP mode active');
-          return;
-        }
-        // On iOS/Android mobile, auto-enter PiP when backgrounding during playback
-        if ((Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !paused) {
-          console.log('[player] Auto-entering PiP on background');
-          isPipActiveRef.current = true;
-          videoRef.current?.enterPip?.();
-          return;
-        }
-        // App is being minimized - pause if currently playing
-        if (!paused) {
-          wasPlayingBeforeBackgroundRef.current = true;
-          setPaused(true);
-          console.log('[player] Auto-paused: app went to background');
-        }
-      } else if (nextAppState === 'active') {
-        // App came back to foreground
-        const backgroundDuration = backgroundedAtRef.current ? Date.now() - backgroundedAtRef.current : 0;
-        backgroundedAtRef.current = null;
-        wasPlayingBeforeBackgroundRef.current = false;
-
-        // If we were backgrounded for a long time with an HLS stream, validate session is still alive
-        if (isHlsStream && backgroundDuration > SESSION_EXPIRY_THRESHOLD_MS) {
-          console.log('[player] Returning from long background, validating HLS session', {
-            backgroundDurationMs: backgroundDuration,
-            thresholdMs: SESSION_EXPIRY_THRESHOLD_MS,
-          });
-
-          // Check if session is still valid
-          const status = await hlsSessionActions.getStatus();
-          if (!status) {
-            console.log('[player] HLS session expired during background, destroying player');
-            showToast('Stream session expired. Please restart playback.', { tone: 'warning', duration: 4000 });
-            router.back();
-            return;
-          }
-          console.log('[player] HLS session still valid after background');
-        }
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [paused, isHlsStream, hlsSessionActions, showToast, router]);
-
   // Pause teardown effect: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause. When paused for 20+ seconds on an HLS stream,
   // we save the current time, clear the video source, and show a poster overlay.
@@ -1188,6 +1132,65 @@ export default function PlayerScreen() {
       restoreSession();
     }
   }, [paused, pauseTeardownActive, initialSourcePath, showToast, hlsSessionActions, hlsSessionRefs]);
+
+  // Auto-pause when app is backgrounded (mobile and TV)
+  // Skip auto-pause when in PiP mode - video should keep playing
+  // Note: This effect must be after useHlsSession initialization as it uses hlsSessionActions
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // Record when we went to background
+        backgroundedAtRef.current = Date.now();
+        console.log('[player] App entering background, recording time');
+
+        // Don't pause if in PiP mode - the video should keep playing
+        if (isPipActiveRef.current) {
+          console.log('[player] Skipping auto-pause: PiP mode active');
+          return;
+        }
+        // On iOS/Android mobile, auto-enter PiP when backgrounding during playback
+        if ((Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !paused) {
+          console.log('[player] Auto-entering PiP on background');
+          isPipActiveRef.current = true;
+          videoRef.current?.enterPip?.();
+          return;
+        }
+        // App is being minimized - pause if currently playing
+        if (!paused) {
+          wasPlayingBeforeBackgroundRef.current = true;
+          setPaused(true);
+          console.log('[player] Auto-paused: app went to background');
+        }
+      } else if (nextAppState === 'active') {
+        // App came back to foreground
+        const backgroundDuration = backgroundedAtRef.current ? Date.now() - backgroundedAtRef.current : 0;
+        backgroundedAtRef.current = null;
+        wasPlayingBeforeBackgroundRef.current = false;
+
+        // If we were backgrounded for a long time with an HLS stream, validate session is still alive
+        if (isHlsStream && backgroundDuration > SESSION_EXPIRY_THRESHOLD_MS) {
+          console.log('[player] Returning from long background, validating HLS session', {
+            backgroundDurationMs: backgroundDuration,
+            thresholdMs: SESSION_EXPIRY_THRESHOLD_MS,
+          });
+
+          // Check if session is still valid
+          const status = await hlsSessionActions.getStatus();
+          if (!status) {
+            console.log('[player] HLS session expired during background, destroying player');
+            showToast('Stream session expired. Please restart playback.', { tone: 'danger', duration: 4000 });
+            router.back();
+            return;
+          }
+          console.log('[player] HLS session still valid after background');
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [paused, isHlsStream, hlsSessionActions, showToast, router]);
 
   // Save per-content language preference when user manually changes audio or subtitle track
   // If the user selects their global default language, clear the content preference instead
