@@ -111,5 +111,11 @@ frontend/.husky
 GEMINI.md
 CLAUDE.md
 NEXT_BUILD_TODO.md
+
+# Planning/tracking docs
+*_PLAN.md
+*_TODO.md
+*_TRACKING.md
+*_REFACTOR.md
 .monitoring/
 monitor.sh
