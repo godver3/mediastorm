@@ -114,12 +114,15 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
         ]);
 
         // Debug logging for profile icon data
-        console.log('[UserProfiles] Loaded users from API:', list.map(u => ({
-          id: u.id,
-          name: u.name,
-          hasIcon: u.hasIcon,
-          iconUrl: u.iconUrl,
-        })));
+        console.log(
+          '[UserProfiles] Loaded users from API:',
+          list.map((u) => ({
+            id: u.id,
+            name: u.name,
+            hasIcon: u.hasIcon,
+            iconUrl: u.iconUrl,
+          })),
+        );
 
         setUsers(list);
         usersRef.current = list;

@@ -1,14 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Keyboard,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import FocusablePressable from '@/components/FocusablePressable';
@@ -136,13 +127,7 @@ export const PinEntryModal: React.FC = () => {
   const { width: screenWidth } = useTVDimensions();
   const isLargeScreen = screenWidth >= 600;
   const styles = useMemo(() => createStyles(theme, isLargeScreen), [theme, isLargeScreen]);
-  const {
-    users,
-    pendingPinUserId,
-    selectUserWithPin,
-    cancelPinEntry,
-    isInitialPinCheck,
-  } = useUserProfiles();
+  const { users, pendingPinUserId, selectUserWithPin, cancelPinEntry, isInitialPinCheck } = useUserProfiles();
 
   // Check if cancel should be allowed - not allowed if all users have PINs on initial load
   const allUsersHavePins = users.length > 0 && users.every((u) => u.hasPin);
@@ -200,7 +185,7 @@ export const PinEntryModal: React.FC = () => {
       }
       setError(null);
     },
-    [loading, pendingPinUserId, selectUserWithPin]
+    [loading, pendingPinUserId, selectUserWithPin],
   );
 
   const handleFocus = useCallback(() => {
@@ -258,23 +243,13 @@ export const PinEntryModal: React.FC = () => {
   }
 
   return (
-    <Modal
-      visible={isVisible}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={handleCancel}>
+    <Modal visible={isVisible} transparent={true} animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.header}>
             {pendingUser && (
-              <View
-                style={[
-                  styles.avatar,
-                  pendingUser.color && { backgroundColor: pendingUser.color },
-                ]}>
-                <Text style={styles.avatarText}>
-                  {pendingUser.name.charAt(0).toUpperCase()}
-                </Text>
+              <View style={[styles.avatar, pendingUser.color && { backgroundColor: pendingUser.color }]}>
+                <Text style={styles.avatarText}>{pendingUser.name.charAt(0).toUpperCase()}</Text>
               </View>
             )}
             <Text style={styles.modalTitle}>Enter PIN</Text>
@@ -295,11 +270,7 @@ export const PinEntryModal: React.FC = () => {
             onPress={() => inputRef.current?.focus()}
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [
-              styles.pinInputWrapper,
-              focused && { opacity: 1 },
-            ]}
-          >
+            style={({ focused }) => [styles.pinInputWrapper, focused && { opacity: 1 }]}>
             {({ focused }) => (
               <TextInput
                 ref={inputRef}
@@ -309,11 +280,7 @@ export const PinEntryModal: React.FC = () => {
                 onBlur={handleBlur}
                 placeholder="Enter PIN"
                 placeholderTextColor={theme.colors.text.muted}
-                style={[
-                  styles.pinInput,
-                  focused && styles.pinInputFocused,
-                  error && styles.pinInputError,
-                ]}
+                style={[styles.pinInput, focused && styles.pinInputFocused, error && styles.pinInputError]}
                 secureTextEntry={!Platform.isTV}
                 autoCapitalize="none"
                 autoCorrect={false}

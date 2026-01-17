@@ -34,15 +34,6 @@ const TRAILER_PORTAL_HOST_KEYWORDS = [
   'tiktok.com',
 ];
 
-const isYouTubeUrl = (url: string) => {
-  try {
-    const { hostname } = new URL(url);
-    return hostname.includes('youtube.com') || hostname.includes('youtu.be');
-  } catch {
-    return url.includes('youtube.com') || url.includes('youtu.be');
-  }
-};
-
 const isPortalHost = (url: string) => {
   try {
     const { hostname } = new URL(url);
@@ -306,8 +297,7 @@ export const TrailerModal = ({
           {!Platform.isTV && (
             <Animated.View
               style={[styles.controlsOverlay, { opacity: controlsOpacity }]}
-              pointerEvents={controlsVisible ? 'box-none' : 'none'}
-            >
+              pointerEvents={controlsVisible ? 'box-none' : 'none'}>
               <View style={styles.topBar}>
                 <Text style={styles.trailerTitle} numberOfLines={1}>
                   {trailerName}

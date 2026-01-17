@@ -896,7 +896,11 @@ class ApiService {
       const isTimeout = response.status === 504;
       // Use console.warn for handled errors (400/404 client errors, health check failures, auth issues, timeouts) that surface via UI
       const isHandledError =
-        response.status === 400 || response.status === 404 || response.status === 502 || response.status === 504 || isAuthFailure;
+        response.status === 400 ||
+        response.status === 404 ||
+        response.status === 502 ||
+        response.status === 504 ||
+        isAuthFailure;
       const logLevel = isHandledError ? console.warn : console.error;
       logLevel('API request failed:', response.status, response.statusText, errorText);
 

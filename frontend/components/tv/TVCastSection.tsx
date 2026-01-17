@@ -1,28 +1,23 @@
 /**
  * TV Cast Section - Horizontal scrollable cast gallery with D-pad focus support
- * Uses native Pressable focus with FlatList.scrollToOffset pattern
+ * Uses spatial navigation for proper integration with other rows
  */
 
-import React, { memo, useCallback, useMemo, useRef } from 'react';
-import {
-  Dimensions,
-  FlatList,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  findNodeHandle,
-} from 'react-native';
+import React, { memo, useCallback, useMemo } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { Credits, CastMember } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
+import {
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationVirtualizedList,
+} from '@/services/tv-navigation';
 import MarqueeText from './MarqueeText';
 
-const isAppleTV = Platform.isTV && Platform.OS === 'ios';
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Card dimensions - scaled for TV viewing distance
@@ -36,8 +31,6 @@ interface TVCastSectionProps {
   isLoading?: boolean;
   maxCast?: number;
   onFocus?: () => void;
-  /** Native tag of the element to focus when navigating up */
-  nextFocusUp?: number;
   /** Reduce top margin (e.g. for movies where cast follows action bar directly) */
   compactMargin?: boolean;
 }
@@ -47,13 +40,10 @@ const TVCastSection = memo(function TVCastSection({
   isLoading,
   maxCast = 12,
   onFocus,
-  nextFocusUp,
   compactMargin,
 }: TVCastSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const listRef = useRef<FlatList>(null);
-  const cardRefs = useRef<Map<number, View | null>>(new Map());
 
   const itemSize = CARD_WIDTH + CARD_GAP;
 
@@ -63,93 +53,35 @@ const TVCastSection = memo(function TVCastSection({
     return credits.cast.slice(0, maxCast);
   }, [credits, maxCast]);
 
-  // Scroll handler using same pattern as home screen shelves
-  // Snaps to card boundaries so items are never cut off
-  const scrollToIndex = useCallback(
-    (index: number) => {
-      if (!Platform.isTV || !listRef.current) return;
-
-      const { width: screenWidth } = Dimensions.get('window');
-      // Keep 1 full card visible to the left
-      const targetCardIndex = Math.max(0, index - 1);
-      let targetX = targetCardIndex * itemSize;
-
-      const maxScroll = Math.max(0, castToShow.length * itemSize - screenWidth);
-      targetX = Math.max(0, Math.min(targetX, maxScroll));
-
-      listRef.current.scrollToOffset({ offset: targetX, animated: true });
-    },
-    [castToShow.length, itemSize]
-  );
-
   const renderCastCard = useCallback(
-    ({ item: actor, index }: { item: CastMember; index: number }) => {
-      const isFirst = index === 0;
-      const isLast = index === castToShow.length - 1;
-
-      // Get refs for focus containment
-      const firstRef = cardRefs.current.get(0);
-      const lastRef = cardRefs.current.get(castToShow.length - 1);
-
+    ({ item: actor }: { item: CastMember }) => {
       return (
-        <Pressable
-          ref={(ref) => {
-            cardRefs.current.set(index, ref);
-          }}
-          onFocus={() => {
-            scrollToIndex(index);
-            onFocus?.();
-          }}
-          tvParallaxProperties={{ enabled: false }}
-          nextFocusLeft={isFirst && firstRef ? findNodeHandle(firstRef) ?? undefined : undefined}
-          nextFocusRight={isLast && lastRef ? findNodeHandle(lastRef) ?? undefined : undefined}
-          nextFocusUp={nextFocusUp}
-          // @ts-ignore - Android TV performance optimization
-          renderToHardwareTextureAndroid={isAndroidTV}
-          style={({ focused }) => [
-            styles.card,
-            focused && styles.cardFocused,
-          ]}
-        >
-          {({ focused }) => (
-            <>
+        <SpatialNavigationFocusableView onFocus={() => onFocus?.()}>
+          {({ isFocused }: { isFocused: boolean }) => (
+            <View style={[styles.card, isFocused && styles.cardFocused]}>
               {actor.profileUrl ? (
-                <Image
-                  source={{ uri: actor.profileUrl }}
-                  style={styles.photo}
-                  contentFit="cover"
-                />
+                <Image source={{ uri: actor.profileUrl }} style={styles.photo} contentFit="cover" />
               ) : (
                 <View style={[styles.photo, styles.photoPlaceholder]}>
-                  <Ionicons
-                    name="person"
-                    size={tvScale(48)}
-                    color={theme.colors.text.muted}
-                  />
+                  <Ionicons name="person" size={tvScale(48)} color={theme.colors.text.muted} />
                 </View>
               )}
               <View style={styles.textContainer}>
-                <MarqueeText
-                  style={[styles.actorName, focused && styles.textFocused]}
-                  focused={focused}
-                >
+                <MarqueeText style={styles.actorName} focused={isFocused}>
                   {actor.name}
                 </MarqueeText>
                 {actor.character && (
-                  <MarqueeText
-                    style={styles.characterName}
-                    focused={focused}
-                  >
+                  <MarqueeText style={styles.characterName} focused={isFocused}>
                     {actor.character}
                   </MarqueeText>
                 )}
               </View>
-            </>
+            </View>
           )}
-        </Pressable>
+        </SpatialNavigationFocusableView>
       );
     },
-    [castToShow.length, scrollToIndex, styles, theme, onFocus, nextFocusUp]
+    [styles, theme, onFocus],
   );
 
   // Render skeleton cards while loading
@@ -175,33 +107,25 @@ const TVCastSection = memo(function TVCastSection({
   }
 
   return (
-    <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
-      <Text style={styles.heading}>Cast</Text>
-      {isLoading ? (
-        renderSkeletonCards()
-      ) : (
-        <FlatList
-          ref={listRef}
-          data={castToShow}
-          renderItem={renderCastCard}
-          keyExtractor={(item) => `cast-${item.id}`}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          scrollEnabled={!Platform.isTV}
-          getItemLayout={(_, index) => ({
-            length: itemSize,
-            offset: itemSize * index,
-            index,
-          })}
-          contentContainerStyle={styles.listContent}
-          initialNumToRender={isAndroidTV ? 6 : 8}
-          maxToRenderPerBatch={4}
-          windowSize={3}
-          removeClippedSubviews={Platform.isTV}
-          extraData={nextFocusUp}
-        />
-      )}
-    </View>
+    <SpatialNavigationNode orientation="horizontal">
+      <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
+        <Text style={styles.heading}>Cast</Text>
+        {isLoading ? (
+          renderSkeletonCards()
+        ) : (
+          <View style={styles.listContainer}>
+            <SpatialNavigationVirtualizedList
+              data={castToShow}
+              renderItem={renderCastCard}
+              itemSize={itemSize}
+              orientation="horizontal"
+              numberOfRenderedItems={castToShow.length}
+              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(castToShow.length - 2, isAndroidTV ? 5 : 6))}
+            />
+          </View>
+        )}
+      </View>
+    </SpatialNavigationNode>
   );
 });
 
@@ -216,6 +140,10 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.primary,
       marginBottom: tvScale(16),
       marginLeft: tvScale(48),
+    },
+    listContainer: {
+      height: CARD_HEIGHT + tvScale(8),
+      paddingLeft: tvScale(48),
     },
     skeletonRow: {
       flexDirection: 'row',
@@ -251,10 +179,6 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.background.elevated,
       borderRadius: tvScale(4),
     },
-    listContent: {
-      paddingHorizontal: tvScale(48),
-      gap: CARD_GAP,
-    },
     card: {
       width: CARD_WIDTH,
       height: CARD_HEIGHT,
@@ -265,7 +189,6 @@ const createStyles = (theme: NovaTheme) =>
       overflow: 'hidden',
     },
     cardFocused: {
-      // No zoom on focus - just border highlight
       borderColor: theme.colors.accent.primary,
     },
     photo: {
@@ -287,9 +210,6 @@ const createStyles = (theme: NovaTheme) =>
       fontWeight: '600',
       color: theme.colors.text.primary,
       lineHeight: tvScale(20),
-    },
-    textFocused: {
-      color: theme.colors.text.primary,
     },
     characterName: {
       fontSize: tvScale(15),

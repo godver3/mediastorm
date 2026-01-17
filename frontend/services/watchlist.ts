@@ -22,7 +22,7 @@ export function mapWatchlistToTitles(
       id: item.id,
       name: item.name,
       overview: item.overview ?? '',
-      year: item.year && item.year > 0 ? item.year : cachedYears?.get(item.id) ?? 0,
+      year: item.year && item.year > 0 ? item.year : (cachedYears?.get(item.id) ?? 0),
       language: 'en',
       mediaType: item.mediaType,
       poster: item.posterUrl ? { url: item.posterUrl, type: 'poster', width: 0, height: 0 } : undefined,

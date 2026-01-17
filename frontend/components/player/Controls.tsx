@@ -193,7 +193,8 @@ const Controls: React.FC<ControlsProps> = ({
   const hasSubtitleSelection = allowTrackSelection && Boolean(onSelectSubtitleTrack) && !isLiveTV;
   const showFullscreenButton = Boolean(onToggleFullscreen) && !isMobile && !isLiveTV && !isTvPlatform;
   // PiP button: show on iOS and Android mobile (not TV, not live TV)
-  const showPipButton = Boolean(onEnterPip) && isMobile && (Platform.OS === 'ios' || Platform.OS === 'android') && !isLiveTV;
+  const showPipButton =
+    Boolean(onEnterPip) && isMobile && (Platform.OS === 'ios' || Platform.OS === 'android') && !isLiveTV;
 
   // Compute a key for the secondary row that changes when buttons change,
   // forcing the spatial navigation tree to be regenerated
@@ -206,7 +207,15 @@ const Controls: React.FC<ControlsProps> = ({
     if (isTvPlatform && showSubtitleOffset) parts.push('offset');
     if (isTvPlatform && streamInfo) parts.push('info');
     return `secondary-${parts.join('-')}`;
-  }, [hasAudioSelection, hasSubtitleSelection, isTvPlatform, onPreviousEpisode, onNextEpisode, showSubtitleOffset, streamInfo]);
+  }, [
+    hasAudioSelection,
+    hasSubtitleSelection,
+    isTvPlatform,
+    onPreviousEpisode,
+    onNextEpisode,
+    showSubtitleOffset,
+    streamInfo,
+  ]);
 
   const activeMenuRef = useRef<ActiveMenu>(null);
   // Guard to prevent modal from immediately reopening when focus returns to the button on tvOS
@@ -304,10 +313,16 @@ const Controls: React.FC<ControlsProps> = ({
   const handleFullscreenFocus = useCallback(() => onFocusChange?.('fullscreen-button'), [onFocusChange]);
   const handleAudioTrackFocus = useCallback(() => onFocusChange?.('audio-track-button'), [onFocusChange]);
   const handleSubtitleTrackFocus = useCallback(() => onFocusChange?.('subtitle-track-button'), [onFocusChange]);
-  const handleSubtitleTrackSecondaryFocus = useCallback(() => onFocusChange?.('subtitle-track-button-secondary'), [onFocusChange]);
+  const handleSubtitleTrackSecondaryFocus = useCallback(
+    () => onFocusChange?.('subtitle-track-button-secondary'),
+    [onFocusChange],
+  );
   const handlePreviousEpisodeFocus = useCallback(() => onFocusChange?.('previous-episode-button'), [onFocusChange]);
   const handleNextEpisodeFocus = useCallback(() => onFocusChange?.('next-episode-button'), [onFocusChange]);
-  const handleSubtitleOffsetEarlierFocus = useCallback(() => onFocusChange?.('subtitle-offset-earlier'), [onFocusChange]);
+  const handleSubtitleOffsetEarlierFocus = useCallback(
+    () => onFocusChange?.('subtitle-offset-earlier'),
+    [onFocusChange],
+  );
   const handleSubtitleOffsetLaterFocus = useCallback(() => onFocusChange?.('subtitle-offset-later'), [onFocusChange]);
   const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
 
@@ -371,9 +386,7 @@ const Controls: React.FC<ControlsProps> = ({
                   size={24}
                   color={hasNextEpisode || shuffleMode ? theme.colors.text.primary : theme.colors.text.disabled}
                 />
-                {nextEpisodePrequeueReady && (
-                  <View style={styles.prequeueReadyIndicator} />
-                )}
+                {nextEpisodePrequeueReady && <View style={styles.prequeueReadyIndicator} />}
               </Pressable>
             </View>
           )}
@@ -381,7 +394,9 @@ const Controls: React.FC<ControlsProps> = ({
       )}
       {/* Mobile subtitle offset controls - above play button in landscape, below in portrait */}
       {isMobile && showSubtitleOffset && (
-        <View style={[styles.subtitleOffsetContainer, isLandscape && styles.subtitleOffsetContainerLandscape]} pointerEvents="box-none">
+        <View
+          style={[styles.subtitleOffsetContainer, isLandscape && styles.subtitleOffsetContainerLandscape]}
+          pointerEvents="box-none">
           <View style={styles.subtitleOffsetRow}>
             <Pressable onPress={onSubtitleOffsetEarlier} style={styles.subtitleOffsetButton}>
               <Ionicons name="remove" size={18} color={theme.colors.text.primary} />
@@ -464,7 +479,11 @@ const Controls: React.FC<ControlsProps> = ({
                     )}
                     {showPipButton && (
                       <Pressable onPress={onEnterPip} style={styles.mobileTrackButton}>
-                        <MaterialCommunityIcons name="picture-in-picture-bottom-right" size={18} color={theme.colors.text.primary} />
+                        <MaterialCommunityIcons
+                          name="picture-in-picture-bottom-right"
+                          size={18}
+                          color={theme.colors.text.primary}
+                        />
                         <Text style={styles.mobileTrackLabel}>PiP</Text>
                       </Pressable>
                     )}
@@ -511,13 +530,29 @@ const Controls: React.FC<ControlsProps> = ({
             </View>
           )}
           {/* Secondary row: hidden in mobile landscape (track selection moved to main row) */}
-          {!(isMobile && isLandscape) && (hasAudioSelection || hasSubtitleSelection || (isTvPlatform && streamInfo) || (isTvPlatform && (onPreviousEpisode || onNextEpisode)) || (isTvPlatform && showSubtitleOffset) || (showPipButton && !isLandscape)) && (
-            <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
-              <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
-                {hasAudioSelection && audioSummary && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                    {isLiveTV ? (
-                      <DefaultFocus>
+          {!(isMobile && isLandscape) &&
+            (hasAudioSelection ||
+              hasSubtitleSelection ||
+              (isTvPlatform && streamInfo) ||
+              (isTvPlatform && (onPreviousEpisode || onNextEpisode)) ||
+              (isTvPlatform && showSubtitleOffset) ||
+              (showPipButton && !isLandscape)) && (
+              <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
+                <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
+                  {hasAudioSelection && audioSummary && (
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      {isLiveTV ? (
+                        <DefaultFocus>
+                          <FocusablePressable
+                            icon="musical-notes"
+                            focusKey="audio-track-button"
+                            onSelect={handleOpenAudioMenu}
+                            onFocus={handleAudioTrackFocus}
+                            style={[styles.controlButton, styles.trackButton]}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        </DefaultFocus>
+                      ) : (
                         <FocusablePressable
                           icon="musical-notes"
                           focusKey="audio-track-button"
@@ -526,24 +561,24 @@ const Controls: React.FC<ControlsProps> = ({
                           style={[styles.controlButton, styles.trackButton]}
                           disabled={isSeeking || activeMenu !== null}
                         />
-                      </DefaultFocus>
-                    ) : (
-                      <FocusablePressable
-                        icon="musical-notes"
-                        focusKey="audio-track-button"
-                        onSelect={handleOpenAudioMenu}
-                        onFocus={handleAudioTrackFocus}
-                        style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null}
-                      />
-                    )}
-                    <Text style={styles.trackLabel}>{audioSummary}</Text>
-                  </View>
-                )}
-                {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                    {isLiveTV ? (
-                      <DefaultFocus>
+                      )}
+                      <Text style={styles.trackLabel}>{audioSummary}</Text>
+                    </View>
+                  )}
+                  {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      {isLiveTV ? (
+                        <DefaultFocus>
+                          <FocusablePressable
+                            icon="chatbubble-ellipses"
+                            focusKey="subtitle-track-button"
+                            onSelect={handleOpenSubtitlesMenu}
+                            onFocus={handleSubtitleTrackFocus}
+                            style={[styles.controlButton, styles.trackButton]}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        </DefaultFocus>
+                      ) : (
                         <FocusablePressable
                           icon="chatbubble-ellipses"
                           focusKey="subtitle-track-button"
@@ -552,117 +587,122 @@ const Controls: React.FC<ControlsProps> = ({
                           style={[styles.controlButton, styles.trackButton]}
                           disabled={isSeeking || activeMenu !== null}
                         />
-                      </DefaultFocus>
-                    ) : (
+                      )}
+                      <Text style={styles.trackLabel}>{subtitleSummary}</Text>
+                    </View>
+                  )}
+                  {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
                       <FocusablePressable
                         icon="chatbubble-ellipses"
-                        focusKey="subtitle-track-button"
+                        focusKey="subtitle-track-button-secondary"
                         onSelect={handleOpenSubtitlesMenu}
-                        onFocus={handleSubtitleTrackFocus}
+                        onFocus={handleSubtitleTrackSecondaryFocus}
                         style={[styles.controlButton, styles.trackButton]}
                         disabled={isSeeking || activeMenu !== null}
                       />
-                    )}
-                    <Text style={styles.trackLabel}>{subtitleSummary}</Text>
-                  </View>
-                )}
-                {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                    <FocusablePressable
-                      icon="chatbubble-ellipses"
-                      focusKey="subtitle-track-button-secondary"
-                      onSelect={handleOpenSubtitlesMenu}
-                      onFocus={handleSubtitleTrackSecondaryFocus}
-                      style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null}
-                    />
-                    <Text style={styles.trackLabel}>{subtitleSummary}</Text>
-                  </View>
-                )}
-                {/* PiP button for mobile portrait */}
-                {showPipButton && !isLandscape && (
-                  <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                    <Pressable
-                      onPress={onEnterPip}
-                      style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
-                      <MaterialCommunityIcons name="picture-in-picture-bottom-right" size={24} color={theme.colors.text.primary} />
-                    </Pressable>
-                    <Text style={styles.trackLabel}>PiP</Text>
-                  </View>
-                )}
-                {/* Episode navigation buttons for TV platforms */}
-                {isTvPlatform && onPreviousEpisode && (
-                  <View style={[styles.trackButtonGroup, (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
-                    <FocusablePressable
-                      icon="chevron-back-circle"
-                      focusKey="previous-episode-button"
-                      onSelect={onPreviousEpisode}
-                      onFocus={handlePreviousEpisodeFocus}
-                      style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode || shuffleMode}
-                    />
-                    <Text style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]}>Prev Ep</Text>
-                  </View>
-                )}
-                {isTvPlatform && onNextEpisode && (
-                  <View style={[styles.trackButtonGroup, !hasNextEpisode && !shuffleMode && styles.episodeButtonGroupDisabled]} pointerEvents="box-none">
-                    <View>
+                      <Text style={styles.trackLabel}>{subtitleSummary}</Text>
+                    </View>
+                  )}
+                  {/* PiP button for mobile portrait */}
+                  {showPipButton && !isLandscape && (
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      <Pressable
+                        onPress={onEnterPip}
+                        style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
+                        <MaterialCommunityIcons
+                          name="picture-in-picture-bottom-right"
+                          size={24}
+                          color={theme.colors.text.primary}
+                        />
+                      </Pressable>
+                      <Text style={styles.trackLabel}>PiP</Text>
+                    </View>
+                  )}
+                  {/* Episode navigation buttons for TV platforms */}
+                  {isTvPlatform && onPreviousEpisode && (
+                    <View
+                      style={[
+                        styles.trackButtonGroup,
+                        (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonGroupDisabled,
+                      ]}
+                      pointerEvents="box-none">
                       <FocusablePressable
-                        icon={shuffleMode ? 'shuffle' : 'chevron-forward-circle'}
-                        focusKey="next-episode-button"
-                        onSelect={onNextEpisode}
-                        onFocus={handleNextEpisodeFocus}
+                        icon="chevron-back-circle"
+                        focusKey="previous-episode-button"
+                        onSelect={onPreviousEpisode}
+                        onFocus={handlePreviousEpisodeFocus}
                         style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null || (!hasNextEpisode && !shuffleMode)}
+                        disabled={isSeeking || activeMenu !== null || !hasPreviousEpisode || shuffleMode}
                       />
-                      {nextEpisodePrequeueReady && (
-                        <View style={styles.prequeueReadyIndicatorTv} />
-                      )}
+                      <Text
+                        style={[styles.trackLabel, (!hasPreviousEpisode || shuffleMode) && styles.trackLabelDisabled]}>
+                        Prev Ep
+                      </Text>
                     </View>
-                    <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]}>
-                      {shuffleMode ? 'Shuffle' : 'Next Ep'}
-                    </Text>
-                  </View>
-                )}
-                {/* Subtitle offset controls for TV platforms */}
-                {isTvPlatform && showSubtitleOffset && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
-                  <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
+                  )}
+                  {isTvPlatform && onNextEpisode && (
+                    <View
+                      style={[
+                        styles.trackButtonGroup,
+                        !hasNextEpisode && !shuffleMode && styles.episodeButtonGroupDisabled,
+                      ]}
+                      pointerEvents="box-none">
+                      <View>
+                        <FocusablePressable
+                          icon={shuffleMode ? 'shuffle' : 'chevron-forward-circle'}
+                          focusKey="next-episode-button"
+                          onSelect={onNextEpisode}
+                          onFocus={handleNextEpisodeFocus}
+                          style={[styles.controlButton, styles.trackButton]}
+                          disabled={isSeeking || activeMenu !== null || (!hasNextEpisode && !shuffleMode)}
+                        />
+                        {nextEpisodePrequeueReady && <View style={styles.prequeueReadyIndicatorTv} />}
+                      </View>
+                      <Text style={[styles.trackLabel, !hasNextEpisode && !shuffleMode && styles.trackLabelDisabled]}>
+                        {shuffleMode ? 'Shuffle' : 'Next Ep'}
+                      </Text>
+                    </View>
+                  )}
+                  {/* Subtitle offset controls for TV platforms */}
+                  {isTvPlatform && showSubtitleOffset && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
+                    <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
+                      <FocusablePressable
+                        icon="remove-circle-outline"
+                        focusKey="subtitle-offset-earlier"
+                        onSelect={onSubtitleOffsetEarlier}
+                        onFocus={handleSubtitleOffsetEarlierFocus}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                      />
+                      <View style={styles.subtitleOffsetTvDisplay} pointerEvents="box-none">
+                        <Text style={styles.subtitleOffsetTvLabel}>Subtitle</Text>
+                        <Text style={styles.subtitleOffsetTvValue}>{formattedSubtitleOffset}</Text>
+                      </View>
+                      <FocusablePressable
+                        icon="add-circle-outline"
+                        focusKey="subtitle-offset-later"
+                        onSelect={onSubtitleOffsetLater}
+                        onFocus={handleSubtitleOffsetLaterFocus}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                      />
+                    </View>
+                  )}
+                  {/* Info button for TV platforms (not for live TV) */}
+                  {isTvPlatform && streamInfo && !isLiveTV && (
                     <FocusablePressable
-                      icon="remove-circle-outline"
-                      focusKey="subtitle-offset-earlier"
-                      onSelect={onSubtitleOffsetEarlier}
-                      onFocus={handleSubtitleOffsetEarlierFocus}
+                      icon="information-circle"
+                      focusKey="info-button"
+                      onSelect={handleOpenInfoMenu}
+                      onFocus={handleInfoFocus}
                       style={[styles.controlButton, styles.trackButton]}
                       disabled={isSeeking || activeMenu !== null}
                     />
-                    <View style={styles.subtitleOffsetTvDisplay} pointerEvents="box-none">
-                      <Text style={styles.subtitleOffsetTvLabel}>Subtitle</Text>
-                      <Text style={styles.subtitleOffsetTvValue}>{formattedSubtitleOffset}</Text>
-                    </View>
-                    <FocusablePressable
-                      icon="add-circle-outline"
-                      focusKey="subtitle-offset-later"
-                      onSelect={onSubtitleOffsetLater}
-                      onFocus={handleSubtitleOffsetLaterFocus}
-                      style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null}
-                    />
-                  </View>
-                )}
-                {/* Info button for TV platforms (not for live TV) */}
-                {isTvPlatform && streamInfo && !isLiveTV && (
-                  <FocusablePressable
-                    icon="information-circle"
-                    focusKey="info-button"
-                    onSelect={handleOpenInfoMenu}
-                    onFocus={handleInfoFocus}
-                    style={[styles.controlButton, styles.trackButton]}
-                    disabled={isSeeking || activeMenu !== null}
-                  />
-                )}
-              </View>
-            </SpatialNavigationNode>
-          )}
+                  )}
+                </View>
+              </SpatialNavigationNode>
+            )}
         </View>
       </SpatialNavigationNode>
       {activeMenu === 'audio' || activeMenu === 'subtitles' ? (

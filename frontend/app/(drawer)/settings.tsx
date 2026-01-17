@@ -1,28 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  ActivityIndicator,
   Clipboard,
   Keyboard,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
-import Animated, { Layout, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 
 import {
   useBackendSettings,
   type BackendIndexerConfig,
-  type BackendPlaybackSettings,
   type BackendSettings,
   type BackendShelfConfig,
   type BackendTorrentScraperConfig,
@@ -37,11 +33,8 @@ import { useAuth } from '@/components/AuthContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
-import { useLiveHiddenChannels, useLiveFavorites, useLiveCategories } from '@/components/LiveContext';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
-import { useLiveChannels } from '@/hooks/useLiveChannels';
-import useUnplayableReleases from '@/hooks/useUnplayableReleases';
 import { apiService } from '@/services/api';
 import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
@@ -53,7 +46,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { useIsFocused } from '@react-navigation/native';
 import { APP_VERSION } from '@/version';
-import { router, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useKonamiCode, KONAMI_SEQUENCE } from '@/hooks/useKonamiCode';
 import { SpaceShooterGame } from '@/components/SpaceShooterGame';
 
@@ -104,11 +97,7 @@ function TextInputField({ label, value, onChange, options, errorMessage, styles 
       <Pressable
         onPress={() => inputRef.current?.focus()}
         tvParallaxProperties={{ enabled: false }}
-        style={({ focused }) => [
-          { flex: 1 },
-          focused && { opacity: 1 },
-        ]}
-      >
+        style={({ focused }) => [{ flex: 1 }, focused && { opacity: 1 }]}>
         {({ focused }) => (
           <TextInput
             ref={inputRef}
@@ -411,8 +400,7 @@ function TextInputModal({
           onPress={() => inputRef.current?.focus()}
           hasTVPreferredFocus={true}
           tvParallaxProperties={{ enabled: false }}
-          style={({ focused }) => [{ width: '100%' }, focused && { opacity: 1 }]}
-        >
+          style={({ focused }) => [{ width: '100%' }, focused && { opacity: 1 }]}>
           {({ focused }) => (
             <TextInput
               ref={inputRef}
@@ -780,8 +768,7 @@ function SettingsScreen() {
     options?: TextInputOptions;
   }>({ visible: false, label: '', value: '', fieldKey: '' });
   const { pendingPinUserId } = useUserProfiles();
-  const isActive =
-    isFocused && !isMenuOpen && !textInputModal.visible && !pendingPinUserId;
+  const isActive = isFocused && !isMenuOpen && !textInputModal.visible && !pendingPinUserId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -861,15 +848,8 @@ function SettingsScreen() {
     ],
     [],
   );
-  const {
-    backendUrl,
-    loading,
-    saving,
-    settings,
-    refreshSettings,
-    setBackendUrl,
-    updateBackendSettings,
-  } = useBackendSettings();
+  const { backendUrl, loading, saving, settings, refreshSettings, setBackendUrl, updateBackendSettings } =
+    useBackendSettings();
   const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
 
   // TV inline text input refs and state
@@ -1100,13 +1080,7 @@ function SettingsScreen() {
       const message = err instanceof Error ? err.message : 'Failed to update backend settings';
       showToast(message, { tone: 'danger' });
     }
-  }, [
-    clearErrors,
-    editableSettings,
-    settings,
-    showToast,
-    updateBackendSettings,
-  ]);
+  }, [clearErrors, editableSettings, settings, showToast, updateBackendSettings]);
 
   const handleSubmitLogs = useCallback(async () => {
     if (isSubmittingLogs) return;
@@ -1440,12 +1414,9 @@ function SettingsScreen() {
   );
 
   // TV Grid field update handler - currently unused as connection tab has no field updates
-  const handleGridFieldUpdate = useCallback(
-    (_fieldKey: string, _value: string | boolean | number) => {
-      // No field updates needed for connection tab
-    },
-    [],
-  );
+  const handleGridFieldUpdate = useCallback((_fieldKey: string, _value: string | boolean | number) => {
+    // No field updates needed for connection tab
+  }, []);
 
   // TV Grid render item
   const renderGridItem = useCallback(
@@ -1453,11 +1424,7 @@ function SettingsScreen() {
       switch (item.type) {
         case 'header': {
           const headerContent = (
-            <View style={[
-              styles.tvGridHeader,
-              styles.tvGridItemFullWidth,
-              styles.tvGridItemSpacing,
-            ]}>
+            <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
               {item.title ? <Text style={styles.tvGridHeaderTitle}>{item.title}</Text> : null}
               {item.description && <Text style={styles.tvGridHeaderDescription}>{item.description}</Text>}
             </View>
@@ -1497,8 +1464,7 @@ function SettingsScreen() {
                   backendUrlInputRef.current?.blur();
                   Keyboard.dismiss();
                 }}
-                tvParallaxProperties={{ enabled: false }}
-              >
+                tvParallaxProperties={{ enabled: false }}>
                 {({ focused }: { focused: boolean }) => (
                   <View style={[styles.tvGridInlineInputRow, focused && styles.tvGridInlineInputRowFocused]}>
                     <Text style={styles.tvGridInlineInputLabel}>{item.label}</Text>
@@ -1538,8 +1504,7 @@ function SettingsScreen() {
             <Pressable
               style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
               onPress={() => openTextInputModal(item.label, item.value, item.fieldKey, item.options)}
-              tvParallaxProperties={{ enabled: false }}
-            >
+              tvParallaxProperties={{ enabled: false }}>
               {({ focused }: { focused: boolean }) => (
                 <View style={[styles.tvGridFieldRow, focused && styles.tvGridFieldRowFocused]}>
                   <Text style={styles.tvGridFieldLabel}>{item.label}</Text>
@@ -1559,8 +1524,7 @@ function SettingsScreen() {
             <Pressable
               style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}
               onPress={() => handleGridFieldUpdate(item.fieldKey, !item.value)}
-              tvParallaxProperties={{ enabled: false }}
-            >
+              tvParallaxProperties={{ enabled: false }}>
               {({ focused }: { focused: boolean }) => (
                 <View style={[styles.tvGridToggleRow, focused && styles.tvGridToggleRowFocused]}>
                   <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
@@ -1668,11 +1632,7 @@ function SettingsScreen() {
               </View>
               <View style={styles.versionInfoRow}>
                 <Text style={styles.versionInfoLabel}>Device ID</Text>
-                <Text
-                  style={styles.deviceIdValueTV}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.6}>
+                <Text style={styles.deviceIdValueTV} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
                   {clientId ?? 'Loading...'}
                 </Text>
               </View>
@@ -1749,14 +1709,10 @@ function SettingsScreen() {
             {/* Grid Content - with edge buffer */}
             <View style={styles.tvContentArea}>
               {currentTabGridData.length > 0 && (
-                <ScrollView
-                  style={styles.tvGridContainer}
-                  contentContainerStyle={styles.tvScrollContent}>
+                <ScrollView style={styles.tvGridContainer} contentContainerStyle={styles.tvScrollContent}>
                   <View style={styles.tvGridRowContainer}>
                     {currentTabGridData.map((item) => (
-                      <View key={item.id}>
-                        {renderGridItem({ item })}
-                      </View>
+                      <View key={item.id}>{renderGridItem({ item })}</View>
                     ))}
                   </View>
                 </ScrollView>
@@ -1766,202 +1722,192 @@ function SettingsScreen() {
         )}
         {/* Mobile Layout: ScrollView with all content */}
         {!Platform.isTV && (
-          <View
-            style={styles.mobileContainer}
-            onTouchStart={onTouchStart}
-            onTouchEnd={onTouchEnd}
-          >
+          <View style={styles.mobileContainer} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
             <ScrollView
               style={styles.container}
               contentContainerStyle={styles.contentContainer}
               contentInsetAdjustmentBehavior="never"
               automaticallyAdjustContentInsets={false}>
-                <Text style={styles.screenTitle}>Settings</Text>
+              <Text style={styles.screenTitle}>Settings</Text>
 
-                {/* Mobile Content - Connection Tab */}
-                {!Platform.isTV && activeTab === 'connection' && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Server</Text>
-                    <Text style={styles.sectionDescription}>
-                      Connected to {backendUrl || 'backend'}.
+              {/* Mobile Content - Connection Tab */}
+              {!Platform.isTV && activeTab === 'connection' && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Server</Text>
+                  <Text style={styles.sectionDescription}>Connected to {backendUrl || 'backend'}.</Text>
+                  <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
+                    Server settings can be configured via the web UI at{' '}
+                    <Text
+                      style={styles.linkText}
+                      onPress={() => {
+                        const adminUrl = backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : null;
+                        if (adminUrl) {
+                          Linking.openURL(adminUrl);
+                        }
+                      }}>
+                      {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}
                     </Text>
-                    <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
-                      Server settings can be configured via the web UI at{' '}
-                      <Text
-                        style={styles.linkText}
-                        onPress={() => {
-                          const adminUrl = backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : null;
-                          if (adminUrl) {
-                            Linking.openURL(adminUrl);
-                          }
-                        }}>
-                        {backendUrl ? backendUrl.replace(/\/api\/?$/, '/admin') : '<backend-url>/admin'}
-                      </Text>
-                      .
-                    </Text>
-                  </View>
-                )}
+                    .
+                  </Text>
+                </View>
+              )}
 
-                {/* App Version Info - shown on Connection tab */}
-                {!Platform.isTV && activeTab === 'connection' && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>About</Text>
-                    <View style={styles.versionInfoContainer}>
-                      <View style={styles.versionInfoRow}>
-                        <Text style={styles.versionInfoLabel}>Frontend</Text>
-                        <Text style={styles.versionInfoValue}>
-                          {APP_VERSION}
-                        </Text>
-                      </View>
-                      <View style={styles.versionInfoRow}>
-                        <Text style={styles.versionInfoLabel}>Backend</Text>
-                        <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
-                      </View>
-                      <Pressable
-                        style={styles.deviceIdRowMobile}
-                        onPress={() => {
-                          if (clientId) {
-                            Clipboard.setString(clientId);
-                            showToast('Device ID copied to clipboard', { tone: 'success' });
-                          }
-                        }}>
-                        <Text style={styles.versionInfoLabel}>Device ID</Text>
-                        <Text style={styles.deviceIdValueMobile} numberOfLines={1}>
-                          {clientId ?? 'Loading...'}
-                        </Text>
-                      </Pressable>
+              {/* App Version Info - shown on Connection tab */}
+              {!Platform.isTV && activeTab === 'connection' && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>About</Text>
+                  <View style={styles.versionInfoContainer}>
+                    <View style={styles.versionInfoRow}>
+                      <Text style={styles.versionInfoLabel}>Frontend</Text>
+                      <Text style={styles.versionInfoValue}>{APP_VERSION}</Text>
                     </View>
-                    {Platform.OS === 'android' ? (
-                      <>
-                        <FocusablePressable
-                          text={
-                            githubRelease
-                              ? `Download ${githubRelease.version}`
-                              : updateStatus === 'checking'
-                                ? 'Checking...'
-                                : 'Check for Updates'
-                          }
-                          onSelect={githubRelease ? handleOpenGitHubRelease : handleCheckGitHubReleases}
-                          disabled={updateStatus === 'checking'}
-                          style={[styles.debugButton, { marginTop: 12 }]}
-                        />
-                        <View style={styles.backendInfoNoteMobile}>
-                          <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
-                          <Text style={styles.backendInfoNoteTextMobile}>
-                            Backend is updated independently via Docker
-                          </Text>
-                        </View>
-                      </>
-                    ) : (
-                      <>
-                        <FocusablePressable
-                          text={
-                            updateStatus === 'checking'
-                              ? 'Checking...'
-                              : updateStatus === 'downloading'
-                                ? 'Downloading...'
-                                : updateStatus === 'ready'
-                                  ? 'Restart to Apply'
-                                  : 'Check for Frontend Updates'
-                          }
-                          onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
-                          disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
-                          style={[styles.debugButton, { marginTop: 12 }]}
-                        />
-                        <View style={styles.backendInfoNoteMobile}>
-                          <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
-                          <Text style={styles.backendInfoNoteTextMobile}>
-                            App updates via TestFlight. Backend updated via Docker.
-                          </Text>
-                        </View>
-                      </>
-                    )}
+                    <View style={styles.versionInfoRow}>
+                      <Text style={styles.versionInfoLabel}>Backend</Text>
+                      <Text style={styles.versionInfoValue}>{backendVersion ?? 'Unknown'}</Text>
+                    </View>
+                    <Pressable
+                      style={styles.deviceIdRowMobile}
+                      onPress={() => {
+                        if (clientId) {
+                          Clipboard.setString(clientId);
+                          showToast('Device ID copied to clipboard', { tone: 'success' });
+                        }
+                      }}>
+                      <Text style={styles.versionInfoLabel}>Device ID</Text>
+                      <Text style={styles.deviceIdValueMobile} numberOfLines={1}>
+                        {clientId ?? 'Loading...'}
+                      </Text>
+                    </Pressable>
                   </View>
-                )}
+                  {Platform.OS === 'android' ? (
+                    <>
+                      <FocusablePressable
+                        text={
+                          githubRelease
+                            ? `Download ${githubRelease.version}`
+                            : updateStatus === 'checking'
+                              ? 'Checking...'
+                              : 'Check for Updates'
+                        }
+                        onSelect={githubRelease ? handleOpenGitHubRelease : handleCheckGitHubReleases}
+                        disabled={updateStatus === 'checking'}
+                        style={[styles.debugButton, { marginTop: 12 }]}
+                      />
+                      <View style={styles.backendInfoNoteMobile}>
+                        <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
+                        <Text style={styles.backendInfoNoteTextMobile}>
+                          Backend is updated independently via Docker
+                        </Text>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <FocusablePressable
+                        text={
+                          updateStatus === 'checking'
+                            ? 'Checking...'
+                            : updateStatus === 'downloading'
+                              ? 'Downloading...'
+                              : updateStatus === 'ready'
+                                ? 'Restart to Apply'
+                                : 'Check for Frontend Updates'
+                        }
+                        onSelect={updateStatus === 'ready' ? handleApplyUpdate : handleCheckForUpdates}
+                        disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                        style={[styles.debugButton, { marginTop: 12 }]}
+                      />
+                      <View style={styles.backendInfoNoteMobile}>
+                        <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.muted} />
+                        <Text style={styles.backendInfoNoteTextMobile}>
+                          App updates via TestFlight. Backend updated via Docker.
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              )}
 
-                {/* Support section - shown on Connection tab */}
-                {!Platform.isTV && activeTab === 'connection' && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Support</Text>
+              {/* Support section - shown on Connection tab */}
+              {!Platform.isTV && activeTab === 'connection' && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Support</Text>
+                  <Text style={styles.sectionDescription}>
+                    Submit logs to help diagnose issues. The URL can be shared with the developer.
+                  </Text>
+                  <FocusablePressable
+                    text={isSubmittingLogs ? 'Submitting...' : 'Submit Logs'}
+                    onSelect={handleSubmitLogs}
+                    disabled={isSubmittingLogs}
+                    style={styles.debugButton}
+                  />
+                  {logUrl && (
+                    <View style={{ marginTop: 16 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <FocusablePressable
+                          text="Copy URL"
+                          onSelect={() => {
+                            Clipboard.setString(logUrl);
+                            showToast('URL copied to clipboard', { tone: 'success' });
+                          }}
+                          style={[styles.debugButton, { flex: 0 }]}
+                        />
+                        <FocusablePressable
+                          text="Clear"
+                          onSelect={() => setLogUrl(null)}
+                          style={[styles.debugButton, { flex: 0, opacity: 0.7 }]}
+                        />
+                      </View>
+                      <Text
+                        style={{
+                          marginTop: 12,
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          color: theme.colors.text.secondary,
+                        }}
+                        selectable>
+                        {logUrl}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Account section - shown on Connection tab */}
+              {!Platform.isTV && activeTab === 'connection' && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Account</Text>
+                  {account && (
                     <Text style={styles.sectionDescription}>
-                      Submit logs to help diagnose issues. The URL can be shared with the developer.
+                      Signed in as {account.username}
+                      {account.isMaster ? ' (Admin)' : ''}
                     </Text>
+                  )}
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
                     <FocusablePressable
-                      text={isSubmittingLogs ? 'Submitting...' : 'Submit Logs'}
-                      onSelect={handleSubmitLogs}
-                      disabled={isSubmittingLogs}
+                      text={isRefreshing ? 'Reloading...' : 'Reload'}
+                      onSelect={handleReloadSettings}
+                      disabled={isRefreshing}
+                      loading={isRefreshing}
                       style={styles.debugButton}
                     />
-                    {logUrl && (
-                      <View style={{ marginTop: 16 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <FocusablePressable
-                            text="Copy URL"
-                            onSelect={() => {
-                              Clipboard.setString(logUrl);
-                              showToast('URL copied to clipboard', { tone: 'success' });
-                            }}
-                            style={[styles.debugButton, { flex: 0 }]}
-                          />
-                          <FocusablePressable
-                            text="Clear"
-                            onSelect={() => setLogUrl(null)}
-                            style={[styles.debugButton, { flex: 0, opacity: 0.7 }]}
-                          />
-                        </View>
-                        <Text
-                          style={{
-                            marginTop: 12,
-                            fontSize: 12,
-                            fontFamily: 'monospace',
-                            color: theme.colors.text.secondary,
-                          }}
-                          selectable>
-                          {logUrl}
-                        </Text>
-                      </View>
-                    )}
+                    <FocusablePressable
+                      text="Sign Out"
+                      onSelect={async () => {
+                        try {
+                          await logout();
+                          showToast('Signed out successfully', { tone: 'success' });
+                        } catch (err) {
+                          showToast('Failed to sign out', { tone: 'danger' });
+                        }
+                      }}
+                      style={styles.debugButton}
+                    />
                   </View>
-                )}
-
-                {/* Account section - shown on Connection tab */}
-                {!Platform.isTV && activeTab === 'connection' && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Account</Text>
-                    {account && (
-                      <Text style={styles.sectionDescription}>
-                        Signed in as {account.username}
-                        {account.isMaster ? ' (Admin)' : ''}
-                      </Text>
-                    )}
-                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
-                      <FocusablePressable
-                        text={isRefreshing ? 'Reloading...' : 'Reload'}
-                        onSelect={handleReloadSettings}
-                        disabled={isRefreshing}
-                        loading={isRefreshing}
-                        style={styles.debugButton}
-                      />
-                      <FocusablePressable
-                        text="Sign Out"
-                        onSelect={async () => {
-                          try {
-                            await logout();
-                            showToast('Signed out successfully', { tone: 'success' });
-                          } catch (err) {
-                            showToast('Failed to sign out', { tone: 'danger' });
-                          }
-                        }}
-                        style={styles.debugButton}
-                      />
-                    </View>
-                  </View>
-                )}
-
+                </View>
+              )}
             </ScrollView>
           </View>
         )}
-
       </FixedSafeAreaView>
 
       {/* TV Text Input Modal */}
@@ -2017,7 +1963,6 @@ function SettingsScreen() {
         </View>
       )}
 
-
       {/* Easter egg: Debug overlay for Konami code */}
       {!Platform.isTV && KONAMI_DEBUG && (
         <View
@@ -2033,41 +1978,79 @@ function SettingsScreen() {
             borderColor: '#00ff00',
             zIndex: 9999,
           }}
-          pointerEvents="none"
-        >
-          <Text style={{ color: '#00ff00', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 12, marginBottom: 8 }}>
+          pointerEvents="none">
+          <Text
+            style={{
+              color: '#00ff00',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 12,
+              marginBottom: 8,
+            }}>
             KONAMI CODE DEBUG
           </Text>
-          <Text style={{ color: '#ffffff', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+          <Text
+            style={{
+              color: '#ffffff',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 11,
+              marginBottom: 4,
+            }}>
             Progress: {debugInfo.currentIndex}/{KONAMI_SEQUENCE.length}
           </Text>
-          <Text style={{ color: '#ffffff', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
-            Sequence: {KONAMI_SEQUENCE.map((d, i) => (
-              i < debugInfo.currentIndex ? '\u2713' : (i === debugInfo.currentIndex ? `[${d.toUpperCase()}]` : d)
-            )).join(' ')}
+          <Text
+            style={{
+              color: '#ffffff',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 11,
+              marginBottom: 4,
+            }}>
+            Sequence:{' '}
+            {KONAMI_SEQUENCE.map((d, i) =>
+              i < debugInfo.currentIndex ? '\u2713' : i === debugInfo.currentIndex ? `[${d.toUpperCase()}]` : d,
+            ).join(' ')}
           </Text>
-          <Text style={{ color: '#ffff00', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+          <Text
+            style={{
+              color: '#ffff00',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 11,
+              marginBottom: 4,
+            }}>
             Next: {debugInfo.expectedNext.toUpperCase()}
           </Text>
-          <Text style={{ color: debugInfo.lastInput === debugInfo.expectedNext || (debugInfo.currentIndex > 0 && KONAMI_SEQUENCE[debugInfo.currentIndex - 1] === debugInfo.lastInput) ? '#00ff00' : '#ff6666', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 11, marginBottom: 4 }}>
+          <Text
+            style={{
+              color:
+                debugInfo.lastInput === debugInfo.expectedNext ||
+                (debugInfo.currentIndex > 0 && KONAMI_SEQUENCE[debugInfo.currentIndex - 1] === debugInfo.lastInput)
+                  ? '#00ff00'
+                  : '#ff6666',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 11,
+              marginBottom: 4,
+            }}>
             Last input: {debugInfo.lastInput?.toUpperCase() ?? 'none'}
           </Text>
           {debugInfo.lastDelta && (
-            <Text style={{ color: '#888888', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 10 }}>
+            <Text
+              style={{ color: '#888888', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 10 }}>
               Delta: x={debugInfo.lastDelta.x.toFixed(0)}, y={debugInfo.lastDelta.y.toFixed(0)}
             </Text>
           )}
-          <Text style={{ color: '#666666', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 9, marginTop: 8 }}>
+          <Text
+            style={{
+              color: '#666666',
+              fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+              fontSize: 9,
+              marginTop: 8,
+            }}>
             Swipe: min 30px | Tap: max 10px movement
           </Text>
         </View>
       )}
 
       {/* Easter egg: Space Shooter Game */}
-      <SpaceShooterGame
-        visible={showSpaceShooter}
-        onClose={() => setShowSpaceShooter(false)}
-      />
+      <SpaceShooterGame visible={showSpaceShooter} onClose={() => setShowSpaceShooter(false)} />
     </>
   );
 }

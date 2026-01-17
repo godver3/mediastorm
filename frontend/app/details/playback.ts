@@ -225,7 +225,9 @@ export const buildStreamUrl = (
 
   // Native platforms always use HLS with react-native-video for consistent experience
   const useHlsOnNative = Platform.OS !== 'web';
-  console.log(`🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`);
+  console.log(
+    `🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`,
+  );
 
   if (useHlsOnNative) {
     const hdrType = options.hasDolbyVision ? 'Dolby Vision' : options.hasHDR10 ? 'HDR10' : 'SDR';
@@ -441,8 +443,7 @@ export const buildDirectUrlForExternalPlayer = async (
   options?: { profileId?: string; profileName?: string },
 ): Promise<string | null> => {
   const isDebridPath = playback.webdavPath.includes('/debrid/');
-  const isExternalUrl =
-    playback.webdavPath.startsWith('http://') || playback.webdavPath.startsWith('https://');
+  const isExternalUrl = playback.webdavPath.startsWith('http://') || playback.webdavPath.startsWith('https://');
 
   // For debrid content or external URLs (AIOStreams), use backend proxy URL
   // Real-Debrid URLs are IP-locked, and external URLs need to be proxied through the backend
@@ -912,8 +913,10 @@ export const initiatePlayback = async (
     } catch (error) {
       // Check if this is a DV policy violation - re-throw so it triggers fallback
       const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
-          errorMessage.toLowerCase().includes('no hdr fallback')) {
+      if (
+        errorMessage.toLowerCase().includes('dv_profile_incompatible') ||
+        errorMessage.toLowerCase().includes('no hdr fallback')
+      ) {
         console.error('🚫 DV profile incompatible with user policy, cannot play:', errorMessage);
         throw error;
       }
@@ -1012,8 +1015,7 @@ export const initiatePlayback = async (
       : undefined;
 
   // Extract passthrough format data from AIOStreams results
-  const passthroughName =
-    result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_name : undefined;
+  const passthroughName = result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_name : undefined;
   const passthroughDescription =
     result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_description : undefined;
 
@@ -1068,10 +1070,7 @@ export const getHealthFailureReason = (error: unknown): string | null => {
   const lowerMessage = rawMessage.toLowerCase();
 
   // Check for DV profile incompatibility error
-  if (
-    lowerMessage.includes('dv_profile_incompatible') ||
-    lowerMessage.includes('no hdr fallback')
-  ) {
+  if (lowerMessage.includes('dv_profile_incompatible') || lowerMessage.includes('no hdr fallback')) {
     return 'DV profile 5 not compatible (no HDR fallback)';
   }
 
@@ -1118,13 +1117,7 @@ export const isTimeoutError = (error: unknown): boolean => {
     return false;
   }
 
-  const timeoutKeywords = [
-    'timeout',
-    'timed out',
-    'gateway timeout',
-    'context deadline exceeded',
-    '504',
-  ];
+  const timeoutKeywords = ['timeout', 'timed out', 'gateway timeout', 'context deadline exceeded', '504'];
   return timeoutKeywords.some((keyword) => message.includes(keyword));
 };
 

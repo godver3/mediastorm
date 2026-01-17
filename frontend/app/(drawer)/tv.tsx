@@ -57,8 +57,7 @@ const NativePreferenceButton = ({
           : isActive
             ? theme.colors.accent.secondary
             : theme.colors.border.subtle,
-      })}
-    >
+      })}>
       {({ focused }) => (
         <Text
           style={{
@@ -66,8 +65,7 @@ const NativePreferenceButton = ({
             fontWeight: '500',
             textAlign: 'center',
             color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
-          }}
-        >
+          }}>
           {label}
         </Text>
       )}

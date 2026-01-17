@@ -11,10 +11,6 @@ import type { SeriesEpisode } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
 
-// Apple TV needs larger dimensions due to different pixel density handling
-const isAppleTV = Platform.isTV && Platform.OS === 'ios';
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
-
 // Card dimensions - design for tvOS, Android TV auto-scales (50% larger for TV viewing)
 const THUMBNAIL_WIDTH = tvScale(360);
 const THUMBNAIL_HEIGHT = tvScale(202); // 16:9 aspect ratio
@@ -51,21 +47,10 @@ const TVEpisodeThumbnail = memo(function TVEpisodeThumbnail({
   const showProgress = progress > 0 && progress < 100;
 
   return (
-    <View
-      style={[
-        styles.container,
-        isFocused && styles.containerFocused,
-        isActive && styles.containerActive,
-      ]}
-    >
+    <View style={[styles.container, isFocused && styles.containerFocused, isActive && styles.containerActive]}>
       {/* Thumbnail Image */}
       {episode.image?.url ? (
-        <Image
-          source={episode.image.url}
-          style={styles.image}
-          contentFit="cover"
-          transition={0}
-        />
+        <Image source={episode.image.url} style={styles.image} contentFit="cover" transition={0} />
       ) : (
         <View style={styles.placeholder} />
       )}
@@ -93,8 +78,7 @@ const TVEpisodeThumbnail = memo(function TVEpisodeThumbnail({
       <LinearGradient
         colors={['transparent', 'rgba(0, 0, 0, 0.85)']}
         locations={[0.3, 1]}
-        style={styles.bottomGradient}
-      >
+        style={styles.bottomGradient}>
         <Text style={styles.episodeCode}>{episodeCode}</Text>
       </LinearGradient>
 

@@ -15,20 +15,13 @@ interface MemoryStats {
  * @param intervalMs - How often to log (default: 10000ms = 10s)
  * @param enabled - Whether monitoring is active (default: true)
  */
-export function useMemoryMonitor(
-  label: string,
-  intervalMs: number = 10000,
-  enabled: boolean = true
-) {
+export function useMemoryMonitor(label: string, intervalMs: number = 10000, enabled: boolean = true) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountTimeRef = useRef<number>(Date.now());
 
   const logMemory = useCallback(async () => {
     try {
-      const [usedMemory, totalMemory] = await Promise.all([
-        DeviceInfo.getUsedMemory(),
-        DeviceInfo.getTotalMemory(),
-      ]);
+      const [usedMemory, totalMemory] = await Promise.all([DeviceInfo.getUsedMemory(), DeviceInfo.getTotalMemory()]);
 
       const usedMB = Math.round(usedMemory / (1024 * 1024));
       const totalMB = Math.round(totalMemory / (1024 * 1024));
@@ -53,7 +46,7 @@ export function useMemoryMonitor(
 
       const maxInfo = stats.maxMemoryMB ? `, heap_limit=${stats.maxMemoryMB}MB` : '';
       console.log(
-        `[MemoryMonitor:${label}] elapsed=${elapsedSec}s, used=${usedMB}MB/${totalMB}MB (${percentUsed}%)${maxInfo}`
+        `[MemoryMonitor:${label}] elapsed=${elapsedSec}s, used=${usedMB}MB/${totalMB}MB (${percentUsed}%)${maxInfo}`,
       );
 
       // Warn if memory usage is high
@@ -97,10 +90,7 @@ export function useMemoryMonitor(
  */
 export async function logMemorySnapshot(label: string): Promise<MemoryStats | null> {
   try {
-    const [usedMemory, totalMemory] = await Promise.all([
-      DeviceInfo.getUsedMemory(),
-      DeviceInfo.getTotalMemory(),
-    ]);
+    const [usedMemory, totalMemory] = await Promise.all([DeviceInfo.getUsedMemory(), DeviceInfo.getTotalMemory()]);
 
     const usedMB = Math.round(usedMemory / (1024 * 1024));
     const totalMB = Math.round(totalMemory / (1024 * 1024));
@@ -122,9 +112,7 @@ export async function logMemorySnapshot(label: string): Promise<MemoryStats | nu
     }
 
     const maxInfo = stats.maxMemoryMB ? `, heap_limit=${stats.maxMemoryMB}MB` : '';
-    console.log(
-      `[MemorySnapshot:${label}] used=${usedMB}MB/${totalMB}MB (${percentUsed}%)${maxInfo}`
-    );
+    console.log(`[MemorySnapshot:${label}] used=${usedMB}MB/${totalMB}MB (${percentUsed}%)${maxInfo}`);
 
     return stats;
   } catch (error) {

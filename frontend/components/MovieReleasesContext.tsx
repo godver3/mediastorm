@@ -43,16 +43,19 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   // Queue release updates and schedule debounced flush
-  const queueUpdates = useCallback((updates: Map<string, ReleaseData>) => {
-    for (const [id, data] of updates) {
-      pendingUpdatesRef.current.set(id, data);
-    }
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-    }
-    // Use longer debounce during initial load to batch more updates together
-    flushTimerRef.current = setTimeout(flushPendingUpdates, 300);
-  }, [flushPendingUpdates]);
+  const queueUpdates = useCallback(
+    (updates: Map<string, ReleaseData>) => {
+      for (const [id, data] of updates) {
+        pendingUpdatesRef.current.set(id, data);
+      }
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+      }
+      // Use longer debounce during initial load to batch more updates together
+      flushTimerRef.current = setTimeout(flushPendingUpdates, 300);
+    },
+    [flushPendingUpdates],
+  );
 
   // Execute the batch fetch
   const executeFetch = useCallback(async () => {
@@ -93,24 +96,27 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [queueUpdates]);
 
   // Queue movies for release fetching
-  const queueReleaseFetch = useCallback((movies: Array<{ id: string; tmdbId?: number; imdbId?: string }>) => {
-    let addedCount = 0;
-    for (const movie of movies) {
-      if (!fetchedIdsRef.current.has(movie.id)) {
-        fetchedIdsRef.current.add(movie.id);
-        pendingFetchQueueRef.current.push(movie);
-        addedCount++;
+  const queueReleaseFetch = useCallback(
+    (movies: Array<{ id: string; tmdbId?: number; imdbId?: string }>) => {
+      let addedCount = 0;
+      for (const movie of movies) {
+        if (!fetchedIdsRef.current.has(movie.id)) {
+          fetchedIdsRef.current.add(movie.id);
+          pendingFetchQueueRef.current.push(movie);
+          addedCount++;
+        }
       }
-    }
 
-    if (addedCount === 0) return;
+      if (addedCount === 0) return;
 
-    // Debounce the fetch to batch multiple queueReleaseFetch calls
-    if (fetchTimerRef.current) {
-      clearTimeout(fetchTimerRef.current);
-    }
-    fetchTimerRef.current = setTimeout(executeFetch, 50);
-  }, [executeFetch]);
+      // Debounce the fetch to batch multiple queueReleaseFetch calls
+      if (fetchTimerRef.current) {
+        clearTimeout(fetchTimerRef.current);
+      }
+      fetchTimerRef.current = setTimeout(executeFetch, 50);
+    },
+    [executeFetch],
+  );
 
   // Check if a movie's releases have been fetched or queued
   const hasRelease = useCallback((id: string) => {
@@ -124,14 +130,10 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
       hasRelease,
       queueReleaseFetch,
     }),
-    [releases, hasRelease, queueReleaseFetch]
+    [releases, hasRelease, queueReleaseFetch],
   );
 
-  return (
-    <MovieReleasesContext.Provider value={value}>
-      {children}
-    </MovieReleasesContext.Provider>
-  );
+  return <MovieReleasesContext.Provider value={value}>{children}</MovieReleasesContext.Provider>;
 };
 
 export const useMovieReleases = (): MovieReleasesContextValue => {

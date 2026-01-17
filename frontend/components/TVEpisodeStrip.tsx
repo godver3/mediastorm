@@ -411,10 +411,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                   )}
                 </View>
                 <View
-                  style={[
-                    styles.progressCorner,
-                    { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 },
-                  ]}>
+                  style={[styles.progressCorner, { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 }]}>
                   <View style={styles.progressTriangle} />
                   <View style={styles.progressBadgeTextWrapper}>
                     <Text style={styles.progressBadgeText}>{`${percentWatched ?? 0}%`}</Text>

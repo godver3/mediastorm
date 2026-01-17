@@ -139,7 +139,10 @@ export const buildAudioTrackOptions = (streams: AudioStreamMetadata[]): TrackOpt
   });
 };
 
-export const buildSubtitleTrackOptions = (streams: SubtitleStreamMetadata[], selectedIndex?: number | null): TrackOption[] => {
+export const buildSubtitleTrackOptions = (
+  streams: SubtitleStreamMetadata[],
+  selectedIndex?: number | null,
+): TrackOption[] => {
   const options: TrackOption[] = streams.map((stream) => {
     const title = toTitleCase(stream.title);
     const language = formatLanguage(stream.language);

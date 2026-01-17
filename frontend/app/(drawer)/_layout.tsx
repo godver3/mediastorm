@@ -200,7 +200,7 @@ export default function DrawerLayout() {
             href: null,
           }}
         />
-        </Tabs>
+      </Tabs>
     );
   }
 

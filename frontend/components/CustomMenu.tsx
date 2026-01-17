@@ -13,15 +13,7 @@ import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
-import {
-  Platform,
-  StyleSheet,
-  Text,
-  View,
-  Animated,
-  Pressable,
-  Image,
-} from 'react-native';
+import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenuContext } from './MenuContext';
 
@@ -69,9 +61,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     { name: '/settings', label: 'Settings' },
   ];
 
-  const menuItems = Platform.isTV
-    ? baseMenuItems
-    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
+  const menuItems = Platform.isTV ? baseMenuItems : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
 
   React.useEffect(() => {
     if (isVisible) {
@@ -143,11 +133,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         name={getMenuIconName(item.name)}
         size={iconSize}
         color={
-          disabled
-            ? theme.colors.text.disabled
-            : isFocused
-              ? theme.colors.background.base
-              : theme.colors.text.primary
+          disabled ? theme.colors.text.disabled : isFocused ? theme.colors.background.base : theme.colors.text.primary
         }
         style={[styles.icon, disabled && styles.iconDisabled]}
       />
@@ -181,8 +167,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         const menuItemElement = (
           <SpatialNavigationFocusableView
             focusKey={`menu-item-${item.name}`}
-            onSelect={() => handleItemSelect(item.name)}
-          >
+            onSelect={() => handleItemSelect(item.name)}>
             {({ isFocused }: { isFocused: boolean }) => (
               <View style={[styles.menuItem, isFocused && styles.menuItemFocused]}>
                 {renderMenuItemContent(item, isFocused, false)}
@@ -235,18 +220,15 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
       ]}>
       <View style={[styles.scrollView, styles.scrollContent]}>
         <View style={styles.header}>
-          {isTV && activeUser && (
-            activeUser.hasIcon ? (
-              <Image
-                source={{ uri: getIconUrl(activeUser.id) }}
-                style={styles.headerAvatarImage}
-              />
+          {isTV &&
+            activeUser &&
+            (activeUser.hasIcon ? (
+              <Image source={{ uri: getIconUrl(activeUser.id) }} style={styles.headerAvatarImage} />
             ) : (
               <View style={[styles.headerAvatar, activeUser.color && { backgroundColor: activeUser.color }]}>
                 <Text style={styles.headerAvatarText}>{activeUser.name.charAt(0).toUpperCase()}</Text>
               </View>
-            )
-          )}
+            ))}
           <Text style={styles.userName}>{activeUser?.name ?? 'Loading profile…'}</Text>
         </View>
         {Platform.isTV ? renderTVMenuItems() : renderNonTVMenuItems()}
@@ -260,8 +242,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
       {Platform.isTV ? (
         <SpatialNavigationRoot
           isActive={isVisible}
-          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
-        >
+          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
           {menuContent}
         </SpatialNavigationRoot>
       ) : (

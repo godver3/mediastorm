@@ -284,8 +284,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       transparent
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
-      hardwareAccelerated
-    >
+      hardwareAccelerated>
       <View style={styles.overlay}>
         <Pressable
           style={styles.backdrop}
@@ -301,8 +300,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           <ScrollView
             style={styles.contentScrollView}
             contentContainerStyle={styles.contentContainer}
-            scrollEnabled={!Platform.isTV}
-          >
+            scrollEnabled={!Platform.isTV}>
             {/* Media Info Section */}
             {mediaTitle && (
               <View style={styles.section}>
@@ -316,9 +314,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
             {(info.passthroughName || info.passthroughDescription) && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Source</Text>
-                {info.passthroughName && (
-                  <InfoRow label="Name" value={info.passthroughName} styles={styles} fullText />
-                )}
+                {info.passthroughName && <InfoRow label="Name" value={info.passthroughName} styles={styles} fullText />}
                 {info.passthroughDescription && (
                   <InfoRow label="Details" value={info.passthroughDescription} styles={styles} fullText />
                 )}
@@ -378,8 +374,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
               onBlur={() => setIsCloseFocused(false)}
               style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
               hasTVPreferredFocus={Platform.isTV}
-              tvParallaxProperties={{ enabled: false }}
-            >
+              tvParallaxProperties={{ enabled: false }}>
               <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
             </Pressable>
           </View>

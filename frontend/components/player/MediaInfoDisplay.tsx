@@ -273,8 +273,7 @@ export default function MediaInfoDisplay({
   const hasBadges = resolutionBadge || formatBadge;
 
   // Hide color info for native players (VLC/RNV) - only show for Expo/Web/System players
-  const showColorInfo =
-    playerImplementation !== 'React Native VLC' && playerImplementation !== 'React Native Video';
+  const showColorInfo = playerImplementation !== 'React Native VLC' && playerImplementation !== 'React Native Video';
 
   if (Platform.isTV) {
     return (
@@ -290,9 +289,7 @@ export default function MediaInfoDisplay({
             </View>
             {resolutionBadge && resolutionColors && (
               <View style={[styles.resolutionBadgeContainer, { backgroundColor: resolutionColors.bg }]}>
-                <Text style={[styles.resolutionBadgeText, { color: resolutionColors.text }]}>
-                  {resolutionBadge}
-                </Text>
+                <Text style={[styles.resolutionBadgeText, { color: resolutionColors.text }]}>{resolutionBadge}</Text>
               </View>
             )}
           </View>

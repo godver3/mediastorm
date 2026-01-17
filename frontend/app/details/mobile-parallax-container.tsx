@@ -54,7 +54,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
       scrollY.value,
       [0, POSTER_TRANSITION_DISTANCE],
       [1, POSTER_MIN_OPACITY],
-      Extrapolation.CLAMP
+      Extrapolation.CLAMP,
     );
     return { opacity };
   });
@@ -66,11 +66,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
       {/* Fixed background poster/backdrop - persists with parallax */}
       {imageUrl && (
         <Animated.View style={[styles.posterContainer, posterAnimatedStyle]}>
-          <Image
-            source={{ uri: imageUrl }}
-            style={styles.posterImage}
-            contentFit="cover"
-          />
+          <Image source={{ uri: imageUrl }} style={styles.posterImage} contentFit="cover" />
           {/* Lower third gradient to darken bottom of poster */}
           <LinearGradient
             colors={['transparent', 'rgba(0, 0, 0, 0.5)', theme.colors.background.base]}
@@ -88,17 +84,20 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContentContainer}
         style={styles.scrollView}
-        contentInsetAdjustmentBehavior="never"
-      >
+        contentInsetAdjustmentBehavior="never">
         {/* Spacer to push content below the poster initially */}
         <View style={styles.contentSpacer} />
 
         {/* Content card - gradient from transparent to opaque */}
         <LinearGradient
-          colors={['transparent', `${theme.colors.background.base}40`, `${theme.colors.background.base}B0`, theme.colors.background.base]}
+          colors={[
+            'transparent',
+            `${theme.colors.background.base}40`,
+            `${theme.colors.background.base}B0`,
+            theme.colors.background.base,
+          ]}
           locations={[0, 0.05, 0.15, 0.3]}
-          style={styles.contentCard}
-        >
+          style={styles.contentCard}>
           {children}
         </LinearGradient>
       </Animated.ScrollView>

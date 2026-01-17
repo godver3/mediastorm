@@ -1,5 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, FlatList, Modal, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
@@ -226,16 +237,14 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
             isFocused && styles.languageChipFocused,
           ]}
           hasTVPreferredFocus={shouldHaveInitialFocus}
-          tvParallaxProperties={{ enabled: false }}
-        >
+          tvParallaxProperties={{ enabled: false }}>
           <Text
             style={[
               styles.languageChipText,
               isSelected && styles.languageChipTextSelected,
               isFocused && styles.languageChipTextFocused,
             ]}
-            numberOfLines={1}
-          >
+            numberOfLines={1}>
             {lang.name}
           </Text>
         </Pressable>
@@ -258,8 +267,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
             }
           }}
           style={[styles.resultItem, isFocused && styles.resultItemFocused]}
-          tvParallaxProperties={{ enabled: false }}
-        >
+          tvParallaxProperties={{ enabled: false }}>
           <View style={styles.resultHeader}>
             <View style={styles.providerBadge}>
               <Text style={styles.providerText}>{result.provider}</Text>
@@ -287,7 +295,14 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
         </Pressable>
       );
     },
-    [focusedResultIndex, handleSelectSubtitle, handleResultFocus, styles, theme.colors.text.inverse, theme.colors.text.secondary],
+    [
+      focusedResultIndex,
+      handleSelectSubtitle,
+      handleResultFocus,
+      styles,
+      theme.colors.text.inverse,
+      theme.colors.text.secondary,
+    ],
   );
 
   if (!visible) {
@@ -379,8 +394,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
               onFocus={() => setIsCloseFocused(true)}
               onBlur={() => setIsCloseFocused(false)}
               style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
-              tvParallaxProperties={{ enabled: false }}
-            >
+              tvParallaxProperties={{ enabled: false }}>
               <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
             </Pressable>
           </View>
@@ -396,10 +410,14 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
       transparent
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
-      hardwareAccelerated
-    >
+      hardwareAccelerated>
       <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={handleClose} tvParallaxProperties={{ enabled: false }} focusable={false} />
+        <Pressable
+          style={styles.backdrop}
+          onPress={handleClose}
+          tvParallaxProperties={{ enabled: false }}
+          focusable={false}
+        />
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Search Subtitles</Text>
@@ -421,8 +439,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
               onBlur={() => setIsCloseFocused(false)}
               style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
               tvParallaxProperties={{ enabled: false }}
-              focusable={false}
-            >
+              focusable={false}>
               <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
             </Pressable>
           </View>

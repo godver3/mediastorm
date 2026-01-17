@@ -38,11 +38,7 @@ import {
   type Trailer,
   type TrailerPrequeueStatus,
 } from '@/services/api';
-import {
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  useSpatialNavigator,
-} from '@/services/tv-navigation';
+import { SpatialNavigationNode, SpatialNavigationRoot, useSpatialNavigator } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
@@ -55,16 +51,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Image,
-  ImageResizeMode,
-  ImageStyle,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { Image, ImageResizeMode, ImageStyle, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
@@ -292,7 +279,8 @@ export default function DetailsScreen() {
   // Compute media type early for content box sizing
   const rawMediaTypeForLayout = toStringParam(params.mediaType);
   const mediaTypeForLayout = (rawMediaTypeForLayout || 'movie').toLowerCase();
-  const isSeriesLayout = mediaTypeForLayout === 'series' || mediaTypeForLayout === 'tv' || mediaTypeForLayout === 'show';
+  const isSeriesLayout =
+    mediaTypeForLayout === 'series' || mediaTypeForLayout === 'tv' || mediaTypeForLayout === 'show';
 
   const contentBoxStyle = useMemo(() => {
     if (Platform.isTV) {
@@ -602,7 +590,9 @@ export default function DetailsScreen() {
           console.log('[Details] Found next episode from playback:', nextEp, {
             hasPrequeueId: !!nextEp.prequeueId,
             hasPrequeueStatus: !!nextEp.prequeueStatus,
-            prequeueStatusReady: nextEp.prequeueStatus ? apiService.isPrequeueReady(nextEp.prequeueStatus.status) : false,
+            prequeueStatusReady: nextEp.prequeueStatus
+              ? apiService.isPrequeueReady(nextEp.prequeueStatus.status)
+              : false,
           });
           setNextEpisodeFromPlayback(nextEp);
           // Restore shuffle mode from playback navigation (set both state and ref for synchronous access)
@@ -1210,7 +1200,16 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, seriesIdentifier, titleId, watchStatusItems, progressRefreshKey]);
+  }, [
+    activeUserId,
+    isSeries,
+    activeEpisode,
+    nextUpEpisode,
+    seriesIdentifier,
+    titleId,
+    watchStatusItems,
+    progressRefreshKey,
+  ]);
 
   // Fetch progress for all episodes when series loads
   useEffect(() => {
@@ -2106,7 +2105,8 @@ export default function DetailsScreen() {
       // Check if we can use the pre-created HLS session
       // Skip if: no HLS URL, need resume offset, or prequeue userId doesn't match current user
       const prequeueUserIdMatches = !prequeueStatus.userId || prequeueStatus.userId === activeUserId;
-      const canUsePreCreatedHLS = needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number' && prequeueUserIdMatches;
+      const canUsePreCreatedHLS =
+        needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number' && prequeueUserIdMatches;
 
       // Track selected audio/subtitle tracks for passing to player (declared here so accessible in router.push)
       let selectedAudioTrack: number | undefined;
@@ -2241,7 +2241,12 @@ export default function DetailsScreen() {
           streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
           hlsDuration = hlsResponse.duration;
           hlsActualStartOffset = hlsResponse.actualStartOffset;
-          console.log('[prequeue] Created HLS session, using URL:', streamUrl, 'actualStartOffset:', hlsActualStartOffset);
+          console.log(
+            '[prequeue] Created HLS session, using URL:',
+            streamUrl,
+            'actualStartOffset:',
+            hlsActualStartOffset,
+          );
         } catch (hlsError) {
           console.error('[prequeue] Failed to create HLS session:', hlsError);
           throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
@@ -2277,10 +2282,7 @@ export default function DetailsScreen() {
         // This is called now that we know the user's resume position
         if (prequeueStatus.prequeueId) {
           try {
-            const subtitleResult = await apiService.startPrequeueSubtitles(
-              prequeueStatus.prequeueId,
-              startOffset ?? 0,
-            );
+            const subtitleResult = await apiService.startPrequeueSubtitles(prequeueStatus.prequeueId, startOffset ?? 0);
             if (subtitleResult.subtitleSessions && Object.keys(subtitleResult.subtitleSessions).length > 0) {
               // Update prequeueStatus with the new subtitle sessions
               prequeueStatus.subtitleSessions = subtitleResult.subtitleSessions;
@@ -3001,21 +3003,24 @@ export default function DetailsScreen() {
     }
   }, [isTouchSeasonLayout]);
 
-  const handleEpisodeSelect = useCallback((episode: SeriesEpisode) => {
-    setActiveEpisode(episode);
-    setSelectionError(null);
-    setSelectionInfo(null);
-    // Clear any resume position from previous episode
-    setCurrentProgress(null);
-    // Update selected season if episode is from a different season
-    setSelectedSeason((currentSeason) => {
-      if (currentSeason?.number !== episode.seasonNumber) {
-        const matchingSeason = seasons.find((s) => s.number === episode.seasonNumber);
-        return matchingSeason ?? currentSeason;
-      }
-      return currentSeason;
-    });
-  }, [seasons]);
+  const handleEpisodeSelect = useCallback(
+    (episode: SeriesEpisode) => {
+      setActiveEpisode(episode);
+      setSelectionError(null);
+      setSelectionInfo(null);
+      // Clear any resume position from previous episode
+      setCurrentProgress(null);
+      // Update selected season if episode is from a different season
+      setSelectedSeason((currentSeason) => {
+        if (currentSeason?.number !== episode.seasonNumber) {
+          const matchingSeason = seasons.find((s) => s.number === episode.seasonNumber);
+          return matchingSeason ?? currentSeason;
+        }
+        return currentSeason;
+      });
+    },
+    [seasons],
+  );
 
   const handlePreviousEpisode = useCallback(() => {
     if (!activeEpisode) return;
@@ -4196,9 +4201,7 @@ export default function DetailsScreen() {
               handleTVFocusAreaChange('actions');
             }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            <View
-              style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
-            >
+            <View style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
               {Platform.isTV && TVActionButton ? (
                 <TVActionButton
                   text={watchNowLabel}
@@ -4246,8 +4249,8 @@ export default function DetailsScreen() {
                   style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                 />
               )}
-              {shouldShowDebugPlayerButton && (
-                Platform.isTV && TVActionButton ? (
+              {shouldShowDebugPlayerButton &&
+                (Platform.isTV && TVActionButton ? (
                   <TVActionButton
                     text="Debug Player"
                     icon="bug"
@@ -4266,10 +4269,9 @@ export default function DetailsScreen() {
                     disabled={isResolving || (isSeries && episodesLoading)}
                     style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
                   />
-                )
-              )}
-              {isSeries && (
-                Platform.isTV && TVActionButton ? (
+                ))}
+              {isSeries &&
+                (Platform.isTV && TVActionButton ? (
                   <TVActionButton
                     text="Select"
                     icon="list"
@@ -4286,10 +4288,9 @@ export default function DetailsScreen() {
                     onFocus={() => handleTVFocusAreaChange('actions')}
                     style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   />
-                )
-              )}
-              {isSeries && (
-                Platform.isTV && TVActionButton ? (
+                ))}
+              {isSeries &&
+                (Platform.isTV && TVActionButton ? (
                   <TVActionButton
                     text="Shuffle"
                     icon="shuffle"
@@ -4310,8 +4311,7 @@ export default function DetailsScreen() {
                     style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                     disabled={episodesLoading || allEpisodes.length === 0}
                   />
-                )
-              )}
+                ))}
               {Platform.isTV && TVActionButton ? (
                 <TVActionButton
                   text={watchlistBusy ? 'Saving...' : watchlistButtonLabel}
@@ -4369,8 +4369,8 @@ export default function DetailsScreen() {
                 />
               )}
               {/* Trailer button */}
-              {(trailersLoading || hasAvailableTrailer) && (
-                Platform.isTV && TVActionButton ? (
+              {(trailersLoading || hasAvailableTrailer) &&
+                (Platform.isTV && TVActionButton ? (
                   <TVActionButton
                     text={trailerButtonLabel}
                     icon="videocam"
@@ -4391,8 +4391,7 @@ export default function DetailsScreen() {
                     style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
                     disabled={trailerButtonDisabled}
                   />
-                )
-              )}
+                ))}
               {/* Show progress badge in action row only for movies (no episode card) */}
               {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
                 <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
@@ -4426,26 +4425,29 @@ export default function DetailsScreen() {
               }}
               onFocusRowChange={handleTVFocusAreaChange}
             />
-          ) : Platform.isTV && isSeries && (
-            <SpatialNavigationNode
-              orientation="horizontal"
-              focusKey="episode-strip-wrapper"
-              onActive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper ACTIVE')}
-              onInactive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper INACTIVE')}>
-              {activeEpisode ? (
-                <TVEpisodeStrip
-                  activeEpisode={activeEpisode}
-                  allEpisodes={allEpisodes}
-                  selectedSeason={selectedSeason}
-                  percentWatched={displayProgress}
-                  onSelect={handleWatchNow}
-                  onFocus={handleEpisodeStripFocus}
-                  onBlur={handleEpisodeStripBlur}
-                />
-              ) : (
-                <View />
-              )}
-            </SpatialNavigationNode>
+          ) : (
+            Platform.isTV &&
+            isSeries && (
+              <SpatialNavigationNode
+                orientation="horizontal"
+                focusKey="episode-strip-wrapper"
+                onActive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper ACTIVE')}
+                onInactive={() => console.log('[Details NAV DEBUG] episode-strip-wrapper INACTIVE')}>
+                {activeEpisode ? (
+                  <TVEpisodeStrip
+                    activeEpisode={activeEpisode}
+                    allEpisodes={allEpisodes}
+                    selectedSeason={selectedSeason}
+                    percentWatched={displayProgress}
+                    onSelect={handleWatchNow}
+                    onFocus={handleEpisodeStripFocus}
+                    onBlur={handleEpisodeStripBlur}
+                  />
+                ) : (
+                  <View />
+                )}
+              </SpatialNavigationNode>
+            )
           )}
           {/* TV Cast Section - shows cast with D-pad navigation */}
           {/* Show while loading to reserve space and prevent layout shift */}
@@ -4536,11 +4538,7 @@ export default function DetailsScreen() {
 
   // Mobile content rendering with parallax and new components
   const renderMobileContent = () => (
-    <MobileParallaxContainer
-      posterUrl={posterUrl}
-      backdropUrl={backdropUrl}
-      theme={theme}
-    >
+    <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme}>
       {/* Title and metadata section */}
       <View style={styles.topContent}>
         <View style={styles.titleRow}>
@@ -4571,14 +4569,15 @@ export default function DetailsScreen() {
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
             {contentPreference.audioLanguage && (
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: theme.colors.background.elevated,
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-                borderRadius: 4,
-              }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.background.elevated,
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 4,
+                }}>
                 <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
                   {contentPreference.audioLanguage.toUpperCase()}
@@ -4586,14 +4585,15 @@ export default function DetailsScreen() {
               </View>
             )}
             {contentPreference.subtitleLanguage && (
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: theme.colors.background.elevated,
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-                borderRadius: 4,
-              }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.background.elevated,
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 4,
+                }}>
                 <Ionicons name="text" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
                   {contentPreference.subtitleLanguage.toUpperCase()}
@@ -4717,11 +4717,7 @@ export default function DetailsScreen() {
       )}
 
       {/* Cast section */}
-      <CastSection
-        credits={credits}
-        isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-        theme={theme}
-      />
+      <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} />
 
       {/* Hidden SeriesEpisodes component to load data (same as in renderDetailsContent) */}
       {isSeries && (
@@ -4787,21 +4783,24 @@ export default function DetailsScreen() {
   const tvScrollViewRef = useRef<Animated.ScrollView>(null);
 
   // Handle focus area change - scroll to appropriate position for each focus area
-  const handleTVFocusAreaChange = useCallback((area: 'seasons' | 'episodes' | 'actions' | 'cast') => {
-    if (!Platform.isTV || !tvScrollViewRef.current) return;
+  const handleTVFocusAreaChange = useCallback(
+    (area: 'seasons' | 'episodes' | 'actions' | 'cast') => {
+      if (!Platform.isTV || !tvScrollViewRef.current) return;
 
-    // Scroll positions based on focus area:
-    // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast
-    // Higher value = more scroll = content raised higher in viewport
-    const scrollPositions = {
-      actions: Math.round(windowHeight * 0.15),    // Show artwork with action row visible
-      seasons: Math.round(windowHeight * 0.25),   // Show action row + season selector
-      episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
-      cast: Math.round(windowHeight * 2),        // Large value to scroll to bottom (clamped by ScrollView)
-    };
-    const targetY = scrollPositions[area];
-    tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
-  }, [windowHeight]);
+      // Scroll positions based on focus area:
+      // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast
+      // Higher value = more scroll = content raised higher in viewport
+      const scrollPositions = {
+        actions: Math.round(windowHeight * 0.15), // Show artwork with action row visible
+        seasons: Math.round(windowHeight * 0.25), // Show action row + season selector
+        episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
+        cast: Math.round(windowHeight * 2), // Large value to scroll to bottom (clamped by ScrollView)
+      };
+      const targetY = scrollPositions[area];
+      tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
+    },
+    [windowHeight],
+  );
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
@@ -4908,28 +4907,27 @@ export default function DetailsScreen() {
                     onScroll={tvScrollHandler}
                     scrollEventThrottle={16}
                     // Disable native scroll-to-focus - we control scroll programmatically
-                    scrollEnabled={false}
-                  >
+                    scrollEnabled={false}>
                     {/* Transparent spacer to show backdrop initially - larger for more artwork at scroll 0 */}
                     <View style={{ height: Math.round(windowHeight * 0.65) }} />
                     {/* Content area with gradient background - starts higher with softer transition */}
                     <LinearGradient
-                      colors={['transparent', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.85)', theme.colors.background.base]}
+                      colors={[
+                        'transparent',
+                        'rgba(0, 0, 0, 0.6)',
+                        'rgba(0, 0, 0, 0.85)',
+                        theme.colors.background.base,
+                      ]}
                       locations={[0, 0.1, 0.25, 0.45]}
-                      style={styles.tvContentGradient}
-                    >
-                      <View style={styles.tvContentInner}>
-                        {renderDetailsContent()}
-                      </View>
+                      style={styles.tvContentGradient}>
+                      <View style={styles.tvContentInner}>{renderDetailsContent()}</View>
                     </LinearGradient>
                   </Animated.ScrollView>
                 ) : (
                   <View style={styles.contentOverlay}>
                     <View style={[styles.contentBox, contentBoxStyle]}>
                       <View style={styles.contentBoxInner}>
-                        <View style={styles.contentContainer}>
-                          {renderDetailsContent()}
-                        </View>
+                        <View style={styles.contentContainer}>{renderDetailsContent()}</View>
                       </View>
                     </View>
                   </View>

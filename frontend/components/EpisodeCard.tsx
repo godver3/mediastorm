@@ -257,8 +257,7 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
 
   return (
     <View style={styles.container}>
-      <View
-        style={[styles.progressCorner, { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 }]}>
+      <View style={[styles.progressCorner, { opacity: percentWatched != null && percentWatched > 0 ? 1 : 0 }]}>
         <View style={styles.progressTriangle} />
         <View style={styles.progressBadgeTextWrapper}>
           <Text style={styles.progressBadgeText}>{`${percentWatched ?? 0}%`}</Text>
@@ -353,9 +352,7 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
               </Animated.View>
             </View>
             {expandedHeight > collapsedHeight && (
-              <Text style={styles.overviewToggle}>
-                {isOverviewExpanded ? 'Show less' : 'More'}
-              </Text>
+              <Text style={styles.overviewToggle}>{isOverviewExpanded ? 'Show less' : 'More'}</Text>
             )}
           </Pressable>
         </View>

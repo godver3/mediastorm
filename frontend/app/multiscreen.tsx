@@ -391,8 +391,7 @@ export default function MultiscreenPage() {
                     isFocused && styles.playerContainerFocused,
                     isActive && styles.playerContainerActive,
                     isExpanded && styles.playerContainerExpanded,
-                  ]}
-                >
+                  ]}>
                   <View style={styles.playerWrapper}>
                     <View style={styles.videoContainer}>
                       <VideoPlayer
@@ -443,8 +442,7 @@ export default function MultiscreenPage() {
               key={`nav-layout-${expandedIndex ?? 'normal'}`}
               orientation="vertical"
               alignInGrid
-              style={StyleSheet.absoluteFill}
-            >
+              style={StyleSheet.absoluteFill}>
               {channelRows.map((row, rowIndex) => (
                 <SpatialNavigationNode key={`nav-row-${rowIndex}`} orientation="horizontal">
                   {row.map(({ channel, index, position }) => {
@@ -465,8 +463,7 @@ export default function MultiscreenPage() {
                             top: position.top,
                             zIndex: (position.zIndex ?? 1) + 100,
                           },
-                        ]}
-                      >
+                        ]}>
                         {() => <View style={styles.navOverlayInner} />}
                       </SpatialNavigationFocusableView>
                     );
@@ -501,8 +498,7 @@ export default function MultiscreenPage() {
                   },
                   isActive && styles.playerContainerActive,
                   isExpanded && styles.playerContainerExpanded,
-                ]}
-              >
+                ]}>
                 <View style={styles.playerWrapper}>
                   <View style={styles.videoContainer}>
                     <VideoPlayer

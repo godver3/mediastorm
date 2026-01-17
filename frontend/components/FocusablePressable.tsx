@@ -54,137 +54,138 @@ interface CustomPressableProps extends PressableProps {
   nextFocusDown?: number;
 }
 
-const FocusablePressable = forwardRef<View, CustomPressableProps>(({
-  text,
-  icon,
-  iconSize = 24,
-  invisibleIcon = false,
-  onSelect,
-  onFocus,
-  style,
-  focusedStyle,
-  textStyle,
-  focusedTextStyle,
-  disabled,
-  focusKey: _focusKey, // deprecated, ignored
-  autoFocus = false,
-  loading = false,
-  showReadyPip = false,
-  wrapperStyle,
-  nextFocusRight,
-  nextFocusLeft,
-  nextFocusUp,
-  nextFocusDown,
-  ...props
-}, ref) => {
-  const { onPress: _ignoredOnPress, ...restProps } = props;
-  void _ignoredOnPress;
-  void _focusKey;
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme, !!icon || invisibleIcon), [theme, icon, invisibleIcon]);
+const FocusablePressable = forwardRef<View, CustomPressableProps>(
+  (
+    {
+      text,
+      icon,
+      iconSize = 24,
+      invisibleIcon = false,
+      onSelect,
+      onFocus,
+      style,
+      focusedStyle,
+      textStyle,
+      focusedTextStyle,
+      disabled,
+      focusKey: _focusKey, // deprecated, ignored
+      autoFocus = false,
+      loading = false,
+      showReadyPip = false,
+      wrapperStyle,
+      nextFocusRight,
+      nextFocusLeft,
+      nextFocusUp,
+      nextFocusDown,
+      ...props
+    },
+    ref,
+  ) => {
+    const { onPress: _ignoredOnPress, ...restProps } = props;
+    void _ignoredOnPress;
+    void _focusKey;
+    const theme = useTheme();
+    const styles = useMemo(() => createStyles(theme, !!icon || invisibleIcon), [theme, icon, invisibleIcon]);
 
-  // Scale icon size for TV platforms
-  // Design for tvOS (1.375x), Android TV auto-derives via tvScale
-  const scaledIconSize = tvScale(iconSize * 1.375, iconSize);
+    // Scale icon size for TV platforms
+    // Design for tvOS (1.375x), Android TV auto-derives via tvScale
+    const scaledIconSize = tvScale(iconSize * 1.375, iconSize);
 
-  // Native Pressable with focus styling - unified for tvOS and Android TV
-  return (
-    <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
-      <Pressable
-        ref={ref}
-        {...restProps}
-        disabled={disabled || loading}
-        onPress={onSelect}
-        onFocus={onFocus}
-        hasTVPreferredFocus={autoFocus}
-        tvParallaxProperties={{ enabled: false }}
-        renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}
-        nextFocusRight={nextFocusRight}
-        nextFocusLeft={nextFocusLeft}
-        nextFocusUp={nextFocusUp}
-        nextFocusDown={nextFocusDown}
-        style={({ focused }) => [
-          styles.watchButton,
-          style,
-          focused && styles.watchButtonFocused,
-          focused && focusedStyle,
-          disabled && !loading && styles.watchButtonDisabled,
-        ]}
-      >
-        {({ focused }) => {
-          // Show both icon and text if both are provided
-          const showBoth = icon && text;
+    // Native Pressable with focus styling - unified for tvOS and Android TV
+    return (
+      <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
+        <Pressable
+          ref={ref}
+          {...restProps}
+          disabled={disabled || loading}
+          onPress={onSelect}
+          onFocus={onFocus}
+          hasTVPreferredFocus={autoFocus}
+          tvParallaxProperties={{ enabled: false }}
+          renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}
+          nextFocusRight={nextFocusRight}
+          nextFocusLeft={nextFocusLeft}
+          nextFocusUp={nextFocusUp}
+          nextFocusDown={nextFocusDown}
+          style={({ focused }) => [
+            styles.watchButton,
+            style,
+            focused && styles.watchButtonFocused,
+            focused && focusedStyle,
+            disabled && !loading && styles.watchButtonDisabled,
+          ]}>
+          {({ focused }) => {
+            // Show both icon and text if both are provided
+            const showBoth = icon && text;
 
-          return (
-            <View style={{ position: 'relative' }}>
-              <View
-                style={[
-                  showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
-                  invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
-                ]}
-              >
-                {icon && !loading ? (
-                  <Ionicons
-                    name={icon}
-                    size={scaledIconSize}
-                    color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
-                  />
-                ) : !loading && !icon && text ? null : icon ? (
-                  <View style={{ width: scaledIconSize, height: scaledIconSize }} />
-                ) : null}
-                {text && (
-                  <Text
-                    numberOfLines={1}
-                    style={[
-                      focused ? styles.watchButtonTextFocused : styles.watchButtonText,
-                      focused ? focusedTextStyle : textStyle,
-                      loading && { opacity: 0 },
-                    ]}
-                  >
-                    {text}
-                  </Text>
+            return (
+              <View style={{ position: 'relative' }}>
+                <View
+                  style={[
+                    showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
+                    invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
+                  ]}>
+                  {icon && !loading ? (
+                    <Ionicons
+                      name={icon}
+                      size={scaledIconSize}
+                      color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                    />
+                  ) : !loading && !icon && text ? null : icon ? (
+                    <View style={{ width: scaledIconSize, height: scaledIconSize }} />
+                  ) : null}
+                  {text && (
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        focused ? styles.watchButtonTextFocused : styles.watchButtonText,
+                        focused ? focusedTextStyle : textStyle,
+                        loading && { opacity: 0 },
+                      ]}>
+                      {text}
+                    </Text>
+                  )}
+                </View>
+                {loading && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}>
+                    <ActivityIndicator
+                      size="small"
+                      color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                    />
+                  </View>
                 )}
               </View>
-              {loading && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                  }}
-                >
-                  <ActivityIndicator
-                    size="small"
-                    color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
-                  />
-                </View>
-              )}
-            </View>
-          );
-        }}
-      </Pressable>
-      {showReadyPip && !loading && (
-        <View
-          style={{
-            position: 'absolute',
-            top: -3,
-            right: -3,
-            width: 10,
-            height: 10,
-            borderRadius: 5,
-            backgroundColor: theme.colors.status.success,
-            zIndex: 10,
+            );
           }}
-          pointerEvents="none"
-        />
-      )}
-    </View>
-  );
-});
+        </Pressable>
+        {showReadyPip && !loading && (
+          <View
+            style={{
+              position: 'absolute',
+              top: -3,
+              right: -3,
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: theme.colors.status.success,
+              zIndex: 10,
+            }}
+            pointerEvents="none"
+          />
+        )}
+      </View>
+    );
+  },
+);
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
   // Unified TV scaling - design for tvOS at 1.375x, Android TV at 1.71875x (25% larger)

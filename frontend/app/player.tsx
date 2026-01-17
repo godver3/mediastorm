@@ -26,17 +26,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  AppState,
-  BackHandler,
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, AppState, BackHandler, Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 // TVMenuControl is available on tvOS but not typed in RN types
@@ -201,7 +191,9 @@ export default function PlayerScreen() {
     return raw || undefined;
   }, [passthroughNameParam]);
   const passthroughDescription = useMemo(() => {
-    const raw = Array.isArray(passthroughDescriptionParam) ? passthroughDescriptionParam[0] : passthroughDescriptionParam;
+    const raw = Array.isArray(passthroughDescriptionParam)
+      ? passthroughDescriptionParam[0]
+      : passthroughDescriptionParam;
     return raw || undefined;
   }, [passthroughDescriptionParam]);
   const routeDvProfile = useMemo(() => {
@@ -228,9 +220,7 @@ export default function PlayerScreen() {
 
   // Parse pre-extracted subtitle sessions from route params
   const preExtractedSubtitles = useMemo((): SubtitleSessionInfo[] | null => {
-    const raw = Array.isArray(preExtractedSubtitlesParam)
-      ? preExtractedSubtitlesParam[0]
-      : preExtractedSubtitlesParam;
+    const raw = Array.isArray(preExtractedSubtitlesParam) ? preExtractedSubtitlesParam[0] : preExtractedSubtitlesParam;
     if (!raw) {
       return null;
     }
@@ -257,7 +247,9 @@ export default function PlayerScreen() {
   }, [preselectedAudioTrackParam]);
 
   const preselectedSubtitleTrack = useMemo(() => {
-    const raw = Array.isArray(preselectedSubtitleTrackParam) ? preselectedSubtitleTrackParam[0] : preselectedSubtitleTrackParam;
+    const raw = Array.isArray(preselectedSubtitleTrackParam)
+      ? preselectedSubtitleTrackParam[0]
+      : preselectedSubtitleTrackParam;
     if (!raw) {
       return undefined;
     }
@@ -409,16 +401,37 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (subtitleSearchLanguageInitializedRef.current) return;
     const preferredLang =
-      userSettings?.playback?.preferredSubtitleLanguage ||
-      settings?.playback?.preferredSubtitleLanguage;
+      userSettings?.playback?.preferredSubtitleLanguage || settings?.playback?.preferredSubtitleLanguage;
     if (preferredLang) {
       // Map ISO 639-2 (3-letter) to ISO 639-1 (2-letter) codes
       const iso639_2_to_1: Record<string, string> = {
-        eng: 'en', spa: 'es', fra: 'fr', fre: 'fr', deu: 'de', ger: 'de',
-        ita: 'it', por: 'pt', nld: 'nl', dut: 'nl', pol: 'pl', rus: 'ru',
-        jpn: 'ja', kor: 'ko', zho: 'zh', chi: 'zh', ara: 'ar', heb: 'he',
-        swe: 'sv', nor: 'no', nob: 'no', nno: 'no', dan: 'da', fin: 'fi',
-        hrv: 'hr', srp: 'sr', bos: 'bs',
+        eng: 'en',
+        spa: 'es',
+        fra: 'fr',
+        fre: 'fr',
+        deu: 'de',
+        ger: 'de',
+        ita: 'it',
+        por: 'pt',
+        nld: 'nl',
+        dut: 'nl',
+        pol: 'pl',
+        rus: 'ru',
+        jpn: 'ja',
+        kor: 'ko',
+        zho: 'zh',
+        chi: 'zh',
+        ara: 'ar',
+        heb: 'he',
+        swe: 'sv',
+        nor: 'no',
+        nob: 'no',
+        nno: 'no',
+        dan: 'da',
+        fin: 'fi',
+        hrv: 'hr',
+        srp: 'sr',
+        bos: 'bs',
       };
       const twoLetterCode = iso639_2_to_1[preferredLang.toLowerCase()] || preferredLang;
       setSubtitleSearchLanguage(twoLetterCode);
@@ -558,34 +571,82 @@ export default function PlayerScreen() {
 
   // Auto-subtitle search: automatically search for subtitles when no embedded tracks match preference
   // Fallback order: preferred language online -> English embedded -> none
-  const performAutoSubtitleSearch = useCallback(async (language: string) => {
-    console.log('[player] starting auto-subtitle search for language:', language);
-    setAutoSubtitleStatus('searching');
-    setAutoSubtitleMessage('Searching for subtitles...');
+  const performAutoSubtitleSearch = useCallback(
+    async (language: string) => {
+      console.log('[player] starting auto-subtitle search for language:', language);
+      setAutoSubtitleStatus('searching');
+      setAutoSubtitleMessage('Searching for subtitles...');
 
-    try {
-      const results = await apiService.searchSubtitles({
-        imdbId: imdbId || undefined,
-        title: title || seriesTitle || undefined,
-        year: year || undefined,
-        season: seasonNumber,
-        episode: episodeNumber,
-        language,
-      });
+      try {
+        const results = await apiService.searchSubtitles({
+          imdbId: imdbId || undefined,
+          title: title || seriesTitle || undefined,
+          year: year || undefined,
+          season: seasonNumber,
+          episode: episodeNumber,
+          language,
+        });
 
-      console.log('[player] auto-subtitle search returned', results.length, 'results');
+        console.log('[player] auto-subtitle search returned', results.length, 'results');
 
-      if (results.length === 0) {
-        // If no results and preferred language is not English, try English embedded track
+        if (results.length === 0) {
+          // If no results and preferred language is not English, try English embedded track
+          if (!isEnglishLanguage(language)) {
+            console.log('[player] no results for preferred language, trying English embedded fallback');
+
+            if (subtitleStreamMetadata && subtitleStreamMetadata.length > 0) {
+              const englishEmbeddedIndex = findSubtitleTrackByPreference(subtitleStreamMetadata, 'eng', 'on');
+              if (englishEmbeddedIndex !== null) {
+                console.log('[player] found English embedded track:', englishEmbeddedIndex);
+                setSelectedSubtitleTrackId(String(englishEmbeddedIndex));
+                setAutoSubtitleStatus('ready');
+                setAutoSubtitleMessage('Using English subtitles');
+                setTimeout(() => setAutoSubtitleMessage(null), 2000);
+                return;
+              }
+            }
+          }
+
+          setAutoSubtitleStatus('no-results');
+          setAutoSubtitleMessage('No subtitles found');
+          setTimeout(() => setAutoSubtitleMessage(null), 3000);
+          return;
+        }
+
+        setAutoSubtitleStatus('downloading');
+        setAutoSubtitleMessage('Downloading subtitles...');
+
+        const bestMatch = selectBestSubtitle(results, releaseName);
+        console.log('[player] auto-subtitle selected best match:', bestMatch.release);
+
+        const url = apiService.getSubtitleDownloadUrl({
+          subtitleId: bestMatch.id,
+          provider: bestMatch.provider,
+          imdbId: imdbId || undefined,
+          title: title || seriesTitle || undefined,
+          year: year || undefined,
+          season: seasonNumber,
+          episode: episodeNumber,
+          language,
+        });
+
+        // Update ref synchronously before setting state to prevent race conditions
+        externalSubtitleUrlRef.current = url;
+        setExternalSubtitleUrl(url);
+        setSelectedSubtitleTrackId('external');
+        setAutoSubtitleStatus('ready');
+        setAutoSubtitleMessage('Subtitles ready');
+        console.log('[player] external subtitle URL set:', url);
+        setTimeout(() => setAutoSubtitleMessage(null), 2000);
+      } catch (error) {
+        console.error('[player] auto-subtitle search error:', error);
+
+        // If search failed and preferred language is not English, try English embedded track
         if (!isEnglishLanguage(language)) {
-          console.log('[player] no results for preferred language, trying English embedded fallback');
+          console.log('[player] search failed, trying English embedded fallback');
 
           if (subtitleStreamMetadata && subtitleStreamMetadata.length > 0) {
-            const englishEmbeddedIndex = findSubtitleTrackByPreference(
-              subtitleStreamMetadata,
-              'eng',
-              'on',
-            );
+            const englishEmbeddedIndex = findSubtitleTrackByPreference(subtitleStreamMetadata, 'eng', 'on');
             if (englishEmbeddedIndex !== null) {
               console.log('[player] found English embedded track:', englishEmbeddedIndex);
               setSelectedSubtitleTrackId(String(englishEmbeddedIndex));
@@ -597,67 +658,23 @@ export default function PlayerScreen() {
           }
         }
 
-        setAutoSubtitleStatus('no-results');
-        setAutoSubtitleMessage('No subtitles found');
+        setAutoSubtitleStatus('failed');
+        setAutoSubtitleMessage('Subtitle search failed');
         setTimeout(() => setAutoSubtitleMessage(null), 3000);
-        return;
       }
-
-      setAutoSubtitleStatus('downloading');
-      setAutoSubtitleMessage('Downloading subtitles...');
-
-      const bestMatch = selectBestSubtitle(results, releaseName);
-      console.log('[player] auto-subtitle selected best match:', bestMatch.release);
-
-      const url = apiService.getSubtitleDownloadUrl({
-        subtitleId: bestMatch.id,
-        provider: bestMatch.provider,
-        imdbId: imdbId || undefined,
-        title: title || seriesTitle || undefined,
-        year: year || undefined,
-        season: seasonNumber,
-        episode: episodeNumber,
-        language,
-      });
-
-      // Update ref synchronously before setting state to prevent race conditions
-      externalSubtitleUrlRef.current = url;
-      setExternalSubtitleUrl(url);
-      setSelectedSubtitleTrackId('external');
-      setAutoSubtitleStatus('ready');
-      setAutoSubtitleMessage('Subtitles ready');
-      console.log('[player] external subtitle URL set:', url);
-      setTimeout(() => setAutoSubtitleMessage(null), 2000);
-
-    } catch (error) {
-      console.error('[player] auto-subtitle search error:', error);
-
-      // If search failed and preferred language is not English, try English embedded track
-      if (!isEnglishLanguage(language)) {
-        console.log('[player] search failed, trying English embedded fallback');
-
-        if (subtitleStreamMetadata && subtitleStreamMetadata.length > 0) {
-          const englishEmbeddedIndex = findSubtitleTrackByPreference(
-            subtitleStreamMetadata,
-            'eng',
-            'on',
-          );
-          if (englishEmbeddedIndex !== null) {
-            console.log('[player] found English embedded track:', englishEmbeddedIndex);
-            setSelectedSubtitleTrackId(String(englishEmbeddedIndex));
-            setAutoSubtitleStatus('ready');
-            setAutoSubtitleMessage('Using English subtitles');
-            setTimeout(() => setAutoSubtitleMessage(null), 2000);
-            return;
-          }
-        }
-      }
-
-      setAutoSubtitleStatus('failed');
-      setAutoSubtitleMessage('Subtitle search failed');
-      setTimeout(() => setAutoSubtitleMessage(null), 3000);
-    }
-  }, [imdbId, title, seriesTitle, year, seasonNumber, episodeNumber, releaseName, isEnglishLanguage, subtitleStreamMetadata]);
+    },
+    [
+      imdbId,
+      title,
+      seriesTitle,
+      year,
+      seasonNumber,
+      episodeNumber,
+      releaseName,
+      isEnglishLanguage,
+      subtitleStreamMetadata,
+    ],
+  );
 
   // Check conditions and trigger auto-subtitle search if needed
   const triggerAutoSubtitleSearchIfNeeded = useCallback(() => {
@@ -666,10 +683,9 @@ export default function PlayerScreen() {
       return;
     }
 
-    const subtitleMode = userSettings?.playback?.preferredSubtitleMode
-      ?? settings?.playback?.preferredSubtitleMode;
-    const subtitleLang = userSettings?.playback?.preferredSubtitleLanguage
-      ?? settings?.playback?.preferredSubtitleLanguage;
+    const subtitleMode = userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode;
+    const subtitleLang =
+      userSettings?.playback?.preferredSubtitleLanguage ?? settings?.playback?.preferredSubtitleLanguage;
 
     // Don't auto-search if user has subtitles disabled
     if (subtitleMode === 'off') {
@@ -684,8 +700,7 @@ export default function PlayerScreen() {
     }
 
     // Check if OpenSubtitles credentials are configured
-    const hasCredentials = settings?.subtitles?.openSubtitlesUsername
-      && settings?.subtitles?.openSubtitlesPassword;
+    const hasCredentials = settings?.subtitles?.openSubtitlesUsername && settings?.subtitles?.openSubtitlesPassword;
     if (!hasCredentials) {
       console.log('[player] auto-subtitle search skipped: no OpenSubtitles credentials configured');
       return;
@@ -1195,10 +1210,7 @@ export default function PlayerScreen() {
   // Save per-content language preference when user manually changes audio or subtitle track
   // If the user selects their global default language, clear the content preference instead
   const saveContentLanguagePreference = useCallback(
-    async (options: {
-      audioTrackId?: string;
-      subtitleTrackId?: string;
-    }) => {
+    async (options: { audioTrackId?: string; subtitleTrackId?: string }) => {
       // Skip if we don't have required info
       if (!titleId || !activeUserId) {
         console.log('[player] skipping content preference save - missing titleId or userId');
@@ -1267,9 +1279,12 @@ export default function PlayerScreen() {
 
         // Only save values that DIFFER from global settings
         // If a value matches global, it should be undefined (no override needed)
-        const audioOverride = finalAudioLanguage && finalAudioLanguage !== globalAudioLanguage ? finalAudioLanguage : undefined;
-        const subtitleLangOverride = finalSubtitleLanguage && finalSubtitleLanguage !== globalSubtitleLanguage ? finalSubtitleLanguage : undefined;
-        const subtitleModeOverride = finalSubtitleMode && finalSubtitleMode !== globalSubtitleMode ? finalSubtitleMode : undefined;
+        const audioOverride =
+          finalAudioLanguage && finalAudioLanguage !== globalAudioLanguage ? finalAudioLanguage : undefined;
+        const subtitleLangOverride =
+          finalSubtitleLanguage && finalSubtitleLanguage !== globalSubtitleLanguage ? finalSubtitleLanguage : undefined;
+        const subtitleModeOverride =
+          finalSubtitleMode && finalSubtitleMode !== globalSubtitleMode ? finalSubtitleMode : undefined;
 
         // If no actual overrides remain, delete the preference entirely
         if (!audioOverride && !subtitleLangOverride && !subtitleModeOverride) {
@@ -1434,10 +1449,7 @@ export default function PlayerScreen() {
       }
 
       // Send keepalive ping using the hook's method (includes offset validation)
-      const keepaliveResponse = await hlsSessionActions.keepalive(
-        currentTimeRef.current,
-        currentTimeRef.current,
-      );
+      const keepaliveResponse = await hlsSessionActions.keepalive(currentTimeRef.current, currentTimeRef.current);
 
       // Log periodically to confirm sync is working (every 60s worth of keepalives)
       if (keepaliveResponse?.startOffset !== undefined) {
@@ -1516,7 +1528,12 @@ export default function PlayerScreen() {
         if (typeof initialActualStartOffset === 'number') {
           actualPlaybackOffsetRef.current = initialActualStartOffset;
         }
-        console.log('🎬 [player] using existing HLS session at offset:', initialStartOffset, 'actualStartOffset:', actualPlaybackOffsetRef.current);
+        console.log(
+          '🎬 [player] using existing HLS session at offset:',
+          initialStartOffset,
+          'actualStartOffset:',
+          actualPlaybackOffsetRef.current,
+        );
       } else {
         pendingSessionSeekRef.current = initialStartOffset;
         console.log('🎬 [player] Set pendingSessionSeekRef to:', initialStartOffset);
@@ -2512,15 +2529,26 @@ export default function PlayerScreen() {
             // Only accept if we've been at target long enough (500ms buffer for late events)
             const timeSinceReached = now - skipTarget.reachedAt;
             if (timeSinceReached > 500) {
-              console.log('[player] skip seek protection ended, accepting progress', { absoluteTime, target: skipTarget.target });
+              console.log('[player] skip seek protection ended, accepting progress', {
+                absoluteTime,
+                target: skipTarget.target,
+              });
               skipSeekTargetRef.current = null;
               currentTimeRef.current = absoluteTime;
               setCurrentTime(absoluteTime);
             } else {
-              console.log('[player] skip seek ignoring stale event after reaching target', { absoluteTime, target: skipTarget.target, timeSinceReached });
+              console.log('[player] skip seek ignoring stale event after reaching target', {
+                absoluteTime,
+                target: skipTarget.target,
+                timeSinceReached,
+              });
             }
           } else {
-            console.log('[player] skip seek ignoring stale event before reaching target', { absoluteTime, target: skipTarget.target, timeSinceSkip });
+            console.log('[player] skip seek ignoring stale event before reaching target', {
+              absoluteTime,
+              target: skipTarget.target,
+              timeSinceSkip,
+            });
           }
         } else {
           currentTimeRef.current = absoluteTime;
@@ -3484,11 +3512,15 @@ export default function PlayerScreen() {
     // This prevents async operations (HLS session recreation, progress events) from
     // resetting the position between rapid skip button presses
     const skipTarget = skipSeekTargetRef.current;
-    const baseTime = skipTarget && Date.now() - skipTarget.timestamp < 2000
-      ? skipTarget.target
-      : currentTimeRef.current;
+    const baseTime =
+      skipTarget && Date.now() - skipTarget.timestamp < 2000 ? skipTarget.target : currentTimeRef.current;
     const targetTime = Math.max(0, baseTime - seekBackwardSeconds);
-    console.log('[player] skip backward', { from: baseTime, to: targetTime, skipAmount: seekBackwardSeconds, usedPendingTarget: !!skipTarget });
+    console.log('[player] skip backward', {
+      from: baseTime,
+      to: targetTime,
+      skipAmount: seekBackwardSeconds,
+      usedPendingTarget: !!skipTarget,
+    });
     skipSeekTargetRef.current = { target: targetTime, timestamp: Date.now() };
     seek(targetTime);
   }, [seek, seekBackwardSeconds]);
@@ -3498,11 +3530,15 @@ export default function PlayerScreen() {
     // This prevents async operations (HLS session recreation, progress events) from
     // resetting the position between rapid skip button presses
     const skipTarget = skipSeekTargetRef.current;
-    const baseTime = skipTarget && Date.now() - skipTarget.timestamp < 2000
-      ? skipTarget.target
-      : currentTimeRef.current;
+    const baseTime =
+      skipTarget && Date.now() - skipTarget.timestamp < 2000 ? skipTarget.target : currentTimeRef.current;
     const targetTime = baseTime + seekForwardSeconds;
-    console.log('[player] skip forward', { from: baseTime, to: targetTime, skipAmount: seekForwardSeconds, usedPendingTarget: !!skipTarget });
+    console.log('[player] skip forward', {
+      from: baseTime,
+      to: targetTime,
+      skipAmount: seekForwardSeconds,
+      usedPendingTarget: !!skipTarget,
+    });
     skipSeekTargetRef.current = { target: targetTime, timestamp: Date.now() };
     seek(targetTime);
   }, [seek, seekForwardSeconds]);
@@ -3547,7 +3583,16 @@ export default function PlayerScreen() {
         }, DOUBLE_TAP_DELAY);
       }
     },
-    [isMobilePlatform, isLiveTV, usesSystemManagedControls, windowWidth, handleSkipBackward, handleSkipForward, handleVideoInteract, DOUBLE_TAP_DELAY],
+    [
+      isMobilePlatform,
+      isLiveTV,
+      usesSystemManagedControls,
+      windowWidth,
+      handleSkipBackward,
+      handleSkipForward,
+      handleVideoInteract,
+      DOUBLE_TAP_DELAY,
+    ],
   );
 
   useEffect(() => {
@@ -4007,7 +4052,11 @@ export default function PlayerScreen() {
       // Build track options from pre-extracted sessions
       const subtitleOptions: TrackOption[] = preExtractedSubtitles.map((session) => {
         let label = session.title || session.language || `Track ${session.trackIndex + 1}`;
-        if (session.language && session.title && !session.title.toLowerCase().includes(session.language.toLowerCase())) {
+        if (
+          session.language &&
+          session.title &&
+          !session.title.toLowerCase().includes(session.language.toLowerCase())
+        ) {
           label = `${session.language.toUpperCase()} - ${session.title}`;
         }
         if (session.isForced) {
@@ -4027,8 +4076,7 @@ export default function PlayerScreen() {
         settings?.playback?.preferredSubtitleLanguage ||
         ''
       ).toLowerCase();
-      const preferredMode =
-        userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
+      const preferredMode = userSettings?.playback?.preferredSubtitleMode || settings?.playback?.preferredSubtitleMode;
 
       // Convert to SubtitleStreamMetadata-like format for selection logic
       const streamsForSelection: SubtitleStreamMetadata[] = preExtractedSubtitles.map((s) => ({
@@ -4042,11 +4090,7 @@ export default function PlayerScreen() {
       const validMode =
         preferredMode === 'on' || preferredMode === 'off' || preferredMode === 'forced-only' ? preferredMode : 'on';
 
-      const selectedIndex = findSubtitleTrackByPreference(
-        streamsForSelection,
-        preferredLang || undefined,
-        validMode,
-      );
+      const selectedIndex = findSubtitleTrackByPreference(streamsForSelection, preferredLang || undefined, validMode);
 
       // Check if external subtitles are already active
       if (externalSubtitleUrlRef.current) {
@@ -4385,11 +4429,15 @@ export default function PlayerScreen() {
     if (isFirstSet) {
       // Check if prequeue already baked in the correct tracks
       // If preselected tracks match user preferences, skip recreation entirely
-      const audioMatchesPreselected = preselectedAudioTrack !== undefined && preselectedAudioTrack === selectedAudioTrackIndex;
-      const subtitleMatchesPreselected = preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack === selectedSubtitleTrackIndex;
+      const audioMatchesPreselected =
+        preselectedAudioTrack !== undefined && preselectedAudioTrack === selectedAudioTrackIndex;
+      const subtitleMatchesPreselected =
+        preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack === selectedSubtitleTrackIndex;
       // Consider subtitle "matching" if preselected is undefined and selected is null/undefined (both mean no subtitle)
-      const subtitleEffectivelyMatches = subtitleMatchesPreselected ||
-        (preselectedSubtitleTrack === undefined && (selectedSubtitleTrackIndex === null || selectedSubtitleTrackIndex === undefined));
+      const subtitleEffectivelyMatches =
+        subtitleMatchesPreselected ||
+        (preselectedSubtitleTrack === undefined &&
+          (selectedSubtitleTrackIndex === null || selectedSubtitleTrackIndex === undefined));
 
       if (audioMatchesPreselected || (preselectedAudioTrack !== undefined && subtitleEffectivelyMatches)) {
         console.log('[player] prequeue tracks match preferences - skipping HLS session recreation', {
@@ -4407,9 +4455,12 @@ export default function PlayerScreen() {
           console.log('[player] marked initial tracks as applied (preselected)');
           const pendingSeek = pendingSessionSeekRef.current;
           if (pendingSeek !== null && pendingSeek > 0) {
-            setTimeout(() => {
-              applyPendingSessionSeek('preselected-tracks-applied');
-            }, isHlsStream ? 1000 : 0);
+            setTimeout(
+              () => {
+                applyPendingSessionSeek('preselected-tracks-applied');
+              },
+              isHlsStream ? 1000 : 0,
+            );
           }
         }, 500);
         return;
@@ -4800,7 +4851,10 @@ export default function PlayerScreen() {
           if (lastHlsTrackSelectionRef.current.audio !== null) {
             const audioId = resolveSelectedTrackId(audioOptions, lastHlsTrackSelectionRef.current.audio);
             setSelectedAudioTrackId(audioId);
-            console.log('[player] set audio track UI state from lastHlsTrackSelection', { audio: lastHlsTrackSelectionRef.current.audio, audioId });
+            console.log('[player] set audio track UI state from lastHlsTrackSelection', {
+              audio: lastHlsTrackSelectionRef.current.audio,
+              audioId,
+            });
           } else if (preselectedAudioTrack !== undefined) {
             const audioId = resolveSelectedTrackId(audioOptions, preselectedAudioTrack);
             setSelectedAudioTrackId(audioId);
@@ -4810,11 +4864,17 @@ export default function PlayerScreen() {
           if (lastHlsTrackSelectionRef.current.subtitle !== null) {
             const subtitleId = resolveSelectedTrackId(subtitleOptions, lastHlsTrackSelectionRef.current.subtitle);
             setSelectedSubtitleTrackId(subtitleId);
-            console.log('[player] set subtitle track UI state from lastHlsTrackSelection', { subtitle: lastHlsTrackSelectionRef.current.subtitle, subtitleId });
+            console.log('[player] set subtitle track UI state from lastHlsTrackSelection', {
+              subtitle: lastHlsTrackSelectionRef.current.subtitle,
+              subtitleId,
+            });
           } else if (preselectedSubtitleTrack !== undefined) {
             const subtitleId = resolveSelectedTrackId(subtitleOptions, preselectedSubtitleTrack);
             setSelectedSubtitleTrackId(subtitleId);
-            console.log('[player] set subtitle track UI state from preselected', { preselectedSubtitleTrack, subtitleId });
+            console.log('[player] set subtitle track UI state from preselected', {
+              preselectedSubtitleTrack,
+              subtitleId,
+            });
           }
 
           // Skip the rest - track selections are already preserved from reset effect
@@ -4949,7 +5009,17 @@ export default function PlayerScreen() {
     return () => {
       isMounted = false;
     };
-  }, [resolvedMovie, updateDuration, sourcePath, settings, userSettings, isHlsStream, routeHasAnyHDR, triggerAutoSubtitleSearchIfNeeded, contentPreference]);
+  }, [
+    resolvedMovie,
+    updateDuration,
+    sourcePath,
+    settings,
+    userSettings,
+    isHlsStream,
+    routeHasAnyHDR,
+    triggerAutoSubtitleSearchIfNeeded,
+    contentPreference,
+  ]);
 
   // Fetch series details for episode navigation (only for series content)
   useEffect(() => {
@@ -5159,8 +5229,7 @@ export default function PlayerScreen() {
           Instead, safe area is applied to the controls overlay only. On iOS, apply top edge in portrait. */}
       <FixedSafeAreaView
         style={styles.safeArea}
-        edges={Platform.OS === 'android' && !Platform.isTV ? [] : isPortrait ? ['top'] : []}
-      >
+        edges={Platform.OS === 'android' && !Platform.isTV ? [] : isPortrait ? ['top'] : []}>
         <View style={styles.container} nativeID="player-fullscreen-root">
           <View ref={videoWrapperRef} style={styles.videoWrapper}>
             <VideoPlayer
@@ -5211,22 +5280,11 @@ export default function PlayerScreen() {
           {/* This prevents AVPlayer HLS timeout by proactively stopping the player */}
           {/* Tapping the overlay shows controls so user can press play to resume */}
           {pauseTeardownActive && (
-            <Pressable
-              style={styles.pauseTeardownOverlay}
-              onPress={handleVideoInteract}
-            >
+            <Pressable style={styles.pauseTeardownOverlay} onPress={handleVideoInteract}>
               {pauseTeardownFrame ? (
-                <Image
-                  source={{ uri: pauseTeardownFrame }}
-                  style={styles.pauseTeardownImage}
-                  resizeMode="cover"
-                />
+                <Image source={{ uri: pauseTeardownFrame }} style={styles.pauseTeardownImage} resizeMode="cover" />
               ) : headerImage ? (
-                <Image
-                  source={{ uri: headerImage }}
-                  style={styles.pauseTeardownImage}
-                  resizeMode="contain"
-                />
+                <Image source={{ uri: headerImage }} style={styles.pauseTeardownImage} resizeMode="contain" />
               ) : (
                 <View style={styles.pauseTeardownPlaceholder} />
               )}
@@ -5265,22 +5323,26 @@ export default function PlayerScreen() {
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
           {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
           {/* timeOffset: -firstCueTime to align VTT cues with player position, -subtitleOffset for user adjustment */}
-          {!isHlsStream && extractedSubtitleUrl && selectedSubtitleTrackId !== 'external' && hasStartedPlaying && !isPipActive && (
-            <SubtitleOverlay
-              vttUrl={extractedSubtitleUrl}
-              currentTime={currentTime}
-              currentTimeRef={currentTimeRef}
-              timeOffset={-sdrFirstCueTimeRef.current - subtitleOffset}
-              enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
-              videoWidth={videoSize?.width}
-              videoHeight={videoSize?.height}
-              sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
-              controlsVisible={controlsVisible}
-              onCuesRangeChange={handleSubtitleCuesRangeChange}
-              isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
-              letterboxBottom={letterboxBottom}
-            />
-          )}
+          {!isHlsStream &&
+            extractedSubtitleUrl &&
+            selectedSubtitleTrackId !== 'external' &&
+            hasStartedPlaying &&
+            !isPipActive && (
+              <SubtitleOverlay
+                vttUrl={extractedSubtitleUrl}
+                currentTime={currentTime}
+                currentTimeRef={currentTimeRef}
+                timeOffset={-sdrFirstCueTimeRef.current - subtitleOffset}
+                enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
+                videoWidth={videoSize?.width}
+                videoHeight={videoSize?.height}
+                sizeScale={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+                controlsVisible={controlsVisible}
+                onCuesRangeChange={handleSubtitleCuesRangeChange}
+                isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
+                letterboxBottom={letterboxBottom}
+              />
+            )}
 
           {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
           {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
@@ -5302,18 +5364,12 @@ export default function PlayerScreen() {
 
           {/* Auto-subtitle search status overlay */}
           {autoSubtitleMessage && !isPipActive && (
-            <SubtitleStatusOverlay
-              status={autoSubtitleStatus}
-              message={autoSubtitleMessage}
-            />
+            <SubtitleStatusOverlay status={autoSubtitleStatus} message={autoSubtitleMessage} />
           )}
 
           {/* Double-tap overlay for mobile skip forward/backward */}
           {isMobilePlatform && !isLiveTV && !usesSystemManagedControls && (
-            <Pressable
-              style={styles.doubleTapOverlay}
-              onPress={handleDoubleTapSeek}
-            />
+            <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
           )}
 
           {(() => {
@@ -5339,8 +5395,7 @@ export default function PlayerScreen() {
                     }
                   }}
                   isChildModalOpen={isModalOpen}
-                  isSeeking={isTVSeeking}
-                >
+                  isSeeking={isTVSeeking}>
                   <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
                     <>
                       {/* Top gradient overlay */}
@@ -5359,13 +5414,11 @@ export default function PlayerScreen() {
                     <Animated.View
                       style={tvOverlayAnimatedStyle}
                       pointerEvents="box-none"
-                      renderToHardwareTextureAndroid={true}
-                    >
+                      renderToHardwareTextureAndroid={true}>
                       <View
                         style={styles.overlayContent}
                         pointerEvents="box-none"
-                        renderToHardwareTextureAndroid={true}
-                      >
+                        renderToHardwareTextureAndroid={true}>
                         <View style={styles.overlayTopRow} pointerEvents="box-none">
                           <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
                           <MediaInfoDisplay
@@ -5386,65 +5439,65 @@ export default function PlayerScreen() {
                           />
                         </View>
                         <View style={styles.overlayControls} pointerEvents="box-none">
-                            <Controls
-                              key={`controls-tv-${isPipActive}`}
-                              paused={paused}
-                              onPlayPause={togglePausePlay}
-                              currentTime={currentTime}
-                              duration={duration}
-                              onSeek={seek}
-                              volume={volume}
-                              onVolumeChange={handleVolumeChange}
-                              isFullscreen={isFullscreen}
-                              onToggleFullscreen={toggleFullscreen}
-                              audioTracks={audioTrackOptions}
-                              selectedAudioTrackId={selectedAudioTrackId}
-                              onSelectAudioTrack={(id) => {
-                                console.log('[player] user selected audio track', { id, audioTrackOptions });
-                                setSelectedAudioTrackId(id);
-                                // Save per-content language preference
-                                saveContentLanguagePreference({ audioTrackId: id });
-                              }}
-                              subtitleTracks={subtitleTrackOptions}
-                              selectedSubtitleTrackId={selectedSubtitleTrackId}
-                              onSelectSubtitleTrack={(id) => {
-                                console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
-                                setSelectedSubtitleTrackId(id);
-                                // Clear external subtitle when switching to embedded track
-                                if (id !== 'external') {
-                                  externalSubtitleUrlRef.current = null;
-                                  setExternalSubtitleUrl(null);
-                                }
-                                // Save per-content language preference
-                                saveContentLanguagePreference({ subtitleTrackId: id });
-                              }}
-                              onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
-                              onModalStateChange={handleModalStateChange}
-                              onScrubStart={handleSeekBarScrubStart}
-                              onScrubEnd={handleSeekBarScrubEnd}
-                              isLiveTV={isLiveTV}
-                              hasStartedPlaying={hasStartedPlaying}
-                              onSkipBackward={handleSkipBackward}
-                              onSkipForward={handleSkipForward}
-                              onFocusChange={handleFocusChange}
-                              seekIndicatorAmount={seekIndicatorAmount}
-                              seekIndicatorStartTime={seekIndicatorStartTimeRef.current}
-                              isSeeking={isTVSeeking}
-                              streamInfo={fullStreamInfo}
-                              hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
-                              hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
-                              onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
-                              onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
-                              nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
-                              showSubtitleOffset={isUsingSidecarSubtitles}
-                              subtitleOffset={subtitleOffset}
-                              onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
-                              onSubtitleOffsetLater={handleSubtitleOffsetLater}
-                              seekBackwardSeconds={seekBackwardSeconds}
-                              seekForwardSeconds={seekForwardSeconds}
-                              shuffleMode={shuffleMode}
-                              onEnterPip={handleEnterPip}
-                            />
+                          <Controls
+                            key={`controls-tv-${isPipActive}`}
+                            paused={paused}
+                            onPlayPause={togglePausePlay}
+                            currentTime={currentTime}
+                            duration={duration}
+                            onSeek={seek}
+                            volume={volume}
+                            onVolumeChange={handleVolumeChange}
+                            isFullscreen={isFullscreen}
+                            onToggleFullscreen={toggleFullscreen}
+                            audioTracks={audioTrackOptions}
+                            selectedAudioTrackId={selectedAudioTrackId}
+                            onSelectAudioTrack={(id) => {
+                              console.log('[player] user selected audio track', { id, audioTrackOptions });
+                              setSelectedAudioTrackId(id);
+                              // Save per-content language preference
+                              saveContentLanguagePreference({ audioTrackId: id });
+                            }}
+                            subtitleTracks={subtitleTrackOptions}
+                            selectedSubtitleTrackId={selectedSubtitleTrackId}
+                            onSelectSubtitleTrack={(id) => {
+                              console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
+                              setSelectedSubtitleTrackId(id);
+                              // Clear external subtitle when switching to embedded track
+                              if (id !== 'external') {
+                                externalSubtitleUrlRef.current = null;
+                                setExternalSubtitleUrl(null);
+                              }
+                              // Save per-content language preference
+                              saveContentLanguagePreference({ subtitleTrackId: id });
+                            }}
+                            onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
+                            onModalStateChange={handleModalStateChange}
+                            onScrubStart={handleSeekBarScrubStart}
+                            onScrubEnd={handleSeekBarScrubEnd}
+                            isLiveTV={isLiveTV}
+                            hasStartedPlaying={hasStartedPlaying}
+                            onSkipBackward={handleSkipBackward}
+                            onSkipForward={handleSkipForward}
+                            onFocusChange={handleFocusChange}
+                            seekIndicatorAmount={seekIndicatorAmount}
+                            seekIndicatorStartTime={seekIndicatorStartTimeRef.current}
+                            isSeeking={isTVSeeking}
+                            streamInfo={fullStreamInfo}
+                            hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
+                            hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
+                            onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
+                            onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
+                            nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
+                            showSubtitleOffset={isUsingSidecarSubtitles}
+                            subtitleOffset={subtitleOffset}
+                            onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
+                            onSubtitleOffsetLater={handleSubtitleOffsetLater}
+                            seekBackwardSeconds={seekBackwardSeconds}
+                            seekForwardSeconds={seekForwardSeconds}
+                            shuffleMode={shuffleMode}
+                            onEnterPip={handleEnterPip}
+                          />
                         </View>
                       </View>
                     </Animated.View>
@@ -5487,10 +5540,11 @@ export default function PlayerScreen() {
                       // so the video doesn't shift when status bar toggles.
                       // Use Constants.statusBarHeight (stable) instead of safeAreaInsets.top (dynamic)
                       // to prevent the controls from "bumping down" when the status bar appears.
-                      Platform.OS === 'android' && !Platform.isTV && isPortrait && { paddingTop: Constants.statusBarHeight ?? 0 },
+                      Platform.OS === 'android' &&
+                        !Platform.isTV &&
+                        isPortrait && { paddingTop: Constants.statusBarHeight ?? 0 },
                     ]}
-                    pointerEvents="box-none"
-                  >
+                    pointerEvents="box-none">
                     <View style={styles.overlayTopRow} pointerEvents="box-none">
                       <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
                       <MediaInfoDisplay
@@ -5512,63 +5566,63 @@ export default function PlayerScreen() {
                       />
                     </View>
                     <View style={styles.overlayControls} pointerEvents="box-none">
-                        <Controls
-                          key={`controls-mobile-${isPipActive}`}
-                          paused={paused}
-                          onPlayPause={togglePausePlay}
-                          currentTime={currentTime}
-                          duration={duration}
-                          onSeek={seek}
-                          volume={volume}
-                          onVolumeChange={handleVolumeChange}
-                          isFullscreen={isFullscreen}
-                          onToggleFullscreen={toggleFullscreen}
-                          audioTracks={audioTrackOptions}
-                          selectedAudioTrackId={selectedAudioTrackId}
-                          onSelectAudioTrack={(id) => {
-                            console.log('[player] user selected audio track', { id, audioTrackOptions });
-                            setSelectedAudioTrackId(id);
-                            // Save per-content language preference
-                            saveContentLanguagePreference({ audioTrackId: id });
-                          }}
-                          subtitleTracks={subtitleTrackOptions}
-                          selectedSubtitleTrackId={selectedSubtitleTrackId}
-                          onSelectSubtitleTrack={(id) => {
-                            console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
-                            setSelectedSubtitleTrackId(id);
-                            // Clear external subtitle when switching to embedded track
-                            if (id !== 'external') {
-                              externalSubtitleUrlRef.current = null;
-                              setExternalSubtitleUrl(null);
-                            }
-                            // Save per-content language preference
-                            saveContentLanguagePreference({ subtitleTrackId: id });
-                          }}
-                          onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
-                          onModalStateChange={handleModalStateChange}
-                          onScrubStart={handleSeekBarScrubStart}
-                          onScrubEnd={handleSeekBarScrubEnd}
-                          isLiveTV={isLiveTV}
-                          hasStartedPlaying={hasStartedPlaying}
-                          onSkipBackward={handleSkipBackward}
-                          onSkipForward={handleSkipForward}
-                          onFocusChange={handleFocusChange}
-                          streamInfo={fullStreamInfo}
-                          hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
-                          hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
-                          onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
-                          onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
-                          nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
-                          showSubtitleOffset={isUsingSidecarSubtitles}
-                          subtitleOffset={subtitleOffset}
-                          onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
-                          onSubtitleOffsetLater={handleSubtitleOffsetLater}
-                          seekBackwardSeconds={seekBackwardSeconds}
-                          seekForwardSeconds={seekForwardSeconds}
-                          shuffleMode={shuffleMode}
-                          onEnterPip={handleEnterPip}
-                          flashSkipButton={flashSkipButton}
-                        />
+                      <Controls
+                        key={`controls-mobile-${isPipActive}`}
+                        paused={paused}
+                        onPlayPause={togglePausePlay}
+                        currentTime={currentTime}
+                        duration={duration}
+                        onSeek={seek}
+                        volume={volume}
+                        onVolumeChange={handleVolumeChange}
+                        isFullscreen={isFullscreen}
+                        onToggleFullscreen={toggleFullscreen}
+                        audioTracks={audioTrackOptions}
+                        selectedAudioTrackId={selectedAudioTrackId}
+                        onSelectAudioTrack={(id) => {
+                          console.log('[player] user selected audio track', { id, audioTrackOptions });
+                          setSelectedAudioTrackId(id);
+                          // Save per-content language preference
+                          saveContentLanguagePreference({ audioTrackId: id });
+                        }}
+                        subtitleTracks={subtitleTrackOptions}
+                        selectedSubtitleTrackId={selectedSubtitleTrackId}
+                        onSelectSubtitleTrack={(id) => {
+                          console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
+                          setSelectedSubtitleTrackId(id);
+                          // Clear external subtitle when switching to embedded track
+                          if (id !== 'external') {
+                            externalSubtitleUrlRef.current = null;
+                            setExternalSubtitleUrl(null);
+                          }
+                          // Save per-content language preference
+                          saveContentLanguagePreference({ subtitleTrackId: id });
+                        }}
+                        onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
+                        onModalStateChange={handleModalStateChange}
+                        onScrubStart={handleSeekBarScrubStart}
+                        onScrubEnd={handleSeekBarScrubEnd}
+                        isLiveTV={isLiveTV}
+                        hasStartedPlaying={hasStartedPlaying}
+                        onSkipBackward={handleSkipBackward}
+                        onSkipForward={handleSkipForward}
+                        onFocusChange={handleFocusChange}
+                        streamInfo={fullStreamInfo}
+                        hasPreviousEpisode={mediaType === 'episode' ? hasPreviousEpisode : undefined}
+                        hasNextEpisode={mediaType === 'episode' ? hasNextEpisode : undefined}
+                        onPreviousEpisode={mediaType === 'episode' ? handlePreviousEpisode : undefined}
+                        onNextEpisode={mediaType === 'episode' ? handleNextEpisode : undefined}
+                        nextEpisodePrequeueReady={mediaType === 'episode' ? nextEpisodePrequeueReady : undefined}
+                        showSubtitleOffset={isUsingSidecarSubtitles}
+                        subtitleOffset={subtitleOffset}
+                        onSubtitleOffsetEarlier={handleSubtitleOffsetEarlier}
+                        onSubtitleOffsetLater={handleSubtitleOffsetLater}
+                        seekBackwardSeconds={seekBackwardSeconds}
+                        seekForwardSeconds={seekForwardSeconds}
+                        shuffleMode={shuffleMode}
+                        onEnterPip={handleEnterPip}
+                        flashSkipButton={flashSkipButton}
+                      />
                     </View>
                   </View>
                 </ControlsContainerComponent>
@@ -5613,85 +5667,241 @@ export default function PlayerScreen() {
                 minWidth: Platform.isTV ? 560 : 280,
                 zIndex: 100,
               }}
-              pointerEvents="none"
-            >
-              <Text style={{ color: '#00ff00', fontFamily: 'monospace', fontSize: Platform.isTV ? 22 : 11, fontWeight: 'bold', marginBottom: Platform.isTV ? 16 : 8 }}>
+              pointerEvents="none">
+              <Text
+                style={{
+                  color: '#00ff00',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 22 : 11,
+                  fontWeight: 'bold',
+                  marginBottom: Platform.isTV ? 16 : 8,
+                }}>
                 SUBTITLE SYNC DEBUG
               </Text>
-              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#fff',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 8 : 4,
+                }}>
                 Current Time (abs): {currentTime.toFixed(3)}s
               </Text>
-              <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#fff',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 8 : 4,
+                }}>
                 Player Relative: {(currentTime - playbackOffsetRef.current).toFixed(3)}s
               </Text>
-              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
-                VTT Lookup Time: {(currentTime - playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
+              <Text
+                style={{
+                  color: '#0ff',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 8 : 4,
+                }}>
+                VTT Lookup Time:{' '}
+                {(currentTime - playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 12 : 6 }}>
+              <Text
+                style={{
+                  color: '#ff0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 12 : 6,
+                }}>
                 Manual Offset: {subtitleOffset.toFixed(3)}s {subtitleOffset !== 0 ? '(USER ADJUSTED)' : ''}
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 18 : 9,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 --- OFFSETS ---
               </Text>
-              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#f0f',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 playbackOffset: {playbackOffsetRef.current.toFixed(3)}s (requested)
               </Text>
-              <Text style={{ color: '#f0f', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#f0f',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 actualPlaybackOffset: {actualPlaybackOffsetRef.current.toFixed(3)}s (keyframe)
               </Text>
-              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#0ff',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 keyframeDelta: {keyframeDeltaRef.current.toFixed(3)}s
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 18 : 9,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                  marginTop: Platform.isTV ? 8 : 4,
+                }}>
                 --- FORMULA ---
               </Text>
-              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
-                timeOffset = -{playbackOffsetRef.current.toFixed(1)} + {keyframeDeltaRef.current.toFixed(1)} - {subtitleOffset.toFixed(1)}
+              <Text
+                style={{
+                  color: '#0f0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
+                timeOffset = -{playbackOffsetRef.current.toFixed(1)} + {keyframeDeltaRef.current.toFixed(1)} -{' '}
+                {subtitleOffset.toFixed(1)}
               </Text>
-              <Text style={{ color: '#0f0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#0f0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 8 : 4,
+                }}>
                 = {(-playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 18 : 9,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 --- STATE ---
               </Text>
-              <Text style={{ color: hasWarmSeekedRef.current ? '#9f9' : '#f90', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: hasWarmSeekedRef.current ? '#9f9' : '#f90',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 hasWarmSeeked: {hasWarmSeekedRef.current ? 'TRUE' : 'FALSE'}
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 sessionBufferEnd: {sessionBufferEndRef.current.toFixed(3)}s
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 initialStartOffset: {initialStartOffset.toFixed(3)}s
               </Text>
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 18 : 9,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                  marginTop: Platform.isTV ? 8 : 4,
+                }}>
                 --- VTT CUES ---
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#ff0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 Total Cues: {subtitleDebugInfo?.totalCues ?? 'N/A'}
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#ff0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 First Cue Start: {subtitleDebugInfo?.firstCueStart?.toFixed(3) ?? 'N/A'}s
               </Text>
-              <Text style={{ color: '#0ff', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#0ff',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 VTT Adjusted Time: {subtitleDebugInfo?.adjustedTime?.toFixed(3) ?? 'N/A'}s
               </Text>
-              <Text style={{ color: subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null ? '#0f0' : '#f00', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
-                Active Cue: {subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null
+              <Text
+                style={{
+                  color: subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null ? '#0f0' : '#f00',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
+                Active Cue:{' '}
+                {subtitleDebugInfo && subtitleDebugInfo.activeCueStart !== null
                   ? `${subtitleDebugInfo.activeCueStart.toFixed(3)}-${subtitleDebugInfo.activeCueEnd?.toFixed(3)}s`
                   : 'NONE'}
               </Text>
               {subtitleDebugInfo?.activeCueText && (
-                <Text style={{ color: '#9f9', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2 }}>
+                <Text
+                  style={{
+                    color: '#9f9',
+                    fontFamily: 'monospace',
+                    fontSize: Platform.isTV ? 18 : 9,
+                    marginBottom: Platform.isTV ? 4 : 2,
+                  }}>
                   "{subtitleDebugInfo.activeCueText}"
                 </Text>
               )}
-              <Text style={{ color: '#aaa', fontFamily: 'monospace', fontSize: Platform.isTV ? 18 : 9, marginBottom: Platform.isTV ? 4 : 2, marginTop: Platform.isTV ? 8 : 4 }}>
+              <Text
+                style={{
+                  color: '#aaa',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 18 : 9,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                  marginTop: Platform.isTV ? 8 : 4,
+                }}>
                 --- SYNC CHECK ---
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#ff0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 If subs late: decrease manual offset
               </Text>
-              <Text style={{ color: '#ff0', fontFamily: 'monospace', fontSize: Platform.isTV ? 20 : 10, marginBottom: Platform.isTV ? 4 : 2 }}>
+              <Text
+                style={{
+                  color: '#ff0',
+                  fontFamily: 'monospace',
+                  fontSize: Platform.isTV ? 20 : 10,
+                  marginBottom: Platform.isTV ? 4 : 2,
+                }}>
                 If subs early: increase manual offset
               </Text>
             </View>
@@ -5705,8 +5915,7 @@ export default function PlayerScreen() {
                   contentContainerStyle={styles.debugScrollContent}
                   showsVerticalScrollIndicator
                   contentInsetAdjustmentBehavior="never"
-                  automaticallyAdjustContentInsets={false}
-                >
+                  automaticallyAdjustContentInsets={false}>
                   {debugEntries.length === 0 ? (
                     <Text style={[styles.debugLine, styles.debugInfo]}>Console output will appear here.</Text>
                   ) : (

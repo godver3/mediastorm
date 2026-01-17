@@ -42,7 +42,7 @@ export async function updateNowPlaying(info: NowPlayingInfo): Promise<void> {
 export async function updatePlaybackPosition(
   currentTime: number,
   duration: number,
-  playbackRate: number
+  playbackRate: number,
 ): Promise<void> {
   if (NowPlayingManagerNative) {
     await NowPlayingManagerNative.updatePlaybackPosition(currentTime, duration, playbackRate);

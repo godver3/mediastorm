@@ -134,7 +134,13 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
         ]}>
         <View style={styles.channelAvatar}>
           {channel.logo ? (
-            <Image source={{ uri: channel.logo }} style={styles.channelLogo} contentFit="contain" transition={0} cachePolicy="disk" />
+            <Image
+              source={{ uri: channel.logo }}
+              style={styles.channelLogo}
+              contentFit="contain"
+              transition={0}
+              cachePolicy="disk"
+            />
           ) : (
             <View style={styles.channelPlaceholder}>
               <Text style={styles.channelPlaceholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
@@ -178,8 +184,7 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
           delayLongPress={500}
           onFocus={handleCardFocus}
           hasTVPreferredFocus={isFirstInList}
-          tvParallaxProperties={{ enabled: false }}
-        >
+          tvParallaxProperties={{ enabled: false }}>
           {({ focused }: { focused: boolean }) => renderCardContent(focused)}
         </Pressable>
       );
@@ -274,86 +279,85 @@ interface TVGridHandlers {
 
 const TVGridHandlersContext = React.createContext<TVGridHandlers | null>(null);
 
-const TVChannelGridCard = React.memo(function TVChannelGridCard({
-  channel,
-  isFavorite,
-  isFirstItem,
-  rowIndex,
-  cardWidth,
-}: {
-  channel: LiveChannel;
-  isFavorite: boolean;
-  isFirstItem: boolean;
-  rowIndex: number;
-  cardWidth: number;
-}) {
-  const handlers = React.useContext(TVGridHandlersContext);
+const TVChannelGridCard = React.memo(
+  function TVChannelGridCard({
+    channel,
+    isFavorite,
+    isFirstItem,
+    rowIndex,
+    cardWidth,
+  }: {
+    channel: LiveChannel;
+    isFavorite: boolean;
+    isFirstItem: boolean;
+    rowIndex: number;
+    cardWidth: number;
+  }) {
+    const handlers = React.useContext(TVGridHandlersContext);
 
-  const handlePress = useCallback(() => {
-    handlers?.onSelect(channel.id);
-  }, [handlers, channel.id]);
+    const handlePress = useCallback(() => {
+      handlers?.onSelect(channel.id);
+    }, [handlers, channel.id]);
 
-  const handleLongPress = useCallback(() => {
-    handlers?.onLongPress(channel.id);
-  }, [handlers, channel.id]);
+    const handleLongPress = useCallback(() => {
+      handlers?.onLongPress(channel.id);
+    }, [handlers, channel.id]);
 
-  const handleFocus = useCallback(() => {
-    handlers?.onFocus(channel.id, rowIndex);
-  }, [handlers, channel.id, rowIndex]);
+    const handleFocus = useCallback(() => {
+      handlers?.onFocus(channel.id, rowIndex);
+    }, [handlers, channel.id, rowIndex]);
 
-  return (
-    <Pressable
-      onPress={handlePress}
-      onLongPress={handleLongPress}
-      delayLongPress={500}
-      onFocus={handleFocus}
-      hasTVPreferredFocus={isFirstItem}
-      tvParallaxProperties={{ enabled: false }}
-      style={({ focused }) => [
-        focused ? tvGridCardStyles.cardFocused : tvGridCardStyles.card,
-        { width: cardWidth },
-      ]}
-    >
-      <View style={tvGridCardStyles.imageContainer}>
-        {channel.logo ? (
-          <Image
-            source={{ uri: channel.logo }}
-            style={tvGridCardStyles.image}
-            contentFit="contain"
-            transition={0}
-            cachePolicy="disk"
-            recyclingKey={`ch-${channel.id}`}
+    return (
+      <Pressable
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={500}
+        onFocus={handleFocus}
+        hasTVPreferredFocus={isFirstItem}
+        tvParallaxProperties={{ enabled: false }}
+        style={({ focused }) => [focused ? tvGridCardStyles.cardFocused : tvGridCardStyles.card, { width: cardWidth }]}>
+        <View style={tvGridCardStyles.imageContainer}>
+          {channel.logo ? (
+            <Image
+              source={{ uri: channel.logo }}
+              style={tvGridCardStyles.image}
+              contentFit="contain"
+              transition={0}
+              cachePolicy="disk"
+              recyclingKey={`ch-${channel.id}`}
+            />
+          ) : (
+            <View style={tvGridCardStyles.placeholder}>
+              <Text style={tvGridCardStyles.placeholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
+            </View>
+          )}
+          {isFavorite && (
+            <View style={tvGridCardStyles.badge}>
+              <Text style={tvGridCardStyles.badgeText}>★</Text>
+            </View>
+          )}
+          <LinearGradient
+            pointerEvents="none"
+            colors={['transparent', 'rgba(0,0,0,0.85)']}
+            style={tvGridCardStyles.gradient}
           />
-        ) : (
-          <View style={tvGridCardStyles.placeholder}>
-            <Text style={tvGridCardStyles.placeholderText}>{channel.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
+          <View style={tvGridCardStyles.textContainer}>
+            <Text style={tvGridCardStyles.text} numberOfLines={2}>
+              {channel.name}
+            </Text>
           </View>
-        )}
-        {isFavorite && (
-          <View style={tvGridCardStyles.badge}>
-            <Text style={tvGridCardStyles.badgeText}>★</Text>
-          </View>
-        )}
-        <LinearGradient
-          pointerEvents="none"
-          colors={['transparent', 'rgba(0,0,0,0.85)']}
-          style={tvGridCardStyles.gradient}
-        />
-        <View style={tvGridCardStyles.textContainer}>
-          <Text style={tvGridCardStyles.text} numberOfLines={2}>{channel.name}</Text>
         </View>
-      </View>
-    </Pressable>
-  );
-},
-(prevProps, nextProps) =>
-  prevProps.channel.id === nextProps.channel.id &&
-  prevProps.channel.logo === nextProps.channel.logo &&
-  prevProps.channel.name === nextProps.channel.name &&
-  prevProps.isFavorite === nextProps.isFavorite &&
-  prevProps.isFirstItem === nextProps.isFirstItem &&
-  prevProps.rowIndex === nextProps.rowIndex &&
-  prevProps.cardWidth === nextProps.cardWidth
+      </Pressable>
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.channel.id === nextProps.channel.id &&
+    prevProps.channel.logo === nextProps.channel.logo &&
+    prevProps.channel.name === nextProps.channel.name &&
+    prevProps.isFavorite === nextProps.isFavorite &&
+    prevProps.isFirstItem === nextProps.isFirstItem &&
+    prevProps.rowIndex === nextProps.rowIndex &&
+    prevProps.cardWidth === nextProps.cardWidth,
 );
 
 function LiveScreen() {
@@ -397,7 +401,14 @@ function LiveScreen() {
   const LOAD_MORE_INCREMENT = 30;
   const [visibleChannelCount, setVisibleChannelCount] = useState(INITIAL_VISIBLE_COUNT);
 
-  const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive && !pendingPinUserId && !isSelectionConfirmVisible;
+  const isActive =
+    isFocused &&
+    !isMenuOpen &&
+    !isCategoryModalVisible &&
+    !isActionModalVisible &&
+    !isFilterActive &&
+    !pendingPinUserId &&
+    !isSelectionConfirmVisible;
 
   // Guard against duplicate "select" events on tvOS
   const selectGuardRef = useRef(false);
@@ -568,7 +579,13 @@ function LiveScreen() {
 
   // Handle scroll for mobile infinite scroll
   const handleInfiniteScroll = useCallback(
-    (event: { nativeEvent: { contentOffset: { y: number }; contentSize: { height: number }; layoutMeasurement: { height: number } } }) => {
+    (event: {
+      nativeEvent: {
+        contentOffset: { y: number };
+        contentSize: { height: number };
+        layoutMeasurement: { height: number };
+      };
+    }) => {
       scrollMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
 
       if (Platform.isTV || !hasMoreChannels) {
@@ -703,7 +720,17 @@ function LiveScreen() {
         showToast('Select up to 5 channels for multiscreen', { tone: 'info' });
       }
     });
-  }, [withSelectGuard, isSelectionMode, selectedChannels.length, launchMultiscreen, showToast, router, enterSelectionMode, exitSelectionMode, startHlsSessionsForChannels]);
+  }, [
+    withSelectGuard,
+    isSelectionMode,
+    selectedChannels.length,
+    launchMultiscreen,
+    showToast,
+    router,
+    enterSelectionMode,
+    exitSelectionMode,
+    startHlsSessionsForChannels,
+  ]);
 
   // Handle resume button press
   const handleResumePress = useCallback(() => {
@@ -1081,28 +1108,31 @@ function LiveScreen() {
   // TV: Channel lookup map for O(1) access
   const channelMap = useMemo(() => {
     const map = new Map<string, LiveChannel>();
-    combinedChannels.forEach(ch => map.set(ch.id, ch));
+    combinedChannels.forEach((ch) => map.set(ch.id, ch));
     return map;
   }, [combinedChannels]);
 
   // TV: Stable handlers via ref (context value stays same reference)
   const scrollToRowRef = useRef<(rowIndex: number) => void>(() => {});
 
-  const tvGridHandlers = useMemo<TVGridHandlers>(() => ({
-    onSelect: (channelId: string) => {
-      const channel = channelMap.get(channelId);
-      if (channel) handleChannelSelect(channel);
-    },
-    onLongPress: (channelId: string) => {
-      const channel = channelMap.get(channelId);
-      if (channel) handleChannelLongPress(channel);
-    },
-    onFocus: (channelId: string, rowIndex: number) => {
-      const channel = channelMap.get(channelId);
-      if (channel) setFocusedChannel(channel);
-      scrollToRowRef.current(rowIndex);
-    },
-  }), [channelMap, handleChannelSelect, handleChannelLongPress, setFocusedChannel]);
+  const tvGridHandlers = useMemo<TVGridHandlers>(
+    () => ({
+      onSelect: (channelId: string) => {
+        const channel = channelMap.get(channelId);
+        if (channel) handleChannelSelect(channel);
+      },
+      onLongPress: (channelId: string) => {
+        const channel = channelMap.get(channelId);
+        if (channel) handleChannelLongPress(channel);
+      },
+      onFocus: (channelId: string, rowIndex: number) => {
+        const channel = channelMap.get(channelId);
+        if (channel) setFocusedChannel(channel);
+        scrollToRowRef.current(rowIndex);
+      },
+    }),
+    [channelMap, handleChannelSelect, handleChannelLongPress, setFocusedChannel],
+  );
 
   // TV: Calculate card width for grid (matches createStyles calculation)
   const tvCardWidth = useMemo(() => {
@@ -1138,42 +1168,51 @@ function LiveScreen() {
   const tvRowRefs = useRef<{ [key: string]: View | null }>({});
 
   // Scroll to row when item receives focus
-  const scrollToRow = useCallback((rowIndex: number) => {
-    if (!Platform.isTV || !tvGridScrollRef.current) return;
+  const scrollToRow = useCallback(
+    (rowIndex: number) => {
+      if (!Platform.isTV || !tvGridScrollRef.current) return;
 
-    const rowRef = tvRowRefs.current[`row-${rowIndex}`];
-    if (!rowRef) return;
+      const rowRef = tvRowRefs.current[`row-${rowIndex}`];
+      if (!rowRef) return;
 
-    rowRef.measureLayout(
-      tvGridScrollRef.current as any,
-      (_left, top) => {
-        const topOffset = 20;
-        const targetY = Math.max(0, top - topOffset);
-        tvGridScrollRef.current?.scrollTo({ y: targetY, animated: true });
-      },
-      () => {
-        // Silently ignore measurement failures
-      },
-    );
+      rowRef.measureLayout(
+        tvGridScrollRef.current as any,
+        (_left, top) => {
+          const topOffset = 20;
+          const targetY = Math.max(0, top - topOffset);
+          tvGridScrollRef.current?.scrollTo({ y: targetY, animated: true });
+        },
+        () => {
+          // Silently ignore measurement failures
+        },
+      );
 
-    // Load more rows if focusing near the end
-    if (rowIndex >= renderedRowCount - 3 && renderedRowCount < allRows.length) {
-      setRenderedRowCount(prev => Math.min(prev + LOAD_MORE_ROWS, allRows.length));
-    }
-  }, [renderedRowCount, allRows.length]);
+      // Load more rows if focusing near the end
+      if (rowIndex >= renderedRowCount - 3 && renderedRowCount < allRows.length) {
+        setRenderedRowCount((prev) => Math.min(prev + LOAD_MORE_ROWS, allRows.length));
+      }
+    },
+    [renderedRowCount, allRows.length],
+  );
 
   // Keep scrollToRowRef in sync
   scrollToRowRef.current = scrollToRow;
 
   // Load more rows when scrolling near bottom (fallback for non-focus scrolling)
   const handleGridScroll = useCallback(
-    (event: { nativeEvent: { layoutMeasurement: { height: number }; contentOffset: { y: number }; contentSize: { height: number } } }) => {
+    (event: {
+      nativeEvent: {
+        layoutMeasurement: { height: number };
+        contentOffset: { y: number };
+        contentSize: { height: number };
+      };
+    }) => {
       const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
       const paddingToBottom = 200;
       const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
 
       if (isNearBottom && renderedRowCount < allRows.length) {
-        setRenderedRowCount(prev => Math.min(prev + LOAD_MORE_ROWS, allRows.length));
+        setRenderedRowCount((prev) => Math.min(prev + LOAD_MORE_ROWS, allRows.length));
       }
     },
     [renderedRowCount, allRows.length],
@@ -1314,13 +1353,12 @@ function LiveScreen() {
                 />
               )}
               <FocusablePressable
-                text={Platform.isTV ? (isSelectionMode ? `Start (${selectedChannels.length})` : 'Multiscreen') : undefined}
+                text={
+                  Platform.isTV ? (isSelectionMode ? `Start (${selectedChannels.length})` : 'Multiscreen') : undefined
+                }
                 icon={isSelectionMode ? 'checkmark-circle-outline' : 'grid-outline'}
                 onSelect={handleMultiscreenPress}
-                style={[
-                  styles.headerActionButton,
-                  isSelectionMode && styles.headerActionButtonActive,
-                ]}
+                style={[styles.headerActionButton, isSelectionMode && styles.headerActionButtonActive]}
               />
               {/* Show selection count badge on mobile when in selection mode */}
               {!Platform.isTV && isSelectionMode && selectedChannels.length > 0 && (
@@ -1348,34 +1386,139 @@ function LiveScreen() {
             </View>
           )}
 
-            {/* Content area */}
-            {!hasPlaylistUrl ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
-                <Text style={styles.emptyMessage}>
-                  Provide an M3U playlist URL in Settings to load channels for Live TV playback.
-                </Text>
-                <FocusablePressable
-                  text="Refresh"
-                  onSelect={handleRefreshSettings}
-                  loading={isRefreshing}
-                  wrapperStyle={{ alignSelf: 'center' }}
-                />
-              </View>
-            ) : (
-              <>
-                {loading ? <LoadingIndicator /> : null}
-                {error ? (
-                  <View style={styles.errorContainer}>
-                    <Text style={styles.errorText}>{error}</Text>
-                    <FocusablePressable text="Try again" onSelect={() => refresh()} />
-                  </View>
-                ) : null}
-                {!loading && !error ? (
-                  <View style={styles.scrollWrapper}>
-                    {Platform.isTV ? (
-                      // tvOS: Virtualized grid for performance
-                      favoriteChannels.length === 0 && regularChannels.length === 0 ? (
+          {/* Content area */}
+          {!hasPlaylistUrl ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
+              <Text style={styles.emptyMessage}>
+                Provide an M3U playlist URL in Settings to load channels for Live TV playback.
+              </Text>
+              <FocusablePressable
+                text="Refresh"
+                onSelect={handleRefreshSettings}
+                loading={isRefreshing}
+                wrapperStyle={{ alignSelf: 'center' }}
+              />
+            </View>
+          ) : (
+            <>
+              {loading ? <LoadingIndicator /> : null}
+              {error ? (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>{error}</Text>
+                  <FocusablePressable text="Try again" onSelect={() => refresh()} />
+                </View>
+              ) : null}
+              {!loading && !error ? (
+                <View style={styles.scrollWrapper}>
+                  {Platform.isTV ? (
+                    // tvOS: Virtualized grid for performance
+                    favoriteChannels.length === 0 && regularChannels.length === 0 ? (
+                      <View style={styles.emptyPlaylist}>
+                        <Text style={styles.emptyMessage}>
+                          {filterText
+                            ? `No channels match "${filterText}"`
+                            : 'No channels found in the configured playlist.'}
+                        </Text>
+                      </View>
+                    ) : (
+                      // Single combined grid - favorites first, then regular channels
+                      // Row-based layout with memoized cards and programmatic scroll
+                      <TVGridHandlersContext.Provider value={tvGridHandlers}>
+                        <ScrollView
+                          ref={tvGridScrollRef}
+                          style={styles.virtualizedGrid}
+                          showsVerticalScrollIndicator={false}
+                          scrollEnabled={!Platform.isTV}
+                          onScroll={handleGridScroll}
+                          scrollEventThrottle={100}>
+                          {visibleRows.map((rowChannels, rowIndex) => (
+                            <View
+                              key={`row-${rowIndex}`}
+                              ref={(ref) => {
+                                tvRowRefs.current[`row-${rowIndex}`] = ref;
+                              }}
+                              style={styles.gridRowContainer}>
+                              {rowChannels.map((channel, colIndex) => {
+                                const globalIndex = rowIndex * TV_COLUMNS + colIndex;
+                                return (
+                                  <TVChannelGridCard
+                                    key={channel.id}
+                                    channel={channel}
+                                    isFavorite={isFavorite(channel.id)}
+                                    isFirstItem={globalIndex === 0}
+                                    rowIndex={rowIndex}
+                                    cardWidth={tvCardWidth}
+                                  />
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </ScrollView>
+                      </TVGridHandlersContext.Provider>
+                    )
+                  ) : (
+                    // Mobile/web: existing vertical list
+                    <ScrollView
+                      ref={scrollViewRef}
+                      style={styles.scrollView}
+                      contentContainerStyle={styles.channelList}
+                      showsVerticalScrollIndicator={false}
+                      bounces={false}
+                      removeClippedSubviews={Platform.isTV}
+                      onScroll={handleInfiniteScroll}
+                      scrollEventThrottle={16}
+                      onLayout={(event: { nativeEvent: { layout: { height: number } } }) => {
+                        scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
+                      }}>
+                      {favoriteChannels.length > 0 && (
+                        <>
+                          <Text style={styles.sectionTitle}>Favorites</Text>
+                          {favoriteChannels.map((channel, index) => (
+                            <ChannelCard
+                              key={channel.id}
+                              channel={channel}
+                              isFavorite={isFavorite(channel.id)}
+                              isFirstInList={index === 0 && regularChannels.length === 0}
+                              onSelect={handleChannelSelect}
+                              onToggleFavorite={handleToggleFavorite}
+                              onLongPress={handleChannelLongPress}
+                              onFocus={handleChannelFocus}
+                              registerCardRef={registerChannelRef}
+                            />
+                          ))}
+                        </>
+                      )}
+
+                      {displayedRegularChannels.length > 0 && (
+                        <>
+                          <Text style={styles.sectionTitle}>
+                            All Channels
+                            {hasMoreChannels ? ` (${displayedRegularChannels.length}/${regularChannels.length})` : ''}
+                          </Text>
+                          {displayedRegularChannels.map((channel, index) => (
+                            <ChannelCard
+                              key={channel.id}
+                              channel={channel}
+                              isFavorite={isFavorite(channel.id)}
+                              isFirstInList={index === 0 && favoriteChannels.length === 0}
+                              onSelect={handleChannelSelect}
+                              onToggleFavorite={handleToggleFavorite}
+                              onLongPress={handleChannelLongPress}
+                              onFocus={handleChannelFocus}
+                              registerCardRef={registerChannelRef}
+                            />
+                          ))}
+                          {hasMoreChannels && (
+                            <View style={styles.loadingMoreContainer}>
+                              <LoadingIndicator />
+                              <Text style={styles.loadingMoreText}>Loading more channels...</Text>
+                            </View>
+                          )}
+                        </>
+                      )}
+
+                      {favoriteChannels.length === 0 && displayedRegularChannels.length === 0 ? (
                         <View style={styles.emptyPlaylist}>
                           <Text style={styles.emptyMessage}>
                             {filterText
@@ -1383,123 +1526,15 @@ function LiveScreen() {
                               : 'No channels found in the configured playlist.'}
                           </Text>
                         </View>
-                      ) : (
-                        // Single combined grid - favorites first, then regular channels
-                        // Row-based layout with memoized cards and programmatic scroll
-                        <TVGridHandlersContext.Provider value={tvGridHandlers}>
-                          <ScrollView
-                            ref={tvGridScrollRef}
-                            style={styles.virtualizedGrid}
-                            showsVerticalScrollIndicator={false}
-                            scrollEnabled={!Platform.isTV}
-                            onScroll={handleGridScroll}
-                            scrollEventThrottle={100}
-                          >
-                            {visibleRows.map((rowChannels, rowIndex) => (
-                              <View
-                                key={`row-${rowIndex}`}
-                                ref={(ref) => {
-                                  tvRowRefs.current[`row-${rowIndex}`] = ref;
-                                }}
-                                style={styles.gridRowContainer}
-                              >
-                                {rowChannels.map((channel, colIndex) => {
-                                  const globalIndex = rowIndex * TV_COLUMNS + colIndex;
-                                  return (
-                                    <TVChannelGridCard
-                                      key={channel.id}
-                                      channel={channel}
-                                      isFavorite={isFavorite(channel.id)}
-                                      isFirstItem={globalIndex === 0}
-                                      rowIndex={rowIndex}
-                                      cardWidth={tvCardWidth}
-                                    />
-                                  );
-                                })}
-                              </View>
-                            ))}
-                          </ScrollView>
-                        </TVGridHandlersContext.Provider>
-                      )
-                    ) : (
-                      // Mobile/web: existing vertical list
-                      <ScrollView
-                        ref={scrollViewRef}
-                        style={styles.scrollView}
-                        contentContainerStyle={styles.channelList}
-                        showsVerticalScrollIndicator={false}
-                        bounces={false}
-                        removeClippedSubviews={Platform.isTV}
-                        onScroll={handleInfiniteScroll}
-                        scrollEventThrottle={16}
-                        onLayout={(event: { nativeEvent: { layout: { height: number } } }) => {
-                          scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
-                        }}>
-                          {favoriteChannels.length > 0 && (
-                            <>
-                              <Text style={styles.sectionTitle}>Favorites</Text>
-                              {favoriteChannels.map((channel, index) => (
-                                <ChannelCard
-                                  key={channel.id}
-                                  channel={channel}
-                                  isFavorite={isFavorite(channel.id)}
-                                  isFirstInList={index === 0 && regularChannels.length === 0}
-                                  onSelect={handleChannelSelect}
-                                  onToggleFavorite={handleToggleFavorite}
-                                  onLongPress={handleChannelLongPress}
-                                  onFocus={handleChannelFocus}
-                                  registerCardRef={registerChannelRef}
-                                />
-                              ))}
-                            </>
-                          )}
-
-                          {displayedRegularChannels.length > 0 && (
-                            <>
-                              <Text style={styles.sectionTitle}>
-                                All Channels{hasMoreChannels ? ` (${displayedRegularChannels.length}/${regularChannels.length})` : ''}
-                              </Text>
-                              {displayedRegularChannels.map((channel, index) => (
-                                <ChannelCard
-                                  key={channel.id}
-                                  channel={channel}
-                                  isFavorite={isFavorite(channel.id)}
-                                  isFirstInList={index === 0 && favoriteChannels.length === 0}
-                                  onSelect={handleChannelSelect}
-                                  onToggleFavorite={handleToggleFavorite}
-                                  onLongPress={handleChannelLongPress}
-                                  onFocus={handleChannelFocus}
-                                  registerCardRef={registerChannelRef}
-                                />
-                              ))}
-                              {hasMoreChannels && (
-                                <View style={styles.loadingMoreContainer}>
-                                  <LoadingIndicator />
-                                  <Text style={styles.loadingMoreText}>
-                                    Loading more channels...
-                                  </Text>
-                                </View>
-                              )}
-                            </>
-                          )}
-
-                          {favoriteChannels.length === 0 && displayedRegularChannels.length === 0 ? (
-                            <View style={styles.emptyPlaylist}>
-                              <Text style={styles.emptyMessage}>
-                                {filterText
-                                  ? `No channels match "${filterText}"`
-                                  : 'No channels found in the configured playlist.'}
-                              </Text>
-                            </View>
-                          ) : null}
-                      </ScrollView>
-                    )}
-                  </View>
-                ) : null}
-              </>
-            )}
-          </View>
-        </FixedSafeAreaView>
+                      ) : null}
+                    </ScrollView>
+                  )}
+                </View>
+              ) : null}
+            </>
+          )}
+        </View>
+      </FixedSafeAreaView>
       {/* Action Modal */}
       {isActionModalVisible && (
         <View style={styles.actionsOverlay}>
@@ -1581,8 +1616,7 @@ function LiveScreen() {
                   filterInputRef.current?.blur();
                 }}
                 hasTVPreferredFocus={true}
-                tvParallaxProperties={{ enabled: false }}
-              >
+                tvParallaxProperties={{ enabled: false }}>
                 {({ focused: inputFocused }: { focused: boolean }) => (
                   <TextInput
                     ref={filterInputRef}
@@ -1694,8 +1728,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
   const scaleFactor = isTV ? 1.5 : 1;
 
   // Ensure we have valid screen dimensions (fallback to 1920x1080 for TV)
-  const effectiveWidth = screenWidth > 0 ? screenWidth : (isTV ? 1920 : 375);
-  const effectiveHeight = screenHeight > 0 ? screenHeight : (isTV ? 1080 : 812);
+  const effectiveWidth = screenWidth > 0 ? screenWidth : isTV ? 1920 : 375;
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
 
   // tvOS grid configuration (replicates Search screen)
   const columnsCount = isTV ? 6 : 1;
@@ -2304,15 +2338,23 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvModalTitle: {
       ...theme.typography.title.lg,
-      fontSize: isTV ? Math.round(theme.typography.title.lg.fontSize * 1.5 * scaleFactor) : theme.typography.title.lg.fontSize,
-      lineHeight: isTV ? Math.round(theme.typography.title.lg.lineHeight * 1.5 * scaleFactor) : theme.typography.title.lg.lineHeight,
+      fontSize: isTV
+        ? Math.round(theme.typography.title.lg.fontSize * 1.5 * scaleFactor)
+        : theme.typography.title.lg.fontSize,
+      lineHeight: isTV
+        ? Math.round(theme.typography.title.lg.lineHeight * 1.5 * scaleFactor)
+        : theme.typography.title.lg.lineHeight,
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
     tvModalSubtitle: {
       ...theme.typography.body.md,
-      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
-      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      fontSize: isTV
+        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
+        : theme.typography.body.md.fontSize,
+      lineHeight: isTV
+        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
+        : theme.typography.body.md.lineHeight,
       color: theme.colors.text.secondary,
       textAlign: 'center',
     },
@@ -2351,15 +2393,23 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvModalButtonText: {
       ...theme.typography.body.md,
-      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
-      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      fontSize: isTV
+        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
+        : theme.typography.body.md.fontSize,
+      lineHeight: isTV
+        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
+        : theme.typography.body.md.lineHeight,
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
     tvModalButtonTextFocused: {
       ...theme.typography.body.md,
-      fontSize: isTV ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor) : theme.typography.body.md.fontSize,
-      lineHeight: isTV ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor) : theme.typography.body.md.lineHeight,
+      fontSize: isTV
+        ? Math.round(theme.typography.body.md.fontSize * 1.25 * scaleFactor)
+        : theme.typography.body.md.fontSize,
+      lineHeight: isTV
+        ? Math.round(theme.typography.body.md.lineHeight * 1.25 * scaleFactor)
+        : theme.typography.body.md.lineHeight,
       color: theme.colors.text.primary,
       fontWeight: '600',
     },

@@ -426,16 +426,14 @@ const MediaItem = memo(function MediaItem({
         onLongPress={handleLongPress}
         delayLongPress={500}
         style={[styles.container, styles.containerCompact, style]}
-        accessibilityRole="button"
-      >
+        accessibilityRole="button">
         <View style={[styles.imageContainer, styles.imageContainerCompact]}>
           {title.mediaType === 'more' ? (
             <LinearGradient
               colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={styles.moreCard}
-            >
+              style={styles.moreCard}>
               <Text style={styles.moreCardText}>{title.name}</Text>
               <Text style={styles.moreCardSubtext}>View all</Text>
             </LinearGradient>
@@ -541,8 +539,7 @@ const MediaItem = memo(function MediaItem({
           colors={['#2a1245', '#3d1a5c', '#1a1a2e']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.moreCard}
-        >
+          style={styles.moreCard}>
           <Text style={styles.moreCardText}>{title.name}</Text>
           <Text style={styles.moreCardSubtext}>View all</Text>
         </LinearGradient>
@@ -650,8 +647,7 @@ const MediaItem = memo(function MediaItem({
         hasTVPreferredFocus={autoFocus}
         nextFocusLeft={effectiveNextFocusLeft}
         style={({ focused }) => [styles.container, style, focused && styles.containerFocused]}
-        accessibilityRole="button"
-      >
+        accessibilityRole="button">
         {/* Note: We pass false for isFocused since native handles visual focus via style prop */}
         {renderTVContent(false)}
       </Pressable>
@@ -664,8 +660,7 @@ const MediaItem = memo(function MediaItem({
       {({ isFocused }: { isFocused: boolean }) => (
         <View
           style={[styles.container, style, isFocused && styles.containerFocused]}
-          renderToHardwareTextureAndroid={isAndroidTV}
-        >
+          renderToHardwareTextureAndroid={isAndroidTV}>
           {renderTVContent(isFocused)}
         </View>
       )}

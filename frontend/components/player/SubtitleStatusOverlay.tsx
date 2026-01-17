@@ -8,10 +8,7 @@ interface SubtitleStatusOverlayProps {
   message: string | null;
 }
 
-export const SubtitleStatusOverlay: React.FC<SubtitleStatusOverlayProps> = ({
-  status,
-  message,
-}) => {
+export const SubtitleStatusOverlay: React.FC<SubtitleStatusOverlayProps> = ({ status, message }) => {
   if (!message || status === 'idle') return null;
 
   const isTvPlatform = Platform.isTV;
@@ -20,11 +17,7 @@ export const SubtitleStatusOverlay: React.FC<SubtitleStatusOverlayProps> = ({
     <View style={styles.container}>
       <View style={[styles.messageBox, isTvPlatform && styles.messageBoxTV]}>
         {(status === 'searching' || status === 'downloading') && (
-          <ActivityIndicator
-            size="small"
-            color="#fff"
-            style={[styles.spinner, isTvPlatform && styles.spinnerTV]}
-          />
+          <ActivityIndicator size="small" color="#fff" style={[styles.spinner, isTvPlatform && styles.spinnerTV]} />
         )}
         <Text style={[styles.text, isTvPlatform && styles.textTV]}>{message}</Text>
       </View>

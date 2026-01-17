@@ -68,14 +68,9 @@ const NativeFilterButton = ({
           borderRadius,
           backgroundColor: focused ? theme.colors.accent.primary : theme.colors.overlay.button,
           borderWidth: responsiveSize(6, 2),
-          borderColor: focused
-            ? theme.colors.accent.primary
-            : isActive
-              ? theme.colors.accent.primary
-              : 'transparent',
+          borderColor: focused ? theme.colors.accent.primary : isActive ? theme.colors.accent.primary : 'transparent',
         },
-      ]}
-    >
+      ]}>
       {({ focused }) => (
         <>
           <Ionicons
@@ -89,8 +84,7 @@ const NativeFilterButton = ({
               fontSize,
               lineHeight,
               fontWeight: '500',
-            }}
-          >
+            }}>
             {label}
           </Text>
         </>
@@ -188,7 +182,12 @@ export default function WatchlistScreen() {
             total = response.total;
           }
         } else if (isCustomList && shelfConfig?.listUrl) {
-          const response = await apiService.getCustomList(shelfConfig.listUrl, limit, offset, shelfConfig?.hideUnreleased);
+          const response = await apiService.getCustomList(
+            shelfConfig.listUrl,
+            limit,
+            offset,
+            shelfConfig?.hideUnreleased,
+          );
           items = response.items;
           total = response.total;
         }
@@ -208,7 +207,15 @@ export default function WatchlistScreen() {
         isLoadingMoreRef.current = false;
       }
     },
-    [needsProgressiveLoading, isTrendingMovies, isTrendingTV, isCustomList, shelfConfig?.listUrl, shelfConfig?.hideUnreleased, activeUserId],
+    [
+      needsProgressiveLoading,
+      isTrendingMovies,
+      isTrendingTV,
+      isCustomList,
+      shelfConfig?.listUrl,
+      shelfConfig?.hideUnreleased,
+      activeUserId,
+    ],
   );
 
   // Initial fetch when explore mode changes
@@ -242,14 +249,7 @@ export default function WatchlistScreen() {
     if (shelfId === 'continue-watching') return continueWatchingLoading;
     if (needsProgressiveLoading) return exploreLoading;
     return false;
-  }, [
-    isExploreMode,
-    shelfId,
-    watchlistLoading,
-    continueWatchingLoading,
-    needsProgressiveLoading,
-    exploreLoading,
-  ]);
+  }, [isExploreMode, shelfId, watchlistLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
 
   // Determine current error state
   const error = useMemo(() => {
@@ -291,8 +291,7 @@ export default function WatchlistScreen() {
           continue;
         }
 
-        const isSeries =
-          item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
+        const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
 
         if (isSeries) {
           seriesToFetch.push({
@@ -440,7 +439,14 @@ export default function WatchlistScreen() {
     };
 
     void fetchReleases();
-  }, [items, continueWatchingItems, exploreItems, userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility, movieReleases]);
+  }, [
+    items,
+    continueWatchingItems,
+    exploreItems,
+    userSettings?.display?.badgeVisibility,
+    settings?.display?.badgeVisibility,
+    movieReleases,
+  ]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(items, watchlistYears);
@@ -475,7 +481,9 @@ export default function WatchlistScreen() {
         language: 'en',
         mediaType: isMovie ? 'movie' : 'series',
         poster: item.posterUrl ? { url: item.posterUrl, type: 'poster' as const, width: 0, height: 0 } : undefined,
-        backdrop: item.backdropUrl ? { url: item.backdropUrl, type: 'backdrop' as const, width: 0, height: 0 } : undefined,
+        backdrop: item.backdropUrl
+          ? { url: item.backdropUrl, type: 'backdrop' as const, width: 0, height: 0 }
+          : undefined,
         uniqueKey: `cw:${item.seriesId}`,
         theatricalRelease: cachedReleases?.theatricalRelease,
         homeRelease: cachedReleases?.homeRelease,
@@ -507,14 +515,7 @@ export default function WatchlistScreen() {
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [
-    isExploreMode,
-    shelfId,
-    watchlistTitles,
-    continueWatchingTitles,
-    needsProgressiveLoading,
-    exploreTitles,
-  ]);
+  }, [isExploreMode, shelfId, watchlistTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {
@@ -600,9 +601,12 @@ export default function WatchlistScreen() {
   }, []);
 
   // Handle focus on grid items - leftmost column (index % numColumns === 0) is at left edge
-  const handleGridItemFocus = useCallback((itemIndex: number) => {
-    isAtLeftEdgeRef.current = itemIndex % numColumns === 0;
-  }, [numColumns]);
+  const handleGridItemFocus = useCallback(
+    (itemIndex: number) => {
+      isAtLeftEdgeRef.current = itemIndex % numColumns === 0;
+    },
+    [numColumns],
+  );
 
   // Handle left key press to open menu when at left edge (TV)
   const isActive = isFocused && !isMenuOpen;

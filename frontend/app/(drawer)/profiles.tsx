@@ -1,16 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
@@ -59,17 +49,8 @@ export default function ProfilesScreen() {
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const {
-    users,
-    loading,
-    error,
-    activeUserId,
-    selectUser,
-    updateColor,
-    getIconUrl,
-    refresh,
-    pendingPinUserId,
-  } = useUserProfiles();
+  const { users, loading, error, activeUserId, selectUser, updateColor, getIconUrl, refresh, pendingPinUserId } =
+    useUserProfiles();
   const { showToast } = useToast();
 
   const [pending, setPending] = useState<PendingAction>(null);
@@ -191,16 +172,11 @@ export default function ProfilesScreen() {
             styles.gridCard,
             focused && styles.gridCardFocused,
             isProfileActive && styles.gridCardActive,
-          ]}
-        >
+          ]}>
           {({ focused }) => (
             <>
               {hasIcon ? (
-                <Image
-                  source={{ uri: getIconUrl(profile.id) }}
-                  style={styles.gridCardAvatar}
-                  resizeMode="cover"
-                />
+                <Image source={{ uri: getIconUrl(profile.id) }} style={styles.gridCardAvatar} resizeMode="cover" />
               ) : (
                 <View style={[styles.gridCardAvatar, avatarColor && { backgroundColor: avatarColor }]}>
                   <Text style={styles.gridCardAvatarText}>{profile.name.charAt(0).toUpperCase()}</Text>
@@ -243,60 +219,56 @@ export default function ProfilesScreen() {
         <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
           <View style={styles.tvContainer}>
             <View style={styles.headerRow}>
-                <View>
-                  <Text style={styles.title}>Profiles</Text>
-                  <Text style={styles.description}>Select a profile to switch or customize</Text>
-                </View>
-                <Pressable
-                  ref={refreshButtonRef}
-                  onPress={handleRefreshProfiles}
-                  disabled={pending === 'refresh'}
-                  tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [
-                    styles.headerButton,
-                    {
-                      paddingHorizontal: refreshButtonPaddingH,
-                      paddingVertical: refreshButtonPaddingV,
-                      borderRadius: refreshButtonBorderRadius,
-                      backgroundColor: focused
-                        ? theme.colors.accent.primary
-                        : theme.colors.background.surface,
-                    },
-                  ]}
-                >
-                  {({ focused }) => (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: responsiveSize(12, 6) }}>
-                      <Ionicons
-                        name="refresh-outline"
-                        size={iconSize}
-                        color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
-                      />
-                      <Text
-                        style={{
-                          fontSize: refreshButtonFontSize,
-                          fontWeight: '500',
-                          color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
-                        }}
-                      >
-                        {pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
+              <View>
+                <Text style={styles.title}>Profiles</Text>
+                <Text style={styles.description}>Select a profile to switch or customize</Text>
               </View>
-
-              {loading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-                  <Text style={styles.loadingText}>Loading profiles…</Text>
-                </View>
-              ) : (
-                <ScrollView style={styles.virtualizedGrid} contentContainerStyle={styles.gridRowContainer}>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xl }}>
-                    {gridData.map((item, index) => renderGridItem({ item, index }))}
+              <Pressable
+                ref={refreshButtonRef}
+                onPress={handleRefreshProfiles}
+                disabled={pending === 'refresh'}
+                tvParallaxProperties={{ enabled: false }}
+                style={({ focused }) => [
+                  styles.headerButton,
+                  {
+                    paddingHorizontal: refreshButtonPaddingH,
+                    paddingVertical: refreshButtonPaddingV,
+                    borderRadius: refreshButtonBorderRadius,
+                    backgroundColor: focused ? theme.colors.accent.primary : theme.colors.background.surface,
+                  },
+                ]}>
+                {({ focused }) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: responsiveSize(12, 6) }}>
+                    <Ionicons
+                      name="refresh-outline"
+                      size={iconSize}
+                      color={focused ? theme.colors.text.inverse : theme.colors.text.primary}
+                    />
+                    <Text
+                      style={{
+                        fontSize: refreshButtonFontSize,
+                        fontWeight: '500',
+                        color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+                      }}>
+                      {pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
+                    </Text>
                   </View>
-                </ScrollView>
-              )}
+                )}
+              </Pressable>
+            </View>
+
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+                <Text style={styles.loadingText}>Loading profiles…</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.virtualizedGrid} contentContainerStyle={styles.gridRowContainer}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xl }}>
+                  {gridData.map((item, index) => renderGridItem({ item, index }))}
+                </View>
+              </ScrollView>
+            )}
           </View>
         </FixedSafeAreaView>
 
@@ -305,8 +277,7 @@ export default function ProfilesScreen() {
           visible={isProfileModalVisible && selectedProfile !== null}
           transparent={true}
           animationType="fade"
-          onRequestClose={handleCloseProfileActions}
-        >
+          onRequestClose={handleCloseProfileActions}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
               {selectedProfile && (
@@ -323,8 +294,7 @@ export default function ProfilesScreen() {
                         style={[
                           styles.profileModalAvatar,
                           selectedProfile.color && { backgroundColor: selectedProfile.color },
-                        ]}
-                      >
+                        ]}>
                         <Text style={styles.profileModalAvatarText}>
                           {selectedProfile.name.charAt(0).toUpperCase()}
                         </Text>
@@ -375,9 +345,8 @@ export default function ProfilesScreen() {
                       style={({ focused }) => [
                         styles.modalButton,
                         focused && styles.modalButtonFocused,
-                        (activeUserId === selectedProfile.id) && { opacity: 0.5 },
-                      ]}
-                    >
+                        activeUserId === selectedProfile.id && { opacity: 0.5 },
+                      ]}>
                       {({ focused }) => (
                         <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>
                           {activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
@@ -390,21 +359,19 @@ export default function ProfilesScreen() {
                       }}
                       onPress={handleCloseProfileActions}
                       tvParallaxProperties={{ enabled: false }}
-                      style={({ focused }) => [
-                        styles.modalButton,
-                        focused && styles.modalButtonFocused,
-                      ]}
-                    >
+                      style={({ focused }) => [styles.modalButton, focused && styles.modalButtonFocused]}>
                       {({ focused }) => (
-                        <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>
-                          Close
-                        </Text>
+                        <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>Close</Text>
                       )}
                     </Pressable>
                   </View>
 
                   <View style={styles.adminInfoNote}>
-                    <Ionicons name="information-circle-outline" size={responsiveSize(24, 18)} color={theme.colors.text.muted} />
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={responsiveSize(24, 18)}
+                      color={theme.colors.text.muted}
+                    />
                     <Text style={styles.adminInfoNoteText}>
                       To create, rename, set PIN, or delete profiles, use the Admin Web UI
                     </Text>
@@ -427,8 +394,7 @@ export default function ProfilesScreen() {
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}
-          >
+            automaticallyAdjustContentInsets={false}>
             <View style={styles.headerRow}>
               <View style={styles.headerContent}>
                 <Text style={styles.title}>Profiles</Text>
@@ -437,11 +403,8 @@ export default function ProfilesScreen() {
               <Pressable
                 onPress={handleRefreshProfiles}
                 disabled={pending === 'refresh'}
-                style={styles.mobileRefreshButton}
-              >
-                <Text style={styles.mobileRefreshButtonText}>
-                  {pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
-                </Text>
+                style={styles.mobileRefreshButton}>
+                <Text style={styles.mobileRefreshButtonText}>{pending === 'refresh' ? 'Refreshing…' : 'Refresh'}</Text>
               </Pressable>
             </View>
 
@@ -463,8 +426,7 @@ export default function ProfilesScreen() {
                     <Pressable
                       key={user.id}
                       onPress={() => handleProfileCardSelect(user)}
-                      style={[styles.mobileCard, isProfileActive && styles.mobileCardActive]}
-                    >
+                      style={[styles.mobileCard, isProfileActive && styles.mobileCardActive]}>
                       {hasIcon ? (
                         <Image
                           source={{ uri: getIconUrl(user.id) }}
@@ -511,8 +473,7 @@ export default function ProfilesScreen() {
         visible={isProfileModalVisible && selectedProfile !== null}
         transparent={true}
         animationType="fade"
-        onRequestClose={handleCloseProfileActions}
-      >
+        onRequestClose={handleCloseProfileActions}>
         <View style={styles.modalOverlay}>
           <View style={styles.mobileModalContainer}>
             {selectedProfile && (
@@ -529,11 +490,8 @@ export default function ProfilesScreen() {
                       style={[
                         styles.profileModalAvatar,
                         selectedProfile.color && { backgroundColor: selectedProfile.color },
-                      ]}
-                    >
-                      <Text style={styles.profileModalAvatarText}>
-                        {selectedProfile.name.charAt(0).toUpperCase()}
-                      </Text>
+                      ]}>
+                      <Text style={styles.profileModalAvatarText}>{selectedProfile.name.charAt(0).toUpperCase()}</Text>
                     </View>
                   )}
                   <Text style={styles.mobileModalTitle}>{selectedProfile.name}</Text>
@@ -573,8 +531,7 @@ export default function ProfilesScreen() {
                         handleActivateProfile(selectedProfile.id);
                         handleCloseProfileActions();
                       }}
-                      style={[styles.mobileModalButton, styles.mobileModalButtonPrimary]}
-                    >
+                      style={[styles.mobileModalButton, styles.mobileModalButtonPrimary]}>
                       <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonPrimaryText]}>
                         Set as Active
                       </Text>
@@ -599,8 +556,8 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
   const horizontalPadding = isTVPlatform ? theme.spacing.xl * 1.5 : isCompact ? theme.spacing.lg : theme.spacing['2xl'];
 
   // Ensure we have valid screen dimensions (fallback to 1920x1080 for TV)
-  const effectiveWidth = screenWidth > 0 ? screenWidth : (isTV ? 1920 : 375);
-  const effectiveHeight = screenHeight > 0 ? screenHeight : (isTV ? 1080 : 812);
+  const effectiveWidth = screenWidth > 0 ? screenWidth : isTV ? 1920 : 375;
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
 
   // TV grid configuration
   const columnsCount = isTV ? 3 : 4; // Fewer columns since content area is narrower

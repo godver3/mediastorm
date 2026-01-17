@@ -53,9 +53,7 @@ export const playbackNavigation = {
   /**
    * Peek at the next episode without consuming it (for checking prequeue data)
    */
-  peekNextEpisode(
-    titleId: string,
-  ): NextEpisodeInfo | null {
+  peekNextEpisode(titleId: string): NextEpisodeInfo | null {
     if (!nextEpisodeToShow) {
       return null;
     }
@@ -77,9 +75,7 @@ export const playbackNavigation = {
   /**
    * Get and clear the next episode to show (if it matches the titleId and is still fresh)
    */
-  consumeNextEpisode(
-    titleId: string,
-  ): {
+  consumeNextEpisode(titleId: string): {
     seasonNumber: number;
     episodeNumber: number;
     autoPlay: boolean;

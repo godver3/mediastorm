@@ -210,7 +210,18 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       removeWatchStatus,
       refresh,
     }),
-    [items, loading, error, isWatched, getItem, toggleWatchStatus, updateWatchStatus, bulkUpdateWatchStatus, removeWatchStatus, refresh]
+    [
+      items,
+      loading,
+      error,
+      isWatched,
+      getItem,
+      toggleWatchStatus,
+      updateWatchStatus,
+      bulkUpdateWatchStatus,
+      removeWatchStatus,
+      refresh,
+    ],
   );
 
   return <WatchStatusContext.Provider value={value}>{children}</WatchStatusContext.Provider>;

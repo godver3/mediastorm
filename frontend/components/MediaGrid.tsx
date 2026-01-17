@@ -78,84 +78,88 @@ const minimalCardStyles = {
   },
   image: { width: '100%' as const, height: '100%' as const, position: 'absolute' as const },
   gradient: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, height: '50%' as const },
-  textContainer: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, padding: 8, alignItems: 'center' as const },
+  textContainer: {
+    position: 'absolute' as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 8,
+    alignItems: 'center' as const,
+  },
   title: { color: '#fff', fontSize: 14, fontWeight: '600' as const, textAlign: 'center' as const },
   year: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
 };
 
 // Optimized card for native focus mode - uses context for callbacks
-const MinimalCard = React.memo(function MinimalCard({
-  item,
-  rowIndex,
-  itemIndex,
-  autoFocus,
-}: {
-  item: DisplayTitle;
-  rowIndex: number;
-  itemIndex: number;
-  autoFocus?: boolean;
-}) {
-  const handlers = React.useContext(MediaGridHandlersContext);
+const MinimalCard = React.memo(
+  function MinimalCard({
+    item,
+    rowIndex,
+    itemIndex,
+    autoFocus,
+  }: {
+    item: DisplayTitle;
+    rowIndex: number;
+    itemIndex: number;
+    autoFocus?: boolean;
+  }) {
+    const handlers = React.useContext(MediaGridHandlersContext);
 
-  const handlePress = useCallback(() => {
-    handlers?.onItemPress(item.id);
-  }, [handlers, item.id]);
+    const handlePress = useCallback(() => {
+      handlers?.onItemPress(item.id);
+    }, [handlers, item.id]);
 
-  const handleLongPress = useCallback(() => {
-    handlers?.onItemLongPress(item.id);
-  }, [handlers, item.id]);
+    const handleLongPress = useCallback(() => {
+      handlers?.onItemLongPress(item.id);
+    }, [handlers, item.id]);
 
-  const handleFocus = useCallback(() => {
-    handlers?.onRowFocus(rowIndex);
-    handlers?.onItemFocus(itemIndex);
-  }, [handlers, rowIndex, itemIndex]);
+    const handleFocus = useCallback(() => {
+      handlers?.onRowFocus(rowIndex);
+      handlers?.onItemFocus(itemIndex);
+    }, [handlers, rowIndex, itemIndex]);
 
-  return (
-    <Pressable
-      onPress={handlePress}
-      onLongPress={handleLongPress}
-      onFocus={handleFocus}
-      hasTVPreferredFocus={autoFocus}
-      style={({ focused }) => focused ? minimalCardStyles.focused : minimalCardStyles.base}
-    >
-      {item.poster?.url ? (
-        <CachedImage
-          source={item.poster.url}
-          style={minimalCardStyles.image}
-          contentFit="cover"
-          transition={0}
-          priority="low"
-          recyclingKey={item.id}
-        />
-      ) : null}
-
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.8)']}
-        style={minimalCardStyles.gradient}
-        pointerEvents="none"
-      />
-
-      <View style={minimalCardStyles.textContainer}>
-        <Text style={minimalCardStyles.title} numberOfLines={2}>
-          {item.name}
-        </Text>
-        {item.year ? (
-          <Text style={minimalCardStyles.year}>{item.year}</Text>
+    return (
+      <Pressable
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        onFocus={handleFocus}
+        hasTVPreferredFocus={autoFocus}
+        style={({ focused }) => (focused ? minimalCardStyles.focused : minimalCardStyles.base)}>
+        {item.poster?.url ? (
+          <CachedImage
+            source={item.poster.url}
+            style={minimalCardStyles.image}
+            contentFit="cover"
+            transition={0}
+            priority="low"
+            recyclingKey={item.id}
+          />
         ) : null}
-      </View>
-    </Pressable>
-  );
-},
-(prevProps, nextProps) =>
-  prevProps.item.id === nextProps.item.id &&
-  prevProps.item.name === nextProps.item.name &&
-  prevProps.item.poster?.url === nextProps.item.poster?.url &&
-  prevProps.item.year === nextProps.item.year &&
-  prevProps.rowIndex === nextProps.rowIndex &&
-  prevProps.itemIndex === nextProps.itemIndex &&
-  prevProps.autoFocus === nextProps.autoFocus
-);
 
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.8)']}
+          style={minimalCardStyles.gradient}
+          pointerEvents="none"
+        />
+
+        <View style={minimalCardStyles.textContainer}>
+          <Text style={minimalCardStyles.title} numberOfLines={2}>
+            {item.name}
+          </Text>
+          {item.year ? <Text style={minimalCardStyles.year}>{item.year}</Text> : null}
+        </View>
+      </Pressable>
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.item.id === nextProps.item.id &&
+    prevProps.item.name === nextProps.item.name &&
+    prevProps.item.poster?.url === nextProps.item.poster?.url &&
+    prevProps.item.year === nextProps.item.year &&
+    prevProps.rowIndex === nextProps.rowIndex &&
+    prevProps.itemIndex === nextProps.itemIndex &&
+    prevProps.autoFocus === nextProps.autoFocus,
+);
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
   const isCompact = theme.breakpoint === 'compact';
@@ -431,36 +435,32 @@ const MediaGrid = React.memo(
 
     // Native focus scroll handler - keeps focused row at top
     // ScrollView naturally clamps to content bounds, so no manual maxScroll needed
-    const scrollToRowNative = useCallback(
-      (rowIndex: number, _totalRows: number) => {
-        if (!Platform.isTV || !nativeScrollViewRef.current) {
-          return;
-        }
+    const scrollToRowNative = useCallback((rowIndex: number, _totalRows: number) => {
+      if (!Platform.isTV || !nativeScrollViewRef.current) {
+        return;
+      }
 
-        const rowKey = `native-row-${rowIndex}`;
-        const rowRef = nativeRowRefs.current[rowKey];
+      const rowKey = `native-row-${rowIndex}`;
+      const rowRef = nativeRowRefs.current[rowKey];
 
-        if (!rowRef) {
-          return;
-        }
+      if (!rowRef) {
+        return;
+      }
 
-        // Measure the row position and scroll to put it at top
-        rowRef.measureLayout(
-          nativeScrollViewRef.current as any,
-          (_left, top) => {
-            const topOffset = 20; // Small padding from top
-            const targetY = Math.max(0, top - topOffset);
+      // Measure the row position and scroll to put it at top
+      rowRef.measureLayout(
+        nativeScrollViewRef.current as any,
+        (_left, top) => {
+          const topOffset = 20; // Small padding from top
+          const targetY = Math.max(0, top - topOffset);
 
-
-            nativeScrollViewRef.current?.scrollTo({ y: targetY, animated: true });
-          },
-          () => {
-            // silently ignore failures
-          },
-        );
-      },
-      [],
-    );
+          nativeScrollViewRef.current?.scrollTo({ y: targetY, animated: true });
+        },
+        () => {
+          // silently ignore failures
+        },
+      );
+    }, []);
 
     const keyExtractor = (item: DisplayTitle, index: number) => {
       if (item.uniqueKey) {
@@ -486,7 +486,7 @@ const MediaGrid = React.memo(
     // Item lookup map for O(1) access
     const itemMap = useMemo(() => {
       const map = new Map<string, DisplayTitle>();
-      items.forEach(item => map.set(item.id, item));
+      items.forEach((item) => map.set(item.id, item));
       return map;
     }, [items]);
 
@@ -505,57 +505,74 @@ const MediaGrid = React.memo(
     onItemFocusRef.current = onItemFocus;
 
     // Stable handlers via context
-    const gridHandlers = useMemo<MediaGridHandlers>(() => ({
-      onItemPress: (itemId: string) => {
-        const item = itemMap.get(itemId);
-        if (item) onItemPress?.(item);
-      },
-      onItemLongPress: (itemId: string) => {
-        const item = itemMap.get(itemId);
-        if (item) onItemLongPress?.(item);
-      },
-      onRowFocus: (rowIndex: number) => {
-        scrollToRowNativeRef.current(rowIndex, 0);
-        // Load more rows if near the end
-        if (rowIndex >= renderedRowCount - 2) {
-          setRenderedRowCount(prev => prev + LOAD_MORE_ROWS);
-        }
-        // Trigger onEndReached for progressive loading when near the end (5 rows early)
-        if (rowIndex >= renderedRowCount - 5 && hasMoreItemsRef.current && !loadingMoreRef.current) {
-          onEndReachedRef.current?.();
-        }
-      },
-      onItemFocus: (index: number) => {
-        onItemFocusRef.current?.(index);
-      },
-    }), [itemMap, onItemPress, onItemLongPress, renderedRowCount]);
+    const gridHandlers = useMemo<MediaGridHandlers>(
+      () => ({
+        onItemPress: (itemId: string) => {
+          const item = itemMap.get(itemId);
+          if (item) onItemPress?.(item);
+        },
+        onItemLongPress: (itemId: string) => {
+          const item = itemMap.get(itemId);
+          if (item) onItemLongPress?.(item);
+        },
+        onRowFocus: (rowIndex: number) => {
+          scrollToRowNativeRef.current(rowIndex, 0);
+          // Load more rows if near the end
+          if (rowIndex >= renderedRowCount - 2) {
+            setRenderedRowCount((prev) => prev + LOAD_MORE_ROWS);
+          }
+          // Trigger onEndReached for progressive loading when near the end (5 rows early)
+          if (rowIndex >= renderedRowCount - 5 && hasMoreItemsRef.current && !loadingMoreRef.current) {
+            onEndReachedRef.current?.();
+          }
+        },
+        onItemFocus: (index: number) => {
+          onItemFocusRef.current?.(index);
+        },
+      }),
+      [itemMap, onItemPress, onItemLongPress, renderedRowCount],
+    );
 
     // Handle scroll to detect when user is near the end (defined at component level to follow hooks rules)
-    const handleScroll = useCallback((event: any) => {
-      if (!onEndReached || loadingMore || !hasMoreItems) return;
+    const handleScroll = useCallback(
+      (event: any) => {
+        if (!onEndReached || loadingMore || !hasMoreItems) return;
 
-      const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-      const paddingToBottom = 600; // Trigger when 600px from bottom (about 2 rows early)
-      const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+        const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+        const paddingToBottom = 600; // Trigger when 600px from bottom (about 2 rows early)
+        const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
 
-      if (isNearBottom) {
-        onEndReached();
-      }
-    }, [onEndReached, loadingMore, hasMoreItems]);
+        if (isNearBottom) {
+          onEndReached();
+        }
+      },
+      [onEndReached, loadingMore, hasMoreItems],
+    );
 
     // Loading more indicator component
-    const LoadingMoreIndicator = useMemo(() => (
-      loadingMore ? (
-        <View style={{ paddingVertical: theme.spacing.xl, alignItems: 'center' }}>
-          <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-          <Text style={[styles.loadingText, { marginTop: theme.spacing.sm }]}>Loading more...</Text>
-        </View>
-      ) : hasMoreItems ? (
-        <View style={{ paddingVertical: theme.spacing.lg, alignItems: 'center' }}>
-          <Text style={styles.emptyText}>Scroll for more</Text>
-        </View>
-      ) : null
-    ), [loadingMore, hasMoreItems, theme.spacing.xl, theme.spacing.lg, theme.spacing.sm, theme.colors.accent.primary, styles.loadingText, styles.emptyText]);
+    const LoadingMoreIndicator = useMemo(
+      () =>
+        loadingMore ? (
+          <View style={{ paddingVertical: theme.spacing.xl, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+            <Text style={[styles.loadingText, { marginTop: theme.spacing.sm }]}>Loading more...</Text>
+          </View>
+        ) : hasMoreItems ? (
+          <View style={{ paddingVertical: theme.spacing.lg, alignItems: 'center' }}>
+            <Text style={styles.emptyText}>Scroll for more</Text>
+          </View>
+        ) : null,
+      [
+        loadingMore,
+        hasMoreItems,
+        theme.spacing.xl,
+        theme.spacing.lg,
+        theme.spacing.sm,
+        theme.colors.accent.primary,
+        styles.loadingText,
+        styles.emptyText,
+      ],
+    );
 
     const renderContent = () => {
       if (loading) {
@@ -592,11 +609,11 @@ const MediaGrid = React.memo(
               contentContainerStyle={styles.grid}
               showsVerticalScrollIndicator={false}
               onScroll={handleScroll}
-              scrollEventThrottle={100}
-            >
+              scrollEventThrottle={100}>
               <View style={styles.mobileGridContainer}>
                 {items.map((item, index) => {
-                  const isExploreCard = item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
+                  const isExploreCard =
+                    item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
                   const yearDisplay = item.mediaType === 'explore' && item.year ? `+${item.year} More` : item.year;
 
                   return (
@@ -604,8 +621,7 @@ const MediaGrid = React.memo(
                       key={keyExtractor(item, index)}
                       style={styles.mobileCard}
                       onPress={() => onItemPress?.(item)}
-                      android_ripple={{ color: theme.colors.accent.primary + '30' }}
-                    >
+                      android_ripple={{ color: theme.colors.accent.primary + '30' }}>
                       <View style={styles.cardImageContainer}>
                         {isExploreCard ? (
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
@@ -626,18 +642,16 @@ const MediaGrid = React.memo(
                           </View>
                         )}
                         {/* Release status badge (top-left) for movies - check badgeVisibility */}
-                        {item.mediaType === 'movie' && badgeVisibility?.includes('releaseStatus') && (() => {
-                          const releaseIcon = getMovieReleaseIcon(item);
-                          return releaseIcon ? (
-                            <View style={styles.releaseStatusBadge}>
-                              <MaterialCommunityIcons
-                                name={releaseIcon.name}
-                                size={14}
-                                color={releaseIcon.color}
-                              />
-                            </View>
-                          ) : null;
-                        })()}
+                        {item.mediaType === 'movie' &&
+                          badgeVisibility?.includes('releaseStatus') &&
+                          (() => {
+                            const releaseIcon = getMovieReleaseIcon(item);
+                            return releaseIcon ? (
+                              <View style={styles.releaseStatusBadge}>
+                                <MaterialCommunityIcons name={releaseIcon.name} size={14} color={releaseIcon.color} />
+                              </View>
+                            ) : null;
+                          })()}
                         {/* Media type badge (top-right) */}
                         {item.mediaType && item.mediaType !== 'explore' && (
                           <View style={styles.badge}>
@@ -690,8 +704,7 @@ const MediaGrid = React.memo(
                   {
                     marginRight: index === items.length - 1 ? 0 : gap,
                   },
-                ]}
-              >
+                ]}>
                 <MediaItem
                   title={item}
                   onPress={() => onItemPress?.(item)}
@@ -726,16 +739,14 @@ const MediaGrid = React.memo(
               showsVerticalScrollIndicator={false}
               scrollEnabled={!Platform.isTV}
               onScroll={handleScroll}
-              scrollEventThrottle={100}
-            >
+              scrollEventThrottle={100}>
               {visibleRows.map((row, rowIndex) => (
                 <View
                   key={`row-${rowIndex}`}
                   ref={(ref) => {
                     nativeRowRefs.current[`native-row-${rowIndex}`] = ref;
                   }}
-                  style={styles.rowContainer}
-                >
+                  style={styles.rowContainer}>
                   <View style={[styles.gridRow, { marginHorizontal: -halfGap }]}>
                     {row.map((item, colIndex) => {
                       const index = rowIndex * columns + colIndex;
@@ -744,8 +755,7 @@ const MediaGrid = React.memo(
                       return (
                         <View
                           key={keyExtractor(item, index)}
-                          style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}
-                        >
+                          style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}>
                           {useMinimalCards ? (
                             <MinimalCard
                               item={item}
@@ -798,8 +808,7 @@ const MediaGrid = React.memo(
           // Android TV: prevent native focus-based scrolling
           focusable={false}
           // @ts-ignore - TV-specific prop
-          isTVSelectable={false}
-        >
+          isTVSelectable={false}>
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;
@@ -809,8 +818,7 @@ const MediaGrid = React.memo(
                   ref={(ref) => {
                     rowRefs.current[rowKey] = ref;
                   }}
-                  style={styles.rowContainer}
-                >
+                  style={styles.rowContainer}>
                   <SpatialNavigationNode orientation="horizontal">
                     <View style={[styles.gridRow, { marginHorizontal: -halfGap }]}>
                       {row.map((item, colIndex) => {
@@ -826,8 +834,7 @@ const MediaGrid = React.memo(
                         return (
                           <View
                             key={keyExtractor(item, index)}
-                            style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}
-                          >
+                            style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}>
                             {defaultFocusFirstItem && index === 0 ? <DefaultFocus>{content}</DefaultFocus> : content}
                           </View>
                         );

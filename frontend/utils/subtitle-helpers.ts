@@ -56,20 +56,14 @@ export function calculateReleaseSimilarity(mediaRelease: string, subtitleRelease
  * Select the best subtitle from search results based on similarity to media release name.
  * Falls back to most downloaded if no release name provided.
  */
-export function selectBestSubtitle(
-  results: SubtitleSearchResult[],
-  mediaReleaseName?: string
-): SubtitleSearchResult {
+export function selectBestSubtitle(results: SubtitleSearchResult[], mediaReleaseName?: string): SubtitleSearchResult {
   if (results.length === 0) {
     throw new Error('No subtitle results to select from');
   }
 
   if (!mediaReleaseName) {
     // Fall back to most downloaded
-    return results.reduce((best, current) =>
-      current.downloads > best.downloads ? current : best,
-      results[0]
-    );
+    return results.reduce((best, current) => (current.downloads > best.downloads ? current : best), results[0]);
   }
 
   // Score each result

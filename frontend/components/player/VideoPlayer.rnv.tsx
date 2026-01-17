@@ -268,9 +268,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
         // For seekable, use actual player value (or last valid) - NOT durationHint
         // durationHint is for duration display; seekable controls buffer/seek decisions
-        const effectiveSeekable = data.seekableDuration > 0
-          ? data.seekableDuration
-          : lastValidSeekableRef.current;
+        const effectiveSeekable = data.seekableDuration > 0 ? data.seekableDuration : lastValidSeekableRef.current;
 
         const meta: VideoProgressMeta = {
           playable: data.playableDuration,

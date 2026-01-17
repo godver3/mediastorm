@@ -17,11 +17,7 @@ export function QRCode({ value, size = 200, style }: QRCodeProps) {
 
   return (
     <View style={[styles.container, { width: size, height: size }, style]}>
-      <Image
-        source={{ uri: qrUrl }}
-        style={{ width: size, height: size }}
-        resizeMode="contain"
-      />
+      <Image source={{ uri: qrUrl }} style={{ width: size, height: size }} resizeMode="contain" />
     </View>
   );
 }

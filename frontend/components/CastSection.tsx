@@ -39,16 +39,11 @@ const CastSection = memo(function CastSection({ credits, isLoading, theme }: Cas
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
-        style={styles.scrollView}
-      >
+        style={styles.scrollView}>
         {topCast.map((actor) => (
           <View key={actor.id} style={styles.actorCard}>
             {actor.profileUrl ? (
-              <Image
-                source={{ uri: actor.profileUrl }}
-                style={styles.actorPhoto}
-                contentFit="cover"
-              />
+              <Image source={{ uri: actor.profileUrl }} style={styles.actorPhoto} contentFit="cover" />
             ) : (
               <View style={[styles.actorPhoto, styles.actorPhotoPlaceholder]}>
                 <Ionicons name="person" size={32} color={theme.colors.text.muted} />

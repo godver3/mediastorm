@@ -399,8 +399,7 @@ export default function SearchScreen() {
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.gridContent}
-          showsVerticalScrollIndicator={false}
-        >
+          showsVerticalScrollIndicator={false}>
           {!Platform.isTV && <Text style={styles.resultsTitle}>Search Results</Text>}
           <View style={styles.grid}>
             {filteredItems.map((item, index) => (
@@ -408,11 +407,16 @@ export default function SearchScreen() {
                 key={item.uniqueKey || `item-${index}`}
                 style={styles.compactCard}
                 onPress={() => handleResultPress(item)}
-                android_ripple={{ color: theme.colors.accent.primary + '30' }}
-              >
+                android_ripple={{ color: theme.colors.accent.primary + '30' }}>
                 <View style={styles.cardImageContainer}>
                   {item.poster?.url ? (
-                    <Image source={{ uri: item.poster.url }} style={styles.cardImage} contentFit="cover" transition={0} cachePolicy={Platform.isTV ? 'disk' : 'memory'} />
+                    <Image
+                      source={{ uri: item.poster.url }}
+                      style={styles.cardImage}
+                      contentFit="cover"
+                      transition={0}
+                      cachePolicy={Platform.isTV ? 'disk' : 'memory'}
+                    />
                   ) : (
                     <View style={styles.placeholder}>
                       <Text style={styles.placeholderImageText}>No Image</Text>
@@ -453,7 +457,15 @@ export default function SearchScreen() {
     // For TV/desktop/wide tablets, use focusable grid with spatial navigation
     // Split items into rows for proper grid navigation
     // Use 6 columns on TV, otherwise base on screen width
-    const columnsPerRow = Platform.isTV ? 6 : screenWidth >= 1200 ? 7 : screenWidth >= 900 ? 6 : screenWidth >= 600 ? 5 : 4;
+    const columnsPerRow = Platform.isTV
+      ? 6
+      : screenWidth >= 1200
+        ? 7
+        : screenWidth >= 900
+          ? 6
+          : screenWidth >= 600
+            ? 5
+            : 4;
     const rows: ResultTitle[][] = [];
     for (let i = 0; i < filteredItems.length; i += columnsPerRow) {
       rows.push(filteredItems.slice(i, i + columnsPerRow));
@@ -476,8 +488,7 @@ export default function SearchScreen() {
         // Android TV: prevent native focus-based scrolling
         focusable={false}
         // @ts-ignore - TV-specific prop
-        isTVSelectable={false}
-      >
+        isTVSelectable={false}>
         <View style={styles.gridContent}>
           {!Platform.isTV && <Text style={styles.resultsTitle}>Search Results</Text>}
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
@@ -490,8 +501,7 @@ export default function SearchScreen() {
                   ref={(ref) => {
                     rowRefs.current[rowKey] = ref;
                   }}
-                  style={styles.rowContainer}
-                >
+                  style={styles.rowContainer}>
                   <SpatialNavigationNode orientation="horizontal">
                     <View style={styles.gridRow}>
                       {row.map((item, colIndex) => {
@@ -500,8 +510,7 @@ export default function SearchScreen() {
                         const focusable = (
                           <SpatialNavigationFocusableView
                             onSelect={() => handleResultPress(item)}
-                            onFocus={() => scrollToRow(rowKey)}
-                          >
+                            onFocus={() => scrollToRow(rowKey)}>
                             {({ isFocused }: { isFocused: boolean }) => (
                               <View style={[styles.card, isFocused && styles.cardFocused]}>
                                 <View style={styles.cardImageContainer}>
@@ -581,14 +590,12 @@ export default function SearchScreen() {
                   onBlur={() => {
                     // Blur the TextInput when spatial navigation moves away
                     inputRef.current?.blur();
-                  }}
-                >
+                  }}>
                   {({ isFocused: textInputFocused }: { isFocused: boolean }) => (
                     <Pressable tvParallaxProperties={{ enabled: false }}>
                       <View
                         style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
-                        pointerEvents={isMenuOpen ? 'none' : 'auto'}
-                      >
+                        pointerEvents={isMenuOpen ? 'none' : 'auto'}>
                         <View style={styles.searchInputContent}>
                           {!isCompact && (
                             <MaterialCommunityIcons
@@ -632,8 +639,7 @@ export default function SearchScreen() {
                               accessibilityLabel="Clear search"
                               hitSlop={10}
                               onPress={handleClearSearch}
-                              style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}
-                            >
+                              style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}>
                               <MaterialCommunityIcons
                                 name="close"
                                 style={styles.clearButtonIcon}
@@ -664,10 +670,7 @@ export default function SearchScreen() {
                     const borderWidth = responsiveSize(6, 2);
 
                     return (
-                      <SpatialNavigationFocusableView
-                        key={option.key}
-                        onSelect={() => setFilter(option.key)}
-                      >
+                      <SpatialNavigationFocusableView key={option.key} onSelect={() => setFilter(option.key)}>
                         {({ isFocused }: { isFocused: boolean }) => (
                           <View
                             style={{
@@ -677,17 +680,14 @@ export default function SearchScreen() {
                               paddingHorizontal: paddingH,
                               paddingVertical: paddingV,
                               borderRadius,
-                              backgroundColor: isFocused
-                                ? theme.colors.accent.primary
-                                : theme.colors.overlay.button,
+                              backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
                               borderWidth,
                               borderColor: isFocused
                                 ? theme.colors.accent.primary
                                 : isFilterActive
                                   ? theme.colors.accent.primary
                                   : 'transparent',
-                            }}
-                          >
+                            }}>
                             <Ionicons
                               name={option.icon}
                               size={iconSize}
@@ -699,8 +699,7 @@ export default function SearchScreen() {
                                 fontSize,
                                 lineHeight,
                                 fontWeight: '500',
-                              }}
-                            >
+                              }}>
                               {option.label}
                             </Text>
                           </View>

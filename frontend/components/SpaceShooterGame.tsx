@@ -43,27 +43,40 @@ const EXPLOSION_CHARS = ['*', '+', 'o', '.'];
 
 // Boss ASCII art frames - animates between these
 const BOSS_FRAMES = [
-  [
-    '  /-===-\\  ',
-    ' |[o]_[o]| ',
-    ' |<#####>| ',
-    ' |_/\\_/\\_| ',
-    '  \\-====/  ',
-  ],
-  [
-    '  \\-===-/  ',
-    ' |[o]_[o]| ',
-    ' |>#####<| ',
-    ' |_\\/\\_\\/| ',
-    '  /-====\\  ',
-  ],
+  ['  /-===-\\  ', ' |[o]_[o]| ', ' |<#####>| ', ' |_/\\_/\\_| ', '  \\-====/  '],
+  ['  \\-===-/  ', ' |[o]_[o]| ', ' |>#####<| ', ' |_\\/\\_\\/| ', '  /-====\\  '],
 ];
 
 // Boss damage states - parts break off
 const BOSS_DAMAGE_CHARS = [
-  { threshold: 0.75, replacements: [[0, 2, ' '], [0, 8, ' '], [4, 2, ' '], [4, 8, ' ']] },
-  { threshold: 0.5, replacements: [[1, 1, '.'], [1, 9, '.'], [3, 1, ' '], [3, 9, ' ']] },
-  { threshold: 0.25, replacements: [[2, 1, '*'], [2, 9, '*'], [1, 5, 'X'], [3, 3, ' '], [3, 7, ' ']] },
+  {
+    threshold: 0.75,
+    replacements: [
+      [0, 2, ' '],
+      [0, 8, ' '],
+      [4, 2, ' '],
+      [4, 8, ' '],
+    ],
+  },
+  {
+    threshold: 0.5,
+    replacements: [
+      [1, 1, '.'],
+      [1, 9, '.'],
+      [3, 1, ' '],
+      [3, 9, ' '],
+    ],
+  },
+  {
+    threshold: 0.25,
+    replacements: [
+      [2, 1, '*'],
+      [2, 9, '*'],
+      [1, 5, 'X'],
+      [3, 3, ' '],
+      [3, 7, ' '],
+    ],
+  },
 ];
 
 const BOSS_WIDTH = 11;
@@ -221,10 +234,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
     if (now - lastShotTime.current < 120) return;
     lastShotTime.current = now;
 
-    setBullets((prev) => [
-      ...prev,
-      { id: bulletIdRef.current++, x: playerXRef.current, y: GAME_HEIGHT - 2 },
-    ]);
+    setBullets((prev) => [...prev, { id: bulletIdRef.current++, x: playerXRef.current, y: GAME_HEIGHT - 2 }]);
   }, []);
 
   // Spawn enemy
@@ -257,7 +267,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
   // Get boss ASCII art with damage applied
   const getBossArt = useCallback((bossState: Boss): string[] => {
     const frame = BOSS_FRAMES[bossState.animFrame % BOSS_FRAMES.length];
-    const art = frame.map(row => row.split(''));
+    const art = frame.map((row) => row.split(''));
 
     const hpPercent = bossState.hp / bossState.maxHp;
 
@@ -286,7 +296,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
       }
     }
 
-    return art.map(row => row.join(''));
+    return art.map((row) => row.join(''));
   }, []);
 
   // Game loop
@@ -310,11 +320,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
       }
 
       // Move bullets
-      setBullets((prev) =>
-        prev
-          .map((b) => ({ ...b, y: b.y - 1 }))
-          .filter((b) => b.y >= 0),
-      );
+      setBullets((prev) => prev.map((b) => ({ ...b, y: b.y - 1 })).filter((b) => b.y >= 0));
 
       // Update boss
       setBoss((prevBoss) => {
@@ -460,16 +466,14 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
 
       // Update explosions
       setExplosions((prev) =>
-        prev
-          .map((e) => ({ ...e, frame: e.frame + 1 }))
-          .filter((e) => e.frame < EXPLOSION_CHARS.length),
+        prev.map((e) => ({ ...e, frame: e.frame + 1 })).filter((e) => e.frame < EXPLOSION_CHARS.length),
       );
 
       // Spawn enemies (reduced when boss is active)
       setBoss((currentBoss) => {
         const spawnRate = currentBoss ? 40 : Math.max(10, 25 - currentWave * 2);
         if (frame % spawnRate === 0) {
-          const enemiesToSpawn = currentBoss ? 1 : (currentWave >= 5 ? 2 : 1);
+          const enemiesToSpawn = currentBoss ? 1 : currentWave >= 5 ? 2 : 1;
           for (let i = 0; i < enemiesToSpawn; i++) {
             if (Math.random() > 0.2) {
               spawnEnemy(currentWave);
@@ -486,7 +490,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
         setBoss((prevBoss) => {
           if (!prevBoss || !prevBoss.active) return prevBoss;
 
-          let newBoss = { ...prevBoss };
+          const newBoss = { ...prevBoss };
 
           for (const bullet of prevBullets) {
             if (bulletsToRemove.has(bullet.id)) continue;
@@ -502,10 +506,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
               newBoss.hp--;
 
               // Add small explosion at hit point
-              setExplosions((prev) => [
-                ...prev,
-                { id: explosionIdRef.current++, x: bullet.x, y: bullet.y, frame: 0 },
-              ]);
+              setExplosions((prev) => [...prev, { id: explosionIdRef.current++, x: bullet.x, y: bullet.y, frame: 0 }]);
 
               // Boss defeated
               if (newBoss.hp <= 0) {
@@ -514,10 +515,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
                   const expX = newBoss.x + Math.floor(Math.random() * BOSS_WIDTH);
                   const expY = newBoss.y + Math.floor(Math.random() * BOSS_HEIGHT);
                   setTimeout(() => {
-                    setExplosions((prev) => [
-                      ...prev,
-                      { id: explosionIdRef.current++, x: expX, y: expY, frame: 0 },
-                    ]);
+                    setExplosions((prev) => [...prev, { id: explosionIdRef.current++, x: expX, y: expY, frame: 0 }]);
                   }, i * 50);
                 }
 
@@ -545,10 +543,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
             for (const bullet of prevBullets) {
               if (bulletsToRemove.has(bullet.id)) continue;
 
-              if (
-                Math.abs(bullet.x - enemy.x) <= 1 &&
-                Math.abs(bullet.y - enemy.y) <= 1
-              ) {
+              if (Math.abs(bullet.x - enemy.x) <= 1 && Math.abs(bullet.y - enemy.y) <= 1) {
                 bulletsToRemove.add(bullet.id);
                 const newHp = enemy.hp - 1;
 
@@ -559,9 +554,8 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
                   lastComboTime.current = Date.now();
                   setCombo((c) => c + 1);
 
-                  const multiplier = comboRef.current >= 10 ? 4 :
-                                    comboRef.current >= 5 ? 3 :
-                                    comboRef.current >= 3 ? 2 : 1;
+                  const multiplier =
+                    comboRef.current >= 10 ? 4 : comboRef.current >= 5 ? 3 : comboRef.current >= 3 ? 2 : 1;
                   setScore((s) => s + config.points * multiplier);
 
                   setExplosions((prev) => [
@@ -665,10 +659,13 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
   }, [stars, explosions, bullets, enemies, playerX, boss, getBossArt]);
 
   // Touch handlers
-  const handleTouchStart = useCallback((event: GestureResponderEvent) => {
-    const { pageX, pageY } = event.nativeEvent;
-    touchStartRef.current = { x: pageX, y: pageY, playerX };
-  }, [playerX]);
+  const handleTouchStart = useCallback(
+    (event: GestureResponderEvent) => {
+      const { pageX, pageY } = event.nativeEvent;
+      touchStartRef.current = { x: pageX, y: pageY, playerX };
+    },
+    [playerX],
+  );
 
   const handleTouchMove = useCallback((event: GestureResponderEvent) => {
     if (!touchStartRef.current) return;
@@ -684,54 +681,52 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
     setPlayerX(newX);
   }, []);
 
-  const handleTouchEnd = useCallback((event: GestureResponderEvent) => {
-    if (!touchStartRef.current) return;
+  const handleTouchEnd = useCallback(
+    (event: GestureResponderEvent) => {
+      if (!touchStartRef.current) return;
 
-    const { pageX, pageY } = event.nativeEvent;
-    const deltaX = Math.abs(pageX - touchStartRef.current.x);
-    const deltaY = Math.abs(pageY - touchStartRef.current.y);
+      const { pageX, pageY } = event.nativeEvent;
+      const deltaX = Math.abs(pageX - touchStartRef.current.x);
+      const deltaY = Math.abs(pageY - touchStartRef.current.y);
 
-    if (deltaX < 15 && deltaY < 15) {
-      shoot();
-    }
+      if (deltaX < 15 && deltaY < 15) {
+        shoot();
+      }
 
-    touchStartRef.current = null;
-  }, [shoot]);
+      touchStartRef.current = null;
+    },
+    [shoot],
+  );
 
   if (!visible) return null;
 
   const livesDisplay = Array(Math.max(0, lives)).fill('\u2665').join(' ');
-  const emptyLives = Array(Math.max(0, STARTING_LIVES - lives)).fill('\u2661').join(' ');
+  const emptyLives = Array(Math.max(0, STARTING_LIVES - lives))
+    .fill('\u2661')
+    .join(' ');
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View
         style={[styles.container, showDamage && styles.damageFlash]}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
+        onTouchEnd={handleTouchEnd}>
         <View style={styles.gameContainer}>
           <View style={styles.header}>
             <Text style={styles.title}>SPACE DEFENDER</Text>
             <View style={styles.statsRow}>
-              <Text style={styles.lives}>{livesDisplay}{emptyLives ? ' ' + emptyLives : ''}</Text>
+              <Text style={styles.lives}>
+                {livesDisplay}
+                {emptyLives ? ' ' + emptyLives : ''}
+              </Text>
               <Text style={styles.wave}>WAVE {wave}</Text>
             </View>
             <View style={styles.statsRow}>
               <Text style={styles.score}>SCORE: {score}</Text>
-              {comboMultiplier > 1 && (
-                <Text style={styles.combo}>{comboMultiplier}x COMBO!</Text>
-              )}
+              {comboMultiplier > 1 && <Text style={styles.combo}>{comboMultiplier}x COMBO!</Text>}
             </View>
-            {highScore > 0 && (
-              <Text style={styles.highScore}>HIGH: {highScore}</Text>
-            )}
+            {highScore > 0 && <Text style={styles.highScore}>HIGH: {highScore}</Text>}
             {boss && boss.active && (
               <View style={styles.bossHealthContainer}>
                 <Text style={styles.bossLabel}>BOSS</Text>
@@ -743,9 +738,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
           </View>
 
           <View style={styles.instructions}>
-            <Text style={styles.instructionText}>
-              Swipe to move | Tap to fire | Don't let enemies pass!
-            </Text>
+            <Text style={styles.instructionText}>Swipe to move | Tap to fire | Don't let enemies pass!</Text>
           </View>
 
           <View style={styles.gameArea}>

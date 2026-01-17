@@ -373,8 +373,14 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
 
       console.log('[BackendSettings] checkNetworkAndUpdateUrl: Checking available settings...');
       console.log('[BackendSettings] checkNetworkAndUpdateUrl:   clientSettings:', JSON.stringify(clientSettings));
-      console.log('[BackendSettings] checkNetworkAndUpdateUrl:   userSettings?.network:', JSON.stringify(userSettings?.network));
-      console.log('[BackendSettings] checkNetworkAndUpdateUrl:   settings?.network:', JSON.stringify(settings?.network));
+      console.log(
+        '[BackendSettings] checkNetworkAndUpdateUrl:   userSettings?.network:',
+        JSON.stringify(userSettings?.network),
+      );
+      console.log(
+        '[BackendSettings] checkNetworkAndUpdateUrl:   settings?.network:',
+        JSON.stringify(settings?.network),
+      );
 
       if (clientSettings?.homeWifiSSID) {
         networkConfig = clientSettings;
@@ -404,7 +410,10 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
 
       // If we got a URL and it's different from current, apply it
       console.log('[BackendSettings] checkNetworkAndUpdateUrl: result.url:', result.url);
-      console.log('[BackendSettings] checkNetworkAndUpdateUrl: lastAppliedNetworkUrlRef:', lastAppliedNetworkUrlRef.current);
+      console.log(
+        '[BackendSettings] checkNetworkAndUpdateUrl: lastAppliedNetworkUrlRef:',
+        lastAppliedNetworkUrlRef.current,
+      );
       if (result.url && result.url !== lastAppliedNetworkUrlRef.current) {
         console.log(
           `[BackendSettings] Network changed - source: ${source}, isHome: ${result.isHomeNetwork}, SSID: ${result.currentSSID}, switching to: ${result.url}`,
@@ -435,7 +444,10 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       if (!mountedRef.current) {
         return { success: false, authRequired: false };
       }
-      console.log('[BackendSettings] Successfully connected to backend, has live playlist:', !!result?.live?.playlistUrl);
+      console.log(
+        '[BackendSettings] Successfully connected to backend, has live playlist:',
+        !!result?.live?.playlistUrl,
+      );
       setSettings(result);
       setError(null);
       setLastLoadedAt(Date.now());
@@ -616,7 +628,8 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   // Check network whenever settings are updated with new network config
   // Watches client, user, and global settings (priority: client > user > global)
   useEffect(() => {
-    const hasNetworkSettings = clientSettings?.homeWifiSSID || userSettings?.network?.homeWifiSSID || settings?.network?.homeWifiSSID;
+    const hasNetworkSettings =
+      clientSettings?.homeWifiSSID || userSettings?.network?.homeWifiSSID || settings?.network?.homeWifiSSID;
     console.log('[BackendSettings] Network settings effect triggered:');
     console.log('[BackendSettings]   hasNetworkSettings:', !!hasNetworkSettings);
     console.log('[BackendSettings]   clientSettings?.homeWifiSSID:', clientSettings?.homeWifiSSID);

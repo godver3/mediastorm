@@ -4,19 +4,8 @@
  */
 
 import React, { memo, useMemo, useRef, useCallback, useEffect } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  ActivityIndicator,
-  useWindowDimensions,
-  ScrollView,
-} from 'react-native';
-import Animated, {
-  useAnimatedScrollHandler,
-  useSharedValue,
-} from 'react-native-reanimated';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions, ScrollView } from 'react-native';
+import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
@@ -74,15 +63,14 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
     (season: SeriesSeason) => {
       onSeasonSelect(season);
     },
-    [onSeasonSelect]
+    [onSeasonSelect],
   );
 
   const handleEpisodePress = useCallback(
     (episode: SeriesEpisode) => {
       // If this episode is already selected, play it
       const isAlreadyActive =
-        activeEpisode?.seasonNumber === episode.seasonNumber &&
-        activeEpisode?.episodeNumber === episode.episodeNumber;
+        activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
 
       if (isAlreadyActive && onEpisodePlay) {
         onEpisodePlay(episode);
@@ -90,14 +78,14 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
         onEpisodeSelect(episode);
       }
     },
-    [activeEpisode, onEpisodeSelect, onEpisodePlay]
+    [activeEpisode, onEpisodeSelect, onEpisodePlay],
   );
 
   const handleEpisodeLongPress = useCallback(
     (episode: SeriesEpisode) => {
       onEpisodeLongPress?.(episode);
     },
-    [onEpisodeLongPress]
+    [onEpisodeLongPress],
   );
 
   // Scroll to active episode when it changes or on initial load
@@ -107,9 +95,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
     }
 
     const activeIndex = episodes.findIndex(
-      (ep) =>
-        ep.seasonNumber === activeEpisode.seasonNumber &&
-        ep.episodeNumber === activeEpisode.episodeNumber
+      (ep) => ep.seasonNumber === activeEpisode.seasonNumber && ep.episodeNumber === activeEpisode.episodeNumber,
     );
 
     if (activeIndex > 0) {
@@ -140,11 +126,11 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
     }
 
     // Determine target season: selected season, or season 1 if available, or first season
-    const targetSeasonNumber = selectedSeason?.number ?? (seasons.some(s => s.number === 1) ? 1 : seasons[0]?.number);
+    const targetSeasonNumber = selectedSeason?.number ?? (seasons.some((s) => s.number === 1) ? 1 : seasons[0]?.number);
     if (targetSeasonNumber === undefined) return;
 
     // Find the index of target season in sorted seasons array
-    const targetIndex = seasons.findIndex(s => s.number === targetSeasonNumber);
+    const targetIndex = seasons.findIndex((s) => s.number === targetSeasonNumber);
     if (targetIndex < 0) return;
 
     // Calculate scroll position - use snap interval for alignment
@@ -194,8 +180,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
           style={styles.seasonScroll}
           snapToOffsets={seasonSnapOffsets}
           decelerationRate="fast"
-          onLayout={handleSeasonScrollLayout}
-        >
+          onLayout={handleSeasonScrollLayout}>
           {seasons.map((season) => {
             const isSelected = selectedSeason?.number === season.number;
             const seasonLabel = season.name || `Season ${season.number}`;
@@ -203,11 +188,8 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
               <Pressable
                 key={season.number}
                 style={[styles.seasonChip, isSelected && styles.seasonChipSelected]}
-                onPress={() => handleSeasonPress(season)}
-              >
-                <Text style={[styles.seasonChipText, isSelected && styles.seasonChipTextSelected]}>
-                  {seasonLabel}
-                </Text>
+                onPress={() => handleSeasonPress(season)}>
+                <Text style={[styles.seasonChipText, isSelected && styles.seasonChipTextSelected]}>{seasonLabel}</Text>
               </Pressable>
             );
           })}
@@ -231,8 +213,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
             scrollEventThrottle={16}
             snapToInterval={snapInterval}
             decelerationRate="fast"
-            snapToAlignment="start"
-          >
+            snapToAlignment="start">
             {episodes.map((episode, index) => {
               const isActive =
                 activeEpisode?.seasonNumber === episode.seasonNumber &&
@@ -245,16 +226,11 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                   key={`${episode.seasonNumber}-${episode.episodeNumber}`}
                   style={[styles.episodeCard, isActive && styles.episodeCardActive]}
                   onPress={() => handleEpisodePress(episode)}
-                  onLongPress={() => handleEpisodeLongPress(episode)}
-                >
+                  onLongPress={() => handleEpisodeLongPress(episode)}>
                   {/* Thumbnail */}
                   <View style={[styles.thumbnailContainer, isActive && styles.thumbnailContainerActive]}>
                     {episode.image?.url ? (
-                      <Image
-                        source={{ uri: episode.image.url }}
-                        style={styles.episodeThumbnail}
-                        contentFit="cover"
-                      />
+                      <Image source={{ uri: episode.image.url }} style={styles.episodeThumbnail} contentFit="cover" />
                     ) : (
                       <View style={[styles.episodeThumbnail, styles.thumbnailPlaceholder]}>
                         <Ionicons name="film-outline" size={32} color={theme.colors.text.muted} />

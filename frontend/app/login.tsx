@@ -1,14 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Keyboard,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Image } from '@/components/Image';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
@@ -23,7 +14,8 @@ import { useToast } from '@/components/ToastContext';
 
 // Local logo asset with fallback chain
 const localLogoAsset = require('@/assets/app-logo-wide.png');
-const GITHUB_LOGO_URL = 'https://raw.githubusercontent.com/godver3/strmr/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
+const GITHUB_LOGO_URL =
+  'https://raw.githubusercontent.com/godver3/strmr/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
 
 export default function LoginScreen() {
   const theme = useTheme();
@@ -218,16 +210,10 @@ export default function LoginScreen() {
           contentContainerStyle={styles.container}
           enableOnAndroid={true}
           extraScrollHeight={200}
-          keyboardShouldPersistTaps="handled"
-        >
-            <View style={styles.card}>
+          keyboardShouldPersistTaps="handled">
+          <View style={styles.card}>
             <View style={styles.tvImageHeaderContainer}>
-              <Image
-                source={getLogoSource()}
-                style={styles.tvLogoImage}
-                contentFit="cover"
-                onError={handleLogoError}
-              />
+              <Image source={getLogoSource()} style={styles.tvLogoImage} contentFit="cover" onError={handleLogoError} />
               <LinearGradient
                 colors={['transparent', theme.colors.background.surface]}
                 style={styles.tvImageGradientOverlay}
@@ -248,8 +234,7 @@ export default function LoginScreen() {
                   onPress={() => serverUrlRef.current?.focus()}
                   hasTVPreferredFocus={true}
                   tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
-                >
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
                   {({ focused }) => (
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Server URL</Text>
@@ -295,8 +280,7 @@ export default function LoginScreen() {
                   onPress={() => usernameRef.current?.focus()}
                   hasTVPreferredFocus={true}
                   tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
-                >
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
                   {({ focused }) => (
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Username</Text>
@@ -328,8 +312,7 @@ export default function LoginScreen() {
                 <Pressable
                   onPress={() => passwordRef.current?.focus()}
                   tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}
-                >
+                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
                   {({ focused }) => (
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Password</Text>
@@ -392,12 +375,7 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.imageHeaderContainer}>
-          <Image
-            source={getLogoSource()}
-            style={styles.mobileLogoImage}
-            contentFit="cover"
-            onError={handleLogoError}
-          />
+          <Image source={getLogoSource()} style={styles.mobileLogoImage} contentFit="cover" onError={handleLogoError} />
           <LinearGradient
             colors={['transparent', theme.colors.background.surface]}
             style={styles.imageGradientOverlay}
@@ -434,8 +412,7 @@ export default function LoginScreen() {
           <Pressable
             onPress={handleSaveServer}
             disabled={isSavingServer}
-            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-          >
+            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
             {isSavingServer ? (
               <ActivityIndicator size="small" color={theme.colors.text.primary} />
             ) : (
@@ -451,12 +428,7 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.imageHeaderContainer}>
-          <Image
-            source={getLogoSource()}
-            style={styles.mobileLogoImage}
-            contentFit="cover"
-            onError={handleLogoError}
-          />
+          <Image source={getLogoSource()} style={styles.mobileLogoImage} contentFit="cover" onError={handleLogoError} />
           <LinearGradient
             colors={['transparent', theme.colors.background.surface]}
             style={styles.imageGradientOverlay}
@@ -527,8 +499,7 @@ export default function LoginScreen() {
           <Pressable
             onPress={handleLogin}
             disabled={isLoading}
-            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-          >
+            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
             {isLoading ? (
               <ActivityIndicator size="small" color={theme.colors.text.primary} />
             ) : (
@@ -643,8 +614,7 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
   const isTvOS = isTV && Platform.OS === 'ios';
   const isAndroidTV = isTV && Platform.OS === 'android';
   const isWeb = Platform.OS === 'web';
-  const s = (value: number) =>
-    isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.55) : value;
+  const s = (value: number) => (isTvOS ? Math.round(value * 1.2) : isAndroidTV ? Math.round(value * 0.55) : value);
   // Extra 50% scaling for specific text elements on TV platforms
   const sText = (value: number) => (isTV ? Math.round(s(value) * 1.5) : s(value));
 
@@ -883,4 +853,3 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     },
   });
 };
-

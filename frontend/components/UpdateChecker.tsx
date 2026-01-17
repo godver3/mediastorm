@@ -140,9 +140,7 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
       <View style={styles.container}>
         <View style={styles.content}>
           <ActivityIndicator size="large" color="#3f66ff" style={styles.spinner} />
-          <Text style={styles.title}>
-            {updateState === 'ready' ? 'Restarting' : 'Updating'}
-          </Text>
+          <Text style={styles.title}>{updateState === 'ready' ? 'Restarting' : 'Updating'}</Text>
           <Text style={styles.progress}>{progress}</Text>
         </View>
       </View>

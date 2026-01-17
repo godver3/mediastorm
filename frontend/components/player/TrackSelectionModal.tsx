@@ -232,7 +232,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   // Determine which option should have initial focus
   const defaultFocusOptionId = useMemo(() => {
-    if (selectedId && options.some(opt => opt.id === selectedId)) {
+    if (selectedId && options.some((opt) => opt.id === selectedId)) {
       return selectedId;
     }
     return options[0]?.id ?? null;
@@ -253,8 +253,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         onLayout={(event) => {
           const { height } = event.nativeEvent.layout;
           handleItemLayout(index, 0, height);
-        }}
-      >
+        }}>
         <Pressable
           onPress={() => handleOptionSelect(option.id)}
           onFocus={() => {
@@ -273,8 +272,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
             isSelected && isFocused && styles.optionItemSelectedFocused,
           ]}
           hasTVPreferredFocus={shouldHaveInitialFocus}
-          tvParallaxProperties={{ enabled: false }}
-        >
+          tvParallaxProperties={{ enabled: false }}>
           <View style={styles.optionTextContainer}>
             <Text
               style={[
@@ -282,8 +280,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                 isFocused && !isSelected && styles.optionLabelFocused,
                 isSelected && !isFocused && styles.optionLabelSelected,
                 isSelected && isFocused && styles.optionLabelSelectedFocused,
-              ]}
-            >
+              ]}>
               {option.label}
             </Text>
             {option.description ? (
@@ -293,8 +290,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                   isFocused && !isSelected && styles.optionDescriptionFocused,
                   isSelected && !isFocused && styles.optionDescriptionSelected,
                   isSelected && isFocused && styles.optionDescriptionSelectedFocused,
-                ]}
-              >
+                ]}>
                 {option.description}
               </Text>
             ) : null}
@@ -316,8 +312,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
       transparent
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
-      hardwareAccelerated
-    >
+      hardwareAccelerated>
       <View style={styles.overlay}>
         <Pressable
           style={styles.backdrop}
@@ -335,8 +330,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
             ref={scrollViewRef}
             style={styles.optionsScrollView}
             contentContainerStyle={styles.optionsList}
-            scrollEnabled={!Platform.isTV}
-          >
+            scrollEnabled={!Platform.isTV}>
             {hasOptions ? (
               options.map((option, index) => renderOption(option, index))
             ) : (
@@ -353,8 +347,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                 onFocus={() => setIsSearchFocused(true)}
                 onBlur={() => setIsSearchFocused(false)}
                 style={[styles.closeButton, styles.searchButton, isSearchFocused && styles.closeButtonFocused]}
-                tvParallaxProperties={{ enabled: false }}
-              >
+                tvParallaxProperties={{ enabled: false }}>
                 <Text style={[styles.closeButtonText, isSearchFocused && styles.closeButtonTextFocused]}>
                   Search Online
                 </Text>
@@ -365,8 +358,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
               onFocus={() => setIsCloseFocused(true)}
               onBlur={() => setIsCloseFocused(false)}
               style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
-              tvParallaxProperties={{ enabled: false }}
-            >
+              tvParallaxProperties={{ enabled: false }}>
               <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
             </Pressable>
           </View>

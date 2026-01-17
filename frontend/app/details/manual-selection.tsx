@@ -255,11 +255,7 @@ export const ManualSelection = ({
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.overlay}>
           {/* Backdrop for closing on mobile (TV uses back button via onRequestClose) */}
-          <Pressable
-            style={styles.overlayPressable}
-            onPress={Platform.isTV ? undefined : onClose}
-            focusable={false}
-          />
+          <Pressable style={styles.overlayPressable} onPress={Platform.isTV ? undefined : onClose} focusable={false} />
           <View style={manualOverlayStyle} pointerEvents="box-none">
             <View style={styles.manualContainer}>
               <View style={styles.manualHeader}>
@@ -298,10 +294,7 @@ export const ManualSelection = ({
                   <SpatialNavigationNode orientation="vertical">
                     <View style={[styles.manualResultsContainer, { maxHeight, overflow: 'hidden' }]}>
                       <Animated.View
-                        style={[
-                          styles.manualResultsContent,
-                          { transform: [{ translateY: scrollOffsetRef }] },
-                        ]}>
+                        style={[styles.manualResultsContent, { transform: [{ translateY: scrollOffsetRef }] }]}>
                         {filteredResults.map((result, index) => {
                           const key = getResultKey(result) || `${result.indexer}-${index}`;
                           const healthState = healthChecks[key];
@@ -309,7 +302,12 @@ export const ManualSelection = ({
                           const isHealthy = healthState?.state === 'healthy';
 
                           const handleSelect = () => {
-                            console.log('[ManualSelection] Item selected:', result.title, 'health:', healthState?.state);
+                            console.log(
+                              '[ManualSelection] Item selected:',
+                              result.title,
+                              'health:',
+                              healthState?.state,
+                            );
 
                             // First tap: check health if not already checked or checking
                             if (!healthState || (!hasHealthCheck && healthState.state !== 'checking')) {

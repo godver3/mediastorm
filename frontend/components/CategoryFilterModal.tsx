@@ -146,8 +146,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
             onPress={() => withSelectGuard(handleSelectAll)}
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [styles.actionButton, focused && styles.actionButtonFocused]}
-          >
+            style={({ focused }) => [styles.actionButton, focused && styles.actionButtonFocused]}>
             {({ focused }) => (
               <Text style={[styles.actionButtonText, focused && styles.actionButtonTextFocused]}>
                 {allSelected ? 'Clear All' : 'Select All'}
@@ -168,8 +167,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
                   styles.categoryItem,
                   focused && styles.categoryItemFocused,
                   isSelected && styles.categoryItemSelected,
-                ]}
-              >
+                ]}>
                 {({ focused }) => (
                   <>
                     <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
@@ -178,8 +176,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
                         styles.categoryText,
                         focused && styles.categoryTextFocused,
                         isSelected && styles.categoryTextSelected,
-                      ]}
-                    >
+                      ]}>
                       {category}
                     </Text>
                   </>
@@ -193,8 +190,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
           <Pressable
             onPress={() => withSelectGuard(onClose)}
             tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}
-          >
+            style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}>
             {({ focused }) => (
               <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
             )}

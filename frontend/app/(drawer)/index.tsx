@@ -13,7 +13,6 @@ import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import { apiService, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
@@ -36,7 +35,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
 import {
-  findNodeHandle,
   FlatList,
   Modal,
   NativeScrollEvent,
@@ -54,13 +52,7 @@ import Animated, {
   scrollTo as reanimatedScrollTo,
   useSharedValue,
   useAnimatedReaction,
-  withTiming,
-  Easing,
 } from 'react-native-reanimated';
-
-// Scroll animation duration for vertical scrolling between shelves (milliseconds)
-// Library default for horizontal is 200ms. Using 450ms for vertical for a smoother feel.
-const TV_SCROLL_DURATION_MS = 450;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type CardData = {
@@ -82,13 +74,6 @@ type CardData = {
   theatricalRelease?: ReleaseWindow; // Movie theatrical release status
   homeRelease?: ReleaseWindow; // Movie home release status
 };
-
-// Context for stable shelf card callbacks - avoids re-creating closures on every render
-interface ShelfCardHandlers {
-  onSelect: (cardId: string | number) => void;
-  onFocus: (cardId: string | number, index: number) => void;
-}
-const ShelfCardHandlersContext = React.createContext<ShelfCardHandlers | null>(null);
 
 type HeroContent = {
   title: string;
@@ -329,12 +314,16 @@ function IndexScreen() {
   // Debug: Log data source changes
   useEffect(() => {
     if (!DEBUG_INDEX_RENDERS) return;
-    console.log(`[IndexPage] Data changed - watchlist: ${watchlistItems?.length ?? 0} items, loading: ${watchlistLoading}`);
+    console.log(
+      `[IndexPage] Data changed - watchlist: ${watchlistItems?.length ?? 0} items, loading: ${watchlistLoading}`,
+    );
   }, [watchlistItems, watchlistLoading]);
 
   useEffect(() => {
     if (!DEBUG_INDEX_RENDERS) return;
-    console.log(`[IndexPage] Data changed - continueWatching: ${continueWatchingItems?.length ?? 0} items, loading: ${continueWatchingLoading}`);
+    console.log(
+      `[IndexPage] Data changed - continueWatching: ${continueWatchingItems?.length ?? 0} items, loading: ${continueWatchingLoading}`,
+    );
   }, [continueWatchingItems, continueWatchingLoading]);
 
   useEffect(() => {
@@ -349,7 +338,9 @@ function IndexScreen() {
 
   useEffect(() => {
     if (!DEBUG_INDEX_RENDERS) return;
-    console.log(`[IndexPage] Settings changed - loading: ${settingsLoading}, reachable: ${isBackendReachable}, lastLoaded: ${settingsLastLoadedAt}`);
+    console.log(
+      `[IndexPage] Settings changed - loading: ${settingsLoading}, reachable: ${isBackendReachable}, lastLoaded: ${settingsLastLoadedAt}`,
+    );
   }, [settingsLoading, isBackendReachable, settingsLastLoadedAt]);
 
   useEffect(() => {
@@ -745,7 +736,7 @@ function IndexScreen() {
   // Memoize badge visibility to prevent prop identity changes on each render
   const badgeVisibility = useMemo(
     () => userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility ?? [],
-    [userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility]
+    [userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility],
   );
 
   // Cache series overviews for continue watching items
@@ -761,7 +752,9 @@ function IndexScreen() {
 
   const watchlistCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
-      console.log(`[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`);
+      console.log(
+        `[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`,
+      );
     }
     const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears), movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -773,7 +766,9 @@ function IndexScreen() {
   }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
   const continueWatchingCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
-      console.log(`[IndexPage] useMemo: continueWatchingCards recomputing (${continueWatchingItems?.length ?? 0} items, ${seriesOverviews.size} overviews)`);
+      console.log(
+        `[IndexPage] useMemo: continueWatchingCards recomputing (${continueWatchingItems?.length ?? 0} items, ${seriesOverviews.size} overviews)`,
+      );
     }
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -1057,7 +1052,15 @@ function IndexScreen() {
 
     // Queue for fetching - context handles batching and deduplication
     queueReleaseFetch(moviesToFetch);
-  }, [trendingMovies, customListData, continueWatchingItems, watchlistItems, badgeVisibility, hasMovieRelease, queueReleaseFetch]);
+  }, [
+    trendingMovies,
+    customListData,
+    continueWatchingItems,
+    watchlistItems,
+    badgeVisibility,
+    hasMovieRelease,
+    queueReleaseFetch,
+  ]);
 
   const trendingMovieCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
@@ -1111,7 +1114,8 @@ function IndexScreen() {
         // Show explore card with remaining filtered items count
         const exploreCard = createExploreCard(shelfId, allCards, remainingCount);
         const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-        result[shelfId] = exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
+        result[shelfId] =
+          exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
       }
     }
     return result;
@@ -1169,7 +1173,8 @@ function IndexScreen() {
           collagePosters,
         };
         const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
-        result[shelfId] = exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
+        result[shelfId] =
+          exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
       }
     }
     return result;
@@ -1852,7 +1857,9 @@ function IndexScreen() {
     // Skip computation for mobile layout
     if (shouldUseMobileLayout) return [];
     if (DEBUG_INDEX_RENDERS) {
-      console.log(`[IndexPage] useMemo: desktopShelves recomputing - CW:${continueWatchingCards.length} WL:${watchlistCards.length} TM:${trendingMovieCards.length} TS:${trendingShowCards.length}`);
+      console.log(
+        `[IndexPage] useMemo: desktopShelves recomputing - CW:${continueWatchingCards.length} WL:${watchlistCards.length} TM:${trendingMovieCards.length} TS:${trendingShowCards.length}`,
+      );
     }
 
     // Get shelf configuration from user settings, fall back to global settings, then default order
@@ -1959,7 +1966,8 @@ function IndexScreen() {
   // The ref focusedShelfKeyRef.current can be read synchronously if needed
 
   // Spatial navigation: active when screen focused, menu closed, and no modals open
-  const isSpatialNavActive = focused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible && !isVersionMismatchVisible;
+  const isSpatialNavActive =
+    focused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible && !isVersionMismatchVisible;
   const onDirectionHandledWithoutMovement = useCallback(
     (direction: Direction) => {
       if (direction === 'left') {
@@ -2033,8 +2041,7 @@ function IndexScreen() {
             style={mobileStyles.container}
             contentContainerStyle={mobileStyles.content}
             contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}
-          >
+            automaticallyAdjustContentInsets={false}>
             <View style={mobileStyles.heroContainer}>
               {mobileHeroItems.length > 1 ? (
                 <>
@@ -2047,14 +2054,12 @@ function IndexScreen() {
                     snapToInterval={heroSnapInterval}
                     snapToAlignment="start"
                     decelerationRate="fast"
-                    contentContainerStyle={{ paddingHorizontal: heroPadding }}
-                  >
+                    contentContainerStyle={{ paddingHorizontal: heroPadding }}>
                     {mobileHeroItems.map((item, index) => (
                       <Pressable
                         key={`hero-${item.id}-${index}`}
                         style={[mobileStyles.hero, { width: heroWidth, marginRight: heroGap }]}
-                        onPress={() => handleCardSelect(item)}
-                      >
+                        onPress={() => handleCardSelect(item)}>
                         <Image
                           source={item.backdropUrl || item.headerImage}
                           style={mobileStyles.heroImage}
@@ -2102,8 +2107,7 @@ function IndexScreen() {
                     if (currentHeroItem) {
                       handleCardSelect(currentHeroItem);
                     }
-                  }}
-                >
+                  }}>
                   <Image source={heroSource.headerImage} style={mobileStyles.heroImage} contentFit="cover" />
                   <LinearGradient
                     colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
@@ -2157,8 +2161,7 @@ function IndexScreen() {
           visible={isRemoveConfirmVisible}
           transparent={true}
           animationType="fade"
-          onRequestClose={handleCancelRemove}
-        >
+          onRequestClose={handleCancelRemove}>
           <View style={mobileStyles.modalOverlay}>
             <View style={mobileStyles.modalContainer}>
               <Text style={mobileStyles.modalTitle}>Remove from Continue Watching?</Text>
@@ -2171,8 +2174,7 @@ function IndexScreen() {
                 </Pressable>
                 <Pressable
                   onPress={handleConfirmRemove}
-                  style={[mobileStyles.modalButton, mobileStyles.modalButtonDanger]}
-                >
+                  style={[mobileStyles.modalButton, mobileStyles.modalButtonDanger]}>
                   <Text style={[mobileStyles.modalButtonText, mobileStyles.modalButtonDangerText]}>Remove</Text>
                 </Pressable>
               </View>
@@ -2185,8 +2187,7 @@ function IndexScreen() {
           visible={isVersionMismatchVisible}
           transparent={true}
           animationType="fade"
-          onRequestClose={handleDismissVersionMismatch}
-        >
+          onRequestClose={handleDismissVersionMismatch}>
           <View style={mobileStyles.modalOverlay}>
             <View style={mobileStyles.modalContainer}>
               <Text style={mobileStyles.modalTitle}>Version Mismatch</Text>
@@ -2214,251 +2215,244 @@ function IndexScreen() {
   const desktopContent = (
     <View ref={pageRef} style={desktopStyles?.styles.page}>
       {Platform.isTV && (
-          <View
-            style={desktopStyles?.styles.topSpacer}
-            pointerEvents="none"
-            renderToHardwareTextureAndroid={isAndroidTV}
-          >
-            {focusedDesktopCard &&
-              heroImageDimensions &&
-              (() => {
-                const imageUrl = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
-                const isPortrait = heroImageDimensions.height > heroImageDimensions.width;
+        <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
+          {focusedDesktopCard &&
+            heroImageDimensions &&
+            (() => {
+              const imageUrl = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
+              const isPortrait = heroImageDimensions.height > heroImageDimensions.width;
 
-                // Android TV: use cover fit and no blur for performance
-                if (isAndroidTV) {
-                  return (
-                    <View style={desktopStyles?.styles.topContent}>
-                      <View style={desktopStyles?.styles.topHeroContainer}>
-                        <Image
-                          source={imageUrl}
-                          style={desktopStyles?.styles.topHeroImage}
-                          contentFit="cover"
-                          transition={0}
-                        />
-                      </View>
-                      <View style={desktopStyles?.styles.topTextContainer}>
-                        <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
-                          {focusedDesktopCard.title}
-                        </Text>
-                        {focusedDesktopCard.year && (
-                          <Text
-                            style={[
-                              desktopStyles?.styles.topYear,
-                              {
-                                fontSize: desktopStyles?.styles.topYear.fontSize * 1.25,
-                                lineHeight: desktopStyles?.styles.topYear.lineHeight * 1.25,
-                              },
-                            ]}
-                          >
-                            {focusedDesktopCard.year}
-                          </Text>
-                        )}
-                        <Text
-                          style={[
-                            desktopStyles?.styles.topDescription,
-                            {
-                              fontSize: desktopStyles?.styles.topDescription.fontSize * 1.25,
-                              lineHeight: desktopStyles?.styles.topDescription.lineHeight * 1.25,
-                            },
-                          ]}
-                          numberOfLines={4}
-                        >
-                          {focusedDesktopCard.description}
-                        </Text>
-                      </View>
-                    </View>
-                  );
-                }
-
+              // Android TV: use cover fit and no blur for performance
+              if (isAndroidTV) {
                 return (
                   <View style={desktopStyles?.styles.topContent}>
                     <View style={desktopStyles?.styles.topHeroContainer}>
-                      {isPortrait ? (
-                        <>
-                          <Image
-                            source={imageUrl}
-                            style={[StyleSheet.absoluteFillObject]}
-                            contentFit="cover"
-                            blurRadius={50}
-                          />
-                          <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
-                        </>
-                      ) : (
-                        <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
-                      )}
+                      <Image
+                        source={imageUrl}
+                        style={desktopStyles?.styles.topHeroImage}
+                        contentFit="cover"
+                        transition={0}
+                      />
                     </View>
                     <View style={desktopStyles?.styles.topTextContainer}>
                       <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
                         {focusedDesktopCard.title}
                       </Text>
                       {focusedDesktopCard.year && (
-                        <Text style={desktopStyles?.styles.topYear}>{focusedDesktopCard.year}</Text>
+                        <Text
+                          style={[
+                            desktopStyles?.styles.topYear,
+                            {
+                              fontSize: desktopStyles?.styles.topYear.fontSize * 1.25,
+                              lineHeight: desktopStyles?.styles.topYear.lineHeight * 1.25,
+                            },
+                          ]}>
+                          {focusedDesktopCard.year}
+                        </Text>
                       )}
-                      <Text style={desktopStyles?.styles.topDescription} numberOfLines={6}>
+                      <Text
+                        style={[
+                          desktopStyles?.styles.topDescription,
+                          {
+                            fontSize: desktopStyles?.styles.topDescription.fontSize * 1.25,
+                            lineHeight: desktopStyles?.styles.topDescription.lineHeight * 1.25,
+                          },
+                        ]}
+                        numberOfLines={4}>
                         {focusedDesktopCard.description}
                       </Text>
                     </View>
                   </View>
                 );
-              })()}
-          </View>
-        )}
-        {/* Bottom gradient fade for visual polish on TV - disabled on Android TV for performance */}
-        {Platform.isTV && !isAndroidTV && (
-          <LinearGradient
-            colors={[
-              'transparent',
-              `${theme.colors.background.base}40`,
-              `${theme.colors.background.base}B3`,
-              theme.colors.background.base,
-            ]}
-            locations={[0, 0.3, 0.7, 1]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={desktopStyles?.styles.bottomFadeGradient}
-            pointerEvents="none"
-          />
-        )}
+              }
 
-        <Animated.ScrollView
-            ref={scrollViewRef}
-            style={desktopStyles?.styles.pageScroll}
-            contentContainerStyle={desktopStyles?.styles.pageScrollContent}
-            bounces={false}
-            overScrollMode="never"
-            decelerationRate="fast"
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={false}
-            contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}
-            removeClippedSubviews={Platform.isTV}
-            scrollEventThrottle={16}
-            onLayout={handleDesktopScrollLayout}
-            onContentSizeChange={handleDesktopContentSizeChange}
-          >
-            {!Platform.isTV && (
-              <View style={desktopStyles?.styles.hero}>
-                <Image source={heroSource.headerImage} style={desktopStyles?.styles.heroImage} contentFit="cover" />
-                <LinearGradient
-                  colors={['rgba(0,0,0,0.9)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.2)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={desktopStyles?.styles.heroGradient}
-                />
-                <View style={desktopStyles?.styles.heroTextContainer}>
-                  <Text style={desktopStyles?.styles.heroTitle} numberOfLines={2}>
-                    {heroSource.title}
-                  </Text>
-                  <Text style={desktopStyles?.styles.heroDescription} numberOfLines={3}>
-                    {heroSource.description}
-                  </Text>
+              return (
+                <View style={desktopStyles?.styles.topContent}>
+                  <View style={desktopStyles?.styles.topHeroContainer}>
+                    {isPortrait ? (
+                      <>
+                        <Image
+                          source={imageUrl}
+                          style={[StyleSheet.absoluteFillObject]}
+                          contentFit="cover"
+                          blurRadius={50}
+                        />
+                        <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
+                      </>
+                    ) : (
+                      <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
+                    )}
+                  </View>
+                  <View style={desktopStyles?.styles.topTextContainer}>
+                    <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
+                      {focusedDesktopCard.title}
+                    </Text>
+                    {focusedDesktopCard.year && (
+                      <Text style={desktopStyles?.styles.topYear}>{focusedDesktopCard.year}</Text>
+                    )}
+                    <Text style={desktopStyles?.styles.topDescription} numberOfLines={6}>
+                      {focusedDesktopCard.description}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            )}
+              );
+            })()}
+        </View>
+      )}
+      {/* Bottom gradient fade for visual polish on TV - disabled on Android TV for performance */}
+      {Platform.isTV && !isAndroidTV && (
+        <LinearGradient
+          colors={[
+            'transparent',
+            `${theme.colors.background.base}40`,
+            `${theme.colors.background.base}B3`,
+            theme.colors.background.base,
+          ]}
+          locations={[0, 0.3, 0.7, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={desktopStyles?.styles.bottomFadeGradient}
+          pointerEvents="none"
+        />
+      )}
 
-            <SpatialNavigationNode orientation="vertical" focusKey="home-shelves">
-              <View key={navigationKey}>
-                {desktopShelves.map((shelf, shelfIndex) => (
-                  <MemoizedDesktopShelf
-                    key={shelf.key}
-                    title={shelf.title}
-                    cards={shelf.cards}
-                    styles={desktopStyles!.styles}
-                    cardWidth={desktopStyles!.cardWidth}
-                    cardHeight={desktopStyles!.cardHeight}
-                    cardSpacing={desktopStyles!.cardSpacing}
-                    shelfPadding={desktopStyles!.shelfPadding}
-                    onCardSelect={handleCardSelect}
-                    onShelfItemFocus={handleShelfItemFocus}
-                    autoFocus={shelf.autoFocus && shelf.cards.length > 0}
-                    collapseIfEmpty={shelf.collapseIfEmpty}
-                    showEmptyState={shelf.showEmptyState}
-                    shelfKey={shelf.key}
-                    shelfIndex={shelfIndex}
-                    registerShelfRef={registerShelfRef}
-                    registerShelfFlatListRef={registerShelfFlatListRef}
-                    isInitialLoad={isInitialLoadRef.current}
-                    badgeVisibility={badgeVisibility}
-                    onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
-                  />
-                ))}
-              </View>
-            </SpatialNavigationNode>
-        </Animated.ScrollView>
+      <Animated.ScrollView
+        ref={scrollViewRef}
+        style={desktopStyles?.styles.pageScroll}
+        contentContainerStyle={desktopStyles?.styles.pageScrollContent}
+        bounces={false}
+        overScrollMode="never"
+        decelerationRate="fast"
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={false}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+        removeClippedSubviews={Platform.isTV}
+        scrollEventThrottle={16}
+        onLayout={handleDesktopScrollLayout}
+        onContentSizeChange={handleDesktopContentSizeChange}>
         {!Platform.isTV && (
-          <FloatingHero
-            data={
-              focusedDesktopCard
-                ? {
-                    title: focusedDesktopCard.title,
-                    description: focusedDesktopCard.description,
-                    headerImage: focusedDesktopCard.headerImage,
-                    year: focusedDesktopCard.year,
-                    mediaType: focusedDesktopCard.mediaType,
-                  }
-                : null
-            }
-          />
+          <View style={desktopStyles?.styles.hero}>
+            <Image source={heroSource.headerImage} style={desktopStyles?.styles.heroImage} contentFit="cover" />
+            <LinearGradient
+              colors={['rgba(0,0,0,0.9)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.2)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={desktopStyles?.styles.heroGradient}
+            />
+            <View style={desktopStyles?.styles.heroTextContainer}>
+              <Text style={desktopStyles?.styles.heroTitle} numberOfLines={2}>
+                {heroSource.title}
+              </Text>
+              <Text style={desktopStyles?.styles.heroDescription} numberOfLines={3}>
+                {heroSource.description}
+              </Text>
+            </View>
+          </View>
         )}
 
-        {/* Remove from Continue Watching Confirmation Modal (TV) */}
-        <TvModal visible={isRemoveConfirmVisible} onRequestClose={handleCancelRemove}>
-          <View style={desktopStyles.styles.tvModalContainer}>
-            <Text style={desktopStyles.styles.tvModalTitle}>Remove from Continue Watching?</Text>
-            <Text style={desktopStyles.styles.tvModalSubtitle}>
-              Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
-            </Text>
-            <View style={desktopStyles.styles.tvModalActions}>
-              <FocusablePressable
-                autoFocus
-                text="Cancel"
-                onSelect={handleCancelRemove}
-                style={desktopStyles.styles.tvModalButton}
-                focusedStyle={desktopStyles.styles.tvModalButtonFocused}
-                textStyle={desktopStyles.styles.tvModalButtonText}
-                focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+        <SpatialNavigationNode orientation="vertical" focusKey="home-shelves">
+          <View key={navigationKey}>
+            {desktopShelves.map((shelf, shelfIndex) => (
+              <MemoizedDesktopShelf
+                key={shelf.key}
+                title={shelf.title}
+                cards={shelf.cards}
+                styles={desktopStyles!.styles}
+                cardWidth={desktopStyles!.cardWidth}
+                cardHeight={desktopStyles!.cardHeight}
+                cardSpacing={desktopStyles!.cardSpacing}
+                shelfPadding={desktopStyles!.shelfPadding}
+                onCardSelect={handleCardSelect}
+                onShelfItemFocus={handleShelfItemFocus}
+                autoFocus={shelf.autoFocus && shelf.cards.length > 0}
+                collapseIfEmpty={shelf.collapseIfEmpty}
+                showEmptyState={shelf.showEmptyState}
+                shelfKey={shelf.key}
+                shelfIndex={shelfIndex}
+                registerShelfRef={registerShelfRef}
+                registerShelfFlatListRef={registerShelfFlatListRef}
+                isInitialLoad={isInitialLoadRef.current}
+                badgeVisibility={badgeVisibility}
+                onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
               />
-              <FocusablePressable
-                text="Remove"
-                onSelect={handleConfirmRemove}
-                style={[desktopStyles.styles.tvModalButton, desktopStyles.styles.tvModalButtonDanger]}
-                focusedStyle={[
-                  desktopStyles.styles.tvModalButtonFocused,
-                  desktopStyles.styles.tvModalButtonDangerFocused,
-                ]}
-                textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
-                focusedTextStyle={[
-                  desktopStyles.styles.tvModalButtonTextFocused,
-                  desktopStyles.styles.tvModalButtonDangerTextFocused,
-                ]}
-              />
-            </View>
+            ))}
           </View>
-        </TvModal>
+        </SpatialNavigationNode>
+      </Animated.ScrollView>
+      {!Platform.isTV && (
+        <FloatingHero
+          data={
+            focusedDesktopCard
+              ? {
+                  title: focusedDesktopCard.title,
+                  description: focusedDesktopCard.description,
+                  headerImage: focusedDesktopCard.headerImage,
+                  year: focusedDesktopCard.year,
+                  mediaType: focusedDesktopCard.mediaType,
+                }
+              : null
+          }
+        />
+      )}
 
-        {/* Version Mismatch Warning Modal (TV) */}
-        <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
-          <View style={desktopStyles.styles.tvModalContainer}>
-            <Text style={desktopStyles.styles.tvModalTitle}>Version Mismatch</Text>
-            <Text style={desktopStyles.styles.tvModalSubtitle}>
-              Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may
-              experience unexpected behavior. Consider updating.
-            </Text>
-            <View style={desktopStyles.styles.tvModalActions}>
-              <FocusablePressable
-                autoFocus
-                text="OK"
-                onSelect={handleDismissVersionMismatch}
-                style={desktopStyles.styles.tvModalButton}
-                focusedStyle={desktopStyles.styles.tvModalButtonFocused}
-                textStyle={desktopStyles.styles.tvModalButtonText}
-                focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
-              />
-            </View>
+      {/* Remove from Continue Watching Confirmation Modal (TV) */}
+      <TvModal visible={isRemoveConfirmVisible} onRequestClose={handleCancelRemove}>
+        <View style={desktopStyles.styles.tvModalContainer}>
+          <Text style={desktopStyles.styles.tvModalTitle}>Remove from Continue Watching?</Text>
+          <Text style={desktopStyles.styles.tvModalSubtitle}>
+            Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
+          </Text>
+          <View style={desktopStyles.styles.tvModalActions}>
+            <FocusablePressable
+              autoFocus
+              text="Cancel"
+              onSelect={handleCancelRemove}
+              style={desktopStyles.styles.tvModalButton}
+              focusedStyle={desktopStyles.styles.tvModalButtonFocused}
+              textStyle={desktopStyles.styles.tvModalButtonText}
+              focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+            />
+            <FocusablePressable
+              text="Remove"
+              onSelect={handleConfirmRemove}
+              style={[desktopStyles.styles.tvModalButton, desktopStyles.styles.tvModalButtonDanger]}
+              focusedStyle={[
+                desktopStyles.styles.tvModalButtonFocused,
+                desktopStyles.styles.tvModalButtonDangerFocused,
+              ]}
+              textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
+              focusedTextStyle={[
+                desktopStyles.styles.tvModalButtonTextFocused,
+                desktopStyles.styles.tvModalButtonDangerTextFocused,
+              ]}
+            />
           </View>
-        </TvModal>
-      </View>
+        </View>
+      </TvModal>
+
+      {/* Version Mismatch Warning Modal (TV) */}
+      <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
+        <View style={desktopStyles.styles.tvModalContainer}>
+          <Text style={desktopStyles.styles.tvModalTitle}>Version Mismatch</Text>
+          <Text style={desktopStyles.styles.tvModalSubtitle}>
+            Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may
+            experience unexpected behavior. Consider updating.
+          </Text>
+          <View style={desktopStyles.styles.tvModalActions}>
+            <FocusablePressable
+              autoFocus
+              text="OK"
+              onSelect={handleDismissVersionMismatch}
+              style={desktopStyles.styles.tvModalButton}
+              focusedStyle={desktopStyles.styles.tvModalButtonFocused}
+              textStyle={desktopStyles.styles.tvModalButtonText}
+              focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+            />
+          </View>
+        </View>
+      </TvModal>
+    </View>
   );
 
   return (
@@ -2467,8 +2461,7 @@ function IndexScreen() {
       {Platform.isTV ? (
         <SpatialNavigationRoot
           isActive={isSpatialNavActive}
-          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}
-        >
+          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
           {desktopContent}
         </SpatialNavigationRoot>
       ) : (
@@ -2513,7 +2506,7 @@ function VirtualizedShelf({
   collapseIfEmpty,
   showEmptyState,
   shelfKey,
-  shelfIndex,
+  shelfIndex: _shelfIndex,
   registerShelfRef,
   registerShelfFlatListRef,
   cardWidth,
@@ -2521,7 +2514,7 @@ function VirtualizedShelf({
   cardSpacing,
   shelfPadding,
   badgeVisibility,
-  onFirstItemTagChange,
+  onFirstItemTagChange: _onFirstItemTagChange,
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
@@ -2597,29 +2590,32 @@ function VirtualizedShelf({
 
   // Stable context handlers that use refs - never recreated when cards change
   // Uses cardMapRef (ref) instead of cardMap (useMemo) to avoid recreation on card updates
-  const shelfHandlers = useMemo<ShelfCardHandlers>(() => ({
-    onSelect: (cardId: string | number) => {
-      const card = cardMapRef.current.get(cardId);
-      if (card) callbacksRef.current.onCardSelect(card);
-    },
-    onFocus: (cardId: string | number, index: number) => {
-      const now = Date.now();
-      const timeSinceLastFocus = now - lastFocusTimeRef.current;
+  const shelfHandlers = useMemo<ShelfCardHandlers>(
+    () => ({
+      onSelect: (cardId: string | number) => {
+        const card = cardMapRef.current.get(cardId);
+        if (card) callbacksRef.current.onCardSelect(card);
+      },
+      onFocus: (cardId: string | number, index: number) => {
+        const now = Date.now();
+        const timeSinceLastFocus = now - lastFocusTimeRef.current;
 
-      // Prevent rapid focus changes that can cause wrap-around bugs
-      if (Platform.isTV && timeSinceLastFocus < 50) {
-        return;
-      }
+        // Prevent rapid focus changes that can cause wrap-around bugs
+        if (Platform.isTV && timeSinceLastFocus < 50) {
+          return;
+        }
 
-      lastFocusTimeRef.current = now;
-      const card = cardMapRef.current.get(cardId);
-      if (card) {
-        // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update
-        callbacksRef.current.onShelfItemFocus(card, shelfKey);
-      }
-      scrollToFocusedItemRef.current(index);
-    },
-  }), [shelfKey]);
+        lastFocusTimeRef.current = now;
+        const card = cardMapRef.current.get(cardId);
+        if (card) {
+          // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update
+          callbacksRef.current.onShelfItemFocus(card, shelfKey);
+        }
+        scrollToFocusedItemRef.current(index);
+      },
+    }),
+    [shelfKey],
+  );
 
   // Render item callback for FlatList - uses stable handlers via shelfHandlers
   // Dependencies minimized to avoid recreating this callback
@@ -2635,21 +2631,24 @@ function VirtualizedShelf({
       const isLastItem = index === lastItemIndexRef.current;
 
       // Compute release icon for movies (shared between platforms)
-      const releaseIcon = card.mediaType === 'movie' ? getMovieReleaseIcon({
-        id: String(card.id),
-        name: card.title,
-        overview: card.description,
-        year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
-        language: 'en',
-        mediaType: 'movie',
-        homeRelease: card.homeRelease,
-        theatricalRelease: card.theatricalRelease,
-      }) : null;
+      const releaseIcon =
+        card.mediaType === 'movie'
+          ? getMovieReleaseIcon({
+              id: String(card.id),
+              name: card.title,
+              overview: card.description,
+              year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
+              language: 'en',
+              mediaType: 'movie',
+              homeRelease: card.homeRelease,
+              theatricalRelease: card.theatricalRelease,
+            })
+          : null;
       const showReleaseStatus = badgeVisibility?.includes('releaseStatus') && releaseIcon;
       const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
 
       // Card content renderer - shared between TV spatial nav and native Pressable
-      const renderCardContent = (isFocused: boolean) => (
+      const renderCardContent = (_isFocused: boolean) => (
         <>
           {/* Card content - using View instead of nested Pressable for performance */}
           {isExploreCard ? (
@@ -2677,7 +2676,9 @@ function VirtualizedShelf({
                 <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
                   {card.title}
                 </Text>
-                {card.year ? <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text> : null}
+                {card.year ? (
+                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+                ) : null}
               </View>
             </>
           ) : (
@@ -2710,7 +2711,11 @@ function VirtualizedShelf({
               <View style={styles.cardTextContainer}>
                 <LinearGradient
                   pointerEvents="none"
-                  colors={isAndroidTV ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)'] : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                  colors={
+                    isAndroidTV
+                      ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']
+                      : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']
+                  }
                   locations={isAndroidTV ? [0, 0.5, 1] : [0, 0.6, 1]}
                   start={{ x: 0.5, y: 0 }}
                   end={{ x: 0.5, y: 1 }}
@@ -2719,7 +2724,9 @@ function VirtualizedShelf({
                 <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={2}>
                   {card.title}
                 </Text>
-                {card.year ? <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text> : null}
+                {card.year ? (
+                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+                ) : null}
               </View>
             </>
           )}
@@ -2733,14 +2740,12 @@ function VirtualizedShelf({
           <SpatialNavigationFocusableView
             focusKey={focusKey}
             onSelect={() => shelfHandlers.onSelect(card.id)}
-            onFocus={() => shelfHandlers.onFocus(card.id, index)}
-          >
+            onFocus={() => shelfHandlers.onFocus(card.id, index)}>
             {({ isFocused }: { isFocused: boolean }) => (
               <View
                 style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
                 // @ts-ignore - Android TV performance optimization
-                renderToHardwareTextureAndroid={isAndroidTV}
-              >
+                renderToHardwareTextureAndroid={isAndroidTV}>
                 {renderCardContent(isFocused)}
               </View>
             )}
@@ -2761,8 +2766,7 @@ function VirtualizedShelf({
             cardRefsMap.current.set(index, ref);
           }}
           onPress={() => shelfHandlers.onSelect(card.id)}
-          style={({ focused }) => [styles.card, focused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
-        >
+          style={({ focused }) => [styles.card, focused && styles.cardFocused, !isLastItem && styles.cardSpacing]}>
           {({ pressed }) => renderCardContent(pressed)}
         </Pressable>
       );
@@ -2784,16 +2788,19 @@ function VirtualizedShelf({
       const shouldAutoFocusItem = autoFocus && index === 0;
       const isLastItem = index === lastItemIndexRef.current;
 
-      const releaseIcon = card.mediaType === 'movie' ? getMovieReleaseIcon({
-        id: String(card.id),
-        name: card.title,
-        overview: card.description,
-        year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
-        language: 'en',
-        mediaType: 'movie',
-        homeRelease: card.homeRelease,
-        theatricalRelease: card.theatricalRelease,
-      }) : null;
+      const releaseIcon =
+        card.mediaType === 'movie'
+          ? getMovieReleaseIcon({
+              id: String(card.id),
+              name: card.title,
+              overview: card.description,
+              year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
+              language: 'en',
+              mediaType: 'movie',
+              homeRelease: card.homeRelease,
+              theatricalRelease: card.theatricalRelease,
+            })
+          : null;
       const showReleaseStatus = badgeVisibility?.includes('releaseStatus') && releaseIcon;
       const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
 
@@ -2801,8 +2808,7 @@ function VirtualizedShelf({
         <View
           style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
           // @ts-ignore - Android TV performance optimization
-          renderToHardwareTextureAndroid={isAndroidTV}
-        >
+          renderToHardwareTextureAndroid={isAndroidTV}>
           {isExploreCard ? (
             <>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
@@ -2828,7 +2834,9 @@ function VirtualizedShelf({
                 <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
                   {card.title}
                 </Text>
-                {card.year ? <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text> : null}
+                {card.year ? (
+                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+                ) : null}
               </View>
             </>
           ) : (
@@ -2861,7 +2869,11 @@ function VirtualizedShelf({
               <View style={styles.cardTextContainer}>
                 <LinearGradient
                   pointerEvents="none"
-                  colors={isAndroidTV ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)'] : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                  colors={
+                    isAndroidTV
+                      ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']
+                      : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']
+                  }
                   locations={isAndroidTV ? [0, 0.5, 1] : [0, 0.6, 1]}
                   start={{ x: 0.5, y: 0 }}
                   end={{ x: 0.5, y: 1 }}
@@ -2870,7 +2882,9 @@ function VirtualizedShelf({
                 <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={2}>
                   {card.title}
                 </Text>
-                {card.year ? <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text> : null}
+                {card.year ? (
+                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+                ) : null}
               </View>
             </>
           )}
@@ -2880,8 +2894,7 @@ function VirtualizedShelf({
       const cardElement = (
         <SpatialNavigationFocusableView
           onSelect={() => shelfHandlers.onSelect(card.id)}
-          onFocus={() => shelfHandlers.onFocus(card.id, index)}
-        >
+          onFocus={() => shelfHandlers.onFocus(card.id, index)}>
           {cardContent}
         </SpatialNavigationFocusableView>
       );
@@ -3626,7 +3639,9 @@ function mapTrendingToCards(
         item.title.poster?.url ||
         'https://via.placeholder.com/1920x1080/333/fff?text=No+Image',
       cardImage:
-        item.title.poster?.url || item.title.backdrop?.url || 'https://via.placeholder.com/600x900/333/fff?text=No+Image',
+        item.title.poster?.url ||
+        item.title.backdrop?.url ||
+        'https://via.placeholder.com/600x900/333/fff?text=No+Image',
       mediaType: item.title.mediaType,
       posterUrl: item.title.poster?.url,
       backdropUrl: item.title.backdrop?.url,

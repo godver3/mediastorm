@@ -1,18 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  findNodeHandle,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { findNodeHandle, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
-import {
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
+import { SpatialNavigationNode, SpatialNavigationRoot } from '@/services/tv-navigation';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import FocusablePressable from '@/components/FocusablePressable';
 
@@ -41,20 +30,12 @@ const CARD_HEIGHT = 180;
 type TestMode = 'native' | 'hybrid';
 
 // Native card - pure native focus, no spatial nav overhead
-const NativeCard = React.memo(function NativeCard({
-  item,
-  autoFocus,
-}: { item: TestItem; autoFocus?: boolean }) {
+const NativeCard = React.memo(function NativeCard({ item, autoFocus }: { item: TestItem; autoFocus?: boolean }) {
   return (
     <Pressable
       // @ts-ignore - TV-specific props
       hasTVPreferredFocus={autoFocus}
-      style={({ focused }) => [
-        styles.card,
-        { backgroundColor: item.color },
-        focused && styles.cardFocused,
-      ]}
-    >
+      style={({ focused }) => [styles.card, { backgroundColor: item.color }, focused && styles.cardFocused]}>
       <Text style={styles.cardTitle}>{item.title}</Text>
     </Pressable>
   );
@@ -113,12 +94,7 @@ const HybridCard = React.memo(function HybridCard({
       nextFocusDown={nextFocusDown}
       nextFocusLeft={nextFocusLeft}
       nextFocusRight={nextFocusRight}
-      style={({ focused }) => [
-        styles.card,
-        { backgroundColor: item.color },
-        focused && styles.cardFocused,
-      ]}
-    >
+      style={({ focused }) => [styles.card, { backgroundColor: item.color }, focused && styles.cardFocused]}>
       <Text style={styles.cardTitle}>{item.title}</Text>
     </Pressable>
   );
@@ -147,7 +123,7 @@ export default function TVPerfDebugScreen() {
 
   const items = useMemo(() => generateItems(ITEM_COUNT), []);
   const rows = useMemo(() => {
-    const result: typeof items[] = [];
+    const result: (typeof items)[] = [];
     for (let i = 0; i < items.length; i += COLUMNS) {
       result.push(items.slice(i, i + COLUMNS));
     }
@@ -189,24 +165,14 @@ export default function TVPerfDebugScreen() {
 
   // Native - pure native focus, no spatial nav
   const renderNative = () => (
-    <ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
+    <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
       {rows.map((row, rowIndex) => (
         <View key={`row-${rowIndex}`} style={styles.rowContainer}>
           <Text style={styles.rowLabel}>Row {rowIndex + 1} (Native)</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.rowInner}
-          >
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowInner}>
             {row.map((item, colIndex) => (
               <View key={item.id} style={styles.cardWrapper}>
-                <NativeCard
-                  item={item}
-                  autoFocus={rowIndex === 0 && colIndex === 0}
-                />
+                <NativeCard item={item} autoFocus={rowIndex === 0 && colIndex === 0} />
               </View>
             ))}
           </ScrollView>
@@ -242,53 +208,58 @@ export default function TVPerfDebugScreen() {
     }
   }, []);
 
-  const getNextFocusUp = useCallback((rowIndex: number, colIndex: number) => {
-    if (rowIndex === 0) return undefined;
-    return cardTagsRef.current[rowIndex - 1]?.[colIndex] ?? undefined;
-  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const getNextFocusUp = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      if (rowIndex === 0) return undefined;
+      return cardTagsRef.current[rowIndex - 1]?.[colIndex] ?? undefined;
+    },
+    [cardTagsVersion],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const getNextFocusDown = useCallback((rowIndex: number, colIndex: number) => {
-    if (rowIndex >= rows.length - 1) return undefined;
-    return cardTagsRef.current[rowIndex + 1]?.[colIndex] ?? undefined;
-  }, [cardTagsVersion, rows.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const getNextFocusDown = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      if (rowIndex >= rows.length - 1) return undefined;
+      return cardTagsRef.current[rowIndex + 1]?.[colIndex] ?? undefined;
+    },
+    [cardTagsVersion, rows.length],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
   // For trapping focus at row edges - first item points left to itself, last item points right to itself
-  const getNextFocusLeft = useCallback((rowIndex: number, colIndex: number) => {
-    if (colIndex === 0) {
-      // First item in row - trap focus by pointing to self
-      return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
-    }
-    return undefined; // Let native handle normal left navigation
-  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const getNextFocusLeft = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      if (colIndex === 0) {
+        // First item in row - trap focus by pointing to self
+        return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
+      }
+      return undefined; // Let native handle normal left navigation
+    },
+    [cardTagsVersion],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const getNextFocusRight = useCallback((rowIndex: number, colIndex: number, rowLength: number) => {
-    if (colIndex === rowLength - 1) {
-      // Last item in row - trap focus by pointing to self
-      return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
-    }
-    return undefined; // Let native handle normal right navigation
-  }, [cardTagsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const getNextFocusRight = useCallback(
+    (rowIndex: number, colIndex: number, rowLength: number) => {
+      if (colIndex === rowLength - 1) {
+        // Last item in row - trap focus by pointing to self
+        return cardTagsRef.current[rowIndex]?.[colIndex] ?? undefined;
+      }
+      return undefined; // Let native handle normal right navigation
+    },
+    [cardTagsVersion],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderHybrid = () => (
-    <ScrollView
-      ref={scrollViewRef}
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
-    >
+    <ScrollView ref={scrollViewRef} style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
       {rows.map((row, rowIndex) => {
         const rowKey = `row-${rowIndex}`;
         return (
           <View
             key={rowKey}
-            ref={(ref) => { rowRefs.current[rowKey] = ref; }}
-            style={styles.rowContainer}
-          >
+            ref={(ref) => {
+              rowRefs.current[rowKey] = ref;
+            }}
+            style={styles.rowContainer}>
             <Text style={styles.rowLabel}>Row {rowIndex + 1} (Hybrid)</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.rowInner}
-            >
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowInner}>
               {row.map((item, colIndex) => (
                 <View key={item.id} style={styles.cardWrapper}>
                   <HybridCard
@@ -338,12 +309,8 @@ export default function TVPerfDebugScreen() {
           <Text style={styles.title}>TV Performance Debug</Text>
           <View style={styles.stats}>
             <Text style={styles.statText}>Last: {lastAction}</Text>
-            <Text style={styles.statText}>
-              Delta: {actionTime > 0 ? `${actionTime.toFixed(0)}ms` : '-'}
-            </Text>
-            <Text style={[styles.statText, focusRate > 5 && styles.statHighlight]}>
-              Rate: {focusRate}/s
-            </Text>
+            <Text style={styles.statText}>Delta: {actionTime > 0 ? `${actionTime.toFixed(0)}ms` : '-'}</Text>
+            <Text style={[styles.statText, focusRate > 5 && styles.statHighlight]}>Rate: {focusRate}/s</Text>
             <Text style={styles.statText}>
               {screenWidth}x{screenHeight} | {ITEM_COUNT} items
             </Text>
@@ -359,19 +326,14 @@ export default function TVPerfDebugScreen() {
                 focusKey={`mode-${m.key}`}
                 text={m.label}
                 onSelect={() => setMode(m.key)}
-                style={[
-                  styles.modeButton,
-                  mode === m.key && styles.modeButtonActive,
-                ]}
+                style={[styles.modeButton, mode === m.key && styles.modeButtonActive]}
               />
             ))}
           </View>
         </SpatialNavigationNode>
 
         {/* Content area */}
-        <View style={styles.content}>
-          {renderContent()}
-        </View>
+        <View style={styles.content}>{renderContent()}</View>
       </View>
     </SpatialNavigationRoot>
   );

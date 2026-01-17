@@ -449,9 +449,13 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
       // Log edge cases that might cause missing subtitles
       if (isHeaderOnly) {
-        console.log(`[SubtitleOverlay] VTT is header-only (${contentLength} bytes) - extraction not started or no cues yet`);
+        console.log(
+          `[SubtitleOverlay] VTT is header-only (${contentLength} bytes) - extraction not started or no cues yet`,
+        );
       } else if (!hasTimestamps && contentLength > 10) {
-        console.log(`[SubtitleOverlay] VTT has content (${contentLength} bytes) but NO timestamps - possibly truncated/corrupted`);
+        console.log(
+          `[SubtitleOverlay] VTT has content (${contentLength} bytes) but NO timestamps - possibly truncated/corrupted`,
+        );
         console.log(`[SubtitleOverlay]   First 200 chars: ${content.substring(0, 200).replace(/\n/g, '\\n')}`);
       }
 
@@ -472,7 +476,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         const lastCue = parsedCues.length > 0 ? parsedCues[parsedCues.length - 1] : null;
         console.log(
           `[SubtitleOverlay] VTT updated: ${prevLength} -> ${contentLength} bytes, ` +
-            `${parsedCues.length} cues, range: ${firstCue?.startTime.toFixed(2) ?? 'N/A'}-${lastCue?.endTime.toFixed(2) ?? 'N/A'}s`
+            `${parsedCues.length} cues, range: ${firstCue?.startTime.toFixed(2) ?? 'N/A'}-${lastCue?.endTime.toFixed(2) ?? 'N/A'}s`,
         );
 
         // Warn if we have content but parsing returned 0 cues
@@ -575,9 +579,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     // Find cues in the window [adjustedTime - 60, adjustedTime]
     const windowStart = Math.max(0, adjustedTime - 60);
     const windowEnd = adjustedTime;
-    const cuesInWindow = cues.filter(
-      (cue) => cue.endTime >= windowStart && cue.startTime <= windowEnd
-    );
+    const cuesInWindow = cues.filter((cue) => cue.endTime >= windowStart && cue.startTime <= windowEnd);
 
     const lastCue = cues.length > 0 ? cues[cues.length - 1] : null;
     const activeCue = activeCues.length > 0 ? activeCues[0] : null;
@@ -586,15 +588,25 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     console.log(`[SubtitleOverlay] === VTT Debug Dump (once per minute) @ ${timestamp} ===`);
     console.log(`[SubtitleOverlay] Platform: ${Platform.OS}, isTV: ${Platform.isTV}`);
     console.log(`[SubtitleOverlay] vttUrl: ${vttUrl}`);
-    console.log(`[SubtitleOverlay] adjustedTime: ${adjustedTime.toFixed(2)}s (currentTime: ${effectiveTime.toFixed(2)}s + timeOffset: ${timeOffset})`);
-    console.log(`[SubtitleOverlay] Total cues: ${cues.length}, First cue: ${cues[0]?.startTime.toFixed(2)}s, Last cue: ${lastCue?.endTime.toFixed(2)}s`);
-    console.log(`[SubtitleOverlay] Active cue: ${activeCue ? `${activeCue.startTime.toFixed(2)}-${activeCue.endTime.toFixed(2)}s "${activeCue.text.substring(0, 40)}"` : 'NONE'}`);
-    console.log(`[SubtitleOverlay] Cues in last 60s window (${windowStart.toFixed(2)}-${windowEnd.toFixed(2)}s): ${cuesInWindow.length}`);
+    console.log(
+      `[SubtitleOverlay] adjustedTime: ${adjustedTime.toFixed(2)}s (currentTime: ${effectiveTime.toFixed(2)}s + timeOffset: ${timeOffset})`,
+    );
+    console.log(
+      `[SubtitleOverlay] Total cues: ${cues.length}, First cue: ${cues[0]?.startTime.toFixed(2)}s, Last cue: ${lastCue?.endTime.toFixed(2)}s`,
+    );
+    console.log(
+      `[SubtitleOverlay] Active cue: ${activeCue ? `${activeCue.startTime.toFixed(2)}-${activeCue.endTime.toFixed(2)}s "${activeCue.text.substring(0, 40)}"` : 'NONE'}`,
+    );
+    console.log(
+      `[SubtitleOverlay] Cues in last 60s window (${windowStart.toFixed(2)}-${windowEnd.toFixed(2)}s): ${cuesInWindow.length}`,
+    );
 
     // Log each cue in the window
     cuesInWindow.forEach((cue, i) => {
       const isActive = adjustedTime >= cue.startTime && adjustedTime < cue.endTime;
-      console.log(`[SubtitleOverlay]   [${i}] ${cue.startTime.toFixed(2)}-${cue.endTime.toFixed(2)}s ${isActive ? '>>> ACTIVE <<<' : ''} "${cue.text.substring(0, 50)}"`);
+      console.log(
+        `[SubtitleOverlay]   [${i}] ${cue.startTime.toFixed(2)}-${cue.endTime.toFixed(2)}s ${isActive ? '>>> ACTIVE <<<' : ''} "${cue.text.substring(0, 50)}"`,
+      );
     });
 
     // Check for gaps - cues that should exist but don't
@@ -602,7 +614,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       console.log('[SubtitleOverlay] WARNING: No cues in last 60 seconds! Possible issues:');
       console.log('[SubtitleOverlay]   - VTT extraction may be slow');
       console.log('[SubtitleOverlay]   - Time offset mismatch');
-      console.log('[SubtitleOverlay]   - Cues haven\'t been extracted yet for this time range');
+      console.log("[SubtitleOverlay]   - Cues haven't been extracted yet for this time range");
     }
     console.log('[SubtitleOverlay] === End VTT Debug Dump ===');
   }, [enabled, cues, adjustedTime, timeOffset, activeCues, vttUrl, effectiveTime]);
@@ -651,9 +663,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
                   TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
               <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
                 {cue.segments.map((segment, segIndex) => (
-                  <Text
-                    key={`seg-${segIndex}`}
-                    style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
+                  <Text key={`seg-${segIndex}`} style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
                     {segment.text}
                   </Text>
                 ))}

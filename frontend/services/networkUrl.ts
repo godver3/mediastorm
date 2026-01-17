@@ -90,7 +90,9 @@ async function requestLocationPermissionForSSID(): Promise<boolean> {
   // If expo-location isn't available (older build), skip permission check
   // and let NetworkInfo.getSSID() try anyway - it may work or return unknown
   if (!Location) {
-    console.log('[NetworkUrl] requestLocationPermissionForSSID: expo-location not available, skipping permission check');
+    console.log(
+      '[NetworkUrl] requestLocationPermissionForSSID: expo-location not available, skipping permission check',
+    );
     return true;
   }
 
@@ -165,10 +167,7 @@ export async function getCurrentSSID(): Promise<string | null> {
  */
 export async function cacheLastDetectedNetwork(isHome: boolean, ssid: string | null): Promise<void> {
   try {
-    await AsyncStorage.setItem(
-      LAST_DETECTED_NETWORK_KEY,
-      JSON.stringify({ isHome, ssid, detectedAt: Date.now() }),
-    );
+    await AsyncStorage.setItem(LAST_DETECTED_NETWORK_KEY, JSON.stringify({ isHome, ssid, detectedAt: Date.now() }));
   } catch (err) {
     console.warn('[NetworkUrl] Failed to cache last detected network:', err);
   }
@@ -177,12 +176,16 @@ export async function cacheLastDetectedNetwork(isHome: boolean, ssid: string | n
 /**
  * Get the last detected network state.
  */
-export async function getLastDetectedNetwork(): Promise<{ isHome: boolean; ssid: string | null; detectedAt: number } | null> {
+export async function getLastDetectedNetwork(): Promise<{
+  isHome: boolean;
+  ssid: string | null;
+  detectedAt: number;
+} | null> {
   try {
     const stored = await AsyncStorage.getItem(LAST_DETECTED_NETWORK_KEY);
     if (!stored) return null;
     return JSON.parse(stored);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -200,9 +203,7 @@ export async function getLastDetectedNetwork(): Promise<{ isHome: boolean; ssid:
  * @param settings - Network settings (from client, user, or global level)
  * @returns NetworkUrlResult with the URL to use and detection metadata
  */
-export async function getNetworkBasedUrl(
-  settings?: NetworkSettingsLike | null,
-): Promise<NetworkUrlResult> {
+export async function getNetworkBasedUrl(settings?: NetworkSettingsLike | null): Promise<NetworkUrlResult> {
   console.log('[NetworkUrl] getNetworkBasedUrl: Starting, settings provided:', !!settings);
 
   // If no settings provided, try to load from cache
@@ -293,8 +294,5 @@ export async function getNetworkBasedUrl(
  */
 export async function isNetworkUrlSwitchingEnabled(): Promise<boolean> {
   const settings = await getCachedNetworkSettings();
-  return !!(
-    settings?.homeWifiSSID &&
-    (settings.homeBackendUrl || settings.remoteBackendUrl)
-  );
+  return !!(settings?.homeWifiSSID && (settings.homeBackendUrl || settings.remoteBackendUrl));
 }

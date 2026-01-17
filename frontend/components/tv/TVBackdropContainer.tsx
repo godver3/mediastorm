@@ -14,7 +14,7 @@ const isAppleTV = Platform.isTV && Platform.OS === 'ios';
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Backdrop covers 70% of screen height
-const BACKDROP_HEIGHT_PERCENT = 0.70;
+const BACKDROP_HEIGHT_PERCENT = 0.7;
 // Content starts at 35% from top (overlapping backdrop)
 const CONTENT_START_PERCENT = 0.35;
 
@@ -52,29 +52,14 @@ const TVBackdropContainer = memo(function TVBackdropContainer({
             <>
               {/* Blurred background fill */}
               {!isAndroidTV && (
-                <Image
-                  source={imageUrl}
-                  style={StyleSheet.absoluteFill}
-                  contentFit="cover"
-                  blurRadius={50}
-                />
+                <Image source={imageUrl} style={StyleSheet.absoluteFill} contentFit="cover" blurRadius={50} />
               )}
               {/* Centered portrait image */}
-              <Image
-                source={imageUrl}
-                style={styles.backdropImage}
-                contentFit="contain"
-                transition={0}
-              />
+              <Image source={imageUrl} style={styles.backdropImage} contentFit="contain" transition={0} />
             </>
           ) : (
             // For landscape images: cover the area
-            <Image
-              source={imageUrl}
-              style={styles.backdropImage}
-              contentFit="cover"
-              transition={0}
-            />
+            <Image source={imageUrl} style={styles.backdropImage} contentFit="cover" transition={0} />
           )}
 
           {/* Gradient overlay for readability */}
@@ -100,8 +85,7 @@ const TVBackdropContainer = memo(function TVBackdropContainer({
             top: contentStartY,
             minHeight: windowHeight - contentStartY,
           },
-        ]}
-      >
+        ]}>
         {children}
       </View>
     </View>

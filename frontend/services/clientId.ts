@@ -1,16 +1,16 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
-import { APP_VERSION } from "@/version";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import { APP_VERSION } from '@/version';
 
 // Safely import DeviceInfo - may not be available on older builds
-let DeviceInfo: typeof import("react-native-device-info").default | null = null;
+let DeviceInfo: typeof import('react-native-device-info').default | null = null;
 try {
-  DeviceInfo = require("react-native-device-info").default;
+  DeviceInfo = require('react-native-device-info').default;
 } catch {
   // Module not available, will use fallback
 }
 
-const CLIENT_ID_KEY = "strmr.clientId";
+const CLIENT_ID_KEY = 'strmr.clientId';
 
 let cachedClientId: string | null = null;
 
@@ -24,7 +24,7 @@ function generateId(): string {
   const randomPart = () =>
     Math.floor(Math.random() * 0x10000)
       .toString(16)
-      .padStart(4, "0");
+      .padStart(4, '0');
 
   return `${timestamp}-${randomPart()}-${randomPart()}-${randomPart()}-${randomPart()}${randomPart()}${randomPart()}`;
 }
@@ -63,7 +63,7 @@ export async function getClientId(): Promise<string> {
     }
     cachedClientId = clientId;
     return clientId;
-  } catch (error) {
+  } catch {
     // Final fallback to a session-only ID if storage fails
     if (!cachedClientId) {
       cachedClientId = generateId();
@@ -79,15 +79,14 @@ export async function getClientId(): Promise<string> {
 export function getDeviceInfo(): { deviceType: string; os: string } {
   const isTV = Platform.isTV;
   const deviceType = isTV
-    ? Platform.OS === "ios"
-      ? "Apple TV"
-      : "Android TV"
-    : Platform.OS === "ios"
-      ? "iPhone"
-      : "Android Phone";
+    ? Platform.OS === 'ios'
+      ? 'Apple TV'
+      : 'Android TV'
+    : Platform.OS === 'ios'
+      ? 'iPhone'
+      : 'Android Phone';
 
-  const os =
-    Platform.OS === "ios" ? (isTV ? "tvOS" : "iOS") : "Android";
+  const os = Platform.OS === 'ios' ? (isTV ? 'tvOS' : 'iOS') : 'Android';
 
   return { deviceType, os };
 }

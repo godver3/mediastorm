@@ -162,7 +162,11 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   }, [allChannels, selectedCategories, favoriteChannelIds]);
 
   const fetchChannels = useCallback(async () => {
-    console.log('[useLiveChannels] fetchChannels called:', { isReady, hasPlaylistUrl, normalisedPlaylistUrl: normalisedPlaylistUrl ? `${normalisedPlaylistUrl.substring(0, 50)}...` : '(empty)' });
+    console.log('[useLiveChannels] fetchChannels called:', {
+      isReady,
+      hasPlaylistUrl,
+      normalisedPlaylistUrl: normalisedPlaylistUrl ? `${normalisedPlaylistUrl.substring(0, 50)}...` : '(empty)',
+    });
 
     if (!isReady) {
       console.log('[useLiveChannels] fetchChannels: Early return - not ready');
@@ -221,7 +225,11 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   }, [hasPlaylistUrl, isReady, normalisedPlaylistUrl]);
 
   useEffect(() => {
-    console.log('[useLiveChannels] Fetch useEffect triggered:', { isReady, hasPlaylistUrl, normalisedPlaylistUrl: normalisedPlaylistUrl ? 'set' : 'empty' });
+    console.log('[useLiveChannels] Fetch useEffect triggered:', {
+      isReady,
+      hasPlaylistUrl,
+      normalisedPlaylistUrl: normalisedPlaylistUrl ? 'set' : 'empty',
+    });
 
     if (!isReady) {
       console.log('[useLiveChannels] Fetch useEffect: Early return - not ready');

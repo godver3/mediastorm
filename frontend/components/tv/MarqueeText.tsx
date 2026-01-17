@@ -78,11 +78,11 @@ const MarqueeText = memo(function MarqueeText({
               easing: Easing.linear,
             }),
             // Pause at start
-            withTiming(0, { duration: pauseDuration })
+            withTiming(0, { duration: pauseDuration }),
           ),
           -1,
-          false
-        )
+          false,
+        ),
       );
     } else {
       cancelAnimation(translateX);
@@ -104,17 +104,10 @@ const MarqueeText = memo(function MarqueeText({
   return (
     <View style={[styles.container, containerStyle]} onLayout={onContainerLayout}>
       {/* Visible animated text - no numberOfLines so full text can scroll */}
-      <Animated.Text
-        style={[style, animatedStyle, { width: fullTextWidth || undefined }]}
-      >
-        {children}
-      </Animated.Text>
+      <Animated.Text style={[style, animatedStyle, { width: fullTextWidth || undefined }]}>{children}</Animated.Text>
       {/* Measurement wrapper - positioned off screen with no width constraint */}
       <View style={styles.measureWrapper} pointerEvents="none">
-        <Text
-          style={[flatStyle, styles.measureText]}
-          onLayout={onMeasureLayout}
-        >
+        <Text style={[flatStyle, styles.measureText]} onLayout={onMeasureLayout}>
           {children}
         </Text>
       </View>

@@ -49,16 +49,19 @@ export function useKonamiCode(onActivate: () => void, debug = false) {
     lastDelta: null,
   });
 
-  const updateDebug = useCallback((input: Direction | null, index: number, delta: { x: number; y: number } | null) => {
-    if (debug) {
-      setDebugInfo({
-        lastInput: input,
-        currentIndex: index,
-        expectedNext: KONAMI_SEQUENCE[index] || KONAMI_SEQUENCE[0],
-        lastDelta: delta,
-      });
-    }
-  }, [debug]);
+  const updateDebug = useCallback(
+    (input: Direction | null, index: number, delta: { x: number; y: number } | null) => {
+      if (debug) {
+        setDebugInfo({
+          lastInput: input,
+          currentIndex: index,
+          expectedNext: KONAMI_SEQUENCE[index] || KONAMI_SEQUENCE[0],
+          lastDelta: delta,
+        });
+      }
+    },
+    [debug],
+  );
 
   const resetSequence = useCallback(() => {
     sequenceIndex.current = 0;
@@ -137,7 +140,7 @@ export function useKonamiCode(onActivate: () => void, debug = false) {
         checkInput(input, delta);
       } else if (debug) {
         // Show delta even if no input detected
-        setDebugInfo(prev => ({ ...prev, lastDelta: delta, lastInput: null }));
+        setDebugInfo((prev) => ({ ...prev, lastDelta: delta, lastInput: null }));
       }
 
       touchState.current = null;

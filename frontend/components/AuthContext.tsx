@@ -149,10 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const clearStoredAuth = async () => {
-    await Promise.all([
-      AsyncStorage.removeItem(AUTH_TOKEN_KEY),
-      AsyncStorage.removeItem(AUTH_ACCOUNT_KEY),
-    ]);
+    await Promise.all([AsyncStorage.removeItem(AUTH_TOKEN_KEY), AsyncStorage.removeItem(AUTH_ACCOUNT_KEY)]);
   };
 
   const storeAuth = async (authToken: string, authAccount: AuthAccount) => {
@@ -162,73 +159,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
   };
 
-  const login = useCallback(async (username: string, password: string) => {
-    if (!mountedRef.current) return;
+  const login = useCallback(
+    async (username: string, password: string) => {
+      if (!mountedRef.current) return;
 
-    setIsLoading(true);
-    setError(null);
+      setIsLoading(true);
+      setError(null);
 
-    try {
-      const response = await fetch(`${apiService.getBaseUrl()}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password, rememberMe: true }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Invalid username or password');
-      }
-
-      const data: LoginResponse = await response.json();
-
-      const authAccount: AuthAccount = {
-        id: data.accountId,
-        username: data.username,
-        isMaster: data.isMaster,
-      };
-
-      // Store auth state
-      await storeAuth(data.token, authAccount);
-
-      // Update API service with new token
-      apiService.setAuthToken(data.token);
-
-      if (mountedRef.current) {
-        setToken(data.token);
-        setAccount(authAccount);
-      }
-
-      // Register client with backend (non-blocking, non-fatal)
       try {
-        const clientPayload = await getClientRegistrationPayload();
-        await apiService.registerClient(clientPayload);
-        console.log('[Auth] Client registered with backend after login');
-      } catch (regErr) {
-        console.warn('[Auth] Failed to register client after login:', regErr);
-      }
+        const response = await fetch(`${apiService.getBaseUrl()}/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, password, rememberMe: true }),
+        });
 
-      // Refresh backend settings now that we're authenticated
-      try {
-        console.log('[Auth] Refreshing backend settings after login');
-        await refreshSettings();
-      } catch (settingsErr) {
-        console.warn('[Auth] Failed to refresh settings after login:', settingsErr);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Invalid username or password');
+        }
+
+        const data: LoginResponse = await response.json();
+
+        const authAccount: AuthAccount = {
+          id: data.accountId,
+          username: data.username,
+          isMaster: data.isMaster,
+        };
+
+        // Store auth state
+        await storeAuth(data.token, authAccount);
+
+        // Update API service with new token
+        apiService.setAuthToken(data.token);
+
+        if (mountedRef.current) {
+          setToken(data.token);
+          setAccount(authAccount);
+        }
+
+        // Register client with backend (non-blocking, non-fatal)
+        try {
+          const clientPayload = await getClientRegistrationPayload();
+          await apiService.registerClient(clientPayload);
+          console.log('[Auth] Client registered with backend after login');
+        } catch (regErr) {
+          console.warn('[Auth] Failed to register client after login:', regErr);
+        }
+
+        // Refresh backend settings now that we're authenticated
+        try {
+          console.log('[Auth] Refreshing backend settings after login');
+          await refreshSettings();
+        } catch (settingsErr) {
+          console.warn('[Auth] Failed to refresh settings after login:', settingsErr);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Login failed';
+        if (mountedRef.current) {
+          setError(message);
+        }
+        throw err;
+      } finally {
+        if (mountedRef.current) {
+          setIsLoading(false);
+        }
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Login failed';
-      if (mountedRef.current) {
-        setError(message);
-      }
-      throw err;
-    } finally {
-      if (mountedRef.current) {
-        setIsLoading(false);
-      }
-    }
-  }, [refreshSettings]);
+    },
+    [refreshSettings],
+  );
 
   const logout = useCallback(async () => {
     try {

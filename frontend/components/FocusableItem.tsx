@@ -27,8 +27,7 @@ export const FocusableItem = forwardRef<any, FocusableItemProps>(
         onPress={onSelect}
         onFocus={handleFocus}
         hasTVPreferredFocus={autoFocus}
-        tvParallaxProperties={{ enabled: false }}
-      >
+        tvParallaxProperties={{ enabled: false }}>
         {({ focused }) => (
           <View style={style} onLayout={createLayoutHandler(itemKey)} {...props}>
             {children({ isFocused: focused })}

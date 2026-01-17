@@ -12,7 +12,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
 import { apiService } from '@/services/api';
 
 export interface HlsSessionOptions {
@@ -94,11 +93,14 @@ export interface HlsSessionRefs {
 
 export interface HlsSessionActions {
   /** Create or recreate session at a target time */
-  createSession: (targetTime: number, options?: {
-    audioTrack?: number;
-    subtitleTrack?: number;
-    trackSwitch?: boolean;
-  }) => Promise<HlsSessionResponse | null>;
+  createSession: (
+    targetTime: number,
+    options?: {
+      audioTrack?: number;
+      subtitleTrack?: number;
+      trackSwitch?: boolean;
+    },
+  ) => Promise<HlsSessionResponse | null>;
   /** Seek to a specific time (uses seek endpoint or creates new session) */
   seek: (targetTime: number) => Promise<HlsSessionResponse | null>;
   /** Change audio track (recreates session) */
@@ -106,7 +108,10 @@ export interface HlsSessionActions {
   /** Change subtitle track (does NOT recreate session - uses sidecar VTT) */
   changeSubtitleTrack: (trackIndex: number) => void;
   /** Send keepalive ping with offset validation */
-  keepalive: (currentTime?: number, bufferStart?: number) => Promise<{
+  keepalive: (
+    currentTime?: number,
+    bufferStart?: number,
+  ) => Promise<{
     startOffset?: number;
     segmentDuration?: number;
   } | null>;
@@ -130,8 +135,6 @@ export interface HlsSessionActions {
   /** Set pending seek */
   setPendingSeek: (value: number | null) => void;
 }
-
-const MAX_RETRY_COUNT = 3;
 
 export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, HlsSessionActions, HlsSessionRefs] {
   const {
@@ -203,7 +206,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
   const createSession = useCallback(
     async (
       targetTime: number,
-      sessionOptions?: { audioTrack?: number; subtitleTrack?: number; trackSwitch?: boolean }
+      sessionOptions?: { audioTrack?: number; subtitleTrack?: number; trackSwitch?: boolean },
     ): Promise<HlsSessionResponse | null> => {
       if (!sourcePath) {
         console.warn('[useHlsSession] Cannot create session: no source path');
@@ -250,18 +253,14 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
 
         const playlistUrl = buildPlaylistUrl(response.playlistUrl);
         const sessionStart =
-          typeof response.startOffset === 'number' && response.startOffset >= 0
-            ? response.startOffset
-            : safeTarget;
+          typeof response.startOffset === 'number' && response.startOffset >= 0 ? response.startOffset : safeTarget;
         const actualSessionStart =
           typeof response.actualStartOffset === 'number' && response.actualStartOffset >= 0
             ? response.actualStartOffset
             : sessionStart;
         // keyframeDelta: negative = keyframe is earlier than requested
         const keyframeDelta =
-          typeof response.keyframeDelta === 'number'
-            ? response.keyframeDelta
-            : actualSessionStart - sessionStart;
+          typeof response.keyframeDelta === 'number' ? response.keyframeDelta : actualSessionStart - sessionStart;
 
         // Update buffer end to match session start
         sessionBufferEndRef.current = sessionStart;
@@ -315,7 +314,17 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
         return null;
       }
     },
-    [sourcePath, hasDolbyVision, dolbyVisionProfile, hasHDR10, forceAAC, profileId, profileName, buildPlaylistUrl, onSessionCreated],
+    [
+      sourcePath,
+      hasDolbyVision,
+      dolbyVisionProfile,
+      hasHDR10,
+      forceAAC,
+      profileId,
+      profileName,
+      buildPlaylistUrl,
+      onSessionCreated,
+    ],
   );
 
   // Seek to a specific time
@@ -444,7 +453,10 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
 
   // Send keepalive ping with offset validation
   const keepalive = useCallback(
-    async (currentTime?: number, bufferStart?: number): Promise<{
+    async (
+      currentTime?: number,
+      bufferStart?: number,
+    ): Promise<{
       startOffset?: number;
       actualStartOffset?: number;
       keyframeDelta?: number;
