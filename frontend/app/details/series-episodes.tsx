@@ -55,7 +55,7 @@ export const SeriesEpisodes = ({
   title,
   tvdbId,
   titleId,
-  yearNumber,
+  yearNumber: _yearNumber,
   seriesDetails,
   seriesDetailsLoading = false,
   initialSeasonNumber,

@@ -32,7 +32,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   selectedId,
   onSelect,
   onClose,
-  focusKeyPrefix = 'track',
+  focusKeyPrefix: _focusKeyPrefix = 'track',
   onSearchSubtitles,
 }) => {
   const theme = useTheme();

@@ -47,15 +47,15 @@ export default function ProfilesScreen() {
   const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useTVDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
-  const isFocused = useIsFocused();
+  const _isFocused = useIsFocused();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { users, loading, error, activeUserId, selectUser, updateColor, getIconUrl, refresh, pendingPinUserId } =
+  const { users, loading, error, activeUserId, selectUser, updateColor, getIconUrl, refresh, pendingPinUserId: _pendingPinUserId } =
     useUserProfiles();
   const { showToast } = useToast();
 
   const [pending, setPending] = useState<PendingAction>(null);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
-  const [openColorSelectorId, setOpenColorSelectorId] = useState<string | null>(null);
+  const [openColorSelectorId, _setOpenColorSelectorId] = useState<string | null>(null);
 
   const isProfileModalVisible = selectedProfile !== null;
 
@@ -173,7 +173,7 @@ export default function ProfilesScreen() {
             focused && styles.gridCardFocused,
             isProfileActive && styles.gridCardActive,
           ]}>
-          {({ focused }) => (
+          {({ focused: _focused }) => (
             <>
               {hasIcon ? (
                 <Image source={{ uri: getIconUrl(profile.id) }} style={styles.gridCardAvatar} resizeMode="cover" />
@@ -557,7 +557,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
 
   // Ensure we have valid screen dimensions (fallback to 1920x1080 for TV)
   const effectiveWidth = screenWidth > 0 ? screenWidth : isTV ? 1920 : 375;
-  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+  const _effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
 
   // TV grid configuration
   const columnsCount = isTV ? 3 : 4; // Fewer columns since content area is narrower

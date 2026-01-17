@@ -380,7 +380,7 @@ const MediaGrid = React.memo(
     emptyMessage,
     useNativeFocus = false,
     useMinimalCards = false,
-    minimalCardLevel = 0,
+    minimalCardLevel: _minimalCardLevel = 0,
     onEndReached,
     loadingMore = false,
     hasMoreItems = false,
@@ -431,7 +431,7 @@ const MediaGrid = React.memo(
     // Native focus mode: refs and scroll handling
     const nativeScrollViewRef = useRef<ScrollView>(null);
     const nativeRowRefs = useRef<{ [key: string]: View | null }>({});
-    const nativeRowHeightsRef = useRef<{ [key: string]: number }>({});
+    const _nativeRowHeightsRef = useRef<{ [key: string]: number }>({});
 
     // Native focus scroll handler - keeps focused row at top
     // ScrollView naturally clamps to content bounds, so no manual maxScroll needed

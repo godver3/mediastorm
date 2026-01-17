@@ -126,7 +126,7 @@ const Controls: React.FC<ControlsProps> = ({
   const isMobile = Platform.OS !== 'web' && !isTvPlatform;
   const allowTrackSelection = true; // Allow track selection on all platforms including tvOS
   const isLandscape = width >= height;
-  const isSeekable = Number.isFinite(duration) && duration > 0;
+  const _isSeekable = Number.isFinite(duration) && duration > 0;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
 
   // Flash animation for skip buttons (triggered by double-tap on mobile)

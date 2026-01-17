@@ -98,7 +98,7 @@ export default function LoginScreen() {
   }));
 
   // TV: no content shift animation (disabled)
-  const tvAnimatedStyle = useAnimatedStyle(() => ({
+  const _tvAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: 0 }],
   }));
 
@@ -133,7 +133,7 @@ export default function LoginScreen() {
         // Don't block login if settings refresh fails
       }
       // Navigation will be handled by the layout detecting auth state change
-    } catch (err) {
+    } catch {
       // Error is already set in the auth context and shown via useEffect
     }
   }, [username, password, login, clearError, refreshSettings, showToast]);

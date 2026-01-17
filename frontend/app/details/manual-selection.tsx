@@ -74,7 +74,7 @@ export const ManualSelection = ({
 }: ManualSelectionProps) => {
   const styles = useMemo(() => createManualSelectionStyles(theme), [theme]);
   const safeAreaInsets = useSafeAreaInsets();
-  const scrollViewRef = useRef<ScrollView>(null);
+  const _scrollViewRef = useRef<ScrollView>(null);
   const scrollOffsetRef = useRef(new Animated.Value(0)).current;
   const itemLayoutsRef = useRef<{ y: number; height: number }[]>([]);
   const showMobileIOSCloseButton = !Platform.isTV && isMobile && Platform.OS === 'ios';
@@ -423,7 +423,7 @@ export const ManualSelection = ({
   );
 };
 
-export const useManualHealthChecks = (results: NZBResult[]) => {
+export const useManualHealthChecks = (_results: NZBResult[]) => {
   const [healthChecks, setHealthChecks] = useState<Record<string, ManualResultHealthState>>({});
 
   // Return healthChecks state and a function to manually check a specific result

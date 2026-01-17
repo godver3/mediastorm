@@ -62,7 +62,7 @@ export const BulkWatchModal = ({
       if (itemView) {
         (itemView as any).measureLayout(
           scrollViewRef.current as any,
-          (x: number, y: number, width: number, height: number) => {
+          (x: number, y: number, _width: number, _height: number) => {
             // Scroll to position the focused item with some padding from the top
             const scrollOffset = Math.max(0, y - 100);
             scrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });

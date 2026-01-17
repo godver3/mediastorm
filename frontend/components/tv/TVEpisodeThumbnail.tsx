@@ -4,7 +4,7 @@
  */
 
 import React, { memo } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { SeriesEpisode } from '@/services/api';

@@ -256,7 +256,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // Screen dimensions include safe areas which may not be part of our container
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
   const [cues, setCues] = useState<VTTCue[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [_error, setError] = useState<string | null>(null);
   const lastFetchedLengthRef = useRef<number>(0);
   const fetchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastUrlRef = useRef<string | null>(null);

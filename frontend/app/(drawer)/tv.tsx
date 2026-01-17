@@ -13,7 +13,7 @@ import { useTheme } from '@/theme';
 import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MediaGrid from '../../components/MediaGrid';
 import { Title } from '../../services/api';
 

@@ -8,9 +8,8 @@ import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Image } from '../Image';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { NovaTheme } from '@/theme';
-import { tvScale } from '@/theme/tokens/tvScale';
 
-const isAppleTV = Platform.isTV && Platform.OS === 'ios';
+const _isAppleTV = Platform.isTV && Platform.OS === 'ios';
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Backdrop covers 70% of screen height
@@ -31,7 +30,7 @@ const TVBackdropContainer = memo(function TVBackdropContainer({
   children,
   theme,
 }: TVBackdropContainerProps) {
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { height: windowHeight, width: _windowWidth } = useWindowDimensions();
 
   const backdropHeight = windowHeight * BACKDROP_HEIGHT_PERCENT;
   const contentStartY = windowHeight * CONTENT_START_PERCENT;

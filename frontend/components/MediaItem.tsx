@@ -532,7 +532,7 @@ const MediaItem = memo(function MediaItem({
   }
 
   // Shared content renderer for TV - used by both native and spatial nav modes
-  const renderTVContent = (isFocused: boolean) => (
+  const renderTVContent = (_isFocused: boolean) => (
     <View style={styles.imageContainer}>
       {title.mediaType === 'more' ? (
         <LinearGradient

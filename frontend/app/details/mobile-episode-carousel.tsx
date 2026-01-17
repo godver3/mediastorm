@@ -214,7 +214,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
             snapToInterval={snapInterval}
             decelerationRate="fast"
             snapToAlignment="start">
-            {episodes.map((episode, index) => {
+            {episodes.map((episode, _index) => {
               const isActive =
                 activeEpisode?.seasonNumber === episode.seasonNumber &&
                 activeEpisode?.episodeNumber === episode.episodeNumber;
@@ -279,7 +279,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
   );
 });
 
-const createStyles = (theme: NovaTheme, screenWidth: number) =>
+const createStyles = (theme: NovaTheme, _screenWidth: number) =>
   StyleSheet.create({
     container: {
       marginTop: theme.spacing.lg,

@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, us
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { BufferConfig } from 'react-native-video';
 import { isAndroidTV } from '@/theme/tokens/tvScale';
-import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import Video, {
   type OnLoadData,
   type OnProgressData,
@@ -21,7 +20,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   (
     {
       movie,
-      headerImage,
+      headerImage: _headerImage,
       paused,
       controls,
       onBuffer,
@@ -318,7 +317,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       console.log('[RNVideoPlayer] playback rate changed', data);
     }, []);
 
-    const handleReceiveAdEvent = useCallback((data: any) => {
+    const _handleReceiveAdEvent = useCallback((data: any) => {
       console.log('[RNVideoPlayer] received ad event', data);
     }, []);
 

@@ -39,9 +39,8 @@ import {
   type TrailerPrequeueStatus,
 } from '@/services/api';
 import { SpatialNavigationNode, SpatialNavigationRoot, useSpatialNavigator } from '@/services/tv-navigation';
-import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
@@ -51,7 +50,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, ImageResizeMode, ImageStyle, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {

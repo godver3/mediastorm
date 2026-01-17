@@ -346,7 +346,7 @@ function TvModalManualScrollTest({
   const styles = useMemo(() => createModalStyles(theme), [theme]);
   const scrollViewRef = useRef<ScrollView>(null);
   const itemHeight = 88; // Approximate height with margin
-  const visibleItems = 5;
+  const _visibleItems = 5;
 
   const handleItemFocus = useCallback(
     (index: number) => {

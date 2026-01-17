@@ -15,7 +15,6 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMenuContext } from './MenuContext';
 
 // Routes that should remain accessible when backend is unreachable
 const ALWAYS_ACCESSIBLE_ROUTES = ['/', '/settings'];

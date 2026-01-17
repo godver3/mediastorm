@@ -1,4 +1,4 @@
-import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ScrollView as RNScrollView } from 'react-native';
 import {
   Animated,
@@ -64,7 +64,7 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
     const theme = useTheme();
     const styles = useMemo(() => createStyles(theme), [theme]);
     const isTV = Platform.isTV;
-    const channelKey = `live-channel-${channel.id}`;
+    const _channelKey = `live-channel-${channel.id}`;
 
     const borderFlashAnim = useRef(new Animated.Value(0)).current;
     const starFlashAnim = useRef(new Animated.Value(1)).current;
@@ -1007,7 +1007,7 @@ function LiveScreen() {
     setIsSelectionConfirmVisible(false);
   }, []);
 
-  const handleOpenSettings = useCallback(() => {
+  const _handleOpenSettings = useCallback(() => {
     router.push('/settings');
   }, [router]);
 

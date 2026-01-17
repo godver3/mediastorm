@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-nat
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
-import type { Credits, CastMember } from '@/services/api';
+import type { Credits } from '@/services/api';
 
 interface CastSectionProps {
   credits: Credits | null | undefined;

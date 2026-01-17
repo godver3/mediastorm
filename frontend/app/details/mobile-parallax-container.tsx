@@ -105,7 +105,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
   );
 });
 
-const createStyles = (theme: NovaTheme, windowHeight: number, windowWidth: number) => {
+const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: number) => {
   const contentStartOffset = windowHeight * CONTENT_START_PERCENT;
 
   return StyleSheet.create({

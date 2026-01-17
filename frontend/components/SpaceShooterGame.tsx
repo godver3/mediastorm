@@ -141,7 +141,7 @@ export function SpaceShooterGame({ visible, onClose }: SpaceShooterGameProps) {
   const [wave, setWave] = useState(1);
   const [showDamage, setShowDamage] = useState(false);
   const [boss, setBoss] = useState<Boss | null>(null);
-  const [bossesDefeated, setBossesDefeated] = useState(0);
+  const [_bossesDefeated, setBossesDefeated] = useState(0);
 
   const bulletIdRef = useRef(0);
   const enemyIdRef = useRef(0);
