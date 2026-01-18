@@ -227,7 +227,7 @@ type LiveSettings struct {
 func (ls *LiveSettings) GetEffectivePlaylistURL() string {
 	if ls.Mode == "xtream" && ls.XtreamHost != "" && ls.XtreamUsername != "" && ls.XtreamPassword != "" {
 		host := strings.TrimRight(ls.XtreamHost, "/")
-		return fmt.Sprintf("%s/get.php?username=%s&password=%s&type=m3u_plus&output=m3u8",
+		return fmt.Sprintf("%s/get.php?username=%s&password=%s&type=m3u&output=ts",
 			host, url.QueryEscape(ls.XtreamUsername), url.QueryEscape(ls.XtreamPassword))
 	}
 	return ls.PlaylistURL

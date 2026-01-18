@@ -63,6 +63,24 @@ type CategoriesResponse struct {
 	Categories []CategoryInfo `json:"categories"`
 }
 
+// XtreamCategory represents a category from the Xtream API.
+type XtreamCategory struct {
+	CategoryID   string `json:"category_id"`
+	CategoryName string `json:"category_name"`
+	ParentID     int    `json:"parent_id"`
+}
+
+// XtreamStream represents a live stream from the Xtream API.
+type XtreamStream struct {
+	Num        int    `json:"num"`
+	Name       string `json:"name"`
+	StreamType string `json:"stream_type"`
+	StreamID   int    `json:"stream_id"`
+	StreamIcon string `json:"stream_icon"`
+	CategoryID string `json:"category_id"`
+	EpgID      string `json:"epg_channel_id"`
+}
+
 // Regex for parsing M3U attributes
 var attributeRegex = regexp.MustCompile(`([a-zA-Z0-9\-]+)="([^"]*)"`)
 
@@ -641,6 +659,7 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context) (string, error)
 	}
 
 	// Fetch from source
+	log.Printf("[live] fetching playlist from: %s", targetURL.String())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to construct playlist request: %w", err)
@@ -678,27 +697,149 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context) (string, error)
 	return string(body), nil
 }
 
+// fetchXtreamChannels fetches live channels from the Xtream Codes API.
+func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, settings *config.Settings) ([]LiveChannel, error) {
+	host := strings.TrimRight(settings.Live.XtreamHost, "/")
+	username := settings.Live.XtreamUsername
+	password := settings.Live.XtreamPassword
+
+	// Fetch categories first to build a category ID -> name map
+	categoriesURL := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories",
+		host, url.QueryEscape(username), url.QueryEscape(password))
+
+	log.Printf("[live] fetching Xtream categories from: %s", categoriesURL)
+
+	catReq, err := http.NewRequestWithContext(ctx, http.MethodGet, categoriesURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create categories request: %w", err)
+	}
+
+	catResp, err := h.client.Do(catReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch categories: %w", err)
+	}
+	defer catResp.Body.Close()
+
+	if catResp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("categories fetch returned status %d", catResp.StatusCode)
+	}
+
+	var categories []XtreamCategory
+	if err := json.NewDecoder(catResp.Body).Decode(&categories); err != nil {
+		return nil, fmt.Errorf("failed to decode categories: %w", err)
+	}
+
+	// Build category ID -> name map
+	categoryMap := make(map[string]string)
+	for _, cat := range categories {
+		categoryMap[cat.CategoryID] = cat.CategoryName
+	}
+
+	// Fetch streams
+	streamsURL := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_streams",
+		host, url.QueryEscape(username), url.QueryEscape(password))
+
+	log.Printf("[live] fetching Xtream streams from: %s", streamsURL)
+
+	streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, streamsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create streams request: %w", err)
+	}
+
+	streamResp, err := h.client.Do(streamReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch streams: %w", err)
+	}
+	defer streamResp.Body.Close()
+
+	if streamResp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("streams fetch returned status %d", streamResp.StatusCode)
+	}
+
+	var streams []XtreamStream
+	if err := json.NewDecoder(streamResp.Body).Decode(&streams); err != nil {
+		return nil, fmt.Errorf("failed to decode streams: %w", err)
+	}
+
+	// Convert to LiveChannel format
+	// Stream URL format: http://host:port/username/password/stream_id.ts
+	channels := make([]LiveChannel, 0, len(streams))
+	for _, stream := range streams {
+		if stream.StreamType != "live" {
+			continue
+		}
+
+		streamURL := fmt.Sprintf("%s/live/%s/%s/%d.ts",
+			host, username, password, stream.StreamID)
+
+		channel := LiveChannel{
+			ID:      fmt.Sprintf("%d", stream.StreamID),
+			Name:    stream.Name,
+			URL:     streamURL,
+			Logo:    stream.StreamIcon,
+			Group:   categoryMap[stream.CategoryID],
+			TvgID:   stream.EpgID,
+			TvgName: stream.Name,
+		}
+		channels = append(channels, channel)
+	}
+
+	log.Printf("[live] fetched %d channels from Xtream API", len(channels))
+	return channels, nil
+}
+
+// isXtreamMode checks if the current configuration is using Xtream Codes mode.
+func (h *LiveHandler) isXtreamMode() bool {
+	if h.cfgManager == nil {
+		return false
+	}
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return false
+	}
+	return settings.Live.Mode == "xtream" &&
+		settings.Live.XtreamHost != "" &&
+		settings.Live.XtreamUsername != "" &&
+		settings.Live.XtreamPassword != ""
+}
+
 // GetChannels returns parsed and filtered channels from the configured playlist.
 func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
-	contents, err := h.fetchPlaylistContents(r.Context())
+	var allChannels []LiveChannel
+	var filter config.LiveTVFilterSettings
+
+	settings, err := h.cfgManager.Load()
 	if err != nil {
-		log.Printf("[live] GetChannels error: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		log.Printf("[live] GetChannels error loading settings: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
+	filter = settings.Live.Filtering
 
-	allChannels := parseM3UPlaylist(contents)
-	totalBeforeFilter := len(allChannels)
-
-	// Apply filtering
-	var filter config.LiveTVFilterSettings
-	if h.cfgManager != nil {
-		settings, err := h.cfgManager.Load()
-		if err == nil {
-			filter = settings.Live.Filtering
+	// Check if we're in Xtream mode
+	if settings.Live.Mode == "xtream" &&
+		settings.Live.XtreamHost != "" &&
+		settings.Live.XtreamUsername != "" &&
+		settings.Live.XtreamPassword != "" {
+		// Use Xtream API
+		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
+		if err != nil {
+			log.Printf("[live] GetChannels Xtream error: %v", err)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			return
 		}
+	} else {
+		// Use M3U playlist
+		contents, err := h.fetchPlaylistContents(r.Context())
+		if err != nil {
+			log.Printf("[live] GetChannels error: %v", err)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+		allChannels = parseM3UPlaylist(contents)
 	}
 
+	totalBeforeFilter := len(allChannels)
 	filteredChannels := filterChannels(allChannels, filter)
 
 	// Extract available categories from filtered channels (only categories with actual channels)
@@ -725,14 +866,38 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 
 // GetCategories returns all available categories from the configured playlist.
 func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
-	contents, err := h.fetchPlaylistContents(r.Context())
+	var allChannels []LiveChannel
+
+	settings, err := h.cfgManager.Load()
 	if err != nil {
-		log.Printf("[live] GetCategories error: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		log.Printf("[live] GetCategories error loading settings: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	allChannels := parseM3UPlaylist(contents)
+	// Check if we're in Xtream mode
+	if settings.Live.Mode == "xtream" &&
+		settings.Live.XtreamHost != "" &&
+		settings.Live.XtreamUsername != "" &&
+		settings.Live.XtreamPassword != "" {
+		// Use Xtream API
+		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
+		if err != nil {
+			log.Printf("[live] GetCategories Xtream error: %v", err)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+	} else {
+		// Use M3U playlist
+		contents, err := h.fetchPlaylistContents(r.Context())
+		if err != nil {
+			log.Printf("[live] GetCategories error: %v", err)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+		allChannels = parseM3UPlaylist(contents)
+	}
+
 	categories := extractCategories(allChannels)
 
 	response := CategoriesResponse{
