@@ -611,18 +611,20 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 		BackdropPath string `json:"backdrop_path"`
 		ReleaseDate  string `json:"release_date"`
 		IMDBId       string `json:"imdb_id"`
+		Runtime      int    `json:"runtime"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&movie); err != nil {
 		return nil, err
 	}
 
 	title := &models.Title{
-		ID:        fmt.Sprintf("tmdb:movie:%d", movie.ID),
-		Name:      movie.Title,
-		Overview:  movie.Overview,
-		MediaType: "movie",
-		TMDBID:    movie.ID,
-		IMDBID:    movie.IMDBId,
+		ID:             fmt.Sprintf("tmdb:movie:%d", movie.ID),
+		Name:           movie.Title,
+		Overview:       movie.Overview,
+		MediaType:      "movie",
+		TMDBID:         movie.ID,
+		IMDBID:         movie.IMDBId,
+		RuntimeMinutes: movie.Runtime,
 	}
 
 	if year := parseTMDBYear(movie.ReleaseDate, ""); year != 0 {

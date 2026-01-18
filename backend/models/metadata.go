@@ -56,8 +56,9 @@ type Title struct {
 	Releases        []Release `json:"releases,omitempty"`
 	Theatrical      *Release  `json:"theatricalRelease,omitempty"`
 	HomeRelease     *Release  `json:"homeRelease,omitempty"`
-	Ratings         []Rating  `json:"ratings,omitempty"` // Aggregated ratings from MDBList
-	Credits         *Credits  `json:"credits,omitempty"` // Top billed cast
+	Ratings         []Rating  `json:"ratings,omitempty"`        // Aggregated ratings from MDBList
+	Credits         *Credits  `json:"credits,omitempty"`        // Top billed cast
+	RuntimeMinutes  int       `json:"runtimeMinutes,omitempty"` // Runtime in minutes (movies only)
 }
 
 type TrendingItem struct {
