@@ -3,13 +3,17 @@
  * Uses native Pressable focus with visual states for focused/active/watched
  */
 
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { SeriesEpisode } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
+
+// Pre-computed gradient props - avoids creating new arrays on every render
+const GRADIENT_COLORS = ['transparent', 'rgba(0, 0, 0, 0.85)'] as const;
+const GRADIENT_LOCATIONS = [0.3, 1] as const;
 
 // Card dimensions - design for tvOS, Android TV auto-scales (50% larger for TV viewing)
 const THUMBNAIL_WIDTH = tvScale(360);
@@ -33,72 +37,86 @@ const formatEpisodeCode = (episode: SeriesEpisode): string => {
   return `S${season}E${episodeNum}`;
 };
 
-const TVEpisodeThumbnail = memo(function TVEpisodeThumbnail({
-  episode,
-  isActive,
-  isFocused,
-  isWatched,
-  progress,
-  theme,
-  showSelectedBadge = false,
-}: TVEpisodeThumbnailProps) {
-  const styles = createStyles(theme);
-  const episodeCode = formatEpisodeCode(episode);
-  const showProgress = progress > 0 && progress < 100;
+const TVEpisodeThumbnail = memo(
+  function TVEpisodeThumbnail({
+    episode,
+    isActive,
+    isFocused,
+    isWatched,
+    progress,
+    theme,
+    showSelectedBadge = false,
+  }: TVEpisodeThumbnailProps) {
+    // Memoize styles to prevent recreation on every render
+    const styles = useMemo(() => createStyles(theme), [theme]);
+    const episodeCode = formatEpisodeCode(episode);
+    const showProgress = progress > 0 && progress < 100;
 
-  return (
-    <View style={[styles.container, isFocused && styles.containerFocused, isActive && styles.containerActive]}>
-      {/* Thumbnail Image */}
-      {episode.image?.url ? (
-        <Image source={episode.image.url} style={styles.image} contentFit="cover" transition={0} />
-      ) : (
-        <View style={styles.placeholder} />
-      )}
+    return (
+      <View style={[styles.container, isFocused && styles.containerFocused, isActive && styles.containerActive]}>
+        {/* Thumbnail Image */}
+        {episode.image?.url ? (
+          <Image source={episode.image.url} style={styles.image} contentFit="cover" transition={0} />
+        ) : (
+          <View style={styles.placeholder} />
+        )}
 
-      {/* Dark overlay for text readability */}
-      <View style={styles.darkOverlay} />
+        {/* Dark overlay for text readability */}
+        <View style={styles.darkOverlay} />
 
-      {/* Episode number badge (top-left) */}
-      <View style={styles.episodeBadge}>
-        <Text style={styles.episodeBadgeText}>{episode.episodeNumber}</Text>
+        {/* Episode number badge (top-left) */}
+        <View style={styles.episodeBadge}>
+          <Text style={styles.episodeBadgeText}>{episode.episodeNumber}</Text>
+        </View>
+
+        {/* Progress percentage or watched checkmark (top-right) */}
+        {showProgress ? (
+          <View style={styles.progressBadge}>
+            <Text style={styles.progressBadgeText}>{Math.round(progress)}%</Text>
+          </View>
+        ) : isWatched ? (
+          <View style={styles.watchedBadge}>
+            <Text style={styles.watchedCheckmark}>✓</Text>
+          </View>
+        ) : null}
+
+        {/* Episode code overlay at bottom */}
+        <LinearGradient colors={GRADIENT_COLORS} locations={GRADIENT_LOCATIONS} style={styles.bottomGradient}>
+          <Text style={styles.episodeCode}>{episodeCode}</Text>
+        </LinearGradient>
+
+        {/* Progress bar at bottom */}
+        {showProgress && (
+          <View style={styles.progressBarContainer}>
+            <View style={styles.progressBarBackground} />
+            <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+          </View>
+        )}
+
+        {/* Selected badge - bottom left indicator */}
+        {showSelectedBadge && (
+          <View style={styles.selectedBadge}>
+            <Text style={styles.selectedBadgeText}>Selected</Text>
+          </View>
+        )}
       </View>
-
-      {/* Progress percentage or watched checkmark (top-right) */}
-      {showProgress ? (
-        <View style={styles.progressBadge}>
-          <Text style={styles.progressBadgeText}>{Math.round(progress)}%</Text>
-        </View>
-      ) : isWatched ? (
-        <View style={styles.watchedBadge}>
-          <Text style={styles.watchedCheckmark}>✓</Text>
-        </View>
-      ) : null}
-
-      {/* Episode code overlay at bottom */}
-      <LinearGradient
-        colors={['transparent', 'rgba(0, 0, 0, 0.85)']}
-        locations={[0.3, 1]}
-        style={styles.bottomGradient}>
-        <Text style={styles.episodeCode}>{episodeCode}</Text>
-      </LinearGradient>
-
-      {/* Progress bar at bottom */}
-      {showProgress && (
-        <View style={styles.progressBarContainer}>
-          <View style={styles.progressBarBackground} />
-          <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
-        </View>
-      )}
-
-      {/* Selected badge - bottom left indicator */}
-      {showSelectedBadge && (
-        <View style={styles.selectedBadge}>
-          <Text style={styles.selectedBadgeText}>Selected</Text>
-        </View>
-      )}
-    </View>
-  );
-});
+    );
+  },
+  // Custom comparison - only re-render when visual state actually changes
+  (prev, next) => {
+    return (
+      prev.episode.seasonNumber === next.episode.seasonNumber &&
+      prev.episode.episodeNumber === next.episode.episodeNumber &&
+      prev.episode.image?.url === next.episode.image?.url &&
+      prev.isActive === next.isActive &&
+      prev.isFocused === next.isFocused &&
+      prev.isWatched === next.isWatched &&
+      prev.progress === next.progress &&
+      prev.showSelectedBadge === next.showSelectedBadge &&
+      prev.theme === next.theme
+    );
+  },
+);
 
 const createStyles = (theme: NovaTheme) =>
   StyleSheet.create({

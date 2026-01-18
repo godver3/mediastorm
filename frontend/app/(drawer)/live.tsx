@@ -467,6 +467,18 @@ function LiveScreen() {
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
   const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
 
+  // Debounce ref for focus updates - prevents re-renders during rapid grid navigation
+  const focusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
+    };
+  }, []);
+
   // Mobile infinite scroll state
   const INITIAL_VISIBLE_COUNT = 50;
   const LOAD_MORE_INCREMENT = 30;
@@ -1237,12 +1249,20 @@ function LiveScreen() {
         if (channel) handleChannelLongPress(channel);
       },
       onFocus: (channelId: string, rowIndex: number) => {
-        const channel = channelMap.get(channelId);
-        if (channel) setFocusedChannel(channel);
+        // Scroll immediately for responsiveness
         scrollToRowRef.current(rowIndex);
+
+        // Debounce channel info update to prevent re-renders during rapid navigation
+        if (focusDebounceRef.current) {
+          clearTimeout(focusDebounceRef.current);
+        }
+        focusDebounceRef.current = setTimeout(() => {
+          const channel = channelMap.get(channelId);
+          if (channel) setFocusedChannel(channel);
+        }, 100);
       },
     }),
-    [channelMap, handleChannelSelect, handleChannelLongPress, setFocusedChannel],
+    [channelMap, handleChannelSelect, handleChannelLongPress],
   );
 
   // TV: Calculate card width for grid (matches createStyles calculation)
