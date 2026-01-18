@@ -366,7 +366,7 @@ func main() {
 		videoHandler.SetConfigManager(cfgManager)
 	}
 
-	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency)
+	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager)
 
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
@@ -471,6 +471,9 @@ func main() {
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.SetProfileIcon)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ClearProfileIcon)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ServeProfileIcon)).Methods(http.MethodGet)
+
+	// Live TV endpoints for admin panel
+	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.GetCategories)).Methods(http.MethodGet)
 
 	// User account management endpoints (master account only)
 	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetUserAccounts)).Methods(http.MethodGet)

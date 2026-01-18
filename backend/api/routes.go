@@ -211,6 +211,10 @@ func Register(
 
 	protected.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
 	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/channels", liveHandler.GetChannels).Methods(http.MethodGet)
+	protected.HandleFunc("/live/channels", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/categories", liveHandler.GetCategories).Methods(http.MethodGet)
+	protected.HandleFunc("/live/categories", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/cache/clear", liveHandler.ClearCache).Methods(http.MethodPost)
 	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)

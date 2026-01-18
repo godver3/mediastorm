@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,9 +14,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"novastream/config"
 )
 
 const (
@@ -26,6 +31,40 @@ const (
 	defaultCacheTTL          = 24 * time.Hour
 	cacheDir                 = "cache/live"
 )
+
+// LiveChannel represents a parsed channel from an M3U playlist.
+type LiveChannel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	Logo        string `json:"logo,omitempty"`
+	Group       string `json:"group,omitempty"`
+	TvgID       string `json:"tvgId,omitempty"`
+	TvgName     string `json:"tvgName,omitempty"`
+	TvgLanguage string `json:"tvgLanguage,omitempty"`
+	StreamURL   string `json:"streamUrl,omitempty"` // Backend-proxied stream URL
+}
+
+// LiveChannelsResponse is the response for the GetChannels endpoint.
+type LiveChannelsResponse struct {
+	Channels            []LiveChannel `json:"channels"`
+	TotalBeforeFilter   int           `json:"totalBeforeFilter"`
+	AvailableCategories []string      `json:"availableCategories"`
+}
+
+// CategoryInfo represents category metadata.
+type CategoryInfo struct {
+	Name         string `json:"name"`
+	ChannelCount int    `json:"channelCount"`
+}
+
+// CategoriesResponse is the response for the GetCategories endpoint.
+type CategoriesResponse struct {
+	Categories []CategoryInfo `json:"categories"`
+}
+
+// Regex for parsing M3U attributes
+var attributeRegex = regexp.MustCompile(`([a-zA-Z0-9\-]+)="([^"]*)"`)
 
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
@@ -39,12 +78,13 @@ type LiveHandler struct {
 	probeSizeMB        int  // FFmpeg probesize in MB (0 = default)
 	analyzeDurationSec int  // FFmpeg analyzeduration in seconds (0 = default)
 	lowLatency         bool // Enable low-latency mode
+	cfgManager         *config.Manager
 }
 
 // NewLiveHandler creates a handler capable of fetching remote playlists.
 // The provided client may be nil, in which case a client with sensible
 // defaults will be created. cacheTTLHours specifies how long to cache playlists.
-func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int, probeSizeMB int, analyzeDurationSec int, lowLatency bool) *LiveHandler {
+func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int, probeSizeMB int, analyzeDurationSec int, lowLatency bool, cfgManager *config.Manager) *LiveHandler {
 	if client == nil {
 		client = &http.Client{
 			Timeout: defaultPlaylistTimeout,
@@ -70,6 +110,7 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 		probeSizeMB:        probeSizeMB,
 		analyzeDurationSec: analyzeDurationSec,
 		lowLatency:         lowLatency,
+		cfgManager:         cfgManager,
 	}
 }
 
@@ -407,4 +448,299 @@ func (h *LiveHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"ok","cleared":%d}`, cleared)))
+}
+
+// parseM3UPlaylist parses an M3U playlist and returns a list of channels.
+func parseM3UPlaylist(contents string) []LiveChannel {
+	if strings.TrimSpace(contents) == "" {
+		return nil
+	}
+
+	lines := strings.Split(contents, "\n")
+	var channels []LiveChannel
+	usedIDs := make(map[string]bool)
+
+	assignID := func(baseID string) string {
+		sanitized := strings.TrimSpace(baseID)
+		if sanitized == "" {
+			sanitized = "channel"
+		}
+		if !usedIDs[sanitized] {
+			usedIDs[sanitized] = true
+			return sanitized
+		}
+		suffix := 1
+		candidate := fmt.Sprintf("%s-%d", sanitized, suffix)
+		for usedIDs[candidate] {
+			suffix++
+			candidate = fmt.Sprintf("%s-%d", sanitized, suffix)
+		}
+		usedIDs[candidate] = true
+		return candidate
+	}
+
+	var pending *LiveChannel
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "#EXTINF") {
+			parts := strings.SplitN(line, "#EXTINF:", 2)
+			if len(parts) < 2 {
+				pending = nil
+				continue
+			}
+
+			metaAndName := parts[1]
+			metaParts := strings.SplitN(metaAndName, ",", 2)
+			metadataPart := metaParts[0]
+			namePart := ""
+			if len(metaParts) > 1 {
+				namePart = metaParts[1]
+			}
+
+			attributes := make(map[string]string)
+			matches := attributeRegex.FindAllStringSubmatch(metadataPart, -1)
+			for _, match := range matches {
+				if len(match) == 3 {
+					attributes[strings.ToLower(match[1])] = match[2]
+				}
+			}
+
+			name := strings.TrimSpace(namePart)
+			if name == "" {
+				name = strings.TrimSpace(attributes["tvg-name"])
+			}
+			if name == "" {
+				name = "Channel"
+			}
+
+			idFallbackSource := strings.TrimSpace(attributes["tvg-id"])
+			if idFallbackSource == "" {
+				idFallbackSource = name
+			}
+			if idFallbackSource == "" {
+				idFallbackSource = fmt.Sprintf("channel-%d", len(channels)+1)
+			}
+
+			pending = &LiveChannel{
+				ID:          idFallbackSource,
+				Name:        name,
+				Logo:        strings.TrimSpace(attributes["tvg-logo"]),
+				Group:       strings.TrimSpace(attributes["group-title"]),
+				TvgID:       strings.TrimSpace(attributes["tvg-id"]),
+				TvgName:     strings.TrimSpace(attributes["tvg-name"]),
+				TvgLanguage: strings.TrimSpace(attributes["tvg-language"]),
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if pending != nil {
+			assignedID := assignID(pending.ID)
+			if pending.Name == "" {
+				pending.Name = assignedID
+			}
+			pending.ID = assignedID
+			pending.URL = line
+			channels = append(channels, *pending)
+			pending = nil
+		}
+	}
+
+	return channels
+}
+
+// extractCategories extracts unique categories with their channel counts from a list of channels.
+func extractCategories(channels []LiveChannel) []CategoryInfo {
+	categoryMap := make(map[string]int)
+	for _, ch := range channels {
+		if ch.Group != "" {
+			categoryMap[ch.Group]++
+		}
+	}
+
+	categories := make([]CategoryInfo, 0, len(categoryMap))
+	for name, count := range categoryMap {
+		categories = append(categories, CategoryInfo{
+			Name:         name,
+			ChannelCount: count,
+		})
+	}
+
+	// Sort alphabetically by name
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].Name < categories[j].Name
+	})
+
+	return categories
+}
+
+// filterChannels applies the filtering settings to a list of channels.
+func filterChannels(channels []LiveChannel, filter config.LiveTVFilterSettings) []LiveChannel {
+	if len(channels) == 0 {
+		return channels
+	}
+
+	// Step 1: Filter by enabled categories (if configured)
+	var filtered []LiveChannel
+	if len(filter.EnabledCategories) > 0 {
+		enabledSet := make(map[string]bool)
+		for _, cat := range filter.EnabledCategories {
+			enabledSet[cat] = true
+		}
+		for _, ch := range channels {
+			if enabledSet[ch.Group] {
+				filtered = append(filtered, ch)
+			}
+		}
+	} else {
+		filtered = channels
+	}
+
+	// Step 2: Apply overall limit (if configured)
+	if filter.MaxChannels > 0 && len(filtered) > filter.MaxChannels {
+		filtered = filtered[:filter.MaxChannels]
+	}
+
+	return filtered
+}
+
+// fetchPlaylistContents fetches the M3U playlist from the configured URL.
+func (h *LiveHandler) fetchPlaylistContents(ctx context.Context) (string, error) {
+	if h.cfgManager == nil {
+		return "", errors.New("config manager not configured")
+	}
+
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return "", fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	playlistURL := settings.Live.GetEffectivePlaylistURL()
+	if strings.TrimSpace(playlistURL) == "" {
+		return "", errors.New("no playlist URL configured")
+	}
+
+	targetURL, err := h.parseRemoteURL(playlistURL)
+	if err != nil {
+		return "", err
+	}
+
+	// Check cache first
+	cacheKey := h.getCacheKey(targetURL.String())
+	cachedData, _, err := h.getFromCache(cacheKey)
+	if err == nil && cachedData != nil {
+		log.Printf("[live] serving playlist from cache for channels endpoint")
+		return string(cachedData), nil
+	}
+
+	// Fetch from source
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to construct playlist request: %w", err)
+	}
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to download playlist: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("playlist fetch returned status %d", resp.StatusCode)
+	}
+
+	limited := io.LimitReader(resp.Body, h.maxSize+1)
+	body, err := io.ReadAll(limited)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("failed to read playlist: %w", err)
+	}
+
+	if int64(len(body)) > h.maxSize {
+		return "", errors.New("playlist exceeds size limit")
+	}
+
+	// Cache the playlist
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = playlistContentTypePlain
+	}
+	if err := h.saveToCache(cacheKey, body, contentType); err != nil {
+		log.Printf("[live] failed to cache playlist: %v", err)
+	}
+
+	return string(body), nil
+}
+
+// GetChannels returns parsed and filtered channels from the configured playlist.
+func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
+	contents, err := h.fetchPlaylistContents(r.Context())
+	if err != nil {
+		log.Printf("[live] GetChannels error: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+
+	allChannels := parseM3UPlaylist(contents)
+	totalBeforeFilter := len(allChannels)
+
+	// Apply filtering
+	var filter config.LiveTVFilterSettings
+	if h.cfgManager != nil {
+		settings, err := h.cfgManager.Load()
+		if err == nil {
+			filter = settings.Live.Filtering
+		}
+	}
+
+	filteredChannels := filterChannels(allChannels, filter)
+
+	// Extract available categories from filtered channels (only categories with actual channels)
+	categoryInfos := extractCategories(filteredChannels)
+	availableCategories := make([]string, len(categoryInfos))
+	for i, cat := range categoryInfos {
+		availableCategories[i] = cat.Name
+	}
+
+	// Note: StreamURL will be set by frontend based on channel.url
+	// The frontend calls buildLiveStreamUrl to create the proxied URL
+
+	response := LiveChannelsResponse{
+		Channels:            filteredChannels,
+		TotalBeforeFilter:   totalBeforeFilter,
+		AvailableCategories: availableCategories,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("[live] GetChannels JSON encode error: %v", err)
+	}
+}
+
+// GetCategories returns all available categories from the configured playlist.
+func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
+	contents, err := h.fetchPlaylistContents(r.Context())
+	if err != nil {
+		log.Printf("[live] GetCategories error: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+
+	allChannels := parseM3UPlaylist(contents)
+	categories := extractCategories(allChannels)
+
+	response := CategoriesResponse{
+		Categories: categories,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("[live] GetCategories JSON encode error: %v", err)
+	}
 }

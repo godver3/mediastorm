@@ -202,17 +202,24 @@ type PlaybackSettings struct {
 	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`       // Seconds to skip backward (default 10)
 }
 
+// LiveTVFilterSettings controls backend-side filtering for Live TV channels.
+type LiveTVFilterSettings struct {
+	EnabledCategories []string `json:"enabledCategories"` // Only show channels in these categories (empty = show all)
+	MaxChannels       int      `json:"maxChannels"`       // Overall channel limit (0 = no limit)
+}
+
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
-	Mode                  string `json:"mode"`                  // "m3u" or "xtream" - how to source the playlist
-	PlaylistURL           string `json:"playlistUrl"`           // M3U playlist URL (used when mode is "m3u")
-	XtreamHost            string `json:"xtreamHost"`            // Xtream Codes server URL (e.g., "http://example.com:8080")
-	XtreamUsername        string `json:"xtreamUsername"`        // Xtream Codes username
-	XtreamPassword        string `json:"xtreamPassword"`        // Xtream Codes password
-	PlaylistCacheTTLHours int    `json:"playlistCacheTtlHours"`
-	ProbeSizeMB           int    `json:"probeSizeMb"`           // FFmpeg probesize in MB (0 = default ~5MB)
-	AnalyzeDurationSec    int    `json:"analyzeDurationSec"`    // FFmpeg analyzeduration in seconds (0 = default ~5s)
-	LowLatency            bool   `json:"lowLatency"`            // Enable low-latency mode (nobuffer + low_delay flags)
+	Mode                  string               `json:"mode"`                  // "m3u" or "xtream" - how to source the playlist
+	PlaylistURL           string               `json:"playlistUrl"`           // M3U playlist URL (used when mode is "m3u")
+	XtreamHost            string               `json:"xtreamHost"`            // Xtream Codes server URL (e.g., "http://example.com:8080")
+	XtreamUsername        string               `json:"xtreamUsername"`        // Xtream Codes username
+	XtreamPassword        string               `json:"xtreamPassword"`        // Xtream Codes password
+	PlaylistCacheTTLHours int                  `json:"playlistCacheTtlHours"`
+	ProbeSizeMB           int                  `json:"probeSizeMb"`           // FFmpeg probesize in MB (0 = default ~5MB)
+	AnalyzeDurationSec    int                  `json:"analyzeDurationSec"`    // FFmpeg analyzeduration in seconds (0 = default ~5s)
+	LowLatency            bool                 `json:"lowLatency"`            // Enable low-latency mode (nobuffer + low_delay flags)
+	Filtering             LiveTVFilterSettings `json:"filtering"`             // Backend-side channel filtering
 }
 
 // GetEffectivePlaylistURL returns the playlist URL based on the configured mode.
