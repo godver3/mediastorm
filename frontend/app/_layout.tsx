@@ -119,6 +119,7 @@ function AuthGate() {
                                   name="player"
                                   options={{
                                     presentation: Platform.isTV ? 'card' : 'fullScreenModal',
+                                    animation: 'fade',
                                   }}
                                 />
                                 <Stack.Screen
