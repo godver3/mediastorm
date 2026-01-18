@@ -765,6 +765,8 @@ export default function DetailsScreen() {
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
   const descriptionHeight = useSharedValue(0);
+  // TV: Track topContent height for dynamic spacer sizing
+  const [tvTopContentHeight, setTvTopContentHeight] = useState(0);
 
   // Reset description height measurements when displayDescription changes
   // This ensures the container re-measures when overview loads asynchronously
@@ -4017,7 +4019,18 @@ export default function DetailsScreen() {
 
   const renderDetailsContent = () => (
     <>
-      <View style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}>
+      <View
+        style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}
+        onLayout={
+          isTV
+            ? (e) => {
+                const height = e.nativeEvent.layout.height;
+                if (height > 0 && height !== tvTopContentHeight) {
+                  setTvTopContentHeight(height);
+                }
+              }
+            : undefined
+        }>
         <View style={styles.titleRow}>
           <Text style={styles.title}>{title}</Text>
         </View>
@@ -4915,8 +4928,17 @@ export default function DetailsScreen() {
                     scrollEventThrottle={16}
                     // Disable native scroll-to-focus - we control scroll programmatically
                     scrollEnabled={false}>
-                    {/* Transparent spacer to show backdrop initially - larger for more artwork at scroll 0 */}
-                    <View style={{ height: Math.round(windowHeight * 0.65) }} />
+                    {/* Transparent spacer - shrinks when topContent is taller to keep action row at consistent position */}
+                    <View
+                      style={{
+                        height: Math.round(
+                          Math.max(
+                            windowHeight * 0.35, // Minimum 35% backdrop visible
+                            windowHeight * 0.65 - Math.max(0, tvTopContentHeight - 200 * tvScale) // Shrink for taller content
+                          )
+                        ),
+                      }}
+                    />
                     {/* Content area with gradient background - starts higher with softer transition */}
                     <LinearGradient
                       colors={[

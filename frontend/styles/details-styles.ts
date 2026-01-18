@@ -100,7 +100,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     },
     topContent: {},
     topContentTV: {
-      // No margin needed without background
+      // Content grows naturally - spacer height adjusts dynamically to keep action row at consistent position
     },
     topContentMobile: {
       backgroundColor: 'rgba(0, 0, 0, 0.35)',
