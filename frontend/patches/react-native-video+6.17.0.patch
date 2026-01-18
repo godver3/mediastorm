@@ -1,139 +1,3 @@
-diff --git a/node_modules/react-native-video/android/build.gradle b/node_modules/react-native-video/android/build.gradle
-index 748b799..1bc5314 100644
---- a/node_modules/react-native-video/android/build.gradle
-+++ b/node_modules/react-native-video/android/build.gradle
-@@ -166,26 +166,11 @@ android {
-     sourceSets {
-         main {
-             java {
--                if (ExoplayerDependencies["useExoplayerIMA"]) {
--                    exclude 'com/google/ads/interactivemedia/v3/api'
--                    exclude 'androidx/media3/exoplayer/ima'
--                }
--
--                if (ExoplayerDependencies["useExoplayerSmoothStreaming"]) {
--                    exclude 'androidx/media3/exoplayer/smoothstreaming'
--                }
--
--                if (ExoplayerDependencies["useExoplayerDash"]) {
--                    exclude 'androidx/media3/exoplayer/dash'
--                }
--
--                if (ExoplayerDependencies["useExoplayerHls"]) {
--                    exclude 'androidx/media3/exoplayer/hls'
--                }
--
--                if (ExoplayerDependencies["useExoplayerRtsp"]) {
--                    exclude 'androidx/media3/exoplayer/rtsp'
--                }
-+                // Exclude all stubs for modules that expo-video provides at runtime
-+                // Keep IMA and RTSP stubs since expo-video doesn't provide these
-+                exclude 'androidx/media3/exoplayer/smoothstreaming'
-+                exclude 'androidx/media3/exoplayer/dash'
-+                exclude 'androidx/media3/exoplayer/hls'
-             }
-         }
-     }
-@@ -233,87 +218,15 @@ dependencies {
-     implementation "androidx.core:core-ktx:$androidxCore_version"
-     implementation "androidx.activity:activity-ktx:$androidxActivity_version"
- 
--    // For media playback using ExoPlayer
--    if (media3_buildFromSource) {
--        implementation(project(":media-lib-exoplayer"))
--    } else {
--        implementation "androidx.media3:media3-exoplayer:$media3_version"
--    }
--
--    if (ExoplayerDependencies["useExoplayerSmoothStreaming"]) {
--        // For Smooth Streaming playback support with ExoPlayer
--        if (media3_buildFromSource) {
--            implementation(project(":media-lib-exoplayer-smoothstreaming"))
--        } else {
--            implementation "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
--        }
--    }
--
--    if (ExoplayerDependencies["useExoplayerDash"]) {
--        // For DASH playback support with ExoPlayer
--        if (media3_buildFromSource) {
--            implementation(project(":media-lib-exoplayer-dash"))
--        } else {
--            implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
--        }
--    }
--
--    if (ExoplayerDependencies["useExoplayerHls"]) {
--        // For HLS playback support with ExoPlayer
--        if (media3_buildFromSource) {
--            implementation(project(":media-lib-exoplayer-hls"))
--        } else {
--            implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
--        }
--    }
--
--    // For RTSP playback support with ExoPlayer
--    if (ExoplayerDependencies["useExoplayerRtsp"]) {
--        if (media3_buildFromSource) {
--            implementation(project(":media-lib-exoplayer-rtsp"))
--        } else {
--            implementation "androidx.media3:media3-exoplayer-rtsp:$media3_version"
--        }
--    }
--
--    // For ad insertion using the Interactive Media Ads SDK with ExoPlayer
--    if (ExoplayerDependencies["useExoplayerIMA"]) {
--        if (media3_buildFromSource) {
--            implementation(project(":media-lib-exoplayer-ima"))
--        } else {
--            implementation "androidx.media3:media3-exoplayer-ima:$media3_version"
--        }
--    }
--
--   if (media3_buildFromSource) {
--        // For loading data using the OkHttp network stack
--        implementation(project(":media-lib-datasource-okhttp"))
--
--        // For building media playback UIs
--        implementation(project(":media-lib-ui"))
--
--        // For exposing and controlling media sessions
--        implementation(project(":media-lib-session"))
--
--        // Common functionality for loading data
--        implementation(project(":media-lib-datasource"))
--
--        // Common functionality used across multiple media libraries
--        implementation(project(":media-lib-common"))
--    } else {
--        // For loading data using the OkHttp network stack
--        implementation "androidx.media3:media3-datasource-okhttp:$media3_version"
--
--        // For building media playback UIs
--        implementation "androidx.media3:media3-ui:$media3_version"
--
--        // For exposing and controlling media sessions
--        implementation "androidx.media3:media3-session:$media3_version"
--
--        // Common functionality for loading data
--        implementation "androidx.media3:media3-datasource:$media3_version"
--
--        // Common functionality used across multiple media libraries
--        implementation "androidx.media3:media3-common:$media3_version"
--    }
-+    // All media3 modules use compileOnly - expo-video provides them at runtime
-+    // This prevents react-native-video from bundling duplicate classes
-+    compileOnly "androidx.media3:media3-exoplayer:$media3_version"
-+    compileOnly "androidx.media3:media3-exoplayer-hls:$media3_version"
-+    compileOnly "androidx.media3:media3-exoplayer-dash:$media3_version"
-+    compileOnly "androidx.media3:media3-exoplayer-smoothstreaming:$media3_version"
-+    compileOnly "androidx.media3:media3-datasource-okhttp:$media3_version"
-+    compileOnly "androidx.media3:media3-ui:$media3_version"
-+    compileOnly "androidx.media3:media3-session:$media3_version"
-+    compileOnly "androidx.media3:media3-datasource:$media3_version"
-+    compileOnly "androidx.media3:media3-common:$media3_version"
- }
-\ No newline at end of file
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
 index bb945fe..5be70b2 100644
 --- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
@@ -193,3 +57,66 @@ index 21d321a..6907356 100644
      class RCTPictureInPicture: NSObject, AVPictureInPictureControllerDelegate {
          public private(set) var _pipController: AVPictureInPictureController?
          private var _onPictureInPictureEnter: (() -> Void)?
+diff --git a/node_modules/react-native-video/ios/Video/RCTVideo.swift b/node_modules/react-native-video/ios/Video/RCTVideo.swift
+index ac4232c..74e62e1 100644
+--- a/node_modules/react-native-video/ios/Video/RCTVideo.swift
++++ b/node_modules/react-native-video/ios/Video/RCTVideo.swift
+@@ -302,6 +302,10 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
+             _pip = nil
+         #endif
+ 
++        #if os(tvOS)
++            clearDisplayCriteria()
++        #endif
++
+         ReactNativeVideoManager.shared.unregisterView(newInstance: self)
+         AudioSessionManager.shared.unregisterView(view: self)
+     }
+@@ -628,10 +632,47 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
+                 _imaAdsManager.setUpAdsLoader()
+             }
+         #endif
++
++        #if os(tvOS)
++            // Set AVDisplayManager criteria for HDR content on tvOS
++            // This enables automatic display mode switching for HDR/Dolby Vision content
++            if #available(tvOS 11.2, *) {
++                Task {
++                    await self.updateDisplayCriteria(for: playerItem.asset)
++                }
++            }
++        #endif
++
+         isSetSourceOngoing = false
+         applyNextSource()
+     }
+ 
++    #if os(tvOS)
++    @available(tvOS 11.2, *)
++    private func updateDisplayCriteria(for asset: AVAsset) async {
++        do {
++            let criteria = try await asset.load(.preferredDisplayCriteria)
++            await MainActor.run {
++                if let window = self.window {
++                    window.avDisplayManager.preferredDisplayCriteria = criteria
++                    DebugLog("[RCTVideo] Set display criteria for HDR content")
++                }
++            }
++        } catch {
++            DebugLog("[RCTVideo] Could not load display criteria: \(error)")
++        }
++    }
++
++    func clearDisplayCriteria() {
++        if #available(tvOS 11.2, *) {
++            if let window = self.window {
++                window.avDisplayManager.preferredDisplayCriteria = nil
++                DebugLog("[RCTVideo] Cleared display criteria")
++            }
++        }
++    }
++    #endif
++
+     @objc
+     func setSrc(_ source: NSDictionary!) {
+         if self.isSetSourceOngoing || self.nextSource != nil {
