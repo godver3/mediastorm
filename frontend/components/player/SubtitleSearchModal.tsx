@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  BackHandler,
-  FlatList,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -88,7 +87,6 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   }, [visible, lock, unlock]);
 
   // Sync selectedLanguage with currentLanguage prop when it changes
-  // This handles the case where settings load after the component mounts
   useEffect(() => {
     if (currentLanguage) {
       setSelectedLanguage(currentLanguage);
@@ -101,13 +99,11 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
       return searchResults;
     }
 
-    // Calculate similarity for each result and sort
     const withScores = searchResults.map((result) => ({
       result,
       score: calculateReleaseSimilarity(mediaReleaseName, result.release),
     }));
 
-    // Sort by score descending, then by downloads as tiebreaker
     withScores.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return (b.result.downloads || 0) - (a.result.downloads || 0);
@@ -123,6 +119,12 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     }
   }, [visible, selectedLanguage, onSearch]);
 
+  const currentLanguageName = useMemo(
+    () => LANGUAGES.find((l) => l.code === selectedLanguage)?.name || selectedLanguage,
+    [selectedLanguage],
+  );
+
+  // Select guard to prevent double-selections on TV
   const selectGuardRef = useRef(false);
   const withSelectGuard = useCallback((fn: () => void) => {
     if (!Platform.isTV) {
@@ -157,16 +159,43 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     setSelectedLanguage(langCode);
   }, []);
 
-  // Back button handling for TV
+  // Back button handling for TV (matching TrackSelectionModal pattern)
   const onCloseRef = useRef(onClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
+  const canCloseWithBackRef = useRef(true);
+  const backCloseDelayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
   useEffect(() => {
-    if (!Platform.isTV || !visible) {
+    // tvOS emits a spurious "blur/back" event when focus jumps into the modal; delay
+    // enabling the back interceptor so that initial focus changes don't immediately close it.
+    if (visible) {
+      canCloseWithBackRef.current = false;
+      if (backCloseDelayTimeoutRef.current) {
+        clearTimeout(backCloseDelayTimeoutRef.current);
+      }
+      backCloseDelayTimeoutRef.current = setTimeout(() => {
+        canCloseWithBackRef.current = true;
+        backCloseDelayTimeoutRef.current = null;
+      }, 300);
+    } else {
+      canCloseWithBackRef.current = true;
+      if (backCloseDelayTimeoutRef.current) {
+        clearTimeout(backCloseDelayTimeoutRef.current);
+        backCloseDelayTimeoutRef.current = null;
+      }
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!Platform.isTV) {
+      return;
+    }
+
+    if (!visible) {
       if (removeInterceptorRef.current) {
         removeInterceptorRef.current();
         removeInterceptorRef.current = null;
@@ -174,172 +203,173 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
       return;
     }
 
-    // Use both BackHandler (for tvOS menu button) and RemoteControlManager
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      onCloseRef.current();
-      return true;
-    });
+    let isHandling = false;
+    let cleanupScheduled = false;
 
     const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      if (!canCloseWithBackRef.current) {
+        return true;
+      }
+      if (isHandling) {
+        return true;
+      }
+
+      isHandling = true;
       onCloseRef.current();
+
+      if (!cleanupScheduled) {
+        cleanupScheduled = true;
+        setTimeout(() => {
+          if (removeInterceptorRef.current) {
+            removeInterceptorRef.current();
+            removeInterceptorRef.current = null;
+          }
+          isHandling = false;
+        }, 750);
+      }
+
       return true;
     });
 
-    removeInterceptorRef.current = () => {
-      backHandler.remove();
-      removeInterceptor();
-    };
+    removeInterceptorRef.current = removeInterceptor;
 
     return () => {
-      if (removeInterceptorRef.current) {
+      if (removeInterceptorRef.current === removeInterceptor && !cleanupScheduled) {
         removeInterceptorRef.current();
         removeInterceptorRef.current = null;
       }
     };
   }, [visible]);
 
-  const currentLanguageName = useMemo(
-    () => LANGUAGES.find((l) => l.code === selectedLanguage)?.name || selectedLanguage,
-    [selectedLanguage],
-  );
-
-  // Language chip dimensions
-  const LANGUAGE_CHIP_WIDTH = 100;
-  const LANGUAGE_CHIP_MARGIN = 8;
-
-  // Track focused elements for native TV navigation
-  const [focusedLanguageCode, setFocusedLanguageCode] = useState<string | null>(null);
-  const [focusedResultIndex, setFocusedResultIndex] = useState<number | null>(null);
-  const [isCloseFocused, setIsCloseFocused] = useState(false);
-  const languageListRef = useRef<FlatList>(null);
-  const resultsListRef = useRef<FlatList>(null);
-
-  // Scroll to focused language chip
-  const handleLanguageFocus = useCallback((langCode: string, index: number) => {
-    setFocusedLanguageCode(langCode);
-    if (Platform.isTV && languageListRef.current) {
-      languageListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
-    }
+  useEffect(() => {
+    return () => {
+      if (removeInterceptorRef.current) {
+        removeInterceptorRef.current();
+        removeInterceptorRef.current = null;
+      }
+      if (backCloseDelayTimeoutRef.current) {
+        clearTimeout(backCloseDelayTimeoutRef.current);
+        backCloseDelayTimeoutRef.current = null;
+      }
+    };
   }, []);
 
-  // Scroll to focused result
+  // Manual scroll handling for TV platforms
+  const languageScrollViewRef = useRef<ScrollView>(null);
+  const resultsScrollViewRef = useRef<ScrollView>(null);
+  const resultLayoutsRef = useRef<{ y: number; height: number }[]>([]);
+
+  const handleResultLayout = useCallback((index: number, y: number, height: number) => {
+    resultLayoutsRef.current[index] = { y, height };
+  }, []);
+
   const handleResultFocus = useCallback((index: number) => {
-    setFocusedResultIndex(index);
-    if (Platform.isTV && resultsListRef.current) {
-      resultsListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+    if (!Platform.isTV) return;
+
+    let cumulativeY = 0;
+    for (let i = 0; i < index; i++) {
+      const layout = resultLayoutsRef.current[i];
+      if (layout) {
+        cumulativeY += layout.height;
+      }
     }
+
+    const scrollOffset = Math.max(0, cumulativeY - 50);
+    resultsScrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
   }, []);
 
-  const renderLanguageItem = useCallback(
-    ({ item: lang, index }: { item: { code: string; name: string }; index: number }) => {
-      const isSelected = lang.code === selectedLanguage;
-      const isFocused = focusedLanguageCode === lang.code;
-      const shouldHaveInitialFocus = Platform.isTV && lang.code === selectedLanguage;
+  const handleLanguageFocus = useCallback((index: number) => {
+    if (!Platform.isTV) return;
 
-      return (
-        <Pressable
-          onPress={() => handleLanguageChange(lang.code)}
-          onFocus={() => handleLanguageFocus(lang.code, index)}
-          onBlur={() => {
-            if (focusedLanguageCode === lang.code) {
-              setFocusedLanguageCode(null);
-            }
-          }}
-          style={[
-            styles.languageChip,
-            { width: LANGUAGE_CHIP_WIDTH, marginRight: LANGUAGE_CHIP_MARGIN },
-            isSelected && styles.languageChipSelected,
-            isFocused && styles.languageChipFocused,
-          ]}
-          hasTVPreferredFocus={shouldHaveInitialFocus}
-          tvParallaxProperties={{ enabled: false }}>
-          <Text
-            style={[
-              styles.languageChipText,
-              isSelected && styles.languageChipTextSelected,
-              isFocused && styles.languageChipTextFocused,
-            ]}
-            numberOfLines={1}>
-            {lang.name}
-          </Text>
-        </Pressable>
-      );
-    },
-    [selectedLanguage, focusedLanguageCode, handleLanguageChange, handleLanguageFocus, styles],
-  );
-
-  const renderResult = useCallback(
-    ({ item: result, index }: { item: SubtitleSearchResult; index: number }) => {
-      const isFocused = focusedResultIndex === index;
-
-      return (
-        <Pressable
-          onPress={() => handleSelectSubtitle(result)}
-          onFocus={() => handleResultFocus(index)}
-          onBlur={() => {
-            if (focusedResultIndex === index) {
-              setFocusedResultIndex(null);
-            }
-          }}
-          style={[styles.resultItem, isFocused && styles.resultItemFocused]}
-          tvParallaxProperties={{ enabled: false }}>
-          <View style={styles.resultHeader}>
-            <View style={styles.providerBadge}>
-              <Text style={styles.providerText}>{result.provider}</Text>
-            </View>
-            <Text style={[styles.resultLanguage, isFocused && styles.resultTextFocused]}>{result.language}</Text>
-            {result.hearing_impaired && (
-              <View style={styles.hiBadge}>
-                <Text style={styles.hiText}>HI</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.resultRelease, isFocused && styles.resultTextFocused]}>
-            {result.release || 'Unknown release'}
-          </Text>
-          <View style={styles.resultFooter}>
-            <Ionicons
-              name="download-outline"
-              size={14}
-              color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary}
-            />
-            <Text style={[styles.resultDownloads, isFocused && styles.resultTextFocused]}>
-              {result.downloads.toLocaleString()} downloads
-            </Text>
-          </View>
-        </Pressable>
-      );
-    },
-    [
-      focusedResultIndex,
-      handleSelectSubtitle,
-      handleResultFocus,
-      styles,
-      theme.colors.text.inverse,
-      theme.colors.text.secondary,
-    ],
-  );
+    // Scroll to show the focused language chip
+    const chipWidth = 108; // LANGUAGE_CHIP_WIDTH + margin
+    const scrollOffset = Math.max(0, index * chipWidth - 50);
+    languageScrollViewRef.current?.scrollTo({ x: scrollOffset, animated: true });
+  }, []);
 
   if (!visible) {
     return null;
   }
 
-  const renderLanguageSelector = () => (
-    <View style={styles.languageSelector}>
-      <Text style={styles.languageLabel}>Language:</Text>
-      <FlatList
-        ref={languageListRef}
-        data={LANGUAGES}
-        renderItem={renderLanguageItem}
-        keyExtractor={(item) => item.code}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.languageScrollView}
-        contentContainerStyle={styles.languageList}
-        onScrollToIndexFailed={() => {}}
-      />
-    </View>
-  );
+  const renderLanguageChip = (lang: { code: string; name: string }, index: number) => {
+    const isSelected = lang.code === selectedLanguage;
+    const shouldHaveInitialFocus = Platform.isTV && lang.code === selectedLanguage;
+
+    return (
+      <Pressable
+        key={lang.code}
+        onPress={() => handleLanguageChange(lang.code)}
+        onFocus={() => handleLanguageFocus(index)}
+        hasTVPreferredFocus={shouldHaveInitialFocus}
+        tvParallaxProperties={{ enabled: false }}>
+        {({ focused: isFocused }) => (
+          <View
+            style={[
+              styles.languageChip,
+              isSelected && !isFocused && styles.languageChipSelected,
+              isFocused && styles.languageChipFocused,
+            ]}>
+            <Text
+              style={[
+                styles.languageChipText,
+                isSelected && !isFocused && styles.languageChipTextSelected,
+                isFocused && styles.languageChipTextFocused,
+              ]}
+              numberOfLines={1}>
+              {lang.name}
+            </Text>
+          </View>
+        )}
+      </Pressable>
+    );
+  };
+
+  const renderResult = (result: SubtitleSearchResult, index: number) => {
+    return (
+      <View
+        key={`subtitle-${index}`}
+        onLayout={(event) => {
+          const { height } = event.nativeEvent.layout;
+          handleResultLayout(index, 0, height);
+        }}>
+        <Pressable
+          onPress={() => handleSelectSubtitle(result)}
+          onFocus={() => handleResultFocus(index)}
+          tvParallaxProperties={{ enabled: false }}>
+          {({ focused: isFocused }) => (
+            <View style={[styles.resultItem, isFocused && styles.resultItemFocused]}>
+              <View style={styles.resultHeader}>
+                <View style={styles.providerBadge}>
+                  <Text style={styles.providerText}>{result.provider}</Text>
+                </View>
+                <Text style={[styles.resultLanguage, isFocused && styles.resultTextFocused]}>
+                  {result.language}
+                </Text>
+                {result.hearing_impaired && (
+                  <View style={styles.hiBadge}>
+                    <Text style={styles.hiText}>HI</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.resultRelease, isFocused && styles.resultTextFocused]}>
+                {result.release || 'Unknown release'}
+              </Text>
+              <View style={styles.resultFooter}>
+                <Ionicons
+                  name="download-outline"
+                  size={14}
+                  color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary}
+                />
+                <Text style={[styles.resultDownloads, isFocused && styles.resultTextFocused]}>
+                  {result.downloads.toLocaleString()} downloads
+                </Text>
+              </View>
+            </View>
+          )}
+        </Pressable>
+      </View>
+    );
+  };
 
   const renderResultsList = () => {
     if (isLoading) {
@@ -370,53 +400,15 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     }
 
     return (
-      <FlatList
-        ref={resultsListRef}
-        data={sortedResults}
-        renderItem={renderResult}
-        keyExtractor={(_, index) => `subtitle-${index}`}
+      <ScrollView
+        ref={resultsScrollViewRef}
         style={styles.resultsScrollView}
         contentContainerStyle={styles.resultsList}
-        onScrollToIndexFailed={() => {}}
-      />
+        scrollEnabled={!Platform.isTV}>
+        {sortedResults.map((result, index) => renderResult(result, index))}
+      </ScrollView>
     );
   };
-
-  // On TV, render as a View (to be placed inside TVControlsModal)
-  // On mobile, use Modal for proper presentation
-  if (Platform.isTV) {
-    return (
-      <View style={styles.overlay}>
-        {/* Use View instead of Pressable on TV to prevent accidental closes - use Menu button to close */}
-        <View style={styles.backdrop} />
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Search Subtitles</Text>
-            {!isLoading && (
-              <Text style={styles.modalSubtitle}>
-                {error ? error : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
-              </Text>
-            )}
-          </View>
-
-          {renderLanguageSelector()}
-
-          {renderResultsList()}
-
-          <View style={styles.modalFooter}>
-            <Pressable
-              onPress={handleClose}
-              onFocus={() => setIsCloseFocused(true)}
-              onBlur={() => setIsCloseFocused(false)}
-              style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
-              tvParallaxProperties={{ enabled: false }}>
-              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <Modal
@@ -443,19 +435,30 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
             )}
           </View>
 
-          {renderLanguageSelector()}
+          <View style={styles.languageSelector}>
+            <Text style={styles.languageLabel}>Language:</Text>
+            <ScrollView
+              ref={languageScrollViewRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.languageScrollView}
+              contentContainerStyle={styles.languageList}
+              scrollEnabled={!Platform.isTV}>
+              {LANGUAGES.map((lang, index) => renderLanguageChip(lang, index))}
+            </ScrollView>
+          </View>
 
           {renderResultsList()}
 
           <View style={styles.modalFooter}>
             <Pressable
               onPress={handleClose}
-              onFocus={() => setIsCloseFocused(true)}
-              onBlur={() => setIsCloseFocused(false)}
-              style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
-              tvParallaxProperties={{ enabled: false }}
-              focusable={false}>
-              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+              tvParallaxProperties={{ enabled: false }}>
+              {({ focused: isCloseFocused }) => (
+                <View style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
             </Pressable>
           </View>
         </View>
@@ -545,8 +548,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       borderRadius: theme.radius.sm,
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
       marginRight: theme.spacing.sm,
-      borderWidth: 1,
+      borderWidth: 2,
       borderColor: 'transparent',
+      minWidth: 100,
     },
     languageChipSelected: {
       backgroundColor: theme.colors.accent.primary,
@@ -572,7 +576,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     resultsList: {
       padding: isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.sm : theme.spacing.lg,
-      gap: theme.spacing.sm,
     },
     resultItem: {
       padding: isNarrow ? theme.spacing.sm : theme.spacing.md,
@@ -580,7 +583,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       marginBottom: theme.spacing.sm,
       borderRadius: theme.radius.md,
       backgroundColor: 'rgba(255, 255, 255, 0.06)',
-      borderWidth: 1,
+      borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       gap: theme.spacing.xs,
     },
@@ -644,10 +647,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       alignItems: 'center',
       justifyContent: 'center',
       gap: theme.spacing.md,
-    },
-    loadingText: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.secondary,
     },
     errorContainer: {
       padding: theme.spacing['3xl'],

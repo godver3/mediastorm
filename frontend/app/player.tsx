@@ -5518,20 +5518,6 @@ export default function PlayerScreen() {
                       </View>
                     </Animated.View>
                   </ControlsContainerComponent>
-                  {/* Render SubtitleSearchModal inside TVControlsModal on TV for proper modal stacking */}
-                  {subtitleSearchModalVisible && (
-                    <SubtitleSearchModal
-                      visible={subtitleSearchModalVisible}
-                      onClose={handleCloseSubtitleSearch}
-                      onSelectSubtitle={handleSelectExternalSubtitle}
-                      searchResults={subtitleSearchResults}
-                      isLoading={subtitleSearchLoading}
-                      error={subtitleSearchError}
-                      onSearch={handleSubtitleSearch}
-                      currentLanguage={subtitleSearchLanguage}
-                      mediaReleaseName={releaseName}
-                    />
-                  )}
                 </TVControlsModal>
               ) : (
                 <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
@@ -5655,20 +5641,18 @@ export default function PlayerScreen() {
             />
           )}
 
-          {/* External subtitle search modal - only render here on non-TV (TV renders inside TVControlsModal) */}
-          {!isTvPlatform && (
-            <SubtitleSearchModal
-              visible={subtitleSearchModalVisible}
-              onClose={handleCloseSubtitleSearch}
-              onSelectSubtitle={handleSelectExternalSubtitle}
-              searchResults={subtitleSearchResults}
-              isLoading={subtitleSearchLoading}
-              error={subtitleSearchError}
-              onSearch={handleSubtitleSearch}
-              currentLanguage={subtitleSearchLanguage}
-              mediaReleaseName={releaseName}
-            />
-          )}
+          {/* External subtitle search modal - uses Modal on all platforms */}
+          <SubtitleSearchModal
+            visible={subtitleSearchModalVisible}
+            onClose={handleCloseSubtitleSearch}
+            onSelectSubtitle={handleSelectExternalSubtitle}
+            searchResults={subtitleSearchResults}
+            isLoading={subtitleSearchLoading}
+            error={subtitleSearchError}
+            onSearch={handleSubtitleSearch}
+            currentLanguage={subtitleSearchLanguage}
+            mediaReleaseName={releaseName}
+          />
 
           {/* Subtitle sync debug overlay - shows timing values for debugging sync issues */}
           {subtitleDebugEnabled && (
