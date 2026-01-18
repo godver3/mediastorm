@@ -8,6 +8,7 @@ import {
   cacheNetworkSettings,
   getNetworkBasedUrl,
   getCachedNetworkSettings,
+  getCurrentSSID,
   type NetworkUrlResult,
 } from '@/services/networkUrl';
 
@@ -84,6 +85,7 @@ export interface BackendStreamingSettings {
   servicePriority: StreamingServicePriority;
   multiProviderMode?: MultiProviderMode;
   debridProviders: BackendDebridProvider[];
+  forceAacTranscoding?: boolean; // Force AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
 }
 
 export interface BackendTransmuxSettings {
@@ -389,6 +391,14 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       return;
     }
 
+    // DEBUG: Always log current WiFi SSID regardless of settings
+    try {
+      const debugSSID = await getCurrentSSID();
+      console.log('[BackendSettings] DEBUG - Current WiFi SSID:', debugSSID ?? '(not detected)');
+    } catch (err) {
+      console.log('[BackendSettings] DEBUG - Failed to get WiFi SSID:', err);
+    }
+
     try {
       // Priority: client > user > global
       let networkConfig = null;
@@ -570,6 +580,17 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     let cancelled = false;
 
     const initialise = async () => {
+      // DEBUG: Log current WiFi SSID on startup
+      if (Platform.OS !== 'web') {
+        try {
+          const debugSSID = await getCurrentSSID();
+          console.log('[BackendSettings] STARTUP DEBUG - Current WiFi SSID:', debugSSID ?? '(not detected)');
+          console.log('[BackendSettings] STARTUP DEBUG - Platform:', Platform.OS, 'isTV:', Platform.isTV);
+        } catch (err) {
+          console.log('[BackendSettings] STARTUP DEBUG - Failed to get WiFi SSID:', err);
+        }
+      }
+
       // First, try to use cached network settings for initial URL selection
       // This allows the app to connect correctly even before fetching fresh settings
       try {
