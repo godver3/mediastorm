@@ -213,6 +213,12 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	if transmuxReason != "" {
 	}
 	forceAAC := target == "web" || target == "browser"
+	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
+	if !forceAAC && h.configManager != nil {
+		if settings, err := h.configManager.Load(); err == nil {
+			forceAAC = settings.Streaming.ForceAACTranscoding
+		}
+	}
 	rangeHeader := strings.TrimSpace(r.Header.Get("Range"))
 	rangeSummary := rangeHeader
 	if rangeSummary == "" {
@@ -1960,6 +1966,12 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	dvProfile := r.URL.Query().Get("dvProfile")
 	hasHDR := r.URL.Query().Get("hdr") == "true"
 	forceAAC := r.URL.Query().Get("forceAAC") == "true"
+	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
+	if !forceAAC && h.configManager != nil {
+		if settings, err := h.configManager.Load(); err == nil {
+			forceAAC = settings.Streaming.ForceAACTranscoding
+		}
+	}
 	// Check both "startOffset" (frontend) and "start" (legacy) parameter names
 	startParam := strings.TrimSpace(r.URL.Query().Get("startOffset"))
 	if startParam == "" {
