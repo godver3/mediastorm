@@ -2373,8 +2373,8 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
 		log.Printf("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)
 
-		// Older cache entries may predate TMDB artwork hydration. Refresh them on the fly.
-		if (cached.Poster == nil || cached.Backdrop == nil) && s.maybeHydrateMovieArtworkFromTMDB(ctx, &cached, req) {
+		// Older cache entries may predate TMDB artwork/runtime hydration. Refresh them on the fly.
+		if (cached.Poster == nil || cached.Backdrop == nil || cached.RuntimeMinutes == 0) && s.maybeHydrateMovieArtworkFromTMDB(ctx, &cached, req) {
 			_ = s.cache.set(cacheID, cached)
 		}
 		if len(cached.Releases) == 0 && s.enrichMovieReleases(ctx, &cached, cached.TMDBID) {
@@ -2497,8 +2497,8 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		movieTitle.TMDBID = req.TMDBID
 	}
 
-	// If TVDB didn't provide images, try TMDB as fallback now that we have remote IDs.
-	if movieTitle.Poster == nil || movieTitle.Backdrop == nil {
+	// If TVDB didn't provide images or runtime, try TMDB as fallback now that we have remote IDs.
+	if movieTitle.Poster == nil || movieTitle.Backdrop == nil || movieTitle.RuntimeMinutes == 0 {
 		_ = s.maybeHydrateMovieArtworkFromTMDB(ctx, &movieTitle, req)
 	}
 
@@ -2591,6 +2591,11 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	}
 	if title.Year == 0 && tmdbMovie.Year > 0 {
 		title.Year = tmdbMovie.Year
+		updated = true
+	}
+	if title.RuntimeMinutes == 0 && tmdbMovie.RuntimeMinutes > 0 {
+		title.RuntimeMinutes = tmdbMovie.RuntimeMinutes
+		log.Printf("[metadata] using TMDB runtime for movie tmdbId=%d runtime=%d", tmdbID, tmdbMovie.RuntimeMinutes)
 		updated = true
 	}
 

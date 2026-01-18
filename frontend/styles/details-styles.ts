@@ -222,6 +222,17 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       fontSize: 14,
       marginTop: 4,
     },
+    movieRuntime: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      fontStyle: 'italic',
+      marginTop: theme.spacing.sm,
+      ...(isTV
+        ? {
+            marginLeft: tvScale * 48,
+          }
+        : null),
+    },
     descriptionHidden: {
       position: 'absolute',
       opacity: 0,

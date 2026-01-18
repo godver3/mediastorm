@@ -4197,6 +4197,9 @@ export default function DetailsScreen() {
         ) : (
           <Text style={styles.description}>{displayDescription}</Text>
         )}
+        {!isSeries && movieDetails?.runtimeMinutes && (
+          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} min</Text>
+        )}
       </View>
       <SpatialNavigationNode
         orientation="vertical"
@@ -4633,9 +4636,12 @@ export default function DetailsScreen() {
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
-        <Text style={[styles.description, { maxWidth: '100%' }]} numberOfLines={8}>
+        <Text style={[styles.description, { maxWidth: '100%' }]}>
           {displayDescription}
         </Text>
+        {!isSeries && movieDetails?.runtimeMinutes && (
+          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} min</Text>
+        )}
       </View>
 
       {/* Action buttons - icon only for mobile */}

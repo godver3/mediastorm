@@ -88,6 +88,7 @@ export interface Title {
   homeRelease?: ReleaseWindow;
   ratings?: Rating[];
   credits?: Credits;
+  runtimeMinutes?: number; // Runtime in minutes (movies only)
 }
 
 export interface TrendingItem {
