@@ -130,7 +130,6 @@ type StreamingSettings struct {
 	MultiProviderMode           MultiProviderMode        `json:"multiProviderMode,omitempty"`     // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec  int                      `json:"usenetResolutionTimeoutSec"`      // Timeout for usenet content resolution in seconds (0 = no limit)
 	IndexerTimeoutSec           int                      `json:"indexerTimeoutSec"`               // Timeout for indexer/scraper searches in seconds (default: 5)
-	ForceAACTranscoding         bool                     `json:"forceAacTranscoding"`             // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
 }
 
 type StreamingServicePriority string
@@ -201,6 +200,7 @@ type PlaybackSettings struct {
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`    // Scaling factor for subtitle size (1.0 = default)
 	SeekForwardSeconds        int     `json:"seekForwardSeconds"`        // Seconds to skip forward (default 30)
 	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`       // Seconds to skip backward (default 10)
+	ForceAACTranscoding       bool    `json:"forceAacTranscoding"`       // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
