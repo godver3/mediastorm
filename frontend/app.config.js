@@ -31,6 +31,7 @@ module.exports = ({ config }) => {
       {
         android: {
           minSdkVersion: 26,
+          targetSdkVersion: 34,
           usesCleartextTraffic: true,
         },
         ios: {
