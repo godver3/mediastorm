@@ -296,7 +296,7 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
 
           {episode.runtimeMinutes && (
             <View style={styles.bottomContent}>
-              <Text style={styles.metadataText}>{episode.runtimeMinutes} min</Text>
+              <Text style={styles.metadataText}>{episode.runtimeMinutes} minutes</Text>
             </View>
           )}
         </View>

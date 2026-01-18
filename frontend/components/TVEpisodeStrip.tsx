@@ -407,7 +407,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                     )}
                   </View>
                   {activeEpisode.runtimeMinutes && (
-                    <Text style={styles.selectedMetadataText}>{activeEpisode.runtimeMinutes} min</Text>
+                    <Text style={styles.selectedMetadataText}>{activeEpisode.runtimeMinutes} minutes</Text>
                   )}
                 </View>
                 <View

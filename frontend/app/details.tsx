@@ -4198,7 +4198,7 @@ export default function DetailsScreen() {
           <Text style={styles.description}>{displayDescription}</Text>
         )}
         {!isSeries && movieDetails?.runtimeMinutes && (
-          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} min</Text>
+          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} minutes</Text>
         )}
       </View>
       <SpatialNavigationNode
@@ -4640,7 +4640,7 @@ export default function DetailsScreen() {
           {displayDescription}
         </Text>
         {!isSeries && movieDetails?.runtimeMinutes && (
-          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} min</Text>
+          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} minutes</Text>
         )}
       </View>
 
@@ -4736,7 +4736,7 @@ export default function DetailsScreen() {
           {activeEpisode.airedDate && (
             <Text style={[styles.episodeOverviewMeta, { color: theme.colors.text.muted }]}>
               {formatPublishDate(activeEpisode.airedDate)}
-              {activeEpisode.runtimeMinutes ? ` • ${activeEpisode.runtimeMinutes} min` : ''}
+              {activeEpisode.runtimeMinutes ? ` • ${activeEpisode.runtimeMinutes} minutes` : ''}
             </Text>
           )}
         </View>
