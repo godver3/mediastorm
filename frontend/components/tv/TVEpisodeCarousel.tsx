@@ -82,6 +82,20 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   // Track focused episode for details panel display
   const [focusedEpisode, setFocusedEpisode] = useState<SeriesEpisode | null>(activeEpisode);
 
+  // Debounce ref for focus updates - prevents re-renders during rapid navigation
+  const focusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Store frequently-changing props in refs to keep render callbacks stable
+  // This prevents recreating callbacks when activeEpisode changes, which would cause all items to re-render
+  const activeEpisodeRef = useRef(activeEpisode);
+  activeEpisodeRef.current = activeEpisode;
+
+  const isEpisodeWatchedRef = useRef(isEpisodeWatched);
+  isEpisodeWatchedRef.current = isEpisodeWatched;
+
+  const getEpisodeProgressRef = useRef(getEpisodeProgress);
+  getEpisodeProgressRef.current = getEpisodeProgress;
+
   // Update focused episode when active episode changes
   useEffect(() => {
     if (activeEpisode) {
@@ -89,15 +103,26 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     }
   }, [activeEpisode]);
 
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
+    };
+  }, []);
+
   // Calculate item sizes for virtualized lists
   const seasonItemSize = SEASON_CHIP_WIDTH + SEASON_CHIP_GAP;
   const episodeItemSize = THUMBNAIL_WIDTH + EPISODE_GAP;
 
   // Handle episode press - first press selects, second press plays
+  // Uses ref to avoid recreating callback when activeEpisode changes
   const handleEpisodePress = useCallback(
     (episode: SeriesEpisode) => {
+      const currentActive = activeEpisodeRef.current;
       const isAlreadySelected =
-        activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
+        currentActive?.seasonNumber === episode.seasonNumber && currentActive?.episodeNumber === episode.episodeNumber;
 
       if (isAlreadySelected) {
         // Second press - play
@@ -107,7 +132,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         onEpisodeSelect(episode);
       }
     },
-    [activeEpisode, onEpisodeSelect, onEpisodePlay],
+    [onEpisodeSelect, onEpisodePlay],
   );
 
   // Render season chip using SpatialNavigationFocusableView
@@ -149,18 +174,28 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   );
 
   // Render episode thumbnail using SpatialNavigationFocusableView
+  // Uses refs to keep callback stable - prevents recreating when activeEpisode changes
   const renderEpisodeItem = useCallback(
     ({ item: episode }: { item: SeriesEpisode }) => {
+      // Read from refs at render time to get current values without callback recreation
+      const currentActive = activeEpisodeRef.current;
       const isSelected =
-        activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
-      const isWatched = isEpisodeWatched?.(episode) ?? false;
-      const progress = getEpisodeProgress?.(episode) ?? 0;
+        currentActive?.seasonNumber === episode.seasonNumber && currentActive?.episodeNumber === episode.episodeNumber;
+      const isWatched = isEpisodeWatchedRef.current?.(episode) ?? false;
+      const progress = getEpisodeProgressRef.current?.(episode) ?? 0;
 
       return (
         <SpatialNavigationFocusableView
           onSelect={() => handleEpisodePress(episode)}
           onFocus={() => {
-            setFocusedEpisode(episode);
+            // Debounce focus updates to prevent re-renders during rapid navigation
+            if (focusDebounceRef.current) {
+              clearTimeout(focusDebounceRef.current);
+            }
+            focusDebounceRef.current = setTimeout(() => {
+              setFocusedEpisode(episode);
+            }, 100);
+
             if (currentFocusAreaRef.current !== 'episodes') {
               currentFocusAreaRef.current = 'episodes';
               onFocusRowChange?.('episodes');
@@ -180,7 +215,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         </SpatialNavigationFocusableView>
       );
     },
-    [activeEpisode, isEpisodeWatched, getEpisodeProgress, handleEpisodePress, onFocusRowChange, theme],
+    [handleEpisodePress, onFocusRowChange, theme],
   );
 
   // Episode details panel content
@@ -274,7 +309,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
           )}
           <View style={styles.detailsMeta}>
             {detailsContent.airDate && <Text style={styles.detailsMetaText}>{detailsContent.airDate}</Text>}
-            {detailsContent.runtime && <Text style={styles.detailsMetaText}>{detailsContent.runtime} min</Text>}
+            {detailsContent.runtime && <Text style={styles.detailsMetaText}>{detailsContent.runtime} minutes</Text>}
           </View>
         </View>
       )}

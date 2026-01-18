@@ -3,7 +3,7 @@ import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
-import { getMovieReleaseIcon } from '@/components/MediaItem';
+import { getMovieReleaseIcon, type ReleaseIconInfo } from '@/components/MediaItem';
 import { useMovieReleases } from '@/components/MovieReleasesContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMenuContext } from '@/components/MenuContext';
@@ -73,6 +73,7 @@ type CardData = {
   collagePosters?: string[]; // For explore cards: array of 4 poster URLs to display in a grid
   theatricalRelease?: ReleaseWindow; // Movie theatrical release status
   homeRelease?: ReleaseWindow; // Movie home release status
+  releaseIcon?: ReleaseIconInfo; // Pre-computed release icon to avoid computation at render time
 };
 
 type HeroContent = {
@@ -631,15 +632,8 @@ function IndexScreen() {
       shelfPositionsRef.current = {};
     }
 
-    // Only reset shelf focus when RETURNING from navigation (e.g., details page)
-    // Not on initial load - that causes unnecessary remounts
-    // Skip on Android TV - the key-based remount causes IllegalStateException crashes
-    if (isReturnFromNavigation && Platform.isTV && !isAndroidTV) {
-      setShelfResetCounter((prev) => prev + 1);
-    }
-
-    // Programmatically grab focus to the first item of the first shelf and scroll to show it
-    // Note: We compute the first shelf inline here since desktopShelves may not be ready yet
+    // Compute shelf config for initial scroll positioning
+    // Note: We compute inline here since desktopShelves may not be ready yet
     const shelfConfig = userSettings?.homeShelves?.shelves ??
       settings?.homeShelves?.shelves ?? [
         { id: 'continue-watching', name: 'Continue Watching', enabled: true, order: 0 },
@@ -664,14 +658,15 @@ function IndexScreen() {
     });
 
     if (Platform.isTV && firstShelfWithCards) {
-      // Scroll to the first shelf position
-      // On initial load: skip animation, on return: also skip to avoid jarring scroll
-      // Native focus will handle initial focus via hasTVPreferredFocus on first card
-      setTimeout(() => {
-        scrollToShelf(firstShelfWithCards.id, true); // Skip animation
-      }, 50);
+      // Only scroll to first shelf on initial load, not on return from navigation
+      // Focus naturally stays on the previously focused item when returning
+      if (!isReturnFromNavigation) {
+        setTimeout(() => {
+          scrollToShelf(firstShelfWithCards.id, true); // Skip animation
+        }, 50);
+      }
 
-      // Mark initial load as complete after scroll
+      // Mark initial load as complete
       if (isInitialLoadRef.current) {
         setTimeout(() => {
           isInitialLoadRef.current = false;
@@ -1345,7 +1340,6 @@ function IndexScreen() {
   // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
   const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [shelfResetCounter, setShelfResetCounter] = useState(0);
 
   // Remove from Continue Watching confirmation modal state
   const [isRemoveConfirmVisible, setIsRemoveConfirmVisible] = useState(false);
@@ -1811,7 +1805,7 @@ function IndexScreen() {
   // Consolidated focus handler - called when any shelf card receives focus
   // Combines: menu close, shelf tracking, vertical scroll, and debounced hero update
   const handleShelfItemFocus = useCallback(
-    (card: CardData, shelfKey: string): void => {
+    (card: CardData, shelfKey: string, cardIndex: number): void => {
       // Close menu if open (no-op if already closed)
       closeMenu();
 
@@ -1957,10 +1951,24 @@ function IndexScreen() {
   // Track navigation structure changes - only based on which shelves exist, NOT card counts
   // Using card counts in the key was causing full remounts on every data load
   const navigationKey = useMemo(() => {
-    if (!desktopShelves || desktopShelves.length === 0) return `shelves-empty-${shelfResetCounter}`;
+    if (!desktopShelves || desktopShelves.length === 0) return 'shelves-empty';
     // Only include shelf keys, not card counts - data changes shouldn't cause remounts
-    return `shelves-${desktopShelves.map((s) => s.key).join('-')}-reset-${shelfResetCounter}`;
-  }, [desktopShelves, shelfResetCounter]);
+    return `shelves-${desktopShelves.map((s) => s.key).join('-')}`;
+  }, [desktopShelves]);
+
+  // Set initial focused card for TV hero display on first load
+  // DefaultFocus grants focus but doesn't trigger onFocus callback, so we set it manually
+  useEffect(() => {
+    if (!Platform.isTV || focusedDesktopCard) {
+      return;
+    }
+    // Find the first shelf with autoFocus (first shelf with cards)
+    const autoFocusShelf = desktopShelves.find((shelf) => shelf.autoFocus && shelf.cards.length > 0);
+    if (autoFocusShelf) {
+      setFocusedDesktopCard(autoFocusShelf.cards[0]);
+      focusedShelfKeyRef.current = autoFocusShelf.key;
+    }
+  }, [desktopShelves, focusedDesktopCard]);
 
   // Note: focusedShelfIndex computation removed - was unused (_shouldShowTopGradient)
   // The ref focusedShelfKeyRef.current can be read synchronously if needed
@@ -2471,12 +2479,134 @@ function IndexScreen() {
   );
 }
 
+// Pre-computed gradient props - avoids creating new arrays on every render
+const GRADIENT_COLORS_ANDROID_TV = ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)'] as const;
+const GRADIENT_COLORS_DEFAULT = ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)'] as const;
+const GRADIENT_LOCATIONS_ANDROID_TV = [0, 0.5, 1] as const;
+const GRADIENT_LOCATIONS_DEFAULT = [0, 0.6, 1] as const;
+const GRADIENT_START = { x: 0.5, y: 0 } as const;
+const GRADIENT_END = { x: 0.5, y: 1 } as const;
+
+// Memoized shelf card content - prevents re-renders when card data hasn't changed
+type ShelfCardContentProps = {
+  card: CardData;
+  cardKey: string;
+  isFocused: boolean;
+  isLastItem: boolean;
+  showReleaseStatus: boolean;
+  styles: ReturnType<typeof createDesktopStyles>['styles'];
+};
+
+const ShelfCardContent = React.memo(
+  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, styles }: ShelfCardContentProps) {
+    const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
+
+    return (
+      <View
+        style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
+        // @ts-ignore - Android TV performance optimization
+        renderToHardwareTextureAndroid={isAndroidTV}>
+        {isExploreCard ? (
+          <>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+              {card.collagePosters!.slice(0, 4).map((poster, i) => (
+                <Image
+                  key={`collage-${i}`}
+                  source={poster}
+                  style={{ width: '50%', height: '50%' }}
+                  contentFit="cover"
+                  transition={0}
+                />
+              ))}
+            </View>
+            <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
+              <LinearGradient
+                pointerEvents="none"
+                colors={GRADIENT_COLORS_ANDROID_TV}
+                locations={GRADIENT_LOCATIONS_ANDROID_TV}
+                start={GRADIENT_START}
+                end={GRADIENT_END}
+                style={styles.cardTextGradient}
+              />
+              <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
+                {card.title}
+              </Text>
+              {card.year ? (
+                <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+              ) : null}
+            </View>
+          </>
+        ) : (
+          <>
+            <Image
+              key={`img-${cardKey}`}
+              source={card.cardImage}
+              style={styles.cardImage}
+              contentFit="cover"
+              transition={0}
+              cachePolicy="disk"
+              recyclingKey={cardKey}
+            />
+            {showReleaseStatus && card.releaseIcon && (
+              <View style={isAndroidTV ? styles.releaseStatusBadgeAndroidTV : styles.releaseStatusBadge}>
+                <MaterialCommunityIcons
+                  name={card.releaseIcon.name}
+                  size={isAndroidTV ? styles.releaseStatusIconAndroidTV.fontSize : styles.releaseStatusIcon.fontSize}
+                  color={card.releaseIcon.color}
+                />
+              </View>
+            )}
+            {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
+              <View style={isAndroidTV ? styles.progressBadgeAndroidTV : styles.progressBadge}>
+                <Text style={isAndroidTV ? styles.progressBadgeTextAndroidTV : styles.progressBadgeText}>
+                  {Math.round(card.percentWatched)}%
+                </Text>
+              </View>
+            )}
+            <View style={styles.cardTextContainer}>
+              <LinearGradient
+                pointerEvents="none"
+                colors={isAndroidTV ? GRADIENT_COLORS_ANDROID_TV : GRADIENT_COLORS_DEFAULT}
+                locations={isAndroidTV ? GRADIENT_LOCATIONS_ANDROID_TV : GRADIENT_LOCATIONS_DEFAULT}
+                start={GRADIENT_START}
+                end={GRADIENT_END}
+                style={styles.cardTextGradient}
+              />
+              <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={2}>
+                {card.title}
+              </Text>
+              {card.year ? (
+                <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+              ) : null}
+            </View>
+          </>
+        )}
+      </View>
+    );
+  },
+  (prev, next) => {
+    // Custom comparison - only re-render if card data or visual state changes
+    return (
+      prev.card.id === next.card.id &&
+      prev.card.title === next.card.title &&
+      prev.card.cardImage === next.card.cardImage &&
+      prev.card.percentWatched === next.card.percentWatched &&
+      prev.card.releaseIcon === next.card.releaseIcon &&
+      prev.card.year === next.card.year &&
+      prev.cardKey === next.cardKey &&
+      prev.isFocused === next.isFocused &&
+      prev.isLastItem === next.isLastItem &&
+      prev.showReleaseStatus === next.showReleaseStatus
+    );
+  },
+);
+
 type VirtualizedShelfProps = {
   title: string;
   cards: CardData[];
   styles: ReturnType<typeof createDesktopStyles>['styles'];
   onCardSelect: (card: CardData) => void;
-  onShelfItemFocus: (card: CardData, shelfKey: string) => void;
+  onShelfItemFocus: (card: CardData, shelfKey: string, cardIndex: number) => void;
   autoFocus?: boolean;
   collapseIfEmpty?: boolean;
   showEmptyState?: boolean;
@@ -2495,6 +2625,12 @@ type VirtualizedShelfProps = {
 
 // Alias for backwards compatibility
 type DesktopShelfProps = VirtualizedShelfProps;
+
+// Type for shelf card handlers passed through context
+type ShelfCardHandlers = {
+  onSelect: (cardId: string | number) => void;
+  onFocus: (cardId: string | number, index: number) => void;
+};
 
 function VirtualizedShelf({
   title,
@@ -2608,8 +2744,8 @@ function VirtualizedShelf({
         lastFocusTimeRef.current = now;
         const card = cardMapRef.current.get(cardId);
         if (card) {
-          // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update
-          callbacksRef.current.onShelfItemFocus(card, shelfKey);
+          // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update, focus key storage
+          callbacksRef.current.onShelfItemFocus(card, shelfKey, index);
         }
         scrollToFocusedItemRef.current(index);
       },
@@ -2618,7 +2754,7 @@ function VirtualizedShelf({
   );
 
   // Render item callback for FlatList - uses stable handlers via shelfHandlers
-  // Dependencies minimized to avoid recreating this callback
+  // Uses memoized ShelfCardContent to prevent unnecessary re-renders
   const renderItem = useCallback(
     ({ item, index }: { item: CardData; index: number }) => {
       const card = item;
@@ -2629,109 +2765,8 @@ function VirtualizedShelf({
       const shouldAutoFocus = autoFocus && index === 0;
       // Check if this is the last item for spacing
       const isLastItem = index === lastItemIndexRef.current;
-
-      // Compute release icon for movies (shared between platforms)
-      const releaseIcon =
-        card.mediaType === 'movie'
-          ? getMovieReleaseIcon({
-              id: String(card.id),
-              name: card.title,
-              overview: card.description,
-              year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
-              language: 'en',
-              mediaType: 'movie',
-              homeRelease: card.homeRelease,
-              theatricalRelease: card.theatricalRelease,
-            })
-          : null;
-      const showReleaseStatus = badgeVisibility?.includes('releaseStatus') && releaseIcon;
-      const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
-
-      // Card content renderer - shared between TV spatial nav and native Pressable
-      const renderCardContent = (_isFocused: boolean) => (
-        <>
-          {/* Card content - using View instead of nested Pressable for performance */}
-          {isExploreCard ? (
-            <>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
-                {card.collagePosters!.slice(0, 4).map((poster, i) => (
-                  <Image
-                    key={`collage-${i}`}
-                    source={poster}
-                    style={{ width: '50%', height: '50%' }}
-                    contentFit="cover"
-                    transition={0}
-                  />
-                ))}
-              </View>
-              <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']}
-                  locations={[0, 0.5, 1]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.cardTextGradient}
-                />
-                <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
-                  {card.title}
-                </Text>
-                {card.year ? (
-                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
-                ) : null}
-              </View>
-            </>
-          ) : (
-            <>
-              <Image
-                key={`img-${cardKey}`}
-                source={card.cardImage}
-                style={styles.cardImage}
-                contentFit="cover"
-                transition={0}
-                cachePolicy={Platform.isTV ? 'disk' : 'memory'}
-                recyclingKey={cardKey}
-              />
-              {showReleaseStatus && (
-                <View style={isAndroidTV ? styles.releaseStatusBadgeAndroidTV : styles.releaseStatusBadge}>
-                  <MaterialCommunityIcons
-                    name={releaseIcon.name}
-                    size={isAndroidTV ? styles.releaseStatusIconAndroidTV.fontSize : styles.releaseStatusIcon.fontSize}
-                    color={releaseIcon.color}
-                  />
-                </View>
-              )}
-              {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
-                <View style={isAndroidTV ? styles.progressBadgeAndroidTV : styles.progressBadge}>
-                  <Text style={isAndroidTV ? styles.progressBadgeTextAndroidTV : styles.progressBadgeText}>
-                    {Math.round(card.percentWatched)}%
-                  </Text>
-                </View>
-              )}
-              <View style={styles.cardTextContainer}>
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={
-                    isAndroidTV
-                      ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']
-                      : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']
-                  }
-                  locations={isAndroidTV ? [0, 0.5, 1] : [0, 0.6, 1]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.cardTextGradient}
-                />
-                <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={2}>
-                  {card.title}
-                </Text>
-                {card.year ? (
-                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
-                ) : null}
-              </View>
-            </>
-          )}
-        </>
-      );
+      // Use pre-computed release icon from card data
+      const showReleaseStatus = Boolean(badgeVisibility?.includes('releaseStatus') && card.releaseIcon);
 
       // TV platform: use spatial navigation focusable view
       if (Platform.isTV) {
@@ -2742,12 +2777,14 @@ function VirtualizedShelf({
             onSelect={() => shelfHandlers.onSelect(card.id)}
             onFocus={() => shelfHandlers.onFocus(card.id, index)}>
             {({ isFocused }: { isFocused: boolean }) => (
-              <View
-                style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
-                // @ts-ignore - Android TV performance optimization
-                renderToHardwareTextureAndroid={isAndroidTV}>
-                {renderCardContent(isFocused)}
-              </View>
+              <ShelfCardContent
+                card={card}
+                cardKey={cardKey}
+                isFocused={isFocused}
+                isLastItem={isLastItem}
+                showReleaseStatus={showReleaseStatus}
+                styles={styles}
+              />
             )}
           </SpatialNavigationFocusableView>
         );
@@ -2759,15 +2796,23 @@ function VirtualizedShelf({
         return cardElement;
       }
 
-      // Non-TV platform: use native Pressable
+      // Non-TV platform: use native Pressable with memoized content
       return (
         <Pressable
           ref={(ref) => {
             cardRefsMap.current.set(index, ref);
           }}
-          onPress={() => shelfHandlers.onSelect(card.id)}
-          style={({ focused }) => [styles.card, focused && styles.cardFocused, !isLastItem && styles.cardSpacing]}>
-          {({ pressed }) => renderCardContent(pressed)}
+          onPress={() => shelfHandlers.onSelect(card.id)}>
+          {({ pressed }) => (
+            <ShelfCardContent
+              card={card}
+              cardKey={cardKey}
+              isFocused={pressed}
+              isLastItem={isLastItem}
+              showReleaseStatus={showReleaseStatus}
+              styles={styles}
+            />
+          )}
         </Pressable>
       );
     },
@@ -2778,8 +2823,7 @@ function VirtualizedShelf({
   const rowHeight = cardHeight + cardSpacing;
 
   // TV: Render function for SpatialNavigationVirtualizedList
-  // Must be defined before early returns to maintain consistent hook order
-  // Uses lastItemIndexRef instead of cards.length to avoid recreation when card count changes
+  // Uses memoized ShelfCardContent to prevent unnecessary re-renders
   const renderTVItem = useCallback(
     ({ item, index }: { item: CardData; index: number }) => {
       const card = item;
@@ -2787,124 +2831,34 @@ function VirtualizedShelf({
       const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
       const shouldAutoFocusItem = autoFocus && index === 0;
       const isLastItem = index === lastItemIndexRef.current;
-
-      const releaseIcon =
-        card.mediaType === 'movie'
-          ? getMovieReleaseIcon({
-              id: String(card.id),
-              name: card.title,
-              overview: card.description,
-              year: typeof card.year === 'number' ? card.year : parseInt(String(card.year)) || 0,
-              language: 'en',
-              mediaType: 'movie',
-              homeRelease: card.homeRelease,
-              theatricalRelease: card.theatricalRelease,
-            })
-          : null;
-      const showReleaseStatus = badgeVisibility?.includes('releaseStatus') && releaseIcon;
-      const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
-
-      const cardContent = ({ isFocused }: { isFocused: boolean }) => (
-        <View
-          style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
-          // @ts-ignore - Android TV performance optimization
-          renderToHardwareTextureAndroid={isAndroidTV}>
-          {isExploreCard ? (
-            <>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
-                {card.collagePosters!.slice(0, 4).map((poster, i) => (
-                  <Image
-                    key={`collage-${i}`}
-                    source={poster}
-                    style={{ width: '50%', height: '50%' }}
-                    contentFit="cover"
-                    transition={0}
-                  />
-                ))}
-              </View>
-              <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']}
-                  locations={[0, 0.5, 1]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.cardTextGradient}
-                />
-                <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
-                  {card.title}
-                </Text>
-                {card.year ? (
-                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
-                ) : null}
-              </View>
-            </>
-          ) : (
-            <>
-              <Image
-                key={`img-${cardKey}`}
-                source={card.cardImage}
-                style={styles.cardImage}
-                contentFit="cover"
-                transition={0}
-                cachePolicy="disk"
-                recyclingKey={cardKey}
-              />
-              {showReleaseStatus && (
-                <View style={isAndroidTV ? styles.releaseStatusBadgeAndroidTV : styles.releaseStatusBadge}>
-                  <MaterialCommunityIcons
-                    name={releaseIcon.name}
-                    size={isAndroidTV ? styles.releaseStatusIconAndroidTV.fontSize : styles.releaseStatusIcon.fontSize}
-                    color={releaseIcon.color}
-                  />
-                </View>
-              )}
-              {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
-                <View style={isAndroidTV ? styles.progressBadgeAndroidTV : styles.progressBadge}>
-                  <Text style={isAndroidTV ? styles.progressBadgeTextAndroidTV : styles.progressBadgeText}>
-                    {Math.round(card.percentWatched)}%
-                  </Text>
-                </View>
-              )}
-              <View style={styles.cardTextContainer}>
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={
-                    isAndroidTV
-                      ? ['transparent', 'rgba(0,0,0,0.8)', 'rgba(0,0,0,1)']
-                      : ['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']
-                  }
-                  locations={isAndroidTV ? [0, 0.5, 1] : [0, 0.6, 1]}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.cardTextGradient}
-                />
-                <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={2}>
-                  {card.title}
-                </Text>
-                {card.year ? (
-                  <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
-                ) : null}
-              </View>
-            </>
-          )}
-        </View>
-      );
+      const showReleaseStatus = Boolean(badgeVisibility?.includes('releaseStatus') && card.releaseIcon);
+      const focusKey = `shelf-${shelfKey}-card-${index}`;
 
       const cardElement = (
         <SpatialNavigationFocusableView
+          focusKey={focusKey}
           onSelect={() => shelfHandlers.onSelect(card.id)}
           onFocus={() => shelfHandlers.onFocus(card.id, index)}>
-          {cardContent}
+          {({ isFocused }: { isFocused: boolean }) => (
+            <ShelfCardContent
+              card={card}
+              cardKey={cardKey}
+              isFocused={isFocused}
+              isLastItem={isLastItem}
+              showReleaseStatus={showReleaseStatus}
+              styles={styles}
+            />
+          )}
         </SpatialNavigationFocusableView>
       );
 
+      // First card gets default focus
       if (shouldAutoFocusItem) {
         return <DefaultFocus>{cardElement}</DefaultFocus>;
       }
       return cardElement;
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey],
   );
 
   // Early return for collapsed shelves - must be after all hooks
@@ -3630,6 +3584,19 @@ function mapTrendingToCards(
   return items.map((item) => {
     // Merge cached release data for movies
     const cached = item.title.mediaType === 'movie' && cachedReleases ? cachedReleases.get(item.title.id) : undefined;
+    const theatricalRelease = item.title.theatricalRelease ?? cached?.theatricalRelease;
+    const homeRelease = item.title.homeRelease ?? cached?.homeRelease;
+
+    // Pre-compute release icon for movies to avoid computation at render time
+    const releaseIcon =
+      item.title.mediaType === 'movie'
+        ? getMovieReleaseIcon({
+            ...item.title,
+            theatricalRelease,
+            homeRelease,
+          })
+        : undefined;
+
     return {
       id: item.title.id,
       title: item.title.name,
@@ -3649,8 +3616,9 @@ function mapTrendingToCards(
       imdbId: item.title.imdbId,
       tvdbId: item.title.tvdbId,
       year: item.title.year,
-      theatricalRelease: item.title.theatricalRelease ?? cached?.theatricalRelease,
-      homeRelease: item.title.homeRelease ?? cached?.homeRelease,
+      theatricalRelease,
+      homeRelease,
+      releaseIcon,
     };
   });
 }
@@ -3756,6 +3724,21 @@ function mapContinueWatchingToCards(
         const movieOverview = item.overview || item.lastWatched?.overview || '';
         // Get cached release data for movie
         const cached = cachedReleases?.get(item.seriesId);
+        const theatricalRelease = cached?.theatricalRelease;
+        const homeRelease = cached?.homeRelease;
+
+        // Pre-compute release icon to avoid computation at render time
+        const releaseIcon = getMovieReleaseIcon({
+          id: item.seriesId,
+          name: item.seriesTitle,
+          overview: movieOverview,
+          year: item.year ?? 0,
+          language: 'en',
+          mediaType: 'movie',
+          theatricalRelease,
+          homeRelease,
+        });
+
         return {
           id: item.seriesId,
           title: item.seriesTitle,
@@ -3771,8 +3754,9 @@ function mapContinueWatchingToCards(
           year: item.year,
           percentWatched: displayPercent,
           seriesOverview: movieOverview, // Store for details page
-          theatricalRelease: cached?.theatricalRelease,
-          homeRelease: cached?.homeRelease,
+          theatricalRelease,
+          homeRelease,
+          releaseIcon,
         };
       }
 
