@@ -216,7 +216,7 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
 	if !forceAAC && h.configManager != nil {
 		if settings, err := h.configManager.Load(); err == nil {
-			forceAAC = settings.Streaming.ForceAACTranscoding
+			forceAAC = settings.Playback.ForceAACTranscoding
 		}
 	}
 	rangeHeader := strings.TrimSpace(r.Header.Get("Range"))
@@ -1969,7 +1969,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
 	if !forceAAC && h.configManager != nil {
 		if settings, err := h.configManager.Load(); err == nil {
-			forceAAC = settings.Streaming.ForceAACTranscoding
+			forceAAC = settings.Playback.ForceAACTranscoding
 		}
 	}
 	// Check both "startOffset" (frontend) and "start" (legacy) parameter names

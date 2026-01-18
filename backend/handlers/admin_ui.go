@@ -411,6 +411,7 @@ var SettingsSchema = map[string]interface{}{
 			"seekForwardSeconds":        map[string]interface{}{"type": "number", "label": "Skip Forward", "description": "Seconds to skip forward (default 30)", "step": 5, "min": 5, "max": 120},
 			"seekBackwardSeconds":       map[string]interface{}{"type": "number", "label": "Skip Backward", "description": "Seconds to skip backward (default 10)", "step": 5, "min": 5, "max": 120},
 			"useLoadingScreen":          map[string]interface{}{"type": "boolean", "label": "Loading Screen", "description": "Show loading screen during playback init"},
+			"forceAacTranscoding":       map[string]interface{}{"type": "boolean", "label": "Force AAC Audio Transcoding", "description": "Transcode AC3/EAC3/DTS surround audio to AAC. Enable this if using Bluetooth headphones, as they cannot decode surround codecs directly.", "order": 99},
 		},
 	},
 	"homeShelves": map[string]interface{}{
