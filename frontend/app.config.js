@@ -26,6 +26,7 @@ module.exports = ({ config }) => {
     './plugins/with-now-playing-manager',
     './plugins/with-android-pip',
     './plugins/with-large-heap', // Increase Android heap limit for video playback
+    './plugins/with-exoplayer-keep-resources', // Preserve ExoPlayer resources during shrinking
     [
       'expo-build-properties',
       {
@@ -33,6 +34,9 @@ module.exports = ({ config }) => {
           minSdkVersion: 26,
           targetSdkVersion: 34,
           usesCleartextTraffic: true,
+          // Build optimizations for smaller APK and better performance on low-end devices
+          enableProguardInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
         },
         ios: {
           deploymentTarget: '15.1',
