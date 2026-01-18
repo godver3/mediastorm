@@ -229,6 +229,8 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginTop: theme.spacing.sm,
       ...(isTV
         ? {
+            fontSize: Math.round(theme.typography.body.md.fontSize * tvTitleScale),
+            lineHeight: Math.round(theme.typography.body.md.lineHeight * tvTitleScale),
             marginLeft: tvScale * 48,
           }
         : null),
