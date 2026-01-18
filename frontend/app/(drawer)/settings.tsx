@@ -221,6 +221,7 @@ interface EditableBackendSettings {
     maxDownloadWorkers: string;
     maxCacheSizeMB: string;
     debridProviders: EditableDebridProvider[];
+    forceAacTranscoding: boolean;
   };
   transmux: {
     enabled: boolean;
@@ -463,6 +464,7 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
     maxDownloadWorkers: 15,
     maxCacheSizeMB: 100,
     debridProviders: [],
+    forceAacTranscoding: false,
   };
   const streamingMaxDownloadWorkers =
     typeof streamingSettings.maxDownloadWorkers === 'number' && streamingSettings.maxDownloadWorkers > 0
@@ -524,6 +526,7 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
         apiKey: provider.apiKey ?? '',
         enabled: !!provider.enabled,
       })),
+      forceAacTranscoding: !!streamingSettings.forceAacTranscoding,
     },
     webdav: {
       enabled: !!webdavSettings.enabled,
@@ -663,6 +666,7 @@ const toBackendPayload = (editable: EditableBackendSettings, baseline: BackendSe
               enabled: !!provider.enabled,
             }))
           : baselineStreaming.debridProviders,
+      forceAacTranscoding: editable.streaming.forceAacTranscoding,
     },
     transmux: {
       enabled: editable.transmux.enabled,
@@ -1423,8 +1427,27 @@ function SettingsScreen() {
           },
         ],
       },
+      // Audio settings section (admin only)
+      ...(account?.isMaster
+        ? [
+            {
+              type: 'header' as const,
+              id: 'audio-header',
+              title: 'Audio',
+              description: 'Audio transcoding settings for streaming compatibility.',
+            },
+            {
+              type: 'toggle' as const,
+              id: 'force-aac-transcoding',
+              label: 'Force AAC Audio Transcoding',
+              value: editableSettings?.streaming.forceAacTranscoding ?? false,
+              fieldKey: 'streaming.forceAacTranscoding',
+              description: 'Transcode AC3/EAC3/DTS audio to AAC for Bluetooth headphone compatibility.',
+            },
+          ]
+        : []),
     ],
-    [backendUrl, isSubmittingLogs, account, isRefreshing],
+    [backendUrl, isSubmittingLogs, account, isRefreshing, editableSettings?.streaming.forceAacTranscoding],
   );
 
   // Get current tab grid data - only connection tab is active
@@ -1463,10 +1486,28 @@ function SettingsScreen() {
     [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, showToast, logout, handleReloadSettings],
   );
 
-  // TV Grid field update handler - currently unused as connection tab has no field updates
-  const handleGridFieldUpdate = useCallback((_fieldKey: string, _value: string | boolean | number) => {
-    // No field updates needed for connection tab
-  }, []);
+  // TV Grid field update handler for toggle settings
+  const handleGridFieldUpdate = useCallback(
+    async (fieldKey: string, value: string | boolean | number) => {
+      if (fieldKey === 'streaming.forceAacTranscoding' && editableSettings && settings) {
+        const newEditableSettings = {
+          ...editableSettings,
+          streaming: { ...editableSettings.streaming, forceAacTranscoding: !!value },
+        };
+        setEditableSettings(newEditableSettings);
+
+        // Immediately save to backend
+        try {
+          const payload = toBackendPayload(newEditableSettings, settings);
+          await updateBackendSettings(payload);
+          showToast('Audio transcoding setting updated', { tone: 'success' });
+        } catch (err) {
+          showToast('Failed to update setting', { tone: 'danger' });
+        }
+      }
+    },
+    [editableSettings, settings, updateBackendSettings, showToast],
+  );
 
   // TV Grid render item
   const renderGridItem = useCallback(
