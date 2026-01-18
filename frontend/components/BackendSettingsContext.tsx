@@ -85,7 +85,6 @@ export interface BackendStreamingSettings {
   servicePriority: StreamingServicePriority;
   multiProviderMode?: MultiProviderMode;
   debridProviders: BackendDebridProvider[];
-  forceAacTranscoding?: boolean; // Force AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
 }
 
 export interface BackendTransmuxSettings {
@@ -105,6 +104,7 @@ export interface BackendPlaybackSettings {
   subtitleSize?: number; // Scaling factor for subtitle size (1.0 = default)
   seekForwardSeconds?: number; // Seconds to skip forward (default 30)
   seekBackwardSeconds?: number; // Seconds to skip backward (default 10)
+  forceAacTranscoding?: boolean; // Force AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
 }
 
 export interface BackendLiveTVFilterSettings {
