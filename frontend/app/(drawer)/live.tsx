@@ -1739,28 +1739,31 @@ function LiveScreen() {
                 </Text>
               ) : null}
             </View>
-            <View>
-              <FocusablePressable
-                autoFocus
-                text="Play channel"
-                onSelect={handleActionPlay}
-                style={styles.actionsButtonMobile}
-              />
-              <FocusablePressable
-                text={actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                onSelect={handleActionToggleFavorite}
-                style={styles.actionsButtonMobile}
-              />
-              <FocusablePressable
-                text="Hide channel"
-                onSelect={handleActionHide}
-                style={[styles.actionsButtonMobile, styles.actionsDangerButtonMobile]}
-              />
-              <FocusablePressable
-                text="Cancel"
-                onSelect={handleCloseActionModal}
-                style={styles.actionsButtonMobile}
-              />
+            <View style={styles.mobileModalActions}>
+              <Pressable
+                onPress={handleActionPlay}
+                style={[styles.mobileModalButton, styles.mobileModalButtonPrimary]}>
+                <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonPrimaryText]}>
+                  Play channel
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleActionToggleFavorite}
+                style={styles.mobileModalButton}>
+                <Text style={styles.mobileModalButtonText}>
+                  {actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleActionHide}
+                style={[styles.mobileModalButton, styles.mobileModalButtonDanger]}>
+                <Text style={[styles.mobileModalButtonText, styles.mobileModalButtonDangerText]}>
+                  Hide channel
+                </Text>
+              </Pressable>
+              <Pressable onPress={handleCloseActionModal} style={styles.mobileModalButton}>
+                <Text style={styles.mobileModalButtonText}>Cancel</Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -2455,7 +2458,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     actionsContainer: {
       width: isTV ? '65%' : '90%',
       maxWidth: 720,
-      backgroundColor: theme.colors.background.elevated,
+      backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
@@ -2506,6 +2509,33 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     actionsButtonMobile: {
       alignSelf: 'stretch',
       marginBottom: theme.spacing.sm,
+    },
+    // Mobile modal button styles (matching profiles page)
+    mobileModalActions: {
+      gap: theme.spacing.sm,
+    },
+    mobileModalButton: {
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.elevated,
+      alignItems: 'center',
+    },
+    mobileModalButtonPrimary: {
+      backgroundColor: theme.colors.accent.primary,
+    },
+    mobileModalButtonDanger: {
+      backgroundColor: theme.colors.status.danger,
+    },
+    mobileModalButtonText: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.primary,
+    },
+    mobileModalButtonPrimaryText: {
+      color: 'white',
+    },
+    mobileModalButtonDangerText: {
+      color: 'white',
     },
     actionsDangerButton: {
       borderColor: theme.colors.status.danger,

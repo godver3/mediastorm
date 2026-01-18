@@ -634,6 +634,37 @@ export interface MultiscreenSession {
   activeAudioIndex: number;
 }
 
+// Backend-parsed Live TV channel
+export interface LiveChannel {
+  id: string;
+  name: string;
+  url: string;
+  logo?: string;
+  group?: string;
+  tvgId?: string;
+  tvgName?: string;
+  tvgLanguage?: string;
+  streamUrl?: string;
+}
+
+// Response from GET /live/channels
+export interface LiveChannelsResponse {
+  channels: LiveChannel[];
+  totalBeforeFilter: number;
+  availableCategories: string[];
+}
+
+// Category info with channel count
+export interface CategoryInfo {
+  name: string;
+  channelCount: number;
+}
+
+// Response from GET /live/categories
+export interface CategoriesResponse {
+  categories: CategoryInfo[];
+}
+
 export interface UserLiveTVSettings {
   hiddenChannels: string[];
   favoriteChannels: string[];
@@ -1349,6 +1380,14 @@ class ApiService {
     return this.request<{ status: string; cleared: number }>('/live/cache/clear', {
       method: 'POST',
     });
+  }
+
+  async getLiveChannels(signal?: AbortSignal): Promise<LiveChannelsResponse> {
+    return this.request<LiveChannelsResponse>('/live/channels', { signal });
+  }
+
+  async getLiveCategories(): Promise<CategoriesResponse> {
+    return this.request<CategoriesResponse>('/live/categories');
   }
 
   async searchIndexer(

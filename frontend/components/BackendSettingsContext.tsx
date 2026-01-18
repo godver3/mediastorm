@@ -105,6 +105,11 @@ export interface BackendPlaybackSettings {
   seekBackwardSeconds?: number; // Seconds to skip backward (default 10)
 }
 
+export interface BackendLiveTVFilterSettings {
+  enabledCategories?: string[]; // Only show channels in these categories (empty = show all)
+  maxChannels?: number; // Overall channel limit (0 = no limit)
+}
+
 export interface BackendLiveSettings {
   mode?: 'm3u' | 'xtream';
   playlistUrl: string;
@@ -113,6 +118,7 @@ export interface BackendLiveSettings {
   xtreamPassword?: string;
   playlistCacheTtlHours: number;
   effectivePlaylistUrl?: string; // Computed URL (constructed from Xtream credentials if in xtream mode)
+  filtering?: BackendLiveTVFilterSettings; // Backend-side channel filtering
 }
 
 export interface BackendShelfConfig {

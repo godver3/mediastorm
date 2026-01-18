@@ -1,110 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
-import apiService from '@/services/api';
+import apiService, { LiveChannel } from '@/services/api';
 
-export interface LiveChannel {
-  id: string;
-  name: string;
-  url: string;
-  logo?: string;
-  group?: string;
-  tvgId?: string;
-  tvgName?: string;
-  tvgLanguage?: string;
-  streamUrl?: string;
-}
-
-const ATTRIBUTE_REGEX = /([a-zA-Z0-9\-]+)="([^"]*)"/g;
-
-const parseM3UPlaylist = (contents: string): LiveChannel[] => {
-  if (!contents?.trim()) {
-    return [];
-  }
-
-  const lines = contents.split(/\r?\n/);
-  const channels: LiveChannel[] = [];
-  const usedIds = new Set<string>();
-
-  const assignId = (baseId: string): string => {
-    const sanitizedBase = baseId.trim() || 'channel';
-    if (!usedIds.has(sanitizedBase)) {
-      usedIds.add(sanitizedBase);
-      return sanitizedBase;
-    }
-    let suffix = 1;
-    let candidate = `${sanitizedBase}-${suffix}`;
-    while (usedIds.has(candidate)) {
-      suffix += 1;
-      candidate = `${sanitizedBase}-${suffix}`;
-    }
-    usedIds.add(candidate);
-    return candidate;
-  };
-  let pending: Partial<LiveChannel> | null = null;
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-
-    if (line.startsWith('#EXTINF')) {
-      const [, metaAndName] = line.split('#EXTINF:', 2);
-      if (!metaAndName) {
-        pending = null;
-        continue;
-      }
-
-      const [metadataPart, namePart = ''] = metaAndName.split(',', 2);
-      const attributes: Record<string, string> = {};
-      let match: RegExpExecArray | null = null;
-      while ((match = ATTRIBUTE_REGEX.exec(metadataPart)) !== null) {
-        attributes[match[1].toLowerCase()] = match[2];
-      }
-      ATTRIBUTE_REGEX.lastIndex = 0;
-
-      const name = namePart.trim() || attributes['tvg-name']?.trim() || 'Channel';
-      const idFallbackSource = attributes['tvg-id']?.trim() || name || `channel-${channels.length + 1}`;
-
-      pending = {
-        id: idFallbackSource,
-        name,
-        logo: attributes['tvg-logo']?.trim(),
-        group: attributes['group-title']?.trim(),
-        tvgId: attributes['tvg-id']?.trim(),
-        tvgName: attributes['tvg-name']?.trim(),
-        tvgLanguage: attributes['tvg-language']?.trim(),
-      };
-      continue;
-    }
-
-    if (line.startsWith('#')) {
-      continue;
-    }
-
-    if (pending) {
-      const assignedId = assignId(pending.id || `channel-${channels.length + 1}`);
-      channels.push({
-        id: assignedId,
-        name: pending.name || assignedId,
-        url: line,
-        logo: pending.logo,
-        group: pending.group,
-        tvgId: pending.tvgId,
-        tvgName: pending.tvgName,
-        tvgLanguage: pending.tvgLanguage,
-      });
-      pending = null;
-    }
-  }
-
-  return channels;
-};
+// Re-export LiveChannel from api.ts for convenience
+export type { LiveChannel } from '@/services/api';
 
 export const useLiveChannels = (selectedCategories?: string[], favoriteChannelIds?: Set<string>) => {
   const { settings, isReady } = useBackendSettings();
   const [allChannels, setAllChannels] = useState<LiveChannel[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -138,18 +43,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     });
   }, [isReady, settings, playlistUrl, hasPlaylistUrl, allChannels.length]);
 
-  // Extract unique categories from all channels
-  const availableCategories = useMemo(() => {
-    const categorySet = new Set<string>();
-    allChannels.forEach((channel) => {
-      if (channel.group) {
-        categorySet.add(channel.group);
-      }
-    });
-    return Array.from(categorySet).sort();
-  }, [allChannels]);
-
-  // Filter channels by selected categories
+  // Filter channels by selected categories (user preference, not backend admin filter)
   // Note: Favorites are always included even if their category is not selected
   const channels = useMemo(() => {
     if (!selectedCategories || selectedCategories.length === 0) {
@@ -184,24 +78,31 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     if (!hasPlaylistUrl) {
       console.log('[useLiveChannels] fetchChannels: Early return - no playlist URL');
       setAllChannels([]);
+      setAvailableCategories([]);
       setError(null);
       setLoading(false);
       return;
     }
 
     try {
-      console.log('[useLiveChannels] fetchChannels: Starting fetch...');
+      console.log('[useLiveChannels] fetchChannels: Starting fetch from backend...');
       setLoading(true);
       setError(null);
-      const text = await apiService.getLivePlaylist(normalisedPlaylistUrl, controller.signal);
-      console.log('[useLiveChannels] fetchChannels: Got response, length:', text?.length ?? 0);
-      const parsed = parseM3UPlaylist(text).map((channel) => ({
+
+      // Use new backend endpoint that returns pre-parsed and filtered channels
+      const response = await apiService.getLiveChannels(controller.signal);
+      console.log('[useLiveChannels] fetchChannels: Got response with', response.channels?.length ?? 0, 'channels');
+
+      // Add stream URLs to channels
+      const channelsWithStreamUrls = (response.channels || []).map((channel) => ({
         ...channel,
         streamUrl: apiService.buildLiveStreamUrl(channel.url),
       }));
-      console.log('[useLiveChannels] fetchChannels: Parsed', parsed.length, 'channels');
-      setAllChannels(parsed);
-      if (!parsed.length) {
+
+      setAllChannels(channelsWithStreamUrls);
+      setAvailableCategories(response.availableCategories || []);
+
+      if (!channelsWithStreamUrls.length) {
         setError('No channels found in the playlist.');
       }
     } catch (err) {
@@ -210,12 +111,14 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
         return;
       }
       // Handle network errors (status 0) and other failures gracefully
-      let message = 'Failed to load playlist.';
+      let message = 'Failed to load channels.';
       if (err instanceof Error) {
         if (err.message.includes('status') && err.message.includes('0')) {
-          message = 'Unable to reach playlist server. The server may be down or unreachable.';
+          message = 'Unable to reach server. The server may be down or unreachable.';
         } else if (err.name === 'RangeError') {
-          message = 'Unable to reach playlist server. The server may be down or unreachable.';
+          message = 'Unable to reach server. The server may be down or unreachable.';
+        } else if (err.message.includes('no playlist URL configured')) {
+          message = 'No Live TV playlist configured. Please configure one in Settings.';
         } else {
           message = err.message;
         }
@@ -223,6 +126,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
       console.log('[useLiveChannels] fetchChannels: Error:', message);
       setError(message);
       setAllChannels([]);
+      setAvailableCategories([]);
     } finally {
       setLoading(false);
     }

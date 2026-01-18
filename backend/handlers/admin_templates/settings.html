@@ -1236,6 +1236,12 @@
                     return '<label class="checkbox-option'+disabledClass+'"><input type="checkbox" value="'+optValue+'" '+isChecked+' '+disabledAttr+' onchange="handleCheckboxChange(\''+basePath+'\', \''+fieldKey+'\', \''+optValue+'\', this.checked)"><span>'+optLabel+'</span></label>';
                 }).join('');
                 return '<div class="checkboxes-group'+invalidClass+'" id="'+id+'_container">'+checkboxesHtml+'</div>';
+            case 'multiselect':
+                const msSelected = Array.isArray(value) ? value : [];
+                const msTagsHtml = msSelected.map(v => '<span class="tag">'+v+'</span>').join('');
+                const endpoint = fieldDef.optionsEndpoint || '';
+                return '<div class="multiselect-container'+invalidClass+'" id="'+id+'_container">' + msTagsHtml +
+                    '<button type="button" class="multiselect-btn" onclick="openMultiselectModal(\''+basePath+'\', \''+fieldKey+'\', \''+endpoint+'\', \''+fieldDef.label+'\')">Select...</button></div>';
             default:
                 return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
@@ -1280,6 +1286,167 @@
         setValue(fullPath, values);
         renderSettings();
     }
+
+    // Multiselect modal state
+    let multiselectState = {
+        basePath: '',
+        fieldKey: '',
+        options: [],
+        selected: [],
+        searchTerm: ''
+    };
+
+    async function openMultiselectModal(sectionPath, fieldKey, endpoint, label) {
+        multiselectState.basePath = sectionPath;
+        multiselectState.fieldKey = fieldKey;
+        const fullPath = sectionPath ? sectionPath+'.'+fieldKey : fieldKey;
+        multiselectState.selected = [...(getValue(fullPath) || [])];
+        multiselectState.searchTerm = '';
+
+        // Disable body scrolling
+        document.body.style.overflow = 'hidden';
+
+        // Create modal HTML
+        const modalHtml = `
+            <div class="multiselect-modal" id="multiselectModal" onclick="closeMultiselectModalOnBackdrop(event)">
+                <div class="multiselect-modal-content" onclick="event.stopPropagation()">
+                    <div class="multiselect-modal-header">
+                        <h3>${label || 'Select Options'}</h3>
+                        <button class="multiselect-modal-close" onclick="closeMultiselectModal()">&times;</button>
+                    </div>
+                    <div class="multiselect-modal-body">
+                        <input type="text" class="multiselect-search" placeholder="Search..." oninput="filterMultiselectOptions(this.value)">
+                        <div class="multiselect-select-actions" style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="multiselectSelectAll()">Select All</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="multiselectSelectNone()">Select None</button>
+                        </div>
+                        <div class="multiselect-options" id="multiselectOptions">
+                            <div class="multiselect-loading">Loading categories...</div>
+                        </div>
+                    </div>
+                    <div class="multiselect-modal-footer">
+                        <button class="btn btn-secondary" onclick="closeMultiselectModal()">Cancel</button>
+                        <button class="btn btn-primary" onclick="applyMultiselectSelection()">Apply</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // Fetch options from endpoint (use admin API with global basePath for session-based auth)
+        if (endpoint) {
+            try {
+                const apiUrl = basePath + '/api' + endpoint;  // basePath is the global admin path ("/admin")
+                const response = await fetch(apiUrl, { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch options: ' + response.status);
+                const data = await response.json();
+                // Handle response format: { categories: [{name, channelCount}, ...] }
+                if (data.categories && Array.isArray(data.categories)) {
+                    multiselectState.options = data.categories.map(cat => ({
+                        value: cat.name,
+                        label: cat.name,
+                        count: cat.channelCount
+                    }));
+                } else if (Array.isArray(data)) {
+                    multiselectState.options = data.map(item => ({
+                        value: typeof item === 'string' ? item : item.value || item.name,
+                        label: typeof item === 'string' ? item : item.label || item.name,
+                        count: item.count || item.channelCount
+                    }));
+                } else {
+                    multiselectState.options = [];
+                }
+                renderMultiselectOptions();
+            } catch (err) {
+                console.error('Failed to load multiselect options:', err);
+                document.getElementById('multiselectOptions').innerHTML = '<div class="multiselect-empty" style="text-align:left;font-size:12px;"><strong>Error loading categories:</strong><br>' + err.message + '<br><br><strong>URL:</strong> ' + apiUrl + '</div>';
+            }
+        } else {
+            document.getElementById('multiselectOptions').innerHTML = '<div class="multiselect-empty">No options endpoint configured<br>endpoint param: ' + endpoint + '</div>';
+        }
+    }
+
+    function renderMultiselectOptions() {
+        const container = document.getElementById('multiselectOptions');
+        if (!container) return;
+
+        const filtered = multiselectState.options.filter(opt =>
+            opt.label.toLowerCase().includes(multiselectState.searchTerm.toLowerCase())
+        );
+
+        if (filtered.length === 0) {
+            container.innerHTML = '<div class="multiselect-empty">No categories found</div>';
+            return;
+        }
+
+        container.innerHTML = filtered.map(opt => {
+            const isSelected = multiselectState.selected.includes(opt.value);
+            const countHtml = opt.count !== undefined ? '<span class="multiselect-option-count">(' + opt.count + ' channels)</span>' : '';
+            return `<label class="multiselect-option ${isSelected ? 'selected' : ''}">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleMultiselectOption('${opt.value.replace(/'/g, "\\'")}', this.checked)">
+                <span class="multiselect-option-label">${opt.label}</span>
+                ${countHtml}
+            </label>`;
+        }).join('');
+    }
+
+    function filterMultiselectOptions(searchTerm) {
+        multiselectState.searchTerm = searchTerm;
+        renderMultiselectOptions();
+    }
+
+    function toggleMultiselectOption(value, isChecked) {
+        if (isChecked && !multiselectState.selected.includes(value)) {
+            multiselectState.selected.push(value);
+        } else if (!isChecked) {
+            multiselectState.selected = multiselectState.selected.filter(v => v !== value);
+        }
+        renderMultiselectOptions();
+    }
+
+    function applyMultiselectSelection() {
+        const fullPath = multiselectState.basePath ? multiselectState.basePath+'.'+multiselectState.fieldKey : multiselectState.fieldKey;
+        setValue(fullPath, multiselectState.selected);
+        closeMultiselectModal();
+        renderSettings();
+    }
+
+    function closeMultiselectModal() {
+        const modal = document.getElementById('multiselectModal');
+        if (modal) modal.remove();
+        // Re-enable body scrolling
+        document.body.style.overflow = '';
+    }
+
+    function closeMultiselectModalOnBackdrop(event) {
+        if (event.target.id === 'multiselectModal') {
+            closeMultiselectModal();
+        }
+    }
+
+    function multiselectSelectAll() {
+        // Select all currently visible (filtered) options
+        const filtered = multiselectState.options.filter(opt =>
+            opt.label.toLowerCase().includes(multiselectState.searchTerm.toLowerCase())
+        );
+        filtered.forEach(opt => {
+            if (!multiselectState.selected.includes(opt.value)) {
+                multiselectState.selected.push(opt.value);
+            }
+        });
+        renderMultiselectOptions();
+    }
+
+    function multiselectSelectNone() {
+        // Deselect all currently visible (filtered) options
+        const filtered = multiselectState.options.filter(opt =>
+            opt.label.toLowerCase().includes(multiselectState.searchTerm.toLowerCase())
+        );
+        const filteredValues = filtered.map(opt => opt.value);
+        multiselectState.selected = multiselectState.selected.filter(v => !filteredValues.includes(v));
+        renderMultiselectOptions();
+    }
+
     function addArrayItem(sectionKey) {
         const sectionDef = schema[sectionKey];
         const parentKey = sectionDef.parent;
