@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { useLockSpatialNavigation } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -39,6 +40,20 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   const { width: screenWidth } = useWindowDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
   const hasOptions = options.length > 0;
+
+  // Lock spatial navigation when modal is visible to prevent dual focus system conflicts
+  const { lock, unlock } = useLockSpatialNavigation();
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    if (visible) {
+      lock();
+    } else {
+      unlock();
+    }
+    return () => {
+      unlock();
+    };
+  }, [visible, lock, unlock]);
 
   const selectedLabel = useMemo(() => options.find((option) => option.id === selectedId)?.label, [options, selectedId]);
 
@@ -225,11 +240,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     };
   }, []);
 
-  // Track focused element for TV - using native focus
-  const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [isCloseFocused, setIsCloseFocused] = useState(false);
-
   // Determine which option should have initial focus
   const defaultFocusOptionId = useMemo(() => {
     if (selectedId && options.some((opt) => opt.id === selectedId)) {
@@ -244,7 +254,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   const renderOption = (option: TrackSelectionOption, index: number) => {
     const isSelected = option.id === selectedId;
-    const isFocused = focusedOptionId === option.id;
     const shouldHaveInitialFocus = Platform.isTV && option.id === defaultFocusOptionId;
 
     return (
@@ -256,50 +265,46 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         }}>
         <Pressable
           onPress={() => handleOptionSelect(option.id)}
-          onFocus={() => {
-            setFocusedOptionId(option.id);
-            handleItemFocus(index);
-          }}
-          onBlur={() => {
-            if (focusedOptionId === option.id) {
-              setFocusedOptionId(null);
-            }
-          }}
-          style={[
-            styles.optionItem,
-            isFocused && !isSelected && styles.optionItemFocused,
-            isSelected && !isFocused && styles.optionItemSelected,
-            isSelected && isFocused && styles.optionItemSelectedFocused,
-          ]}
+          onFocus={() => handleItemFocus(index)}
           hasTVPreferredFocus={shouldHaveInitialFocus}
           tvParallaxProperties={{ enabled: false }}>
-          <View style={styles.optionTextContainer}>
-            <Text
+          {({ focused: isFocused }) => (
+            <View
               style={[
-                styles.optionLabel,
-                isFocused && !isSelected && styles.optionLabelFocused,
-                isSelected && !isFocused && styles.optionLabelSelected,
-                isSelected && isFocused && styles.optionLabelSelectedFocused,
+                styles.optionItem,
+                isFocused && !isSelected && styles.optionItemFocused,
+                isSelected && !isFocused && styles.optionItemSelected,
+                isSelected && isFocused && styles.optionItemSelectedFocused,
               ]}>
-              {option.label}
-            </Text>
-            {option.description ? (
-              <Text
-                style={[
-                  styles.optionDescription,
-                  isFocused && !isSelected && styles.optionDescriptionFocused,
-                  isSelected && !isFocused && styles.optionDescriptionSelected,
-                  isSelected && isFocused && styles.optionDescriptionSelectedFocused,
-                ]}>
-                {option.description}
-              </Text>
-            ) : null}
-          </View>
-          {isSelected ? (
-            <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
-              <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
+              <View style={styles.optionTextContainer}>
+                <Text
+                  style={[
+                    styles.optionLabel,
+                    isFocused && !isSelected && styles.optionLabelFocused,
+                    isSelected && !isFocused && styles.optionLabelSelected,
+                    isSelected && isFocused && styles.optionLabelSelectedFocused,
+                  ]}>
+                  {option.label}
+                </Text>
+                {option.description ? (
+                  <Text
+                    style={[
+                      styles.optionDescription,
+                      isFocused && !isSelected && styles.optionDescriptionFocused,
+                      isSelected && !isFocused && styles.optionDescriptionSelected,
+                      isSelected && isFocused && styles.optionDescriptionSelectedFocused,
+                    ]}>
+                    {option.description}
+                  </Text>
+                ) : null}
+              </View>
+              {isSelected ? (
+                <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
+                  <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
+                </View>
+              ) : null}
             </View>
-          ) : null}
+          )}
         </Pressable>
       </View>
     );
@@ -344,22 +349,24 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
             {onSearchSubtitles && (
               <Pressable
                 onPress={handleSearchSubtitles}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setIsSearchFocused(false)}
-                style={[styles.closeButton, styles.searchButton, isSearchFocused && styles.closeButtonFocused]}
                 tvParallaxProperties={{ enabled: false }}>
-                <Text style={[styles.closeButtonText, isSearchFocused && styles.closeButtonTextFocused]}>
-                  Search Online
-                </Text>
+                {({ focused: isSearchFocused }) => (
+                  <View style={[styles.closeButton, styles.searchButton, isSearchFocused && styles.closeButtonFocused]}>
+                    <Text style={[styles.closeButtonText, isSearchFocused && styles.closeButtonTextFocused]}>
+                      Search Online
+                    </Text>
+                  </View>
+                )}
               </Pressable>
             )}
             <Pressable
               onPress={handleClose}
-              onFocus={() => setIsCloseFocused(true)}
-              onBlur={() => setIsCloseFocused(false)}
-              style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}
               tvParallaxProperties={{ enabled: false }}>
-              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+              {({ focused: isCloseFocused }) => (
+                <View style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
             </Pressable>
           </View>
         </View>

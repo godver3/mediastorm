@@ -1,13 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-} from '@/services/tv-navigation';
+import { useLockSpatialNavigation } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -119,6 +114,20 @@ const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles>
 export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info, onClose }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+
+  // Lock spatial navigation when modal is visible to prevent dual focus system conflicts
+  const { lock, unlock } = useLockSpatialNavigation();
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    if (visible) {
+      lock();
+    } else {
+      unlock();
+    }
+    return () => {
+      unlock();
+    };
+  }, [visible, lock, unlock]);
 
   // Build display values
   const mediaTitle = useMemo(() => {
@@ -276,9 +285,6 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     withSelectGuard(onClose);
   }, [onClose, withSelectGuard]);
 
-  // Track focused state for TV - using native focus
-  const [isCloseFocused, setIsCloseFocused] = useState(false);
-
   if (!visible) {
     return null;
   }
@@ -381,63 +387,47 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     <View key={s.key}>{renderSection(s.title, s.content)}</View>
   ));
 
-  // TV version with spatial navigation and manual scroll control
+  // TV version with native focus handling (spatial navigation is locked)
   const tvModalContent = (
-    <SpatialNavigationRoot isActive={visible}>
-      <View style={styles.modalContainer}>
-        <View style={styles.tvModalHeader}>
-          <Text style={styles.modalTitle}>Stream Information</Text>
-        </View>
-
-        {/* Vertical node for navigating between sections and close button */}
-        <SpatialNavigationNode orientation="vertical">
-          {/* Scrollable sections list with manual scroll on focus */}
-          <ScrollView
-            ref={tvScrollViewRef}
-            style={styles.tvListContainer}
-            contentContainerStyle={styles.tvListContent}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}>
-            {visibleSections.map((section, index) => {
-              const sectionItem = (
-                <SpatialNavigationFocusableView
-                  key={section.key}
-                  onFocus={() => handleSectionFocus(index)}>
-                  {({ isFocused }: { isFocused: boolean }) => (
-                    <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
-                      <Text style={styles.sectionTitle}>{section.title}</Text>
-                      {section.content}
-                    </View>
-                  )}
-                </SpatialNavigationFocusableView>
-              );
-
-              // Give first section default focus
-              return index === 0 ? (
-                <DefaultFocus key={section.key}>{sectionItem}</DefaultFocus>
-              ) : (
-                sectionItem
-              );
-            })}
-          </ScrollView>
-
-          {/* Close button in its own horizontal node */}
-          <SpatialNavigationNode orientation="horizontal">
-            <View style={styles.tvModalFooter}>
-              <SpatialNavigationFocusableView onSelect={onClose}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.tvCloseButton, isFocused && styles.tvCloseButtonFocused]}>
-                    <Text style={[styles.tvCloseButtonText, isFocused && styles.tvCloseButtonTextFocused]}>
-                      Close
-                    </Text>
-                  </View>
-                )}
-              </SpatialNavigationFocusableView>
-            </View>
-          </SpatialNavigationNode>
-        </SpatialNavigationNode>
+    <View style={styles.modalContainer}>
+      <View style={styles.tvModalHeader}>
+        <Text style={styles.modalTitle}>Stream Information</Text>
       </View>
-    </SpatialNavigationRoot>
+
+      {/* Scrollable sections list with manual scroll on focus */}
+      <ScrollView
+        ref={tvScrollViewRef}
+        style={styles.tvListContainer}
+        contentContainerStyle={styles.tvListContent}
+        scrollEnabled={false}
+        showsVerticalScrollIndicator={false}>
+        {visibleSections.map((section, index) => (
+          <Pressable
+            key={section.key}
+            onFocus={() => handleSectionFocus(index)}
+            hasTVPreferredFocus={index === 0}
+            tvParallaxProperties={{ enabled: false }}>
+            {({ focused: isFocused }) => (
+              <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
+                <Text style={styles.sectionTitle}>{section.title}</Text>
+                {section.content}
+              </View>
+            )}
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      {/* Close button */}
+      <View style={styles.tvModalFooter}>
+        <Pressable onPress={handleClose} tvParallaxProperties={{ enabled: false }}>
+          {({ focused: isFocused }) => (
+            <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+              <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+            </View>
+          )}
+        </Pressable>
+      </View>
+    </View>
   );
 
   // Non-TV version with regular ScrollView
@@ -452,12 +442,12 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       </ScrollView>
 
       <View style={styles.modalFooter}>
-        <Pressable
-          onPress={handleClose}
-          onFocus={() => setIsCloseFocused(true)}
-          onBlur={() => setIsCloseFocused(false)}
-          style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
-          <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+        <Pressable onPress={handleClose}>
+          {({ focused: isCloseFocused }) => (
+            <View style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
+              <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
+            </View>
+          )}
         </Pressable>
       </View>
     </View>

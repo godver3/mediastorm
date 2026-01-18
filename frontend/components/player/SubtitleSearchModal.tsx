@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { useLockSpatialNavigation } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,6 +72,20 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   const { width: screenWidth } = useWindowDimensions();
   const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
   const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage || 'en');
+
+  // Lock spatial navigation when modal is visible to prevent dual focus system conflicts
+  const { lock, unlock } = useLockSpatialNavigation();
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    if (visible) {
+      lock();
+    } else {
+      unlock();
+    }
+    return () => {
+      unlock();
+    };
+  }, [visible, lock, unlock]);
 
   // Sync selectedLanguage with currentLanguage prop when it changes
   // This handles the case where settings load after the component mounts
