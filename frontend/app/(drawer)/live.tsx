@@ -2798,8 +2798,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       padding: theme.spacing['2xl'],
-      minWidth: 500,
-      maxWidth: 700,
+      minWidth: 400,
+      maxWidth: 500,
       gap: theme.spacing.xl,
       alignItems: 'center',
     },
@@ -2831,6 +2831,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       alignItems: 'center',
       justifyContent: 'center',
       alignSelf: 'center',
+      minWidth: '30%',
     },
     tvModalButtonFocused: {
       borderColor: theme.colors.accent.primary,
