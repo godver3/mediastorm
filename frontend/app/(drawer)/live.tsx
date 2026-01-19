@@ -1818,6 +1818,22 @@ function LiveScreen() {
   }
   wasModalVisibleRef.current = isSelectionConfirmVisible;
 
+  // Refs for focus trapping within modal
+  const modalButton1Ref = useRef<View>(null);
+  const modalButton2Ref = useRef<View>(null);
+  const [modalButton1Handle, setModalButton1Handle] = useState<number | null>(null);
+  const [modalButton2Handle, setModalButton2Handle] = useState<number | null>(null);
+
+  // Get node handles for focus trapping
+  useEffect(() => {
+    if (isSelectionConfirmVisible) {
+      const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
+      const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
+      setModalButton1Handle(handle1);
+      setModalButton2Handle(handle2);
+    }
+  }, [isSelectionConfirmVisible, modalKeyRef.current]);
+
   const selectionConfirmModal = isSelectionConfirmVisible ? (
     <View key={`modal-${modalKeyRef.current}`} style={styles.selectionModalOverlay} focusable={false}>
       <View style={styles.tvModalContainer} focusable={false}>
@@ -1833,8 +1849,13 @@ function LiveScreen() {
         </Text>
         <View style={styles.tvModalActions} focusable={false}>
           <Pressable
+            ref={modalButton1Ref}
             onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
             tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={modalButton2Handle}
+            nextFocusDown={modalButton2Handle}
+            nextFocusLeft={modalButton1Handle}
+            nextFocusRight={modalButton1Handle}
             style={({ focused }) => [
               styles.tvModalButton,
               styles.tvModalButtonDanger,
@@ -1854,9 +1875,14 @@ function LiveScreen() {
           </Pressable>
           {selectedChannels.length >= 2 ? (
             <Pressable
+              ref={modalButton2Ref}
               onPress={() => withSelectGuard(handleSelectionConfirmLaunch)}
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
+              nextFocusUp={modalButton1Handle}
+              nextFocusDown={modalButton1Handle}
+              nextFocusLeft={modalButton2Handle}
+              nextFocusRight={modalButton2Handle}
               style={({ focused }) => [
                 styles.tvModalButton,
                 styles.tvModalButtonPrimary,
@@ -1876,9 +1902,14 @@ function LiveScreen() {
             </Pressable>
           ) : (
             <Pressable
+              ref={modalButton2Ref}
               onPress={() => withSelectGuard(handleSelectionConfirmClose)}
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
+              nextFocusUp={modalButton1Handle}
+              nextFocusDown={modalButton1Handle}
+              nextFocusLeft={modalButton2Handle}
+              nextFocusRight={modalButton2Handle}
               style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
               {({ focused }) => (
                 <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
