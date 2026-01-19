@@ -501,6 +501,7 @@ function LiveScreen() {
   // Guard against duplicate "select" events on tvOS
   const selectGuardRef = useRef(false);
   const filterClosingRef = useRef(false);
+  const filterInterceptorRef = useRef<(() => void) | null>(null);
   const withSelectGuard = useCallback((fn: () => void) => {
     if (Platform.isTV) {
       if (selectGuardRef.current) return;
@@ -888,6 +889,13 @@ function LiveScreen() {
       // Blur the text input first to prevent keyboard from briefly showing
       filterInputRef.current?.blur();
 
+      // Explicitly remove back interceptor before closing
+      if (filterInterceptorRef.current) {
+        console.log('[live] Removing filter back interceptor (Close button pressed)');
+        filterInterceptorRef.current();
+        filterInterceptorRef.current = null;
+      }
+
       // Defer the state update to ensure blur completes
       setTimeout(() => {
         setIsFilterActive(false);
@@ -901,7 +909,6 @@ function LiveScreen() {
 
   // Register back interceptor for filter modal
   const handleCloseFilterRef = useRef(handleCloseFilter);
-  const filterInterceptorRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     handleCloseFilterRef.current = handleCloseFilter;
@@ -1943,21 +1950,47 @@ function LiveScreen() {
 
   // Text Filter Modal for tvOS - rendered outside SpatialNavigationRoot for native focus
   // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  // Refs for focus navigation between input and close button
+  const filterInputWrapperRef = useRef<View>(null);
+  const filterCloseButtonRef = useRef<View>(null);
+  const [filterInputHandle, setFilterInputHandle] = useState<number | null>(null);
+  const [filterCloseHandle, setFilterCloseHandle] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isFilterActive && Platform.isTV) {
+      const timer = setTimeout(() => {
+        const inputHandle = filterInputWrapperRef.current ? findNodeHandle(filterInputWrapperRef.current) : null;
+        const closeHandle = filterCloseButtonRef.current ? findNodeHandle(filterCloseButtonRef.current) : null;
+        setFilterInputHandle(inputHandle);
+        setFilterCloseHandle(closeHandle);
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setFilterInputHandle(null);
+      setFilterCloseHandle(null);
+    }
+  }, [isFilterActive]);
+
   const textFilterModal = Platform.isTV && isFilterActive ? (
-    <View style={styles.filterModalOverlay}>
-      <View style={styles.filterModalContainer}>
+    <View style={styles.filterModalOverlay} focusable={false}>
+      <View style={styles.filterModalContainer} focusable={false}>
         <View style={styles.filterModalHeader}>
           <Text style={styles.filterModalTitle}>Filter Channels</Text>
           <Text style={styles.filterModalSubtitle}>Enter a channel name to filter</Text>
         </View>
 
-        <View style={styles.filterModalInputContainer}>
+        <View style={styles.filterModalInputContainer} focusable={false}>
           <Pressable
+            ref={filterInputWrapperRef}
             onPress={() => {
               filterInputRef.current?.focus();
             }}
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={filterInputHandle}
+            nextFocusDown={filterCloseHandle}
+            nextFocusLeft={filterInputHandle}
+            nextFocusRight={filterInputHandle}
             style={({ focused }) => [
               styles.filterModalInputWrapper,
               focused && styles.filterModalInputWrapperFocused,
@@ -1996,8 +2029,13 @@ function LiveScreen() {
 
         <View style={styles.filterModalFooter}>
           <Pressable
+            ref={filterCloseButtonRef}
             onPress={handleCloseFilter}
             tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={filterInputHandle}
+            nextFocusDown={filterCloseHandle}
+            nextFocusLeft={filterCloseHandle}
+            nextFocusRight={filterCloseHandle}
             style={({ focused }) => [styles.filterModalCloseButton, focused && styles.filterModalCloseButtonFocused]}>
             {({ focused }) => (
               <Text style={[styles.filterModalCloseButtonText, focused && styles.filterModalCloseButtonTextFocused]}>

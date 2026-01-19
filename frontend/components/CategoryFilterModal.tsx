@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
@@ -60,9 +60,47 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
   const onCloseRef = useRef(onClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
 
+  // Refs for focus navigation on TV
+  const actionButtonRef = useRef<View>(null);
+  const closeButtonRef = useRef<View>(null);
+  const categoryRefs = useRef<Map<string, View | null>>(new Map());
+  const [actionButtonHandle, setActionButtonHandle] = useState<number | null>(null);
+  const [closeButtonHandle, setCloseButtonHandle] = useState<number | null>(null);
+  const [firstCategoryHandle, setFirstCategoryHandle] = useState<number | null>(null);
+  const [lastCategoryHandle, setLastCategoryHandle] = useState<number | null>(null);
+
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  // Set up focus handles when modal is visible
+  useEffect(() => {
+    if (visible && Platform.isTV) {
+      const timer = setTimeout(() => {
+        const actionHandle = actionButtonRef.current ? findNodeHandle(actionButtonRef.current) : null;
+        const closeHandle = closeButtonRef.current ? findNodeHandle(closeButtonRef.current) : null;
+        setActionButtonHandle(actionHandle);
+        setCloseButtonHandle(closeHandle);
+
+        // Get first and last category handles
+        if (categories.length > 0) {
+          const firstRef = categoryRefs.current.get(categories[0]);
+          const lastRef = categoryRefs.current.get(categories[categories.length - 1]);
+          setFirstCategoryHandle(firstRef ? findNodeHandle(firstRef) : null);
+          setLastCategoryHandle(lastRef ? findNodeHandle(lastRef) : null);
+        } else {
+          setFirstCategoryHandle(null);
+          setLastCategoryHandle(null);
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setActionButtonHandle(null);
+      setCloseButtonHandle(null);
+      setFirstCategoryHandle(null);
+      setLastCategoryHandle(null);
+    }
+  }, [visible, categories]);
 
   // Register back interceptor to close modal when menu/back button is pressed on tvOS
   // Following the same pattern as TvModal for proper handling
@@ -130,10 +168,10 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
   }
 
   return (
-    <View style={styles.overlay}>
+    <View style={styles.overlay} focusable={false}>
       {!Platform.isTV ? <Pressable style={styles.backdrop} onPress={onClose} /> : null}
-      <View style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
+      <View style={styles.modalContainer} focusable={false}>
+        <View style={styles.modalHeader} focusable={false}>
           <Text style={styles.modalTitle}>Filter by Category</Text>
           <Text style={styles.modalSubtitle}>
             {selectedCategories.length === 0
@@ -142,11 +180,16 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
           </Text>
         </View>
 
-        <View style={styles.actionRow}>
+        <View style={styles.actionRow} focusable={false}>
           <Pressable
+            ref={actionButtonRef}
             onPress={() => withSelectGuard(handleSelectAll)}
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={actionButtonHandle}
+            nextFocusDown={firstCategoryHandle ?? closeButtonHandle}
+            nextFocusLeft={actionButtonHandle}
+            nextFocusRight={actionButtonHandle}
             style={({ focused }) => [styles.actionButton, focused && styles.actionButtonFocused]}>
             {({ focused }) => (
               <Text style={[styles.actionButtonText, focused && styles.actionButtonTextFocused]}>
@@ -157,17 +200,27 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
         </View>
 
         <ScrollView contentContainerStyle={styles.categoriesList}>
-          {categories.map((category) => {
+          {categories.map((category, index) => {
             const isSelected = selectedCategories.includes(category);
+            const isFirst = index === 0;
+            const isLast = index === categories.length - 1;
             return (
               <Pressable
                 key={category}
+                ref={(ref) => {
+                  if (ref) {
+                    categoryRefs.current.set(category, ref);
+                  }
+                }}
                 onPress={() => withSelectGuard(() => onToggleCategory(category))}
                 tvParallaxProperties={{ enabled: false }}
+                {...(isFirst && { nextFocusUp: actionButtonHandle })}
+                {...(isLast && { nextFocusDown: closeButtonHandle })}
                 style={({ focused }) => [
                   styles.categoryItem,
-                  focused && styles.categoryItemFocused,
                   isSelected && styles.categoryItemSelected,
+                  focused && styles.categoryItemFocused,
+                  focused && isSelected && styles.categoryItemFocusedSelected,
                 ]}>
                 {({ focused }) => (
                   <>
@@ -187,10 +240,25 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
           })}
         </ScrollView>
 
-        <View style={styles.modalFooter}>
+        <View style={styles.modalFooter} focusable={false}>
           <Pressable
-            onPress={() => withSelectGuard(onClose)}
+            ref={closeButtonRef}
+            onPress={() =>
+              withSelectGuard(() => {
+                // Explicitly remove back interceptor before closing
+                if (removeInterceptorRef.current) {
+                  console.log('[CategoryFilterModal] Removing back interceptor (Close button pressed)');
+                  removeInterceptorRef.current();
+                  removeInterceptorRef.current = null;
+                }
+                onClose();
+              })
+            }
             tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={lastCategoryHandle ?? actionButtonHandle}
+            nextFocusDown={closeButtonHandle}
+            nextFocusLeft={closeButtonHandle}
+            nextFocusRight={closeButtonHandle}
             style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}>
             {({ focused }) => (
               <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
@@ -219,8 +287,8 @@ const createStyles = (theme: NovaTheme) =>
       bottom: 0,
     },
     modalContainer: {
-      width: '80%',
-      maxWidth: 800,
+      width: '45%',
+      maxWidth: 500,
       maxHeight: '80%',
       backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.xl,
@@ -280,8 +348,8 @@ const createStyles = (theme: NovaTheme) =>
       padding: theme.spacing.lg,
       borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
+      borderWidth: 2,
+      borderColor: 'transparent',
       gap: theme.spacing.md,
     },
     categoryItemFocused: {
@@ -292,19 +360,23 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.accent.primary + '20',
       borderColor: theme.colors.accent.primary + '60',
     },
+    categoryItemFocusedSelected: {
+      backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.text.inverse,
+    },
     checkbox: {
-      width: 32,
-      height: 32,
-      borderRadius: theme.radius.sm,
+      width: 20,
+      height: 20,
+      borderRadius: theme.radius.xs,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       alignItems: 'center',
       justifyContent: 'center',
     },
     checkboxInner: {
-      width: 20,
-      height: 20,
-      borderRadius: theme.radius.sm,
+      width: 12,
+      height: 12,
+      borderRadius: theme.radius.xs,
       backgroundColor: theme.colors.accent.primary,
     },
     categoryText: {
