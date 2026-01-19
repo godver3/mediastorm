@@ -1072,12 +1072,30 @@ function LiveScreen() {
   // Handlers for selection confirmation modal
   const handleSelectionConfirmCancel = useCallback(() => {
     setIsSelectionConfirmVisible(false);
+    // Explicitly remove both interceptors to avoid timing issues
+    if (selectionConfirmInterceptorRef.current) {
+      selectionConfirmInterceptorRef.current();
+      selectionConfirmInterceptorRef.current = null;
+    }
+    if (selectionModeInterceptorRef.current) {
+      selectionModeInterceptorRef.current();
+      selectionModeInterceptorRef.current = null;
+    }
     exitSelectionMode();
     showToast('Selection cancelled', { tone: 'info' });
   }, [exitSelectionMode, showToast]);
 
   const handleSelectionConfirmLaunch = useCallback(() => {
     setIsSelectionConfirmVisible(false);
+    // Explicitly remove both interceptors to avoid timing issues
+    if (selectionConfirmInterceptorRef.current) {
+      selectionConfirmInterceptorRef.current();
+      selectionConfirmInterceptorRef.current = null;
+    }
+    if (selectionModeInterceptorRef.current) {
+      selectionModeInterceptorRef.current();
+      selectionModeInterceptorRef.current = null;
+    }
     const channels = launchMultiscreen();
     if (channels) {
       showToast(`Launching ${channels.length} channels`, { tone: 'success' });
@@ -1091,6 +1109,11 @@ function LiveScreen() {
   const handleSelectionConfirmClose = useCallback(() => {
     // Just close modal, keep selection mode active
     setIsSelectionConfirmVisible(false);
+    // Explicitly remove modal interceptor
+    if (selectionConfirmInterceptorRef.current) {
+      selectionConfirmInterceptorRef.current();
+      selectionConfirmInterceptorRef.current = null;
+    }
   }, []);
 
   // Register back interceptor for selection confirm modal (same pattern as CategoryFilterModal)
