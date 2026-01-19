@@ -1825,7 +1825,7 @@ function LiveScreen() {
         </Text>
         <View style={styles.tvModalActions}>
           <Pressable
-            onPress={handleSelectionConfirmCancel}
+            onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [
               styles.tvModalButton,
@@ -1846,7 +1846,7 @@ function LiveScreen() {
           </Pressable>
           {selectedChannels.length >= 2 ? (
             <Pressable
-              onPress={handleSelectionConfirmLaunch}
+              onPress={() => withSelectGuard(handleSelectionConfirmLaunch)}
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
               style={({ focused }) => [
@@ -1868,7 +1868,7 @@ function LiveScreen() {
             </Pressable>
           ) : (
             <Pressable
-              onPress={handleSelectionConfirmClose}
+              onPress={() => withSelectGuard(handleSelectionConfirmClose)}
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
               style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
