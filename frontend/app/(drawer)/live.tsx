@@ -63,15 +63,18 @@ const SpatialHeaderButton = ({
   isActive?: boolean;
   theme: NovaTheme;
 }) => {
-  // Use tvScale for consistent sizing across TV platforms
+  // Match TVActionButton sizing exactly
   const scale = tvScale(1.375, 1);
-  const iconSize = 24 * scale;
-  const paddingH = theme.spacing.sm * scale;
+  const baseIconSize = 24;
+  const scaledIconSize = tvScale(baseIconSize * 1.375, baseIconSize);
+  const paddingH = theme.spacing.md * scale;
   const paddingV = theme.spacing.sm * scale;
   const borderRadius = theme.radius.md * scale;
   const fontSize = theme.typography.label.md.fontSize * scale;
   const lineHeight = theme.typography.label.md.lineHeight * scale;
-  const gap = theme.spacing.sm;
+  const gap = theme.spacing.sm * scale;
+  // Consistent border width to prevent button resizing when active state changes
+  const borderWidth = 2 * scale;
 
   return (
     <SpatialNavigationFocusableView onSelect={disabled || loading ? undefined : onSelect}>
@@ -84,26 +87,27 @@ const SpatialHeaderButton = ({
             paddingHorizontal: paddingH,
             paddingVertical: paddingV,
             borderRadius,
-            backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
-            borderWidth: isActive && !isFocused ? 2 * scale : StyleSheet.hairlineWidth,
-            borderColor: isFocused
+            backgroundColor: isFocused
               ? theme.colors.accent.primary
               : isActive
-                ? theme.colors.accent.primary
-                : theme.colors.border.subtle,
+                ? 'transparent'
+                : theme.colors.overlay.button,
+            borderWidth,
+            borderColor: isFocused || isActive ? theme.colors.accent.primary : 'transparent',
             opacity: disabled || loading ? 0.5 : 1,
             alignSelf: 'flex-start',
           }}>
           <Ionicons
             name={icon}
-            size={iconSize}
-            color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+            size={scaledIconSize}
+            color={isFocused ? theme.colors.text.inverse : isActive ? theme.colors.accent.primary : theme.colors.text.primary}
           />
           {text && (
             <Text
+              numberOfLines={1}
               style={{
                 ...theme.typography.label.md,
-                color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
+                color: isFocused ? theme.colors.text.inverse : isActive ? theme.colors.accent.primary : theme.colors.text.primary,
                 fontSize,
                 lineHeight,
               }}>

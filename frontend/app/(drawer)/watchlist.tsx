@@ -44,15 +44,19 @@ const SpatialFilterButton = ({
   onSelect: () => void;
   theme: NovaTheme;
 }) => {
-  // Use same scaling approach as TVActionButton for consistent sizing
+  // Match TVActionButton sizing exactly
   const scale = tvScale(1.375, 1);
-  const iconSize = 24 * scale;
+  const baseIconSize = 24;
+  const scaledIconSize = tvScale(baseIconSize * 1.375, baseIconSize); // Same as TVActionButton
   const paddingH = theme.spacing.md * scale;
   const paddingV = theme.spacing.sm * scale;
   const borderRadius = theme.radius.md * scale;
   const fontSize = theme.typography.label.md.fontSize * scale;
   const lineHeight = theme.typography.label.md.lineHeight * scale;
   const gap = theme.spacing.sm * scale;
+
+  // Consistent border width to prevent button resizing when active state changes
+  const borderWidth = 2 * scale;
 
   return (
     <SpatialNavigationFocusableView onSelect={onSelect}>
@@ -65,22 +69,22 @@ const SpatialFilterButton = ({
             paddingHorizontal: paddingH,
             paddingVertical: paddingV,
             borderRadius,
-            backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: isFocused
+            backgroundColor: isFocused
               ? theme.colors.accent.primary
               : isActive
-                ? theme.colors.accent.primary
-                : theme.colors.border.subtle,
+                ? 'transparent'
+                : theme.colors.overlay.button,
+            borderWidth,
+            borderColor: isFocused || isActive ? theme.colors.accent.primary : 'transparent',
           }}>
           <Ionicons
             name={icon}
-            size={iconSize}
-            color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+            size={scaledIconSize}
+            color={isFocused ? theme.colors.text.inverse : isActive ? theme.colors.accent.primary : theme.colors.text.primary}
           />
           <Text
             style={{
-              color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
+              color: isFocused ? theme.colors.text.inverse : isActive ? theme.colors.accent.primary : theme.colors.text.primary,
               fontSize,
               lineHeight,
               fontWeight: '500',
@@ -676,7 +680,7 @@ const createStyles = (theme: NovaTheme) =>
     filtersRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.sm,
+      gap: theme.spacing.lg, // Match details page actionRow gap
       marginBottom: theme.spacing.sm,
     },
   });
