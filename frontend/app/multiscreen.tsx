@@ -197,6 +197,12 @@ export default function MultiscreenPage() {
   const overlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRefs = useRef<(VideoPlayerHandle | null)[]>([]);
 
+  // Sync active audio index to context via useEffect to avoid setState during render
+  // (onFocus can be called synchronously during SpatialNavigationFocusableView render)
+  useEffect(() => {
+    setActiveAudioIndex(activeIndex);
+  }, [activeIndex, setActiveAudioIndex]);
+
   // Keep screen awake during multiscreen playback
   useEffect(() => {
     KeepAwake.activateKeepAwakeAsync();
@@ -253,6 +259,7 @@ export default function MultiscreenPage() {
   }, [resetOverlayTimeout]);
 
   // Handle focus change - always update focus visuals
+  // Note: setActiveAudioIndex is synced via useEffect to avoid setState during render
   const handleFocusChange = useCallback(
     (index: number) => {
       setFocusedIndex(index);
@@ -263,19 +270,18 @@ export default function MultiscreenPage() {
         return;
       }
       setActiveIndex(index);
-      setActiveAudioIndex(index);
     },
-    [setActiveAudioIndex, resetOverlayTimeout, expandedIndex],
+    [resetOverlayTimeout, expandedIndex],
   );
 
   // Handle active index change (update audio) - used by select handlers
+  // Note: setActiveAudioIndex is synced via useEffect to avoid setState during render
   const handleActiveChange = useCallback(
     (index: number) => {
       setActiveIndex(index);
-      setActiveAudioIndex(index);
       resetOverlayTimeout();
     },
-    [setActiveAudioIndex, resetOverlayTimeout],
+    [resetOverlayTimeout],
   );
 
   // Handle back button to exit multiscreen
