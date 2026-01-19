@@ -1810,8 +1810,16 @@ function LiveScreen() {
 
   // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus
   // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  // Use a ref-based key that increments each time modal opens to force remount and reset hasTVPreferredFocus
+  const modalKeyRef = useRef(0);
+  const wasModalVisibleRef = useRef(false);
+  if (isSelectionConfirmVisible && !wasModalVisibleRef.current) {
+    modalKeyRef.current += 1;
+  }
+  wasModalVisibleRef.current = isSelectionConfirmVisible;
+
   const selectionConfirmModal = isSelectionConfirmVisible ? (
-    <View style={styles.selectionModalOverlay} focusable={false}>
+    <View key={`modal-${modalKeyRef.current}`} style={styles.selectionModalOverlay} focusable={false}>
       <View style={styles.tvModalContainer} focusable={false}>
         <Text style={styles.tvModalTitle}>
           {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
