@@ -371,6 +371,9 @@ func main() {
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
 
+	// Create image proxy handler for resizing and caching TMDB images
+	imageHandler := handlers.NewImageHandler(settings.Cache.Directory)
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -391,6 +394,7 @@ func main() {
 		subtitlesHandler,
 		clientsHandler,
 		contentPreferencesHandler,
+		imageHandler,
 		accountsService,
 		sessionsService,
 		userService,

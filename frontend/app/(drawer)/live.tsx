@@ -35,7 +35,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV as isTVDevice, responsiveSize } from '@/theme/tokens/tvScale';
+import { isTV as isTVDevice, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -63,8 +63,8 @@ const SpatialHeaderButton = ({
   isActive?: boolean;
   theme: NovaTheme;
 }) => {
-  // TVActionButton scale: 1.375 for tvOS, 1.71875 for Android TV
-  const scale = Platform.OS === 'android' ? 1.71875 : 1.375;
+  // Use tvScale for consistent sizing across TV platforms
+  const scale = tvScale(1.375, 1);
   const iconSize = 24 * scale;
   const paddingH = theme.spacing.sm * scale;
   const paddingV = theme.spacing.sm * scale;
@@ -253,18 +253,19 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
     );
 
     if (isTV) {
-      return (
-        <Pressable
-          key={channel.id}
-          onPress={handlePress}
-          onLongPress={handleLongPress}
-          delayLongPress={500}
-          onFocus={handleCardFocus}
-          hasTVPreferredFocus={isFirstInList}
-          tvParallaxProperties={{ enabled: false }}>
-          {({ focused }: { focused: boolean }) => renderCardContent(focused)}
-        </Pressable>
+      const cardContent = (
+        <SpatialNavigationFocusableView
+          onSelect={handlePress}
+          onLongSelect={handleLongPress}
+          onFocus={handleCardFocus}>
+          {({ isFocused }: { isFocused: boolean }) => renderCardContent(isFocused)}
+        </SpatialNavigationFocusableView>
       );
+
+      if (isFirstInList) {
+        return <DefaultFocus key={channel.id}>{cardContent}</DefaultFocus>;
+      }
+      return cardContent;
     }
 
     return (
@@ -2610,10 +2611,10 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       gap: theme.spacing.md,
     },
     tvActionModalButton: {
-      // TVActionButton scale: 1.375 for tvOS, 1.71875 for Android TV
-      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      // TVActionButton consistent scaling using tvScale
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -2627,8 +2628,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvActionModalButtonText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
     },
     tvActionModalButtonTextFocused: {
@@ -2714,9 +2715,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     // TVActionButton styling for filter modal close button
     filterModalCloseButton: {
-      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -2729,8 +2730,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     filterModalCloseButtonText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
     },
     filterModalCloseButtonTextFocused: {
@@ -2757,15 +2758,15 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvModalTitle: {
       ...theme.typography.title.xl,
-      fontSize: theme.typography.title.xl.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.title.xl.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.title.xl.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.title.xl.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
       textAlign: 'center',
     },
     tvModalSubtitle: {
       ...theme.typography.body.md,
-      fontSize: theme.typography.body.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.body.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.body.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.body.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.secondary,
       textAlign: 'center',
     },
@@ -2776,9 +2777,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       width: '100%',
     },
     tvModalButton: {
-      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -2809,8 +2810,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvModalButtonText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
     },
     tvModalButtonTextFocused: {

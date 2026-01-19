@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-n
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { tvScale } from '@/theme/tokens/tvScale';
 
 interface CategoryFilterModalProps {
   visible: boolean;
@@ -248,10 +249,10 @@ const createStyles = (theme: NovaTheme) =>
       borderBottomColor: theme.colors.border.subtle,
     },
     actionButton: {
-      // TVActionButton scale: 1.375 for tvOS, 1.71875 for Android TV
-      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      // TVActionButton consistent scaling using tvScale
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -262,8 +263,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     actionButtonText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
     },
     actionButtonTextFocused: {
@@ -277,7 +278,7 @@ const createStyles = (theme: NovaTheme) =>
       flexDirection: 'row',
       alignItems: 'center',
       padding: theme.spacing.lg,
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -308,8 +309,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     categoryText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
       flex: 1,
     },
@@ -326,9 +327,9 @@ const createStyles = (theme: NovaTheme) =>
       alignItems: 'center',
     },
     closeButton: {
-      paddingHorizontal: theme.spacing.lg * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      paddingVertical: theme.spacing.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -341,8 +342,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     closeButtonText: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * (Platform.OS === 'android' ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (Platform.OS === 'android' ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
     },
     closeButtonTextFocused: {

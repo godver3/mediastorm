@@ -1,6 +1,33 @@
 // API service for strmr backend integration
 
+import { Platform } from 'react-native';
 import { getApiConfig } from '../config/api';
+
+// Network request profiling
+const DEBUG_API_TIMING = __DEV__ && true; // Set to true to enable API request timing
+const apiRequestStats: { endpoint: string; duration: number; method: string }[] = [];
+let apiRequestCount = 0;
+let totalApiTime = 0;
+
+// Log API stats periodically
+if (DEBUG_API_TIMING && Platform.isTV) {
+  setInterval(() => {
+    if (apiRequestCount > 0) {
+      const avgTime = totalApiTime / apiRequestCount;
+      const slowRequests = apiRequestStats.filter((r) => r.duration > 500).slice(-5);
+      console.log(
+        `[API:Perf] ${apiRequestCount} requests, avg=${avgTime.toFixed(0)}ms` +
+          (slowRequests.length > 0
+            ? `, slow: ${slowRequests.map((r) => `${r.endpoint}=${r.duration.toFixed(0)}ms`).join(', ')}`
+            : ''),
+      );
+      // Reset counters
+      apiRequestCount = 0;
+      totalApiTime = 0;
+      apiRequestStats.length = 0;
+    }
+  }, 10000);
+}
 
 export interface ApiError extends Error {
   status?: number;
@@ -920,7 +947,20 @@ class ApiService {
       throw error;
     }
 
+    const requestStartTime = DEBUG_API_TIMING ? performance.now() : 0;
     const response = await fetch(url, requestInit);
+
+    if (DEBUG_API_TIMING && requestStartTime) {
+      const duration = performance.now() - requestStartTime;
+      apiRequestCount++;
+      totalApiTime += duration;
+      if (duration > 200) {
+        apiRequestStats.push({ endpoint, duration, method: options.method || 'GET' });
+      }
+      if (duration > 1000) {
+        console.log(`[API:Perf] Slow request: ${options.method || 'GET'} ${endpoint} took ${duration.toFixed(0)}ms`);
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text();

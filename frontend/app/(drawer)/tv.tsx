@@ -13,12 +13,13 @@ import { useTheme } from '@/theme';
 import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import MediaGrid from '../../components/MediaGrid';
 import { Title } from '../../services/api';
+import { DefaultFocus, SpatialNavigationFocusableView, SpatialNavigationNode } from '@/services/tv-navigation';
 
-// Native preference button for TV platforms
-const NativePreferenceButton = ({
+// Preference button using spatial navigation for TV platforms
+const PreferenceButton = ({
   label,
   isActive,
   onPress,
@@ -36,41 +37,46 @@ const NativePreferenceButton = ({
   const fontSize = responsiveSize(22, 14);
   const borderRadius = responsiveSize(8, 6);
 
-  return (
-    <Pressable
-      onPress={onPress}
-      hasTVPreferredFocus={autoFocus}
-      tvParallaxProperties={{ enabled: false }}
-      style={({ focused }) => ({
-        paddingHorizontal: paddingH,
-        paddingVertical: paddingV,
-        borderRadius,
-        minWidth: responsiveSize(120, 80),
-        backgroundColor: focused
-          ? theme.colors.accent.primary
-          : isActive
-            ? theme.colors.accent.secondary
-            : theme.colors.overlay.button,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: focused
-          ? theme.colors.accent.primary
-          : isActive
-            ? theme.colors.accent.secondary
-            : theme.colors.border.subtle,
-      })}>
-      {({ focused }) => (
-        <Text
+  const content = (
+    <SpatialNavigationFocusableView onSelect={onPress}>
+      {({ isFocused }: { isFocused: boolean }) => (
+        <View
           style={{
-            fontSize,
-            fontWeight: '500',
-            textAlign: 'center',
-            color: focused ? theme.colors.text.inverse : theme.colors.text.primary,
+            paddingHorizontal: paddingH,
+            paddingVertical: paddingV,
+            borderRadius,
+            minWidth: responsiveSize(120, 80),
+            backgroundColor: isFocused
+              ? theme.colors.accent.primary
+              : isActive
+                ? theme.colors.accent.secondary
+                : theme.colors.overlay.button,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: isFocused
+              ? theme.colors.accent.primary
+              : isActive
+                ? theme.colors.accent.secondary
+                : theme.colors.border.subtle,
           }}>
-          {label}
-        </Text>
+          <Text
+            style={{
+              fontSize,
+              fontWeight: '500',
+              textAlign: 'center',
+              color: isFocused ? theme.colors.text.inverse : theme.colors.text.primary,
+            }}>
+            {label}
+          </Text>
+        </View>
       )}
-    </Pressable>
+    </SpatialNavigationFocusableView>
   );
+
+  if (autoFocus) {
+    return <DefaultFocus>{content}</DefaultFocus>;
+  }
+
+  return content;
 };
 
 export default function TVShowsScreen() {
@@ -117,34 +123,40 @@ export default function TVShowsScreen() {
       <View style={styles.container}>
         <Text style={styles.title}>TV Shows</Text>
 
-        <View style={styles.preferenceSection}>
-          <Text style={styles.sectionLabel}>Quality</Text>
-          <View style={styles.preferenceRow}>
-            {QUALITY_OPTIONS.map((option, index) => (
-              <NativePreferenceButton
-                key={option.value}
-                label={option.label}
-                isActive={preferences.quality === option.value}
-                onPress={() => updatePreferences({ quality: option.value })}
-                autoFocus={index === 0}
-                theme={theme}
-              />
-            ))}
-          </View>
+        <SpatialNavigationNode orientation="vertical">
+          <View style={styles.preferenceSection}>
+            <Text style={styles.sectionLabel}>Quality</Text>
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={styles.preferenceRow}>
+                {QUALITY_OPTIONS.map((option, index) => (
+                  <PreferenceButton
+                    key={option.value}
+                    label={option.label}
+                    isActive={preferences.quality === option.value}
+                    onPress={() => updatePreferences({ quality: option.value })}
+                    autoFocus={index === 0}
+                    theme={theme}
+                  />
+                ))}
+              </View>
+            </SpatialNavigationNode>
 
-          <Text style={styles.sectionLabel}>Era</Text>
-          <View style={styles.preferenceRow}>
-            {YEAR_RANGE_OPTIONS.map((option) => (
-              <NativePreferenceButton
-                key={option.value}
-                label={option.label}
-                isActive={preferences.yearRange === option.value}
-                onPress={() => updatePreferences({ yearRange: option.value })}
-                theme={theme}
-              />
-            ))}
+            <Text style={styles.sectionLabel}>Era</Text>
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={styles.preferenceRow}>
+                {YEAR_RANGE_OPTIONS.map((option) => (
+                  <PreferenceButton
+                    key={option.value}
+                    label={option.label}
+                    isActive={preferences.yearRange === option.value}
+                    onPress={() => updatePreferences({ yearRange: option.value })}
+                    theme={theme}
+                  />
+                ))}
+              </View>
+            </SpatialNavigationNode>
           </View>
-        </View>
+        </SpatialNavigationNode>
 
         <MediaGrid
           title={`Trending TV Shows • ${qualityLabel}`}
@@ -153,7 +165,7 @@ export default function TVShowsScreen() {
           error={error}
           onItemPress={handleTVShowPress}
           badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
-          useNativeFocus={true}
+          useNativeFocus={false}
         />
       </View>
     </>

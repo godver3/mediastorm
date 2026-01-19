@@ -1,8 +1,22 @@
 diff --git a/node_modules/react-tv-space-navigation/dist/index.js b/node_modules/react-tv-space-navigation/dist/index.js
-index 68332a1..4665fd7 100644
+index 68332a1..9165768 100644
 --- a/node_modules/react-tv-space-navigation/dist/index.js
 +++ b/node_modules/react-tv-space-navigation/dist/index.js
-@@ -5310,7 +5310,7 @@ module.exports = toNumber;
+@@ -1637,10 +1637,12 @@ const InnerFocusableView = (0, react_1.forwardRef)(({
+   const accessibilityState = (0, react_1.useMemo)(() => ({
+     selected: isFocused
+   }), [isFocused]);
++  const isAndroidTV = react_native_1.Platform.OS === 'android' && react_native_1.Platform.isTV;
+   return (0, jsx_runtime_1.jsx)(react_native_1.View, Object.assign({
+     ref: ref,
+     style: style,
+-    accessibilityState: accessibilityState
++    accessibilityState: accessibilityState,
++    focusable: isAndroidTV ? true : undefined
+   }, accessibilityProps, viewProps, webProps, {
+     children: typeof children === 'function' ? children({
+       isFocused,
+@@ -5310,7 +5312,7 @@ module.exports = toNumber;
   * This source code is licensed under the MIT license found in the
   * LICENSE file in the root directory of this source tree.
   */

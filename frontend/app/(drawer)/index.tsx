@@ -47,6 +47,7 @@ import {
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import Animated, {
   useAnimatedRef,
   scrollTo as reanimatedScrollTo,
@@ -153,9 +154,38 @@ const getConnectionStatusMessage = (
 
 const MIN_CONTINUE_WATCHING_PERCENT = 5;
 const MAX_HERO_ITEMS = 10;
+
+// Memory optimization: cap cache sizes to prevent unbounded growth
+const MAX_SERIES_OVERVIEWS_CACHE = 200; // Keep overviews for ~200 series
+const MAX_WATCHLIST_YEARS_CACHE = 200; // Keep years for ~200 items
+const MAX_HERO_KEYS_CACHE = 100; // Track up to 100 hero item keys
 const RECENT_SERIES_WATCH_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
 
 const AUTH_WARNING_MESSAGE = 'Backend URL/PIN authorization failed. Verify your settings.';
+
+// Helper to cap Map size by removing oldest entries (FIFO eviction)
+function capMapSize<K, V>(map: Map<K, V>, maxSize: number): Map<K, V> {
+  if (map.size <= maxSize) {
+    return map;
+  }
+  const entries = Array.from(map.entries());
+  const trimmed = entries.slice(entries.length - maxSize);
+  return new Map(trimmed);
+}
+
+// Helper to cap Set size by removing oldest entries (FIFO eviction)
+function capSetSize<T>(set: Set<T>, maxSize: number): void {
+  if (set.size <= maxSize) {
+    return;
+  }
+  const toRemove = set.size - maxSize;
+  let removed = 0;
+  for (const item of set) {
+    if (removed >= toRemove) break;
+    set.delete(item);
+    removed++;
+  }
+}
 
 function isAuthErrorMessage(rawMessage: string | null | undefined): boolean {
   if (!rawMessage) {
@@ -202,21 +232,35 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Debug logging for index page render/load analysis
-const DEBUG_INDEX_RENDERS = __DEV__ && true; // Set to false to disable
+const DEBUG_INDEX_RENDERS = __DEV__ && false; // Set to true for render debugging
+const DEBUG_PERF = __DEV__ && false; // Performance profiling
 let indexRenderCount = 0;
+let renderStartTime = 0;
 
 function IndexScreen() {
-  // Memory monitoring disabled - was causing lag due to native bridge calls
-  // Uncomment to debug memory issues:
-  // useMemoryMonitor('HomePage', 60000, isAndroidTV);
+  // Memory monitoring - logs every 60s on Android TV
+  useMemoryMonitor('IndexPage', 60000, DEBUG_PERF && isAndroidTV);
 
-  // Track render count
+  // Track render count and timing
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
+
+  if (DEBUG_PERF) {
+    renderStartTime = performance.now();
+  }
+
   if (DEBUG_INDEX_RENDERS) {
     indexRenderCount += 1;
     console.log(`[IndexPage] Render #${indexRenderCount} (component instance: ${renderCountRef.current})`);
   }
+
+  // Log render completion time
+  React.useLayoutEffect(() => {
+    if (DEBUG_PERF && renderStartTime) {
+      const elapsed = performance.now() - renderStartTime;
+      console.log(`[IndexPage:Perf] Render #${indexRenderCount} took ${elapsed.toFixed(1)}ms`);
+    }
+  });
 
   const { height: screenHeight, width: screenWidth } = useTVDimensions();
   const theme = useTheme();
@@ -536,26 +580,19 @@ function IndexScreen() {
   const shouldUseMobileLayout = isMobileDevice;
 
   const triggerReloadAfterAuthFailure = useCallback(() => {
-    console.log('[Homepage] Triggering full API reload');
     const callAndReport = (label: string, fn?: () => Promise<unknown> | void) => {
       if (!fn) {
-        console.warn(`[Homepage] No reload function for ${label}`);
         return;
       }
-      console.log(`[Homepage] Reloading ${label}...`);
       try {
         const result = fn();
         if (result && typeof (result as Promise<unknown>).then === 'function') {
-          (result as Promise<unknown>)
-            .then(() => {
-              console.log(`[Homepage] ${label} reload succeeded`);
-            })
-            .catch((error) => {
-              console.warn(`[Homepage] ${label} reload failed`, error);
-            });
+          (result as Promise<unknown>).catch(() => {
+            // Silently ignore reload failures
+          });
         }
-      } catch (error) {
-        console.warn(`[Homepage] ${label} reload threw`, error);
+      } catch {
+        // Silently ignore reload errors
       }
     };
 
@@ -576,7 +613,6 @@ function IndexScreen() {
 
     // If settingsLastLoadedAt changed, trigger a full reload
     if (settingsLastLoadedAt !== null && settingsLastLoadedAt !== previousSettingsLoadedAtRef.current) {
-      console.log('[Homepage] Settings changed, triggering full reload');
       previousSettingsLoadedAtRef.current = settingsLastLoadedAt;
       triggerReloadAfterAuthFailure();
     }
@@ -593,7 +629,6 @@ function IndexScreen() {
 
     // If backend just became reachable, trigger a full reload
     if (isBackendReachable && !previousBackendReachableRef.current) {
-      console.log('[Homepage] Backend became reachable, triggering full reload');
       triggerReloadAfterAuthFailure();
     }
     previousBackendReachableRef.current = isBackendReachable;
@@ -609,6 +644,32 @@ function IndexScreen() {
 
       return undefined;
     }, [hasAuthFailure, triggerReloadAfterAuthFailure]),
+  );
+
+  // Memory optimization: clear large caches when screen loses focus
+  // This reduces memory pressure when navigating to player/details
+  useFocusEffect(
+    useCallback(() => {
+      // Called when screen gains focus - nothing to do
+      return () => {
+        // Called when screen loses focus - clear caches to free memory
+        if (Platform.isTV) {
+          // Clear custom list data (can be refetched when returning)
+          setCustomListData({});
+          setCustomListTotals({});
+          setCustomListUnfilteredTotals({});
+          fetchedListUrlsRef.current.clear();
+
+          // Clear overview caches (will be refetched as needed)
+          setSeriesOverviews(new Map());
+          setWatchlistYears(new Map());
+
+          if (__DEV__) {
+            console.log('[IndexPage] Cleared caches on blur to free memory');
+          }
+        }
+      };
+    }, []),
   );
 
   // Reload data when screen becomes visible (including when navigating back from details)
@@ -853,7 +914,7 @@ function IndexScreen() {
       }
 
       if (updates.size > 0) {
-        setSeriesOverviews((prev) => new Map([...prev, ...updates]));
+        setSeriesOverviews((prev) => capMapSize(new Map([...prev, ...updates]), MAX_SERIES_OVERVIEWS_CACHE));
       }
     };
 
@@ -968,7 +1029,7 @@ function IndexScreen() {
       }
 
       if (updates.size > 0) {
-        setWatchlistYears((prev) => new Map([...prev, ...updates]));
+        setWatchlistYears((prev) => capMapSize(new Map([...prev, ...updates]), MAX_WATCHLIST_YEARS_CACHE));
       }
     };
 
@@ -1468,6 +1529,9 @@ function IndexScreen() {
       stableHeroItemsRef.current = [...stableHeroItemsRef.current, ...shuffledNew].slice(0, MAX_HERO_ITEMS);
     }
 
+    // Cap the keys set to prevent unbounded memory growth
+    capSetSize(heroItemKeysRef.current, MAX_HERO_KEYS_CACHE);
+
     return stableHeroItemsRef.current;
   }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards]);
 
@@ -1583,26 +1647,11 @@ function IndexScreen() {
             // Series ID format: "tmdb:tv:127235"
             // Remove the episode code (":S03E09") from the end
             const cardIdWithoutEpisode = String(card.id).replace(/:S\d{2}E\d{2}$/i, '');
-            console.log('[ContinueWatching] Metadata lookup:', {
-              cardId: card.id,
-              cardIdWithoutEpisode,
-              seriesId: state.seriesId,
-              matches: state.seriesId === cardIdWithoutEpisode,
-            });
             return state.seriesId === cardIdWithoutEpisode;
           })
         : isContinueWatchingMovie
           ? continueWatchingItems?.find((state) => state.seriesId === String(card.id))
           : null;
-
-      console.log('[ContinueWatching] Card select:', {
-        cardId: card.id,
-        cardMediaType: card.mediaType,
-        isContinueWatching,
-        hasMetadata: !!metadata,
-        nextEpisode: metadata?.nextEpisode,
-        continueWatchingItemsCount: continueWatchingItems?.length ?? 0,
-      });
 
       // Try to find series overview from card (pre-fetched), cache, watchlist, or fallback to card description
       const seriesId = metadata?.seriesId ?? String(card.id ?? '');
@@ -1631,8 +1680,6 @@ function IndexScreen() {
         initialSeason: metadata?.nextEpisode ? String(metadata.nextEpisode.seasonNumber ?? '') : '',
         initialEpisode: metadata?.nextEpisode ? String(metadata.nextEpisode.episodeNumber ?? '') : '',
       };
-
-      console.log('[ContinueWatching] Navigation params:', params);
 
       router.push({
         pathname: '/details',
@@ -1778,11 +1825,8 @@ function IndexScreen() {
 
       // Only handle when a continue watching item is focused
       if (focusedShelfKeyRef.current !== 'continue-watching' || !focusedDesktopCard) {
-        console.log('[Homepage] LongEnter ignored - not on continue watching shelf or no focused card');
         return;
       }
-
-      console.log('[Homepage] LongEnter detected on continue watching item:', focusedDesktopCard.id);
 
       // Extract the series ID from the card
       // For series: ID format is "tmdb:tv:127235:S03E09" (has episode code)
@@ -1809,9 +1853,12 @@ function IndexScreen() {
       // Close menu if open (no-op if already closed)
       closeMenu();
 
-      // Update shelf tracking and scroll vertically to shelf
+      // Only scroll vertically if shelf changed (skip on horizontal navigation)
+      const previousShelfKey = focusedShelfKeyRef.current;
       focusedShelfKeyRef.current = shelfKey;
-      scrollToShelf(shelfKey);
+      if (previousShelfKey !== shelfKey) {
+        scrollToShelf(shelfKey);
+      }
 
       // Debounced hero update - only update after focus settles
       if (focusDebounceRef.current) {
@@ -2246,7 +2293,7 @@ function IndexScreen() {
                       <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
                         {focusedDesktopCard.title}
                       </Text>
-                      {focusedDesktopCard.year && (
+                      {focusedDesktopCard.year != null && focusedDesktopCard.year > 0 && (
                         <Text
                           style={[
                             desktopStyles?.styles.topYear,
@@ -2295,7 +2342,7 @@ function IndexScreen() {
                     <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
                       {focusedDesktopCard.title}
                     </Text>
-                    {focusedDesktopCard.year && (
+                    {focusedDesktopCard.year != null && focusedDesktopCard.year > 0 && (
                       <Text style={desktopStyles?.styles.topYear}>{focusedDesktopCard.year}</Text>
                     )}
                     <Text style={desktopStyles?.styles.topDescription} numberOfLines={6}>
@@ -2659,7 +2706,6 @@ function VirtualizedShelf({
   const flatListRef = React.useRef<FlatList>(null);
   const isEmpty = cards.length === 0;
   const shouldCollapse = Boolean(collapseIfEmpty && isEmpty);
-  const lastFocusTimeRef = React.useRef<number>(0);
   // Track refs for non-TV platforms only
   const cardRefsMap = React.useRef<Map<number, View | null>>(new Map());
   const lastItemIndexRef = React.useRef<number>(cards.length - 1);
@@ -2733,18 +2779,9 @@ function VirtualizedShelf({
         if (card) callbacksRef.current.onCardSelect(card);
       },
       onFocus: (cardId: string | number, index: number) => {
-        const now = Date.now();
-        const timeSinceLastFocus = now - lastFocusTimeRef.current;
-
-        // Prevent rapid focus changes that can cause wrap-around bugs
-        if (Platform.isTV && timeSinceLastFocus < 50) {
-          return;
-        }
-
-        lastFocusTimeRef.current = now;
         const card = cardMapRef.current.get(cardId);
         if (card) {
-          // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update, focus key storage
+          // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update (debounced)
           callbacksRef.current.onShelfItemFocus(card, shelfKey, index);
         }
         scrollToFocusedItemRef.current(index);

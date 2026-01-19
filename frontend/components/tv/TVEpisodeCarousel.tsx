@@ -174,13 +174,10 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   );
 
   // Render episode thumbnail using SpatialNavigationFocusableView
-  // Uses refs to keep callback stable - prevents recreating when activeEpisode changes
   const renderEpisodeItem = useCallback(
     ({ item: episode }: { item: SeriesEpisode }) => {
-      // Read from refs at render time to get current values without callback recreation
-      const currentActive = activeEpisodeRef.current;
       const isSelected =
-        currentActive?.seasonNumber === episode.seasonNumber && currentActive?.episodeNumber === episode.episodeNumber;
+        activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
       const isWatched = isEpisodeWatchedRef.current?.(episode) ?? false;
       const progress = getEpisodeProgressRef.current?.(episode) ?? 0;
 
@@ -215,7 +212,9 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         </SpatialNavigationFocusableView>
       );
     },
-    [handleEpisodePress, onFocusRowChange, theme],
+    // Note: activeEpisode in deps is intentional - it recreates the callback to trigger list re-render
+    // when selection changes, updating the "Selected" badge on episode thumbnails
+    [handleEpisodePress, onFocusRowChange, theme, activeEpisode],
   );
 
   // Episode details panel content

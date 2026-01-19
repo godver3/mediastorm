@@ -110,7 +110,7 @@ const TVActionButton = memo(function TVActionButton({
 });
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | 'secondary') => {
-  const scale = Platform.OS === 'android' ? 1.71875 : 1.375;
+  const scale = tvScale(1.375, 1);
   const basePaddingVertical = hasIcon ? theme.spacing.sm : theme.spacing.md;
   const basePaddingHorizontal = hasIcon ? theme.spacing.sm : theme.spacing.lg;
 

@@ -40,7 +40,7 @@ import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
 import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { isTV } from '@/theme/tokens/tvScale';
+import { isTV, tvScale } from '@/theme/tokens/tvScale';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import {
@@ -2579,9 +2579,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     // Spatial navigation button styles (matching TVActionButton)
     spatialButton: {
-      paddingHorizontal: theme.spacing.lg * (isNonTvosTV ? 1.71875 : 1.375),
-      paddingVertical: theme.spacing.md * (isNonTvosTV ? 1.71875 : 1.375),
-      borderRadius: theme.radius.md * (isNonTvosTV ? 1.71875 : 1.375),
+      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
+      borderRadius: theme.radius.md * tvScale(1.375, 1),
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.overlay.button,
@@ -2598,8 +2598,8 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     spatialButtonText: {
       ...theme.typography.label.md,
       color: theme.colors.text.primary,
-      fontSize: theme.typography.label.md.fontSize * (isNonTvosTV ? 1.71875 : 1.375),
-      lineHeight: theme.typography.label.md.lineHeight * (isNonTvosTV ? 1.71875 : 1.375),
+      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
+      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
     },
     spatialButtonTextFocused: {
       color: theme.colors.text.inverse,

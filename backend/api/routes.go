@@ -83,6 +83,7 @@ func Register(
 	subtitlesHandler *handlers.SubtitlesHandler,
 	clientsHandler *handlers.ClientsHandler,
 	contentPreferencesHandler *handlers.ContentPreferencesHandler,
+	imageHandler *handlers.ImageHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -259,6 +260,12 @@ func Register(
 	// Static assets endpoint (public - rating icons, etc.)
 	staticHandler := handlers.NewStaticHandler()
 	api.PathPrefix("/static/").Handler(http.StripPrefix("/api/static/", staticHandler))
+
+	// Image proxy endpoint (public - no auth required for image loading)
+	if imageHandler != nil {
+		api.HandleFunc("/images/proxy", imageHandler.Proxy).Methods(http.MethodGet)
+		api.HandleFunc("/images/proxy", imageHandler.Options).Methods(http.MethodOptions)
+	}
 
 	// Admin endpoints for monitoring (master only)
 	adminHandler := handlers.NewAdminHandler(videoHandler.GetHLSManager())

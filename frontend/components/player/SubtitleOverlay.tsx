@@ -4,7 +4,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
-import { getTVScaleMultiplier, ANDROID_TV_TO_TVOS_RATIO } from '@/theme/tokens/tvScale';
+import { getTVScaleMultiplier, tvScale } from '@/theme/tokens/tvScale';
 
 /** A segment of styled text within a subtitle cue */
 export interface StyledTextSegment {
@@ -325,9 +325,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         if (Platform.isTV) {
           // TV control bar calculation:
           // - Theme spacing uses legacy scale factors: tvOS 0.85, Android TV 0.5
-          // - FocusablePressable uses: scale = (android ? 1.71875 : 1.375) * getTVScaleMultiplier()
+          // - FocusablePressable uses: scale = tvScale(1.375, 1) * getTVScaleMultiplier()
           const themeScaleFactor = isAndroidTV ? 0.5 : 0.85;
-          const buttonScale = (isAndroidTV ? 1.71875 : 1.375) * getTVScaleMultiplier();
+          const buttonScale = tvScale(1.375, 1) * getTVScaleMultiplier();
 
           // Base spacing values (before theme scaling)
           const baseSpacingSm = 8;
