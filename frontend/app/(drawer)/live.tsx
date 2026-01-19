@@ -2795,6 +2795,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.overlay.button,
       alignItems: 'center',
+      justifyContent: 'center',
       alignSelf: 'center',
       minWidth: 200,
     },
@@ -2825,6 +2826,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
       lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
       color: theme.colors.text.primary,
+      textAlign: 'center',
     },
     tvModalButtonTextFocused: {
       color: theme.colors.text.inverse,
