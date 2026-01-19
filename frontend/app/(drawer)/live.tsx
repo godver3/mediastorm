@@ -1834,7 +1834,12 @@ function LiveScreen() {
               focused && styles.tvModalButtonDangerFocused,
             ]}>
             {({ focused }) => (
-              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
+              <Text
+                style={[
+                  styles.tvModalButtonText,
+                  styles.tvModalButtonDangerText,
+                  focused && styles.tvModalButtonDangerTextFocused,
+                ]}>
                 Cancel Selection
               </Text>
             )}
@@ -2779,32 +2784,31 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       textAlign: 'center',
     },
     tvModalActions: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: theme.spacing.xl,
-      width: '100%',
+      gap: theme.spacing.md,
+      alignItems: 'center',
     },
     tvModalButton: {
-      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
       paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
+      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
       borderRadius: theme.radius.md * tvScale(1.375, 1),
-      backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
-      flex: 1,
+      backgroundColor: theme.colors.overlay.button,
       alignItems: 'center',
+      alignSelf: 'center',
+      minWidth: 200,
     },
     tvModalButtonFocused: {
       borderColor: theme.colors.accent.primary,
       backgroundColor: theme.colors.accent.primary,
     },
     tvModalButtonDanger: {
+      borderColor: theme.colors.status.danger,
       backgroundColor: theme.colors.status.danger + '20',
-      borderColor: theme.colors.status.danger + '40',
     },
     tvModalButtonDangerFocused: {
       borderColor: theme.colors.status.danger,
-      backgroundColor: theme.colors.status.danger,
+      backgroundColor: theme.colors.status.danger + '30',
     },
     tvModalButtonPrimary: {
       backgroundColor: theme.colors.accent.primary,
@@ -2824,6 +2828,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     tvModalButtonTextFocused: {
       color: theme.colors.text.inverse,
+    },
+    tvModalButtonDangerText: {
+      color: theme.colors.status.danger,
+    },
+    tvModalButtonDangerTextFocused: {
+      color: theme.colors.status.danger,
     },
     // Virtualized grid styles for TV
     virtualizedGrid: {
