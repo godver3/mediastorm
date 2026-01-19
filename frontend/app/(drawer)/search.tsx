@@ -30,7 +30,7 @@ import {
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
-import { responsiveSize } from '@/theme/tokens/tvScale';
+import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
 
@@ -511,7 +511,9 @@ export default function SearchScreen() {
         style={styles.scrollView}
         bounces={false}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={true}
+        // TV: disable native scroll - use programmatic scrolling only to prevent
+        // native focus from moving the grid when drawer is open
+        scrollEnabled={!Platform.isTV}
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}
         removeClippedSubviews={Platform.isTV}
@@ -623,82 +625,80 @@ export default function SearchScreen() {
                     inputRef.current?.blur();
                   }}>
                   {({ isFocused: textInputFocused }: { isFocused: boolean }) => (
-                    <Pressable tvParallaxProperties={{ enabled: false }}>
-                      <View
-                        style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
-                        pointerEvents={isMenuOpen ? 'none' : 'auto'}>
-                        <View style={styles.searchInputContent}>
-                          {!isCompact && (
-                            <MaterialCommunityIcons
-                              name="magnify"
-                              style={styles.searchIcon}
-                              size={isCompact ? 20 : 28}
-                            />
-                          )}
-                          <TextInput
-                            ref={inputRef}
-                            style={[styles.searchInput, textInputFocused && styles.searchInputFocused]}
-                            placeholder="Search for movies or TV shows"
-                            placeholderTextColor={theme.colors.text.muted}
-                            {...(Platform.isTV ? { defaultValue: query } : { value: query })}
-                            onChangeText={handleChangeText}
-                            onFocus={handleFocus}
-                            onBlur={handleBlur}
-                            returnKeyType="search"
-                            onSubmitEditing={handleSubmit}
-                            autoCorrect={false}
-                            autoCapitalize="none"
-                            autoComplete="off"
-                            textContentType="none"
-                            spellCheck={false}
-                            clearButtonMode="never"
-                            enablesReturnKeyAutomatically={false}
-                            multiline={false}
-                            numberOfLines={1}
-                            underlineColorAndroid="transparent"
-                            importantForAutofill="no"
-                            disableFullscreenUI={true}
-                            editable={Platform.isTV ? textInputFocused && !isMenuOpen : !isMenuOpen}
-                            {...(Platform.OS === 'ios' &&
-                              Platform.isTV && {
-                                keyboardAppearance: 'dark',
-                              })}
+                    <View
+                      style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
+                      pointerEvents={isMenuOpen ? 'none' : 'auto'}>
+                      <View style={styles.searchInputContent}>
+                        {!isCompact && (
+                          <MaterialCommunityIcons
+                            name="magnify"
+                            style={styles.searchIcon}
+                            size={isCompact ? 20 : 28}
                           />
-                          {showClearButton ? (
-                            <Pressable
-                              accessibilityHint="Clears the current search"
-                              accessibilityLabel="Clear search"
-                              hitSlop={10}
-                              onPress={handleClearSearch}
-                              style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}>
-                              <MaterialCommunityIcons
-                                name="close"
-                                style={styles.clearButtonIcon}
-                                size={isCompact ? 22 : 26}
-                              />
-                            </Pressable>
-                          ) : null}
-                        </View>
+                        )}
+                        <TextInput
+                          ref={inputRef}
+                          style={[styles.searchInput, textInputFocused && styles.searchInputFocused]}
+                          placeholder="Search for movies or TV shows"
+                          placeholderTextColor={theme.colors.text.muted}
+                          {...(Platform.isTV ? { defaultValue: query } : { value: query })}
+                          onChangeText={handleChangeText}
+                          onFocus={handleFocus}
+                          onBlur={handleBlur}
+                          returnKeyType="search"
+                          onSubmitEditing={handleSubmit}
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          autoComplete="off"
+                          textContentType="none"
+                          spellCheck={false}
+                          clearButtonMode="never"
+                          enablesReturnKeyAutomatically={false}
+                          multiline={false}
+                          numberOfLines={1}
+                          underlineColorAndroid="transparent"
+                          importantForAutofill="no"
+                          disableFullscreenUI={true}
+                          editable={Platform.isTV ? textInputFocused && !isMenuOpen : !isMenuOpen}
+                          {...(Platform.OS === 'ios' &&
+                            Platform.isTV && {
+                              keyboardAppearance: 'dark',
+                            })}
+                        />
+                        {showClearButton ? (
+                          <Pressable
+                            accessibilityHint="Clears the current search"
+                            accessibilityLabel="Clear search"
+                            hitSlop={10}
+                            onPress={handleClearSearch}
+                            style={({ pressed }) => [styles.clearButton, pressed && styles.clearButtonPressed]}>
+                            <MaterialCommunityIcons
+                              name="close"
+                              style={styles.clearButtonIcon}
+                              size={isCompact ? 22 : 26}
+                            />
+                          </Pressable>
+                        ) : null}
                       </View>
-                    </Pressable>
+                    </View>
                   )}
                 </SpatialNavigationFocusableView>
               </DefaultFocus>
 
-              {/* Filter buttons */}
+              {/* Filter buttons - styled to match TVActionButton */}
               <SpatialNavigationNode orientation="horizontal">
                 <View style={styles.filtersRow}>
                   {filterOptions.map((option) => {
                     const isFilterActive = filter === option.key;
-                    // Responsive sizes matching watchlist NativeFilterButton
-                    const iconSize = responsiveSize(36, 20);
-                    const paddingH = responsiveSize(28, 14);
-                    const paddingV = responsiveSize(16, 8);
-                    const borderRadius = responsiveSize(12, 6);
-                    const fontSize = responsiveSize(24, 14);
-                    const lineHeight = responsiveSize(32, 18);
-                    const gap = responsiveSize(12, 6);
-                    const borderWidth = responsiveSize(6, 2);
+                    // Use same scaling approach as TVActionButton for consistent sizing
+                    const scale = tvScale(1.375, 1);
+                    const iconSize = 24 * scale;
+                    const paddingH = theme.spacing.md * scale;
+                    const paddingV = theme.spacing.sm * scale;
+                    const borderRadius = theme.radius.md * scale;
+                    const fontSize = theme.typography.label.md.fontSize * scale;
+                    const lineHeight = theme.typography.label.md.lineHeight * scale;
+                    const gap = theme.spacing.sm * scale;
 
                     return (
                       <SpatialNavigationFocusableView key={option.key} onSelect={() => setFilter(option.key)}>
@@ -712,12 +712,12 @@ export default function SearchScreen() {
                               paddingVertical: paddingV,
                               borderRadius,
                               backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
-                              borderWidth,
+                              borderWidth: StyleSheet.hairlineWidth,
                               borderColor: isFocused
                                 ? theme.colors.accent.primary
                                 : isFilterActive
                                   ? theme.colors.accent.primary
-                                  : 'transparent',
+                                  : theme.colors.border.subtle,
                             }}>
                             <Ionicons
                               name={option.icon}

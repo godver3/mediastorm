@@ -800,7 +800,9 @@ const MediaGrid = React.memo(
           contentContainerStyle={styles.grid}
           bounces={false}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={true}
+          // TV: disable native scroll - use programmatic scrolling only to prevent
+          // native focus from moving the grid when drawer is open
+          scrollEnabled={!Platform.isTV}
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
           removeClippedSubviews={Platform.isTV}

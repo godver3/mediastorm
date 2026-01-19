@@ -21,7 +21,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
-import { responsiveSize } from '@/theme/tokens/tvScale';
+import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
@@ -30,7 +30,7 @@ const INITIAL_LOAD_COUNT = 30;
 const LOAD_MORE_COUNT = 30;
 
 // Spatial navigation filter button - uses SpatialNavigationFocusableView for D-pad navigation
-// Uses responsiveSize() for unified scaling across tvOS and Android TV
+// Styled to match TVActionButton for visual consistency
 const SpatialFilterButton = ({
   label,
   icon,
@@ -44,15 +44,15 @@ const SpatialFilterButton = ({
   onSelect: () => void;
   theme: NovaTheme;
 }) => {
-  // Unified responsive sizing - design for 1920px width, scales automatically
-  const iconSize = responsiveSize(36, 20);
-  const paddingH = responsiveSize(28, 14);
-  const paddingV = responsiveSize(16, 8);
-  const borderRadius = responsiveSize(12, 6);
-  const fontSize = responsiveSize(24, 14);
-  const lineHeight = responsiveSize(32, 18);
-  const gap = responsiveSize(12, 6);
-  const borderWidth = responsiveSize(6, 2);
+  // Use same scaling approach as TVActionButton for consistent sizing
+  const scale = tvScale(1.375, 1);
+  const iconSize = 24 * scale;
+  const paddingH = theme.spacing.md * scale;
+  const paddingV = theme.spacing.sm * scale;
+  const borderRadius = theme.radius.md * scale;
+  const fontSize = theme.typography.label.md.fontSize * scale;
+  const lineHeight = theme.typography.label.md.lineHeight * scale;
+  const gap = theme.spacing.sm * scale;
 
   return (
     <SpatialNavigationFocusableView onSelect={onSelect}>
@@ -66,12 +66,12 @@ const SpatialFilterButton = ({
             paddingVertical: paddingV,
             borderRadius,
             backgroundColor: isFocused ? theme.colors.accent.primary : theme.colors.overlay.button,
-            borderWidth,
+            borderWidth: StyleSheet.hairlineWidth,
             borderColor: isFocused
               ? theme.colors.accent.primary
               : isActive
                 ? theme.colors.accent.primary
-                : 'transparent',
+                : theme.colors.border.subtle,
           }}>
           <Ionicons
             name={icon}

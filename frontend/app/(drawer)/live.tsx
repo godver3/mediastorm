@@ -1574,7 +1574,9 @@ function LiveScreen() {
                       ref={tvGridScrollRef}
                       style={styles.virtualizedGrid}
                       showsVerticalScrollIndicator={false}
-                      scrollEnabled={true}
+                      // TV: disable native scroll - use programmatic scrolling only to prevent
+                      // native focus from moving the grid when drawer is open
+                      scrollEnabled={false}
                       bounces={false}
                       contentInsetAdjustmentBehavior="never"
                       automaticallyAdjustContentInsets={false}

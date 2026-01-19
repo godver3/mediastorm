@@ -112,7 +112,8 @@ const TVActionButton = memo(function TVActionButton({
 const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | 'secondary') => {
   const scale = tvScale(1.375, 1);
   const basePaddingVertical = hasIcon ? theme.spacing.sm : theme.spacing.md;
-  const basePaddingHorizontal = hasIcon ? theme.spacing.sm : theme.spacing.lg;
+  // Add horizontal padding for comfortable spacing between content and button edges
+  const basePaddingHorizontal = hasIcon ? theme.spacing.md : theme.spacing.xl;
 
   return StyleSheet.create({
     button: {
