@@ -2084,7 +2084,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     actionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.sm,
+      gap: theme.spacing.lg,
+      marginBottom: theme.spacing.lg,
     },
     headerActionButton: {
       paddingHorizontal: isTV ? theme.spacing['2xl'] : theme.spacing.md,

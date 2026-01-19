@@ -613,31 +613,34 @@ export default function WatchlistScreen() {
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
           <SpatialNavigationNode orientation="vertical">
-            {/* Filter buttons row */}
-            <View style={styles.controlsRow}>
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.filtersRow}>
-                  {filterOptions.map((option, index) => {
-                    const button = (
-                      <SpatialFilterButton
-                        key={option.key}
-                        label={option.label}
-                        icon={option.icon}
-                        isActive={filter === option.key}
-                        onSelect={() => setFilter(option.key)}
-                        theme={theme}
-                      />
-                    );
-                    // Give first filter button default focus
-                    return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
-                  })}
-                </View>
-              </SpatialNavigationNode>
+            {/* Page title */}
+            <View style={styles.titleRow}>
+              <Text style={styles.title}>{pageTitle}</Text>
             </View>
+
+            {/* Filter buttons row */}
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={styles.filtersRow}>
+                {filterOptions.map((option, index) => {
+                  const button = (
+                    <SpatialFilterButton
+                      key={option.key}
+                      label={option.label}
+                      icon={option.icon}
+                      isActive={filter === option.key}
+                      onSelect={() => setFilter(option.key)}
+                      theme={theme}
+                    />
+                  );
+                  // Give first filter button default focus
+                  return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
+                })}
+              </View>
+            </SpatialNavigationNode>
 
             {/* Grid content */}
             <MediaGrid
-              title={`${pageTitle} · ${filterLabel}`}
+              title={filterLabel}
               items={filteredTitles}
               loading={loading}
               error={error}
@@ -670,17 +673,17 @@ const createStyles = (theme: NovaTheme) =>
       paddingHorizontal: theme.spacing.xl,
       paddingTop: theme.spacing.xl,
     },
-    controlsRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      flexWrap: 'wrap',
-      marginBottom: theme.spacing.sm,
+    titleRow: {
+      marginBottom: theme.spacing.lg,
+    },
+    title: {
+      ...theme.typography.title.xl,
+      color: theme.colors.text.primary,
     },
     filtersRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.lg, // Match details page actionRow gap
-      marginBottom: theme.spacing.sm,
+      gap: theme.spacing.lg,
+      marginBottom: theme.spacing.lg,
     },
   });
