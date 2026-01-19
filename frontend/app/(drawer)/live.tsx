@@ -1818,11 +1818,13 @@ function LiveScreen() {
   }
   wasModalVisibleRef.current = isSelectionConfirmVisible;
 
-  // Refs for focus trapping within modal
+  // Refs for focus trapping within modal (up to 3 buttons)
   const modalButton1Ref = useRef<View>(null);
   const modalButton2Ref = useRef<View>(null);
+  const modalButton3Ref = useRef<View>(null);
   const [modalButton1Handle, setModalButton1Handle] = useState<number | null>(null);
   const [modalButton2Handle, setModalButton2Handle] = useState<number | null>(null);
+  const [modalButton3Handle, setModalButton3Handle] = useState<number | null>(null);
 
   // Get node handles for focus trapping - use setTimeout to ensure refs are set after mount
   useEffect(() => {
@@ -1831,14 +1833,17 @@ function LiveScreen() {
       const timer = setTimeout(() => {
         const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
         const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
+        const handle3 = modalButton3Ref.current ? findNodeHandle(modalButton3Ref.current) : null;
         setModalButton1Handle(handle1);
         setModalButton2Handle(handle2);
+        setModalButton3Handle(handle3);
       }, 50);
       return () => clearTimeout(timer);
     } else {
       // Reset handles when modal closes
       setModalButton1Handle(null);
       setModalButton2Handle(null);
+      setModalButton3Handle(null);
     }
   }, [isSelectionConfirmVisible]);
 
@@ -1856,6 +1861,7 @@ function LiveScreen() {
               : 'No channels selected. Cancel selection mode?'}
         </Text>
         <View style={styles.tvModalActions} focusable={false}>
+          {/* Cancel - exits selection mode */}
           <Pressable
             ref={modalButton1Ref}
             onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
@@ -1871,37 +1877,38 @@ function LiveScreen() {
               </Text>
             )}
           </Pressable>
-          {selectedChannels.length >= 2 ? (
+          {/* Continue Selecting - just closes modal */}
+          <Pressable
+            ref={modalButton2Ref}
+            onPress={() => withSelectGuard(handleSelectionConfirmClose)}
+            hasTVPreferredFocus={selectedChannels.length < 2}
+            tvParallaxProperties={{ enabled: false }}
+            nextFocusUp={modalButton1Handle}
+            nextFocusDown={selectedChannels.length >= 2 ? modalButton3Handle : modalButton2Handle}
+            nextFocusLeft={modalButton2Handle}
+            nextFocusRight={modalButton2Handle}
+            style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
+            {({ focused }) => (
+              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
+                Continue Selecting
+              </Text>
+            )}
+          </Pressable>
+          {/* Launch - only when >= 2 channels selected */}
+          {selectedChannels.length >= 2 && (
             <Pressable
-              ref={modalButton2Ref}
+              ref={modalButton3Ref}
               onPress={() => withSelectGuard(handleSelectionConfirmLaunch)}
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
-              nextFocusUp={modalButton1Handle}
-              nextFocusDown={modalButton2Handle}
-              nextFocusLeft={modalButton2Handle}
-              nextFocusRight={modalButton2Handle}
+              nextFocusUp={modalButton2Handle}
+              nextFocusDown={modalButton3Handle}
+              nextFocusLeft={modalButton3Handle}
+              nextFocusRight={modalButton3Handle}
               style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
               {({ focused }) => (
                 <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
                   {`Launch (${selectedChannels.length})`}
-                </Text>
-              )}
-            </Pressable>
-          ) : (
-            <Pressable
-              ref={modalButton2Ref}
-              onPress={() => withSelectGuard(handleSelectionConfirmClose)}
-              hasTVPreferredFocus={true}
-              tvParallaxProperties={{ enabled: false }}
-              nextFocusUp={modalButton1Handle}
-              nextFocusDown={modalButton2Handle}
-              nextFocusLeft={modalButton2Handle}
-              nextFocusRight={modalButton2Handle}
-              style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
-              {({ focused }) => (
-                <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
-                  Continue Selecting
                 </Text>
               )}
             </Pressable>
@@ -2824,7 +2831,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       alignItems: 'center',
       justifyContent: 'center',
       alignSelf: 'center',
-      minWidth: 200,
     },
     tvModalButtonFocused: {
       borderColor: theme.colors.accent.primary,
