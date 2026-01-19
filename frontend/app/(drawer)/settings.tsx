@@ -1637,7 +1637,8 @@ function SettingsScreen() {
                       style={[
                         styles.spatialButtonText,
                         isFocused && styles.spatialButtonTextFocused,
-                      ]}>
+                      ]}
+                      numberOfLines={1}>
                       {item.label}
                     </Text>
                   </View>
@@ -1666,7 +1667,8 @@ function SettingsScreen() {
                             style={[
                               styles.spatialButtonText,
                               isFocused && styles.spatialButtonTextFocused,
-                            ]}>
+                            ]}
+                            numberOfLines={1}>
                             {btn.label}
                           </Text>
                         </View>
@@ -1739,7 +1741,8 @@ function SettingsScreen() {
                           style={[
                             styles.spatialButtonText,
                             isFocused && styles.spatialButtonTextFocused,
-                          ]}>
+                          ]}
+                          numberOfLines={1}>
                           {updateButtonText}
                         </Text>
                       </View>
