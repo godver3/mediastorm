@@ -1824,15 +1824,23 @@ function LiveScreen() {
   const [modalButton1Handle, setModalButton1Handle] = useState<number | null>(null);
   const [modalButton2Handle, setModalButton2Handle] = useState<number | null>(null);
 
-  // Get node handles for focus trapping
+  // Get node handles for focus trapping - use setTimeout to ensure refs are set after mount
   useEffect(() => {
     if (isSelectionConfirmVisible) {
-      const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
-      const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
-      setModalButton1Handle(handle1);
-      setModalButton2Handle(handle2);
+      // Small delay to ensure refs are populated after modal mounts
+      const timer = setTimeout(() => {
+        const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
+        const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
+        setModalButton1Handle(handle1);
+        setModalButton2Handle(handle2);
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      // Reset handles when modal closes
+      setModalButton1Handle(null);
+      setModalButton2Handle(null);
     }
-  }, [isSelectionConfirmVisible, modalKeyRef.current]);
+  }, [isSelectionConfirmVisible]);
 
   const selectionConfirmModal = isSelectionConfirmVisible ? (
     <View key={`modal-${modalKeyRef.current}`} style={styles.selectionModalOverlay} focusable={false}>
