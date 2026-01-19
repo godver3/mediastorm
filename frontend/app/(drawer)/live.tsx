@@ -1864,20 +1864,10 @@ function LiveScreen() {
             nextFocusDown={modalButton2Handle}
             nextFocusLeft={modalButton1Handle}
             nextFocusRight={modalButton1Handle}
-            style={({ focused }) => [
-              styles.tvModalButton,
-              styles.tvModalButtonDanger,
-              focused && styles.tvModalButtonFocused,
-              focused && styles.tvModalButtonDangerFocused,
-            ]}>
+            style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
             {({ focused }) => (
-              <Text
-                style={[
-                  styles.tvModalButtonText,
-                  styles.tvModalButtonDangerText,
-                  focused && styles.tvModalButtonDangerTextFocused,
-                ]}>
-                Cancel Selection
+              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
+                Cancel
               </Text>
             )}
           </Pressable>
@@ -1891,19 +1881,9 @@ function LiveScreen() {
               nextFocusDown={modalButton2Handle}
               nextFocusLeft={modalButton2Handle}
               nextFocusRight={modalButton2Handle}
-              style={({ focused }) => [
-                styles.tvModalButton,
-                styles.tvModalButtonPrimary,
-                focused && styles.tvModalButtonFocused,
-                focused && styles.tvModalButtonPrimaryFocused,
-              ]}>
+              style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
               {({ focused }) => (
-                <Text
-                  style={[
-                    styles.tvModalButtonText,
-                    styles.tvModalButtonPrimaryText,
-                    focused && styles.tvModalButtonTextFocused,
-                  ]}>
+                <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
                   {`Launch (${selectedChannels.length})`}
                 </Text>
               )}
