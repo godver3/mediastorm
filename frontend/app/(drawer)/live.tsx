@@ -2725,8 +2725,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       zIndex: 1000,
     },
     filterModalContainer: {
-      width: '60%',
-      maxWidth: 900,
+      width: '45%',
+      maxWidth: 600,
       backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.xl,
       borderWidth: 2,
@@ -2758,17 +2758,15 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     filterModalInputWrapperFocused: {
       borderColor: theme.colors.accent.primary,
     },
-    // Match search page input styling
     filterModalInput: {
-      fontSize: 32,
+      fontSize: theme.typography.body.lg.fontSize * tvScale(1.375, 1),
       color: theme.colors.text.primary,
       paddingHorizontal: theme.spacing.lg,
       paddingVertical: theme.spacing.md,
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
-      borderWidth: 3,
+      borderWidth: 2,
       borderColor: 'transparent',
-      minHeight: 60,
     },
     filterModalInputFocused: {
       borderColor: theme.colors.accent.primary,
@@ -2783,7 +2781,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
     },
-    // TVActionButton styling for filter modal close button
     filterModalCloseButton: {
       paddingVertical: theme.spacing.md * tvScale(1.375, 1),
       paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
@@ -2791,8 +2788,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       backgroundColor: theme.colors.overlay.button,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
-      width: '60%',
       alignItems: 'center',
+      minWidth: '30%',
     },
     filterModalCloseButtonFocused: {
       borderColor: theme.colors.accent.primary,
