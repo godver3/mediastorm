@@ -1811,8 +1811,8 @@ function LiveScreen() {
   // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus
   // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
   const selectionConfirmModal = isSelectionConfirmVisible ? (
-    <View style={styles.selectionModalOverlay}>
-      <View style={styles.tvModalContainer}>
+    <View style={styles.selectionModalOverlay} focusable={false}>
+      <View style={styles.tvModalContainer} focusable={false}>
         <Text style={styles.tvModalTitle}>
           {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
         </Text>
@@ -1823,7 +1823,7 @@ function LiveScreen() {
               ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
               : 'No channels selected. Cancel selection mode?'}
         </Text>
-        <View style={styles.tvModalActions}>
+        <View style={styles.tvModalActions} focusable={false}>
           <Pressable
             onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
             tvParallaxProperties={{ enabled: false }}
