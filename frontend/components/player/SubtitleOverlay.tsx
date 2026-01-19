@@ -656,20 +656,22 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     <View style={styles.container} pointerEvents="none" onLayout={handleLayout}>
       {shouldShowSubtitles && (
         <View style={[styles.subtitlePositioner, { bottom: subtitleBottomOffset }]}>
-          {activeCues.map((cue, index) => (
-            <View key={`${cue.startTime}-${index}`} style={styles.cueContainer}>
-              {/* White text (or grey for HDR content) */}
-              {/* Note: hdrTextColor is applied to both outer and inner Text elements because
-                  TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
-              <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
-                {cue.segments.map((segment, segIndex) => (
-                  <Text key={`seg-${segIndex}`} style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
-                    {segment.text}
-                  </Text>
-                ))}
-              </Text>
-            </View>
-          ))}
+          <View style={styles.cueContainer}>
+            {activeCues.map((cue, index) => (
+              <React.Fragment key={`${cue.startTime}-${index}`}>
+                {/* White text (or grey for HDR content) */}
+                {/* Note: hdrTextColor is applied to both outer and inner Text elements because
+                    TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
+                <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
+                  {cue.segments.map((segment, segIndex) => (
+                    <Text key={`seg-${segIndex}`} style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
+                      {segment.text}
+                    </Text>
+                  ))}
+                </Text>
+              </React.Fragment>
+            ))}
+          </View>
         </View>
       )}
     </View>
@@ -698,6 +700,7 @@ const styles = StyleSheet.create({
   },
   cueContainer: {
     // Subtitles grow upward from bottom (anchor at bottom line)
+    // Single container for all active cues - ensures multi-line subtitles have connected backgrounds
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'flex-end',
@@ -706,7 +709,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Platform.isTV ? 16 : 8,
     paddingVertical: Platform.isTV ? 6 : 3,
     borderRadius: Platform.isTV ? 6 : 4,
-    marginBottom: 2,
   },
   subtitleText: {
     color: '#FFFFFF',
