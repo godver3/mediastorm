@@ -1852,7 +1852,7 @@ function LiveScreen() {
             ref={modalButton1Ref}
             onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
             tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={modalButton2Handle}
+            nextFocusUp={modalButton1Handle}
             nextFocusDown={modalButton2Handle}
             nextFocusLeft={modalButton1Handle}
             nextFocusRight={modalButton1Handle}
@@ -1880,7 +1880,7 @@ function LiveScreen() {
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
               nextFocusUp={modalButton1Handle}
-              nextFocusDown={modalButton1Handle}
+              nextFocusDown={modalButton2Handle}
               nextFocusLeft={modalButton2Handle}
               nextFocusRight={modalButton2Handle}
               style={({ focused }) => [
@@ -1907,7 +1907,7 @@ function LiveScreen() {
               hasTVPreferredFocus={true}
               tvParallaxProperties={{ enabled: false }}
               nextFocusUp={modalButton1Handle}
-              nextFocusDown={modalButton1Handle}
+              nextFocusDown={modalButton2Handle}
               nextFocusLeft={modalButton2Handle}
               nextFocusRight={modalButton2Handle}
               style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
