@@ -4,7 +4,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
-import { getTVScaleMultiplier, tvScale } from '@/theme/tokens/tvScale';
+import { ANDROID_TV_TO_TVOS_RATIO, getTVScaleMultiplier, tvScale } from '@/theme/tokens/tvScale';
 
 /** A segment of styled text within a subtitle cue */
 export interface StyledTextSegment {

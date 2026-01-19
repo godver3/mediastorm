@@ -586,8 +586,6 @@ export default function WatchlistScreen() {
     [router],
   );
 
-  const filterLabel = filter === 'movie' ? 'Movies' : filter === 'series' ? 'TV Shows' : 'All';
-
   const emptyMessage = useMemo(() => {
     if (allTitles.length === 0) {
       if (isExploreMode) {
@@ -640,7 +638,6 @@ export default function WatchlistScreen() {
 
             {/* Grid content */}
             <MediaGrid
-              title={filterLabel}
               items={filteredTitles}
               loading={loading}
               error={error}

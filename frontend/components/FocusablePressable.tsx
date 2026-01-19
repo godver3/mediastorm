@@ -188,8 +188,9 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
 );
 
 const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
-  // Unified TV scaling using tvScale for consistent sizing
-  const scale = isTV ? tvScale(1.375, 1) * TV_SCALE : 1;
+  // Unified TV scaling: tvOS buttons 1.375x larger, Android TV auto-scales from tvOS
+  // tvOS: 1.375, Android TV: 1.375 * 0.55 ≈ 0.76, Mobile: 1
+  const scale = isTV ? 1.375 * TV_SCALE : 1;
   const basePaddingVertical = hasIcon ? theme.spacing.sm : theme.spacing.md;
   const basePaddingHorizontal = hasIcon ? theme.spacing.sm : theme.spacing.lg;
 

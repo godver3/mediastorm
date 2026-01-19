@@ -1,19 +1,36 @@
 import React, { useMemo } from 'react';
-import { StyleSheet } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useTheme } from '@/theme';
 import type { NovaTheme } from '@/theme';
-import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { tvScale } from '@/theme/tokens/tvScale';
 
 interface GoBackButtonProps {
   onSelect: () => void;
   onFocus?: () => void;
 }
 
+const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+
 const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
   const theme = useTheme();
   const styles = useMemo(() => useExitButtonStyles(theme), [theme]);
 
+  // Android TV: Use native Pressable with tvScale sizing
+  if (isAndroidTV) {
+    return (
+      <Pressable
+        onPress={onSelect}
+        onFocus={onFocus}
+        style={({ focused }) => [styles.exitBtn, styles.androidTvButton, focused && styles.androidTvButtonFocused]}>
+        {({ focused }) => (
+          <Text style={[styles.androidTvText, focused && styles.androidTvTextFocused]}>Exit</Text>
+        )}
+      </Pressable>
+    );
+  }
+
+  // tvOS and mobile: Use FocusablePressable
   return (
     <FocusablePressable
       text={'Exit'}
@@ -26,16 +43,32 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
 };
 
 const useExitButtonStyles = (theme: NovaTheme) => {
-  // Unified TV scaling - tvOS is baseline, Android TV auto-derives
-  const tvScale = isTV ? getTVScaleMultiplier() : 1;
-
   return StyleSheet.create({
     exitBtn: {
       position: 'absolute',
       top: theme.spacing.lg,
       left: theme.spacing.lg,
-      // Scale minWidth for TV - designed for tvOS at 120px
-      minWidth: Math.round(120 * (isTV ? tvScale : 1)),
+    },
+    androidTvButton: {
+      paddingVertical: tvScale(14, 8),
+      paddingHorizontal: tvScale(24, 16),
+      backgroundColor: theme.colors.overlay.button,
+      borderRadius: tvScale(theme.radius.md * 1.375, theme.radius.md),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+    },
+    androidTvButtonFocused: {
+      backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
+    },
+    androidTvText: {
+      fontSize: tvScale(20, 14),
+      lineHeight: tvScale(28, 20),
+      fontWeight: '500',
+      color: theme.colors.text.primary,
+    },
+    androidTvTextFocused: {
+      color: theme.colors.text.inverse,
     },
   });
 };
