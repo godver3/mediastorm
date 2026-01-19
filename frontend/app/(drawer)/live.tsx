@@ -1546,8 +1546,9 @@ function LiveScreen() {
               {/* Fixed header with title and action buttons */}
               <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
                 <Text style={styles.title}>Live TV</Text>
-                {renderTVHeaderButtons()}
               </View>
+              {/* Action buttons as direct child of vertical node for proper navigation back from grid */}
+              {renderTVHeaderButtons()}
 
               {/* Content area for TV */}
               {!hasPlaylistUrl ? (
