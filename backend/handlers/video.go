@@ -1628,7 +1628,7 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 				CodecLongName: strings.TrimSpace(stream.CodecLongName),
 				Channels:      stream.Channels,
 				SampleRate:    parseInt(stream.SampleRate),
-				BitRate:       parseInt64(stream.BitRate),
+				BitRate:       getStreamBitrate(stream.BitRate, stream.Tags),
 				ChannelLayout: strings.TrimSpace(stream.ChannelLayout),
 				Language:      normalizeTag(stream.Tags, "language"),
 				Title:         normalizeTag(stream.Tags, "title"),
@@ -1648,7 +1648,7 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 				CodecLongName:      strings.TrimSpace(stream.CodecLongName),
 				Width:              stream.Width,
 				Height:             stream.Height,
-				BitRate:            parseInt64(stream.BitRate),
+				BitRate:            getStreamBitrate(stream.BitRate, stream.Tags),
 				PixFmt:             strings.TrimSpace(stream.PixFmt),
 				Profile:            strings.TrimSpace(stream.Profile),
 				AvgFrameRate:       strings.TrimSpace(stream.AvgFrameRate),
@@ -1754,6 +1754,23 @@ func parseInt64(value string) int64 {
 		return 0
 	}
 	return v
+}
+
+// getStreamBitrate extracts bitrate from ffprobe stream data.
+// FFprobe doesn't always populate the bit_rate field, but MKV containers
+// often have BPS (bits per second) in the stream tags from mkvmerge statistics.
+func getStreamBitrate(bitRate string, tags map[string]string) int64 {
+	// Try standard bit_rate field first
+	if br := parseInt64(bitRate); br > 0 {
+		return br
+	}
+	// Fall back to MKV BPS tag if available
+	if tags != nil {
+		if bps := parseInt64(tags["BPS"]); bps > 0 {
+			return bps
+		}
+	}
+	return 0
 }
 
 type audioPlanMode string
