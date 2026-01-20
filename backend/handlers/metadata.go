@@ -21,6 +21,7 @@ type metadataService interface {
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
+	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
 	StreamTrailer(context.Context, string, io.Writer) error
@@ -282,6 +283,45 @@ func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(details)
+}
+
+func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	collectionIDStr := strings.TrimSpace(query.Get("id"))
+	if collectionIDStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "collection id is required"})
+		return
+	}
+
+	collectionID, err := strconv.ParseInt(collectionIDStr, 10, 64)
+	if err != nil || collectionID <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid collection id"})
+		return
+	}
+
+	log.Printf("[metadata] fetching collection details collectionId=%d", collectionID)
+
+	details, err := h.Service.CollectionDetails(r.Context(), collectionID)
+	if err != nil {
+		log.Printf("[metadata] collection details error collectionId=%d err=%v", collectionID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	log.Printf("[metadata] collection details success collectionId=%d name=%q movieCount=%d", collectionID, details.Name, len(details.Movies))
+	for i, movie := range details.Movies {
+		log.Printf("[metadata]   movie[%d]: id=%s name=%q year=%d hasPoster=%v", i, movie.ID, movie.Name, movie.Year, movie.Poster != nil)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

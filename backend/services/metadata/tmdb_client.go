@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -604,14 +605,20 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 	}
 
 	var movie struct {
-		ID           int64  `json:"id"`
-		Title        string `json:"title"`
-		Overview     string `json:"overview"`
-		PosterPath   string `json:"poster_path"`
-		BackdropPath string `json:"backdrop_path"`
-		ReleaseDate  string `json:"release_date"`
-		IMDBId       string `json:"imdb_id"`
-		Runtime      int    `json:"runtime"`
+		ID                  int64  `json:"id"`
+		Title               string `json:"title"`
+		Overview            string `json:"overview"`
+		PosterPath          string `json:"poster_path"`
+		BackdropPath        string `json:"backdrop_path"`
+		ReleaseDate         string `json:"release_date"`
+		IMDBId              string `json:"imdb_id"`
+		Runtime             int    `json:"runtime"`
+		BelongsToCollection *struct {
+			ID           int64  `json:"id"`
+			Name         string `json:"name"`
+			PosterPath   string `json:"poster_path"`
+			BackdropPath string `json:"backdrop_path"`
+		} `json:"belongs_to_collection"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&movie); err != nil {
 		return nil, err
@@ -636,8 +643,119 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 	if backdrop := buildTMDBImage(movie.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
 		title.Backdrop = backdrop
 	}
+	if movie.BelongsToCollection != nil {
+		title.Collection = &models.Collection{
+			ID:   movie.BelongsToCollection.ID,
+			Name: movie.BelongsToCollection.Name,
+		}
+		if poster := buildTMDBImage(movie.BelongsToCollection.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Collection.Poster = poster
+		}
+		if backdrop := buildTMDBImage(movie.BelongsToCollection.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Collection.Backdrop = backdrop
+		}
+	}
 
 	return title, nil
+}
+
+// fetchCollectionDetails retrieves details of a movie collection from TMDB
+// including all movies in the collection
+func (c *tmdbClient) fetchCollectionDetails(ctx context.Context, collectionID int64) (*models.CollectionDetails, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "collection", fmt.Sprintf("%d", collectionID))
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	q := req.URL.Query()
+	q.Set("api_key", c.apiKey)
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		q.Set("language", normalizeLanguage(lang))
+	} else {
+		q.Set("language", "en-US")
+	}
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("tmdb collection details failed: %s", resp.Status)
+	}
+
+	var collection struct {
+		ID           int64  `json:"id"`
+		Name         string `json:"name"`
+		Overview     string `json:"overview"`
+		PosterPath   string `json:"poster_path"`
+		BackdropPath string `json:"backdrop_path"`
+		Parts        []struct {
+			ID           int64   `json:"id"`
+			Title        string  `json:"title"`
+			Overview     string  `json:"overview"`
+			PosterPath   string  `json:"poster_path"`
+			BackdropPath string  `json:"backdrop_path"`
+			ReleaseDate  string  `json:"release_date"`
+			Popularity   float64 `json:"popularity"`
+		} `json:"parts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&collection); err != nil {
+		return nil, err
+	}
+
+	details := &models.CollectionDetails{
+		ID:       collection.ID,
+		Name:     collection.Name,
+		Overview: collection.Overview,
+	}
+	if poster := buildTMDBImage(collection.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+		details.Poster = poster
+	}
+	if backdrop := buildTMDBImage(collection.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+		details.Backdrop = backdrop
+	}
+
+	// Convert parts to Title slice, sorted by release date
+	details.Movies = make([]models.Title, 0, len(collection.Parts))
+	for _, part := range collection.Parts {
+		title := models.Title{
+			ID:        fmt.Sprintf("tmdb:movie:%d", part.ID),
+			Name:      part.Title,
+			Overview:  part.Overview,
+			MediaType: "movie",
+			TMDBID:    part.ID,
+		}
+		if year := parseTMDBYear(part.ReleaseDate, ""); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(part.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(part.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+		title.Popularity = part.Popularity
+		details.Movies = append(details.Movies, title)
+	}
+
+	// Sort movies by year (release date)
+	sort.Slice(details.Movies, func(i, j int) bool {
+		return details.Movies[i].Year < details.Movies[j].Year
+	})
+
+	return details, nil
 }
 
 // fetchCredits retrieves cast information from TMDB for movies or TV shows

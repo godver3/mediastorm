@@ -2282,6 +2282,14 @@ func (s *Service) MovieDetails(ctx context.Context, req models.MovieDetailsQuery
 	return s.movieDetailsInternal(ctx, req, true)
 }
 
+// CollectionDetails fetches details for a movie collection from TMDB.
+func (s *Service) CollectionDetails(ctx context.Context, collectionID int64) (*models.CollectionDetails, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, fmt.Errorf("tmdb client not configured")
+	}
+	return s.tmdb.fetchCollectionDetails(ctx, collectionID)
+}
+
 // movieDetailsInternal is the shared implementation for MovieInfo and MovieDetails.
 func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDetailsQuery, includeRatings bool) (*models.Title, error) {
 	if s.client == nil {
@@ -2367,8 +2375,8 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		return nil, fmt.Errorf("unable to resolve tvdb id for movie and no tmdb fallback available")
 	}
 
-	// Check cache
-	cacheID := cacheKey("tvdb", "movie", "details", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
+	// Check cache (v2 adds collection data)
+	cacheID := cacheKey("tvdb", "movie", "details", "v2", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
 		log.Printf("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)
@@ -2596,6 +2604,11 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	if title.RuntimeMinutes == 0 && tmdbMovie.RuntimeMinutes > 0 {
 		title.RuntimeMinutes = tmdbMovie.RuntimeMinutes
 		log.Printf("[metadata] using TMDB runtime for movie tmdbId=%d runtime=%d", tmdbID, tmdbMovie.RuntimeMinutes)
+		updated = true
+	}
+	if title.Collection == nil && tmdbMovie.Collection != nil {
+		title.Collection = tmdbMovie.Collection
+		log.Printf("[metadata] using TMDB collection for movie tmdbId=%d collection=%q collectionId=%d", tmdbID, tmdbMovie.Collection.Name, tmdbMovie.Collection.ID)
 		updated = true
 	}
 

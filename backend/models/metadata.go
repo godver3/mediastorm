@@ -56,9 +56,10 @@ type Title struct {
 	Releases        []Release `json:"releases,omitempty"`
 	Theatrical      *Release  `json:"theatricalRelease,omitempty"`
 	HomeRelease     *Release  `json:"homeRelease,omitempty"`
-	Ratings         []Rating  `json:"ratings,omitempty"`        // Aggregated ratings from MDBList
-	Credits         *Credits  `json:"credits,omitempty"`        // Top billed cast
-	RuntimeMinutes  int       `json:"runtimeMinutes,omitempty"` // Runtime in minutes (movies only)
+	Ratings         []Rating    `json:"ratings,omitempty"`        // Aggregated ratings from MDBList
+	Credits         *Credits    `json:"credits,omitempty"`        // Top billed cast
+	RuntimeMinutes  int         `json:"runtimeMinutes,omitempty"` // Runtime in minutes (movies only)
+	Collection      *Collection `json:"collection,omitempty"`     // Movie collection (movies only)
 }
 
 type TrendingItem struct {
@@ -156,6 +157,24 @@ type CastMember struct {
 // Credits contains cast information for a title
 type Credits struct {
 	Cast []CastMember `json:"cast"`
+}
+
+// Collection represents a movie collection (e.g., "The Matrix Collection")
+type Collection struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Poster   *Image `json:"poster,omitempty"`
+	Backdrop *Image `json:"backdrop,omitempty"`
+}
+
+// CollectionDetails contains full collection info including all movies
+type CollectionDetails struct {
+	ID       int64   `json:"id"`
+	Name     string  `json:"name"`
+	Overview string  `json:"overview,omitempty"`
+	Poster   *Image  `json:"poster,omitempty"`
+	Backdrop *Image  `json:"backdrop,omitempty"`
+	Movies   []Title `json:"movies"`
 }
 
 // BatchSeriesDetailsRequest represents a batch request for multiple series
