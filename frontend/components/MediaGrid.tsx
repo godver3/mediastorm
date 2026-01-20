@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 
 import {
   ActivityIndicator,
+  FlatList,
   Image as RNImage,
   Platform,
   Pressable,
@@ -11,7 +12,6 @@ import {
   View,
 } from 'react-native';
 import { Image as CachedImage } from './Image';
-import Animated, { Easing, FadeOut, Layout } from 'react-native-reanimated';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import { Title } from '../services/api';
 import { useResponsiveColumns } from '../hooks/useResponsiveColumns';
@@ -19,6 +19,7 @@ import { useTVDimensions } from '../hooks/useTVDimensions';
 import type { ColumnOverride } from '../hooks/useResponsiveColumns';
 import { useTheme } from '../theme';
 import type { NovaTheme } from '../theme';
+import { isAndroidTablet } from '../theme/tokens/tvScale';
 import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -600,105 +601,121 @@ const MediaGrid = React.memo(
         );
       }
 
-      if (isCompact) {
-        // Grid layout for mobile (matching search page)
+      // Use virtualized FlatList for compact devices AND Android tablets
+      const useVirtualizedGrid = isCompact || isAndroidTablet;
+
+      if (useVirtualizedGrid) {
+        // Grid layout for mobile/tablet - virtualized for performance
         if (layout === 'grid') {
+          const isAndroid = Platform.OS === 'android';
+          const gridColumns = numColumns || 3;
+
+          const renderGridItem = ({ item, index }: { item: DisplayTitle; index: number }) => {
+            const isExploreCard =
+              item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
+            const yearDisplay = item.mediaType === 'explore' && item.year ? `+${item.year} More` : item.year;
+
+            return (
+              <Pressable
+                key={keyExtractor(item, index)}
+                style={styles.mobileCard}
+                onPress={() => onItemPress?.(item)}
+                android_ripple={{ color: theme.colors.accent.primary + '30' }}>
+                <View style={styles.cardImageContainer}>
+                  {isExploreCard ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+                      {item.collagePosters!.slice(0, 4).map((poster, i) => (
+                        <RNImage
+                          key={`collage-${i}`}
+                          source={{ uri: poster }}
+                          style={{ width: '50%', height: '50%' }}
+                          resizeMode="cover"
+                        />
+                      ))}
+                    </View>
+                  ) : item.poster?.url ? (
+                    <RNImage source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.placeholder}>
+                      <Text style={styles.placeholderImageText}>No Image</Text>
+                    </View>
+                  )}
+                  {/* Release status badge (top-left) for movies - check badgeVisibility */}
+                  {item.mediaType === 'movie' &&
+                    badgeVisibility?.includes('releaseStatus') &&
+                    (() => {
+                      const releaseIcon = getMovieReleaseIcon(item);
+                      return releaseIcon ? (
+                        <View style={styles.releaseStatusBadge}>
+                          <MaterialCommunityIcons name={releaseIcon.name} size={14} color={releaseIcon.color} />
+                        </View>
+                      ) : null;
+                    })()}
+                  {/* Media type badge (top-right) */}
+                  {item.mediaType && item.mediaType !== 'explore' && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
+                    </View>
+                  )}
+                  <View style={styles.cardTextContainer}>
+                    <LinearGradient
+                      pointerEvents="none"
+                      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                      locations={[0, 0.6, 1]}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={styles.cardTextGradient}
+                    />
+                    <Text style={styles.cardTitle} numberOfLines={2}>
+                      {item.name}
+                    </Text>
+                    {yearDisplay ? <Text style={styles.cardYear}>{yearDisplay}</Text> : null}
+                  </View>
+                </View>
+              </Pressable>
+            );
+          };
+
           return (
-            <ScrollView
+            <FlatList
               style={styles.scrollView}
               contentContainerStyle={styles.grid}
               showsVerticalScrollIndicator={false}
               onScroll={handleScroll}
-              scrollEventThrottle={100}>
-              <View style={styles.mobileGridContainer}>
-                {items.map((item, index) => {
-                  const isExploreCard =
-                    item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
-                  const yearDisplay = item.mediaType === 'explore' && item.year ? `+${item.year} More` : item.year;
-
-                  return (
-                    <Pressable
-                      key={keyExtractor(item, index)}
-                      style={styles.mobileCard}
-                      onPress={() => onItemPress?.(item)}
-                      android_ripple={{ color: theme.colors.accent.primary + '30' }}>
-                      <View style={styles.cardImageContainer}>
-                        {isExploreCard ? (
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
-                            {item.collagePosters!.slice(0, 4).map((poster, i) => (
-                              <RNImage
-                                key={`collage-${i}`}
-                                source={{ uri: poster }}
-                                style={{ width: '50%', height: '50%' }}
-                                resizeMode="cover"
-                              />
-                            ))}
-                          </View>
-                        ) : item.poster?.url ? (
-                          <RNImage source={{ uri: item.poster.url }} style={styles.cardImage} resizeMode="cover" />
-                        ) : (
-                          <View style={styles.placeholder}>
-                            <Text style={styles.placeholderImageText}>No Image</Text>
-                          </View>
-                        )}
-                        {/* Release status badge (top-left) for movies - check badgeVisibility */}
-                        {item.mediaType === 'movie' &&
-                          badgeVisibility?.includes('releaseStatus') &&
-                          (() => {
-                            const releaseIcon = getMovieReleaseIcon(item);
-                            return releaseIcon ? (
-                              <View style={styles.releaseStatusBadge}>
-                                <MaterialCommunityIcons name={releaseIcon.name} size={14} color={releaseIcon.color} />
-                              </View>
-                            ) : null;
-                          })()}
-                        {/* Media type badge (top-right) */}
-                        {item.mediaType && item.mediaType !== 'explore' && (
-                          <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{item.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
-                          </View>
-                        )}
-                        <View style={styles.cardTextContainer}>
-                          <LinearGradient
-                            pointerEvents="none"
-                            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                            locations={[0, 0.6, 1]}
-                            start={{ x: 0.5, y: 0 }}
-                            end={{ x: 0.5, y: 1 }}
-                            style={styles.cardTextGradient}
-                          />
-                          <Text style={styles.cardTitle} numberOfLines={2}>
-                            {item.name}
-                          </Text>
-                          {yearDisplay ? <Text style={styles.cardYear}>{yearDisplay}</Text> : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {LoadingMoreIndicator}
-            </ScrollView>
+              scrollEventThrottle={100}
+              data={items}
+              extraData={badgeVisibility}
+              keyExtractor={keyExtractor}
+              numColumns={gridColumns}
+              renderItem={renderGridItem}
+              initialNumToRender={isAndroid ? 9 : 12}
+              maxToRenderPerBatch={isAndroid ? 6 : 9}
+              windowSize={isAndroid ? 3 : 5}
+              removeClippedSubviews={isAndroid}
+              onEndReached={onEndReached}
+              onEndReachedThreshold={1.5}
+              ListFooterComponent={LoadingMoreIndicator}
+            />
           );
         }
 
         // Carousel layout for mobile (horizontal scroll)
+        // Android: aggressive virtualization to reduce memory pressure
+        const isAndroid = Platform.OS === 'android';
         return (
-          <Animated.FlatList
+          <FlatList
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={[styles.carouselContent, styles.carouselContentCompact]}
             data={items}
             extraData={badgeVisibility}
             keyExtractor={keyExtractor}
-            initialNumToRender={5}
-            maxToRenderPerBatch={5}
-            windowSize={3}
-            removeClippedSubviews={false}
-            itemLayoutAnimation={Layout.duration(250).easing(Easing.out(Easing.ease))}
+            initialNumToRender={isAndroid ? 3 : 5}
+            maxToRenderPerBatch={isAndroid ? 2 : 5}
+            windowSize={isAndroid ? 2 : 3}
+            removeClippedSubviews={isAndroid}
             renderItem={({ item, index }) => (
-              <Animated.View
-                exiting={FadeOut.duration(200)}
+              <View
                 style={[
                   styles.carouselItem,
                   {
@@ -711,7 +728,7 @@ const MediaGrid = React.memo(
                   onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
                   badgeVisibility={badgeVisibility}
                 />
-              </Animated.View>
+              </View>
             )}
           />
         );
@@ -729,6 +746,7 @@ const MediaGrid = React.memo(
       if (useNativeFocus) {
         // Progressive rendering - only render visible rows
         const visibleRows = rows.slice(0, renderedRowCount);
+        const isAndroidDevice = Platform.OS === 'android';
 
         return (
           <MediaGridHandlersContext.Provider value={gridHandlers}>
@@ -739,7 +757,8 @@ const MediaGrid = React.memo(
               showsVerticalScrollIndicator={false}
               scrollEnabled={!Platform.isTV}
               onScroll={handleScroll}
-              scrollEventThrottle={100}>
+              scrollEventThrottle={100}
+              removeClippedSubviews={isAndroidDevice}>
               {visibleRows.map((row, rowIndex) => (
                 <View
                   key={`row-${rowIndex}`}
@@ -793,6 +812,7 @@ const MediaGrid = React.memo(
       const gridKey = `grid-${rows.length}`;
 
       // Standard mode: Use SpatialNavigationNode for focus management
+      const isAndroidDevice = Platform.OS === 'android';
       return (
         <ScrollView
           ref={mainScrollViewRef}
@@ -805,7 +825,7 @@ const MediaGrid = React.memo(
           scrollEnabled={!Platform.isTV}
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
-          removeClippedSubviews={Platform.isTV}
+          removeClippedSubviews={Platform.isTV || isAndroidDevice}
           scrollEventThrottle={16}
           // TV: prevent native focus-based scrolling and gestures
           focusable={false}

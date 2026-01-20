@@ -6,16 +6,24 @@ import {
   NativeModules,
   Platform,
   StyleProp,
+  View,
 } from 'react-native';
 import { API_CONFIG } from '../config/api';
 
-// Use disk-only caching on TV to reduce memory pressure (112MB+ GL memory savings)
-const DEFAULT_CACHE_POLICY = Platform.isTV ? 'disk' : 'memory-disk';
+// Use disk-only caching on TV and Android to reduce memory pressure
+// Android emulators and lower-end devices struggle with memory-disk caching
+const isAndroid = Platform.OS === 'android';
+const DEFAULT_CACHE_POLICY = Platform.isTV || isAndroid ? 'disk' : 'memory-disk';
 
-// Image proxy configuration for TV platforms to reduce memory usage
+// DEBUG: Set to true to disable all images for performance testing
+const DEBUG_DISABLE_IMAGES = __DEV__ && false;
+
+// Image proxy configuration to reduce memory usage
 // When enabled, TMDB images are routed through the backend which resizes and caches them
-const USE_IMAGE_PROXY = Platform.isTV; // Only use proxy on TV where memory is limited
-const IMAGE_PROXY_QUALITY = 80; // JPEG quality (1-100)
+// Enable for TV (limited memory) and Android (emulator/device performance)
+const USE_IMAGE_PROXY = Platform.isTV || isAndroid;
+const IMAGE_PROXY_QUALITY = 80; // JPEG quality
+const IMAGE_PROXY_MAX_WIDTH = 500; // Max width for resized images
 const DEBUG_IMAGE_PROXY = __DEV__ && false; // Log proxy URL conversions
 
 /**
@@ -45,12 +53,12 @@ function getProxyUrl(url: string, targetWidth?: number): string {
   // This ensures images are always resized to reduce memory usage
   let proxyWidth: number;
   if (targetWidth && targetWidth > 0) {
-    // Request 2x size for retina displays, but cap at reasonable max
-    proxyWidth = Math.min(targetWidth * 2, 500);
+    // Request 2x size for retina displays, but cap at platform-specific max
+    proxyWidth = Math.min(targetWidth * 2, IMAGE_PROXY_MAX_WIDTH);
   } else {
-    // Default: 300px is good for most poster cards, 500px max for backdrops
+    // Default: smaller for posters, larger for backdrops (but capped)
     // Check if it's a backdrop (original size) vs poster (w500)
-    proxyWidth = url.includes('/original/') ? 500 : 300;
+    proxyWidth = url.includes('/original/') ? IMAGE_PROXY_MAX_WIDTH : Math.min(300, IMAGE_PROXY_MAX_WIDTH);
   }
   params.set('w', proxyWidth.toString());
 
@@ -119,6 +127,7 @@ interface ImageWrapperProps {
   source: string | { uri: string } | number;
   style?: StyleProp<ImageStyle>;
   contentFit?: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
+  contentPosition?: 'center' | 'top' | 'bottom' | 'left' | 'right' | 'top left' | 'top right' | 'bottom left' | 'bottom right' | { top?: number; right?: number; bottom?: number; left?: number };
   transition?: number;
   blurRadius?: number;
   cachePolicy?: 'none' | 'disk' | 'memory' | 'memory-disk';
@@ -132,6 +141,7 @@ export function Image({
   source,
   style,
   contentFit = 'cover',
+  contentPosition,
   transition,
   blurRadius,
   cachePolicy = DEFAULT_CACHE_POLICY,
@@ -140,6 +150,11 @@ export function Image({
   onError,
   onLoad,
 }: ImageWrapperProps) {
+  // DEBUG: Return placeholder when images are disabled for performance testing
+  if (DEBUG_DISABLE_IMAGES) {
+    return <View style={[style, { backgroundColor: '#333' }]} />;
+  }
+
   const sourceUrl =
     typeof source === 'string' ? source : typeof source === 'object' && 'uri' in source ? source.uri : '';
 
@@ -164,6 +179,7 @@ export function Image({
         source={finalSource}
         style={style}
         contentFit={contentFit}
+        contentPosition={contentPosition}
         transition={transition}
         blurRadius={blurRadius}
         cachePolicy={cachePolicy}
