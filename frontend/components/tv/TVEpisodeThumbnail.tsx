@@ -15,9 +15,10 @@ import { tvScale } from '@/theme/tokens/tvScale';
 const GRADIENT_COLORS = ['transparent', 'rgba(0, 0, 0, 0.85)'] as const;
 const GRADIENT_LOCATIONS = [0.3, 1] as const;
 
-// Card dimensions - design for tvOS, Android TV auto-scales (50% larger for TV viewing)
-const THUMBNAIL_WIDTH = tvScale(360);
-const THUMBNAIL_HEIGHT = tvScale(202); // 16:9 aspect ratio
+// Card dimensions - design for tvOS, Android TV auto-scales
+// 56% larger than original (360, 202)
+const THUMBNAIL_WIDTH = tvScale(562);
+const THUMBNAIL_HEIGHT = tvScale(316); // 16:9 aspect ratio
 
 export { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT };
 

@@ -55,11 +55,11 @@ const createStyles = (theme: NovaTheme) => {
     },
     topRow: {
       flexDirection: 'row',
-      height: tvScale(220, 110),
+      height: tvScale(343, 172),
     },
     imageContainer: {
-      width: tvScale(320, 160),
-      height: tvScale(220, 110),
+      width: tvScale(499, 250),
+      height: tvScale(343, 172),
       backgroundColor: theme.colors.background.elevated,
       position: 'relative',
     },

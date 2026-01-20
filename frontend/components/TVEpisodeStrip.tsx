@@ -22,9 +22,10 @@ interface TVEpisodeStripProps {
 const isAppleTV = Platform.isTV && Platform.OS === 'ios';
 const TV_SCALE = isAppleTV ? 1.0 : 0.5; // Android TV renders at roughly 2x, so scale down
 
-const STRIP_HEIGHT = Math.round(200 * TV_SCALE);
-const THUMBNAIL_WIDTH = Math.round(120 * TV_SCALE);
-const SELECTED_IMAGE_WIDTH = Math.round(240 * TV_SCALE);
+// 56% larger than original (200, 120, 240)
+const STRIP_HEIGHT = Math.round(312 * TV_SCALE);
+const THUMBNAIL_WIDTH = Math.round(187 * TV_SCALE);
+const SELECTED_IMAGE_WIDTH = Math.round(374 * TV_SCALE);
 
 const formatEpisodeCode = (episode: SeriesEpisode): string => {
   const season = String(episode.seasonNumber).padStart(2, '0');
