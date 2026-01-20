@@ -21,7 +21,8 @@ import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
-import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
+import { isTablet, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
+import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
@@ -117,9 +118,14 @@ export default function WatchlistScreen() {
     [openMenu],
   );
 
-  // Get shelf parameter - if present, we're exploring a non-watchlist shelf
-  const { shelf: shelfId } = useLocalSearchParams<{ shelf?: string }>();
-  const isExploreMode = !!shelfId;
+  // Get shelf and collection parameters - if present, we're exploring a non-watchlist shelf
+  const { shelf: shelfId, collection: collectionId, collectionName } = useLocalSearchParams<{
+    shelf?: string;
+    collection?: string;
+    collectionName?: string;
+  }>();
+  const isExploreMode = !!shelfId || !!collectionId;
+  const isCollectionMode = !!collectionId;
 
   // Get shelf configuration for custom lists
   const shelfConfig = useMemo(() => {
@@ -142,6 +148,38 @@ export default function WatchlistScreen() {
   const [exploreError, setExploreError] = useState<string | null>(null);
   const loadedOffsetRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
+
+  // Collection mode state
+  const [collectionItems, setCollectionItems] = useState<Title[]>([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
+
+  // Fetch collection data when in collection mode
+  useEffect(() => {
+    if (!isCollectionMode || !collectionId) {
+      setCollectionItems([]);
+      return;
+    }
+
+    const fetchCollection = async () => {
+      setCollectionLoading(true);
+      setCollectionError(null);
+      try {
+        const collectionIdNum = parseInt(collectionId, 10);
+        if (isNaN(collectionIdNum)) {
+          throw new Error('Invalid collection ID');
+        }
+        const details = await apiService.getCollectionDetails(collectionIdNum);
+        setCollectionItems(details.movies);
+      } catch (err) {
+        setCollectionError(err instanceof Error ? err.message : 'Failed to load collection');
+      } finally {
+        setCollectionLoading(false);
+      }
+    };
+
+    void fetchCollection();
+  }, [isCollectionMode, collectionId]);
 
   // Cache for movie release data
   const [movieReleases, setMovieReleases] = useState<
@@ -258,17 +296,19 @@ export default function WatchlistScreen() {
   // Determine current loading state (initial loading only, not load more)
   const loading = useMemo(() => {
     if (!isExploreMode) return watchlistLoading;
+    if (isCollectionMode) return collectionLoading;
     if (shelfId === 'continue-watching') return continueWatchingLoading;
     if (needsProgressiveLoading) return exploreLoading;
     return false;
-  }, [isExploreMode, shelfId, watchlistLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
+  }, [isExploreMode, isCollectionMode, shelfId, watchlistLoading, collectionLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
 
   // Determine current error state
   const error = useMemo(() => {
     if (!isExploreMode) return watchlistError;
+    if (isCollectionMode) return collectionError;
     if (needsProgressiveLoading) return exploreError;
     return null;
-  }, [isExploreMode, watchlistError, needsProgressiveLoading, exploreError]);
+  }, [isExploreMode, isCollectionMode, watchlistError, collectionError, needsProgressiveLoading, exploreError]);
 
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
@@ -544,23 +584,40 @@ export default function WatchlistScreen() {
     });
   }, [needsProgressiveLoading, exploreItems, isTrendingMovies, isTrendingTV, movieReleases]);
 
+  // Map collection items to titles
+  const collectionTitles = useMemo((): WatchlistTitle[] => {
+    if (!isCollectionMode || collectionItems.length === 0) return [];
+
+    return collectionItems.map((item, index) => {
+      const cachedReleases = movieReleases.get(item.id);
+      return {
+        ...item,
+        uniqueKey: `col:${item.id}-${index}`,
+        theatricalRelease: item.theatricalRelease ?? cachedReleases?.theatricalRelease,
+        homeRelease: item.homeRelease ?? cachedReleases?.homeRelease,
+      };
+    });
+  }, [isCollectionMode, collectionItems, movieReleases]);
+
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
     if (!isExploreMode) return watchlistTitles;
+    if (isCollectionMode) return collectionTitles;
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [isExploreMode, shelfId, watchlistTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
+  }, [isExploreMode, isCollectionMode, shelfId, watchlistTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {
     if (!isExploreMode) return 'Your Watchlist';
+    if (isCollectionMode && collectionName) return decodeURIComponent(collectionName);
     if (shelfConfig?.name) return shelfConfig.name;
     if (shelfId === 'continue-watching') return 'Continue Watching';
     if (shelfId === 'trending-movies') return 'Trending Movies';
     if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return 'Trending TV Shows';
     return 'Explore';
-  }, [isExploreMode, shelfConfig?.name, shelfId]);
+  }, [isExploreMode, isCollectionMode, collectionName, shelfConfig?.name, shelfId]);
 
   // Tab title - show "Explore" when in explore mode, otherwise "Watchlist"
   const tabTitle = isExploreMode ? 'Explore' : 'Watchlist';
@@ -574,9 +631,7 @@ export default function WatchlistScreen() {
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
 
   const filteredTitles = useMemo(() => {
-    if (filter === 'all') {
-      return allTitles;
-    }
+    if (filter === 'all') return allTitles;
     return allTitles.filter((title) => title.mediaType === filter);
   }, [filter, allTitles]);
 
@@ -625,8 +680,15 @@ export default function WatchlistScreen() {
     return isExploreMode ? 'No items in this list' : 'Your watchlist is empty';
   }, [filter, allTitles.length, isExploreMode, pageTitle]);
 
-  // Number of columns in the grid (must match MediaGrid numColumns)
-  const numColumns = 6;
+  // Number of columns based on device type and orientation
+  // Mobile: 2, Tablet portrait: 4, Tablet landscape: 6, TV: 6
+  const { width: screenWidth, height: screenHeight } = useTVDimensions();
+  const isLandscape = screenWidth > screenHeight;
+  const numColumns = useMemo(() => {
+    if (Platform.isTV) return 6;
+    if (isTablet) return isLandscape ? 6 : 4;
+    return 2; // Mobile
+  }, [isLandscape]);
 
   return (
     <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
@@ -639,28 +701,31 @@ export default function WatchlistScreen() {
               <Text style={styles.title}>{pageTitle}</Text>
             </View>
 
-            {/* Filter buttons row */}
-            <SpatialNavigationNode orientation="horizontal">
-              <View style={styles.filtersRow}>
-                {filterOptions.map((option, index) => {
-                  const button = (
-                    <SpatialFilterButton
-                      key={option.key}
-                      label={option.label}
-                      icon={option.icon}
-                      isActive={filter === option.key}
-                      onSelect={() => setFilter(option.key)}
-                      theme={theme}
-                    />
-                  );
-                  // Give first filter button default focus
-                  return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
-                })}
-              </View>
-            </SpatialNavigationNode>
+            {/* Filter buttons row - hidden in collection mode since collections are all movies */}
+            {!isCollectionMode && (
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.filtersRow}>
+                  {filterOptions.map((option, index) => {
+                    const button = (
+                      <SpatialFilterButton
+                        key={option.key}
+                        label={option.label}
+                        icon={option.icon}
+                        isActive={filter === option.key}
+                        onSelect={() => setFilter(option.key)}
+                        theme={theme}
+                      />
+                    );
+                    // Give first filter button default focus
+                    return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
+                  })}
+                </View>
+              </SpatialNavigationNode>
+            )}
 
-            {/* Grid content */}
+            {/* Grid content - hide title in collection mode since page title already shows it */}
             <MediaGrid
+              title={isCollectionMode ? '' : pageTitle}
               items={filteredTitles}
               loading={loading}
               error={error}

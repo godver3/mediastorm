@@ -91,6 +91,22 @@ export interface Credits {
   cast: CastMember[];
 }
 
+export interface Collection {
+  id: number;
+  name: string;
+  poster?: Image;
+  backdrop?: Image;
+}
+
+export interface CollectionDetails {
+  id: number;
+  name: string;
+  overview?: string;
+  poster?: Image;
+  backdrop?: Image;
+  movies: Title[];
+}
+
 export interface Title {
   id: string;
   name: string;
@@ -116,6 +132,7 @@ export interface Title {
   ratings?: Rating[];
   credits?: Credits;
   runtimeMinutes?: number; // Runtime in minutes (movies only)
+  collection?: Collection; // Movie collection (movies only)
 }
 
 export interface TrendingItem {
@@ -1245,6 +1262,10 @@ class ApiService {
     const query = searchParams.toString();
     const endpoint = `/metadata/movies/details${query ? `?${query}` : ''}`;
     return this.request<Title>(endpoint);
+  }
+
+  async getCollectionDetails(collectionId: number): Promise<CollectionDetails> {
+    return this.request<CollectionDetails>(`/metadata/collection?id=${collectionId}`);
   }
 
   async getTrailers(params: TrailerQuery): Promise<TrailerResponse> {

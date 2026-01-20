@@ -167,6 +167,7 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
 
   // Calculate card dimensions for mobile grid layout (matching search page)
   // Use 4 columns on wide mobile screens (foldables, tablets), 2 on phones
+  // Note: This is the default - actual columns may be overridden by numColumns prop
   const isWideCompact = isCompact && screenWidth && screenWidth >= 600;
   const mobileColumnsCount = isWideCompact ? 4 : 2;
   const mobileGap = theme.spacing.md;
@@ -608,7 +609,15 @@ const MediaGrid = React.memo(
         // Grid layout for mobile/tablet - virtualized for performance
         if (layout === 'grid') {
           const isAndroid = Platform.OS === 'android';
-          const gridColumns = numColumns || 3;
+          const gridColumns = typeof numColumns === 'number' ? numColumns : 3;
+
+          // Calculate dynamic card dimensions based on actual gridColumns
+          const dynamicGap = theme.spacing.md;
+          const containerPadding = theme.spacing.xl;
+          const availableWidth = (screenWidth || 0) - containerPadding * 2;
+          const totalGapWidth = dynamicGap * (gridColumns - 1);
+          const dynamicCardWidth = availableWidth > 0 ? Math.floor((availableWidth - totalGapWidth) / gridColumns) : 160;
+          const dynamicCardHeight = Math.round(dynamicCardWidth * (3 / 2));
 
           const renderGridItem = ({ item, index }: { item: DisplayTitle; index: number }) => {
             const isExploreCard =
@@ -618,7 +627,7 @@ const MediaGrid = React.memo(
             return (
               <Pressable
                 key={keyExtractor(item, index)}
-                style={styles.mobileCard}
+                style={[styles.mobileCard, { width: dynamicCardWidth, height: dynamicCardHeight }]}
                 onPress={() => onItemPress?.(item)}
                 android_ripple={{ color: theme.colors.accent.primary + '30' }}>
                 <View style={styles.cardImageContainer}>
@@ -678,6 +687,7 @@ const MediaGrid = React.memo(
 
           return (
             <FlatList
+              key={`grid-${gridColumns}`}
               style={styles.scrollView}
               contentContainerStyle={styles.grid}
               showsVerticalScrollIndicator={false}

@@ -3574,6 +3574,17 @@ export default function DetailsScreen() {
     setTrailerModalVisible(true);
   }, [primaryTrailer, trailers, trailersLoading]);
 
+  const handleViewCollection = useCallback(() => {
+    if (!movieDetails?.collection) return;
+    router.push({
+      pathname: '/watchlist',
+      params: {
+        collection: String(movieDetails.collection.id),
+        collectionName: encodeURIComponent(movieDetails.collection.name),
+      },
+    });
+  }, [movieDetails?.collection, router]);
+
   const handleCloseTrailer = useCallback(() => {
     setTrailerModalVisible(false);
     setActiveTrailer(null);
@@ -4408,6 +4419,26 @@ export default function DetailsScreen() {
                     disabled={trailerButtonDisabled}
                   />
                 ))}
+              {/* Collection button - show only for movies that are part of a collection */}
+              {!isSeries && movieDetails?.collection &&
+                (Platform.isTV && TVActionButton ? (
+                  <TVActionButton
+                    text={movieDetails.collection.name}
+                    icon="albums"
+                    onSelect={handleViewCollection}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                  />
+                ) : (
+                  <FocusablePressable
+                    focusKey="view-collection"
+                    text={!useCompactActionLayout ? movieDetails.collection.name : undefined}
+                    icon={useCompactActionLayout || Platform.isTV ? 'albums' : undefined}
+                    accessibilityLabel={`View ${movieDetails.collection.name}`}
+                    onSelect={handleViewCollection}
+                    onFocus={() => handleTVFocusAreaChange('actions')}
+                    style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+                  />
+                ))}
               {/* Show progress badge in action row only for movies (no episode card) */}
               {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
                 <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
@@ -4698,6 +4729,15 @@ export default function DetailsScreen() {
             loading={trailersLoading}
             style={styles.iconActionButton}
             disabled={trailerButtonDisabled}
+          />
+        )}
+        {!isSeries && movieDetails?.collection && (
+          <FocusablePressable
+            focusKey="view-collection-mobile"
+            icon="albums"
+            accessibilityLabel={`View ${movieDetails.collection.name}`}
+            onSelect={handleViewCollection}
+            style={styles.iconActionButton}
           />
         )}
       </View>
