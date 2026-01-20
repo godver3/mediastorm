@@ -16,9 +16,54 @@ import (
 
 const (
 	maxLogLines   = 5000
-	pasteURL      = "https://paste.c-net.org/"
 	maxUploadSize = 10 << 20 // 10 MB limit for frontend logs
 )
+
+// pasteService defines a paste service configuration
+type pasteService struct {
+	name       string
+	url        string
+	urlPrefix  string            // if response is a key, prepend this to form the full URL
+	headers    map[string]string // additional headers to send
+	jsonKeyField string          // if non-empty, parse JSON response and extract this field as the key
+}
+
+// pasteServices is the ordered list of paste services to try
+var pasteServices = []pasteService{
+	{
+		name: "paste.c-net.org",
+		url:  "https://paste.c-net.org/",
+		headers: map[string]string{
+			"Content-Type": "text/plain; charset=utf-8",
+			"x-uuid":       "1",
+		},
+	},
+	{
+		name: "paste.rs",
+		url:  "https://paste.rs",
+		headers: map[string]string{
+			"Content-Type": "text/plain; charset=utf-8",
+		},
+	},
+	{
+		name:         "bytebin.lucko.me",
+		url:          "https://bytebin.lucko.me/post",
+		urlPrefix:    "https://bytebin.lucko.me/",
+		jsonKeyField: "key",
+		headers: map[string]string{
+			"Content-Type": "text/plain; charset=utf-8",
+		},
+	},
+	{
+		name:         "pastes.dev",
+		url:          "https://api.pastes.dev/post",
+		urlPrefix:    "https://pastes.dev/",
+		jsonKeyField: "key",
+		headers: map[string]string{
+			"Content-Type": "text/plain; charset=utf-8",
+		},
+	},
+}
 
 type LogsHandler struct {
 	logger  *log.Logger
@@ -208,15 +253,36 @@ func readLastNLines(file *os.File, n int) ([]string, error) {
 }
 
 func (h *LogsHandler) submitToPaste(content string) (string, error) {
-	req, err := http.NewRequest(http.MethodPost, pasteURL, strings.NewReader(content))
+	var lastErr error
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	for _, service := range pasteServices {
+		h.logger.Printf("[logs] Trying paste service: %s", service.name)
+
+		url, err := h.tryPasteService(client, service, content)
+		if err != nil {
+			h.logger.Printf("[logs] %s failed: %v", service.name, err)
+			lastErr = fmt.Errorf("%s: %w", service.name, err)
+			continue
+		}
+
+		h.logger.Printf("[logs] Successfully uploaded to %s", service.name)
+		return url, nil
+	}
+
+	return "", fmt.Errorf("all paste services failed, last error: %v", lastErr)
+}
+
+func (h *LogsHandler) tryPasteService(client *http.Client, service pasteService, content string) (string, error) {
+	req, err := http.NewRequest(http.MethodPost, service.url, strings.NewReader(content))
 	if err != nil {
 		return "", err
 	}
 
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	req.Header.Set("x-uuid", "1") // Use UUID-based names for harder-to-guess URLs
+	for key, value := range service.headers {
+		req.Header.Set(key, value)
+	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -225,24 +291,37 @@ func (h *LogsHandler) submitToPaste(content string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("paste service returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// The response body contains the paste URL
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	// Parse the URL from the response - paste.c-net.org returns just the URL
-	pasteResult := strings.TrimSpace(string(body))
+	result := strings.TrimSpace(string(body))
 
-	// Verify it looks like a URL
-	if !strings.HasPrefix(pasteResult, "http") {
-		return "", fmt.Errorf("unexpected response from paste service: %s", pasteResult)
+	// If service returns JSON with a key field, parse it
+	if service.jsonKeyField != "" {
+		var jsonResp map[string]interface{}
+		if err := json.Unmarshal(body, &jsonResp); err != nil {
+			return "", fmt.Errorf("failed to parse JSON response: %w", err)
+		}
+
+		key, ok := jsonResp[service.jsonKeyField].(string)
+		if !ok {
+			return "", fmt.Errorf("missing or invalid '%s' field in response", service.jsonKeyField)
+		}
+
+		return service.urlPrefix + key, nil
 	}
 
-	return pasteResult, nil
+	// Otherwise expect a direct URL response
+	if !strings.HasPrefix(result, "http") {
+		return "", fmt.Errorf("unexpected response: %s", result)
+	}
+
+	return result, nil
 }
 
 func (h *LogsHandler) respondError(w http.ResponseWriter, message string, status int) {
