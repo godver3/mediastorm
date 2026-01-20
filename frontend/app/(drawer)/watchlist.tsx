@@ -272,6 +272,8 @@ export default function WatchlistScreen() {
 
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
+  // Track which IDs we've already queued for year fetching (prevents re-fetch cascade)
+  const fetchedYearIdsRef = useRef<Set<string>>(new Set());
 
   // Fetch missing year data for watchlist items
   useEffect(() => {
@@ -299,7 +301,8 @@ export default function WatchlistScreen() {
         if (item.year && item.year > 0) {
           continue;
         }
-        if (watchlistYears.has(item.id)) {
+        // Use ref to check (not state) to prevent re-fetch cascade
+        if (fetchedYearIdsRef.current.has(item.id)) {
           continue;
         }
 
@@ -320,6 +323,18 @@ export default function WatchlistScreen() {
             name: item.name,
           });
         }
+      }
+
+      // Mark all IDs as queued BEFORE fetching to prevent duplicate fetches
+      for (const series of seriesToFetch) {
+        fetchedYearIdsRef.current.add(series.id);
+      }
+      for (const movie of moviesToFetch) {
+        fetchedYearIdsRef.current.add(movie.id);
+      }
+
+      if (seriesToFetch.length === 0 && moviesToFetch.length === 0) {
+        return;
       }
 
       // Batch fetch series details
@@ -368,7 +383,10 @@ export default function WatchlistScreen() {
     };
 
     void fetchMissingYears();
-  }, [items, watchlistYears]);
+  }, [items]); // Removed watchlistYears from deps - using ref instead
+
+  // Track which movie IDs we've already fetched releases for (avoids re-fetching on re-renders)
+  const fetchedReleaseIdsRef = useRef<Set<string>>(new Set());
 
   // Fetch release data for movies when releaseStatus badge is enabled
   useEffect(() => {
@@ -384,7 +402,7 @@ export default function WatchlistScreen() {
       for (const item of items) {
         const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
         const imdbId = item.externalIds?.imdb;
-        if (item.mediaType === 'movie' && (tmdbId || imdbId) && !movieReleases.has(item.id)) {
+        if (item.mediaType === 'movie' && (tmdbId || imdbId) && !fetchedReleaseIdsRef.current.has(item.id)) {
           moviesToFetch.push({ id: item.id, tmdbId, imdbId });
         }
       }
@@ -396,7 +414,7 @@ export default function WatchlistScreen() {
         const isMovie = !item.nextEpisode;
         const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
         const imdbId = item.externalIds?.imdb;
-        if (isMovie && (tmdbId || imdbId) && !movieReleases.has(item.seriesId)) {
+        if (isMovie && (tmdbId || imdbId) && !fetchedReleaseIdsRef.current.has(item.seriesId)) {
           moviesToFetch.push({ id: item.seriesId, tmdbId, imdbId });
         }
       }
@@ -407,7 +425,7 @@ export default function WatchlistScreen() {
       if (
         item.title.mediaType === 'movie' &&
         (item.title.tmdbId || item.title.imdbId) &&
-        !movieReleases.has(item.title.id) &&
+        !fetchedReleaseIdsRef.current.has(item.title.id) &&
         !item.title.theatricalRelease &&
         !item.title.homeRelease
       ) {
@@ -417,6 +435,11 @@ export default function WatchlistScreen() {
 
     if (moviesToFetch.length === 0) {
       return;
+    }
+
+    // Mark these IDs as being fetched (before async to prevent duplicate fetches)
+    for (const movie of moviesToFetch) {
+      fetchedReleaseIdsRef.current.add(movie.id);
     }
 
     const fetchReleases = async () => {
@@ -457,7 +480,7 @@ export default function WatchlistScreen() {
     exploreItems,
     userSettings?.display?.badgeVisibility,
     settings?.display?.badgeVisibility,
-    movieReleases,
+    // Removed movieReleases from deps - using ref to track fetched IDs instead
   ]);
 
   const watchlistTitles = useMemo(() => {
