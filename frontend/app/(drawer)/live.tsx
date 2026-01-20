@@ -3,6 +3,7 @@ import type { ScrollView as RNScrollView } from 'react-native';
 import {
   Animated,
   findNodeHandle,
+  FlatList,
   Platform,
   Pressable,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   Text,
   TextInput,
   UIManager,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
@@ -35,7 +37,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV as isTVDevice, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
+import { isTV as isTVDevice, isTablet, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -352,6 +354,104 @@ const tvGridCardStyles = {
   },
 };
 
+// Tablet Grid Card - touch-friendly version of TV grid card
+const TabletChannelGridCard = React.memo(function TabletChannelGridCard({
+  channel,
+  isFavorite,
+  onSelect,
+  onLongPress,
+  onToggleFavorite,
+}: {
+  channel: LiveChannel;
+  isFavorite: boolean;
+  onSelect: (channel: LiveChannel) => void;
+  onLongPress: (channel: LiveChannel) => void;
+  onToggleFavorite: (channel: LiveChannel) => void;
+}) {
+  const theme = useTheme();
+
+  const handlePress = useCallback(() => {
+    onSelect(channel);
+  }, [channel, onSelect]);
+
+  const handleLongPress = useCallback(() => {
+    onLongPress(channel);
+  }, [channel, onLongPress]);
+
+  const handleFavoritePress = useCallback(() => {
+    onToggleFavorite(channel);
+  }, [channel, onToggleFavorite]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={500}
+      style={({ pressed }) => [
+        {
+          flex: 1,
+          borderRadius: 12,
+          backgroundColor: pressed ? '#252542' : '#1a1a2e',
+          borderWidth: 2,
+          borderColor: pressed ? theme.colors.accent.primary : 'transparent',
+          overflow: 'hidden',
+        },
+      ]}>
+      <View style={{ width: '100%', aspectRatio: 5 / 3, position: 'relative' }}>
+        {channel.logo ? (
+          <Image
+            source={{ uri: channel.logo }}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="contain"
+            transition={0}
+            cachePolicy="disk"
+          />
+        ) : (
+          <View
+            style={{
+              width: '100%',
+              height: '100%',
+              backgroundColor: '#2a2a4e',
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}>
+            <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600' }}>
+              {channel.name?.charAt(0)?.toUpperCase() ?? '?'}
+            </Text>
+          </View>
+        )}
+        {isFavorite && (
+          <Pressable
+            onPress={handleFavoritePress}
+            style={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              backgroundColor: theme.colors.accent.primary,
+              borderRadius: 12,
+              width: 28,
+              height: 28,
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}>
+            <Text style={{ color: '#fff', fontSize: 14 }}>★</Text>
+          </Pressable>
+        )}
+        <LinearGradient
+          pointerEvents="none"
+          colors={['transparent', 'rgba(0,0,0,0.8)']}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%' }}
+        />
+        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 10 }}>
+          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={2}>
+            {channel.name}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+});
+
 // Ultra-minimal TV Grid Card - callbacks via context to avoid prop changes
 interface TVGridHandlers {
   onSelect: (channelId: string) => void;
@@ -471,6 +571,20 @@ function LiveScreen() {
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
   const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
+
+  // Tablet grid configuration
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const tabletNumColumns = isTablet ? (isLandscape ? 6 : 4) : 1;
+  // Use raw spacing values to avoid scaling issues
+  const tabletGridGap = 8; // 8px gap between cards
+  // Container already has paddingHorizontal: theme.spacing.xl, use raw base value (24px) for calculation
+  // theme.spacing.xl is scaled 1.2x for tablets, so we need the scaled value
+  const containerPadding = 24 * 1.2; // 28.8px (matches theme.spacing.xl for tablets)
+  // Card width: (screen - container padding - gaps between cards) / numColumns
+  const tabletCardWidth = isTablet
+    ? Math.floor((windowWidth - containerPadding * 2 - tabletGridGap * (tabletNumColumns - 1)) / tabletNumColumns)
+    : 0;
 
   // Debounce ref for focus updates - prevents re-renders during rapid grid navigation
   const focusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1706,76 +1820,133 @@ function LiveScreen() {
                   ) : null}
                   {!loading && !error ? (
                     <View style={styles.scrollWrapper}>
-                      <ScrollView
-                      ref={scrollViewRef}
-                      style={styles.scrollView}
-                      contentContainerStyle={styles.channelList}
-                      showsVerticalScrollIndicator={false}
-                      bounces={false}
-                      removeClippedSubviews={Platform.isTV}
-                      onScroll={handleInfiniteScroll}
-                      scrollEventThrottle={16}
-                      onLayout={(event: { nativeEvent: { layout: { height: number } } }) => {
-                        scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
-                      }}>
-                      {favoriteChannels.length > 0 && (
-                        <>
-                          <Text style={styles.sectionTitle}>Favorites</Text>
-                          {favoriteChannels.map((channel, index) => (
-                            <ChannelCard
-                              key={channel.id}
-                              channel={channel}
-                              isFavorite={isFavorite(channel.id)}
-                              isFirstInList={index === 0 && regularChannels.length === 0}
-                              onSelect={handleChannelSelect}
-                              onToggleFavorite={handleToggleFavorite}
-                              onLongPress={handleChannelLongPress}
-                              onFocus={handleChannelFocus}
-                              registerCardRef={registerChannelRef}
-                            />
-                          ))}
-                        </>
-                      )}
-
-                      {displayedRegularChannels.length > 0 && (
-                        <>
-                          <Text style={styles.sectionTitle}>
-                            All Channels
-                            {hasMoreChannels ? ` (${displayedRegularChannels.length}/${regularChannels.length})` : ''}
-                          </Text>
-                          {displayedRegularChannels.map((channel, index) => (
-                            <ChannelCard
-                              key={channel.id}
-                              channel={channel}
-                              isFavorite={isFavorite(channel.id)}
-                              isFirstInList={index === 0 && favoriteChannels.length === 0}
-                              onSelect={handleChannelSelect}
-                              onToggleFavorite={handleToggleFavorite}
-                              onLongPress={handleChannelLongPress}
-                              onFocus={handleChannelFocus}
-                              registerCardRef={registerChannelRef}
-                            />
-                          ))}
-                          {hasMoreChannels && (
-                            <View style={styles.loadingMoreContainer}>
-                              <LoadingIndicator />
-                              <Text style={styles.loadingMoreText}>Loading more channels...</Text>
+                      {isTablet ? (
+                        /* Tablet: Grid layout using FlatList */
+                        <FlatList
+                          data={[...favoriteChannels, ...displayedRegularChannels]}
+                          keyExtractor={(item) => item.id}
+                          numColumns={tabletNumColumns}
+                          key={`tablet-grid-${tabletNumColumns}`}
+                          showsVerticalScrollIndicator={false}
+                          contentContainerStyle={{
+                            paddingBottom: theme.spacing.xl,
+                          }}
+                          columnWrapperStyle={{
+                            justifyContent: 'flex-start',
+                            marginBottom: tabletGridGap,
+                          }}
+                          onEndReached={() => {
+                            if (hasMoreChannels) {
+                              setVisibleChannelCount((prev) => prev + LOAD_MORE_INCREMENT);
+                            }
+                          }}
+                          onEndReachedThreshold={0.3}
+                          renderItem={({ item: channel, index }) => (
+                            <View
+                              style={{
+                                width: tabletCardWidth,
+                                marginRight: (index + 1) % tabletNumColumns === 0 ? 0 : tabletGridGap,
+                              }}>
+                              <TabletChannelGridCard
+                                channel={channel}
+                                isFavorite={isFavorite(channel.id)}
+                                onSelect={handleChannelSelect}
+                                onLongPress={handleChannelLongPress}
+                                onToggleFavorite={handleToggleFavorite}
+                              />
                             </View>
                           )}
-                        </>
-                      )}
+                          ListFooterComponent={
+                            hasMoreChannels ? (
+                              <View style={styles.loadingMoreContainer}>
+                                <LoadingIndicator />
+                                <Text style={styles.loadingMoreText}>Loading more channels...</Text>
+                              </View>
+                            ) : null
+                          }
+                          ListEmptyComponent={
+                            <View style={styles.emptyPlaylist}>
+                              <Text style={styles.emptyMessage}>
+                                {filterText
+                                  ? `No channels match "${filterText}"`
+                                  : 'No channels found in the configured playlist.'}
+                              </Text>
+                            </View>
+                          }
+                        />
+                      ) : (
+                        /* Phone: List layout using ScrollView */
+                        <ScrollView
+                          ref={scrollViewRef}
+                          style={styles.scrollView}
+                          contentContainerStyle={styles.channelList}
+                          showsVerticalScrollIndicator={false}
+                          bounces={false}
+                          removeClippedSubviews={Platform.isTV}
+                          onScroll={handleInfiniteScroll}
+                          scrollEventThrottle={16}
+                          onLayout={(event: { nativeEvent: { layout: { height: number } } }) => {
+                            scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
+                          }}>
+                          {favoriteChannels.length > 0 && (
+                            <>
+                              <Text style={styles.sectionTitle}>Favorites</Text>
+                              {favoriteChannels.map((channel, index) => (
+                                <ChannelCard
+                                  key={channel.id}
+                                  channel={channel}
+                                  isFavorite={isFavorite(channel.id)}
+                                  isFirstInList={index === 0 && regularChannels.length === 0}
+                                  onSelect={handleChannelSelect}
+                                  onToggleFavorite={handleToggleFavorite}
+                                  onLongPress={handleChannelLongPress}
+                                  onFocus={handleChannelFocus}
+                                  registerCardRef={registerChannelRef}
+                                />
+                              ))}
+                            </>
+                          )}
 
-                      {favoriteChannels.length === 0 && displayedRegularChannels.length === 0 ? (
-                        <View style={styles.emptyPlaylist}>
-                          <Text style={styles.emptyMessage}>
-                            {filterText
-                              ? `No channels match "${filterText}"`
-                              : 'No channels found in the configured playlist.'}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </ScrollView>
-                  </View>
+                          {displayedRegularChannels.length > 0 && (
+                            <>
+                              <Text style={styles.sectionTitle}>
+                                All Channels
+                                {hasMoreChannels ? ` (${displayedRegularChannels.length}/${regularChannels.length})` : ''}
+                              </Text>
+                              {displayedRegularChannels.map((channel, index) => (
+                                <ChannelCard
+                                  key={channel.id}
+                                  channel={channel}
+                                  isFavorite={isFavorite(channel.id)}
+                                  isFirstInList={index === 0 && favoriteChannels.length === 0}
+                                  onSelect={handleChannelSelect}
+                                  onToggleFavorite={handleToggleFavorite}
+                                  onLongPress={handleChannelLongPress}
+                                  onFocus={handleChannelFocus}
+                                  registerCardRef={registerChannelRef}
+                                />
+                              ))}
+                              {hasMoreChannels && (
+                                <View style={styles.loadingMoreContainer}>
+                                  <LoadingIndicator />
+                                  <Text style={styles.loadingMoreText}>Loading more channels...</Text>
+                                </View>
+                              )}
+                            </>
+                          )}
+
+                          {favoriteChannels.length === 0 && displayedRegularChannels.length === 0 ? (
+                            <View style={styles.emptyPlaylist}>
+                              <Text style={styles.emptyMessage}>
+                                {filterText
+                                  ? `No channels match "${filterText}"`
+                                  : 'No channels found in the configured playlist.'}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </ScrollView>
+                      )}
+                    </View>
                 ) : null}
                 </>
               )}

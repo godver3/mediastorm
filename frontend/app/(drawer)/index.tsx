@@ -27,7 +27,7 @@ import {
 import type { Direction } from '@bam.tech/lrud';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { isTV, isTablet, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
@@ -1579,9 +1579,12 @@ function IndexScreen() {
     settingsLoading,
   ]);
 
-  // Calculate hero width for carousel scrolling (90% of screen width with spacing between items)
+  // Calculate hero width for carousel scrolling
+  // Phones: 90% of screen width, Tablets: 70% portrait / 60% landscape
   const heroGap = theme.spacing.md;
-  const heroWidth = Math.round(screenWidth * 0.9);
+  const isLandscape = screenWidth > screenHeight;
+  const heroWidthPercent = isTablet ? (isLandscape ? 0.6 : 0.7) : 0.9;
+  const heroWidth = Math.round(screenWidth * heroWidthPercent);
   const heroSnapInterval = heroWidth + heroGap;
   // Padding to center the first/last items
   const heroPadding = (screenWidth - heroWidth) / 2;
@@ -1621,6 +1624,15 @@ function IndexScreen() {
 
     return () => clearInterval(interval);
   }, [shouldUseMobileLayout, mobileHeroItems.length, focused, heroSnapInterval]);
+
+  // Re-align hero scroll position when screen dimensions change (e.g., rotation)
+  useEffect(() => {
+    if (!shouldUseMobileLayout || mobileHeroItems.length === 0) {
+      return;
+    }
+    // Scroll to current index position with new dimensions (no animation to avoid jarring effect)
+    heroScrollRef.current?.scrollTo({ x: mobileHeroIndex * heroSnapInterval, animated: false });
+  }, [heroSnapInterval]); // Only trigger on dimension changes, not index changes
 
   const handleCardSelect = useCallback(
     (card: CardData) => {
@@ -2096,7 +2108,8 @@ function IndexScreen() {
             style={mobileStyles.container}
             contentContainerStyle={mobileStyles.content}
             contentInsetAdjustmentBehavior="never"
-            automaticallyAdjustContentInsets={false}>
+            automaticallyAdjustContentInsets={false}
+            removeClippedSubviews={Platform.OS === 'android'}>
             <View style={mobileStyles.heroContainer}>
               {mobileHeroItems.length > 1 ? (
                 <>
@@ -2109,6 +2122,7 @@ function IndexScreen() {
                     snapToInterval={heroSnapInterval}
                     snapToAlignment="start"
                     decelerationRate="fast"
+                    removeClippedSubviews={Platform.OS === 'android'}
                     contentContainerStyle={{ paddingHorizontal: heroPadding }}>
                     {mobileHeroItems.map((item, index) => (
                       <Pressable
