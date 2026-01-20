@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useContext, useMemo } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 
-import { Breakpoint, discoveryColumnMap, getBreakpoint } from './tokens/breakpoints';
+import { Breakpoint, discoveryColumnMap, getBreakpoint, isTablet } from './tokens/breakpoints';
 import { colorTokens, ColorTokens, getColorTokens, SupportedColorScheme } from './tokens/colors';
 import { radiusTokens, RadiusTokens } from './tokens/radius';
 import { getSpacingForTV, spacingTokens, SpacingTokens, ScaledSpacingTokens } from './tokens/spacing';
@@ -62,13 +62,14 @@ export function NovaThemeProvider({ children }: { children: ReactNode }) {
   // Enforce dark theme regardless of system preference
   const colorScheme: SupportedColorScheme = 'dark';
   // TV platforms use fixed 'immersive' breakpoint to avoid text size flicker
-  // caused by useWindowDimensions() returning inconsistent values on first render
-  // Non-TV iOS/Android (phones, tablets, foldables) always use 'compact' for mobile layout
+  // Mobile devices (phones + tablets) use 'compact' for mobile layout
+  // Tablets get 1.2x scaling via typography/spacing functions
+  // Web uses width-based breakpoints for responsive columns
   const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
   const breakpoint = Platform.isTV ? 'immersive' : isMobileDevice ? 'compact' : getBreakpoint(width);
   const isTV = Platform.isTV;
-  const typography = useMemo(() => getTypographyForBreakpoint(breakpoint, isTV), [breakpoint, isTV]);
-  const spacing = useMemo(() => getSpacingForTV(isTV), [isTV]);
+  const typography = useMemo(() => getTypographyForBreakpoint(breakpoint, isTV, isTablet), [breakpoint, isTV]);
+  const spacing = useMemo(() => getSpacingForTV(isTV, isTablet), [isTV]);
   const colors = useMemo(() => getColorTokens(colorScheme), [colorScheme]);
   const isDark = colorScheme === 'dark';
 

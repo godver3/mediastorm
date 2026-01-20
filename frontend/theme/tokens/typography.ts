@@ -1,6 +1,6 @@
 import { Platform, TextStyle } from 'react-native';
 
-import { Breakpoint, breakpointScaleMultiplier, getTVScaleFactor } from './breakpoints';
+import { Breakpoint, breakpointScaleMultiplier, getTVScaleFactor, TABLET_SCALE_FACTOR } from './breakpoints';
 
 export type TypographyScale = {
   fontSize: number;
@@ -64,10 +64,15 @@ const scale = (scale: TypographyScale, factor: number): TypographyScale => ({
   lineHeight: round(scale.lineHeight * factor),
 });
 
-export function getTypographyForBreakpoint(breakpoint: Breakpoint, isTV: boolean = false): TypographyTokens {
+export function getTypographyForBreakpoint(
+  breakpoint: Breakpoint,
+  isTV: boolean = false,
+  isTablet: boolean = false,
+): TypographyTokens {
   const baseFactor = breakpointScaleMultiplier[breakpoint];
   const tvFactor = isTV ? getTVScaleFactor(Platform.OS) : 1;
-  const factor = baseFactor * tvFactor;
+  const tabletFactor = isTablet ? TABLET_SCALE_FACTOR : 1;
+  const factor = baseFactor * tvFactor * tabletFactor;
 
   // Apply additional 20% scale for shelf titles on tvOS
   const shelfTitleFactor = isTV ? factor * 1.2 : factor;

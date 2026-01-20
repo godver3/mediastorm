@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { getTVScaleFactor } from './breakpoints';
+import { getTVScaleFactor, TABLET_SCALE_FACTOR } from './breakpoints';
 
 const baseSpacingTokens = {
   none: 0,
@@ -20,13 +20,13 @@ export type SpacingTokens = typeof spacingTokens;
 // Type for scaled spacing values (numbers instead of literal types)
 export type ScaledSpacingTokens = { [K in keyof SpacingTokens]: number };
 
-// Function to get scaled spacing tokens for TV displays
-export function getSpacingForTV(isTV: boolean): SpacingTokens | ScaledSpacingTokens {
-  if (!isTV) {
+// Function to get scaled spacing tokens for TV and tablet displays
+export function getSpacingForTV(isTV: boolean, isTablet: boolean = false): SpacingTokens | ScaledSpacingTokens {
+  if (!isTV && !isTablet) {
     return spacingTokens;
   }
 
-  const scaleFactor = getTVScaleFactor(Platform.OS);
+  const scaleFactor = isTV ? getTVScaleFactor(Platform.OS) : TABLET_SCALE_FACTOR;
   const round = (value: number) => Math.round(value * 10) / 10;
 
   return {

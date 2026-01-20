@@ -20,7 +20,7 @@ export const breakpointScaleMultiplier: Record<Breakpoint, number> = {
   immersive: 1.2,
 };
 
-// Re-export unified TV scaling utilities
+// Re-export unified TV and tablet scaling utilities
 export {
   tvScale,
   tvScaleExplicit,
@@ -30,6 +30,12 @@ export {
   isTVOS,
   isAndroidTV,
   ANDROID_TV_TO_TVOS_RATIO,
+  isTablet,
+  isIPad,
+  isAndroidTablet,
+  TABLET_SCALE_FACTOR,
+  useTVLayout,
+  hasTouchSupport,
 } from './tvScale';
 
 // ============================================================================
