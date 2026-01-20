@@ -25,6 +25,7 @@
         <p>{{if .IsAdmin}}Configure your strmr server{{else}}Configure profile settings{{end}}</p>
     </div>
     <div class="page-header-controls" style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="text" id="settingsSearch" class="form-input" placeholder="Search settings..." oninput="handleSettingsSearch(this.value)" style="min-width: 200px;">
         <select id="userSelector" class="form-select" style="min-width: 180px;" onchange="handleUserChange(this.value)">
             {{if .IsAdmin}}<option value="">Global Defaults</option>{{end}}
             {{range .Users}}
@@ -95,6 +96,11 @@
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
     const basePath = {{json .BasePath}};
+
+    // Search state
+    let searchTerm = '';
+    let filteredSections = null; // null = no filter, Set = filtered section keys
+    let filteredFields = null; // null = no filter, Map of sectionKey -> Set of matching field keys
 
     // Sections that are per-user (when a user is selected, only show these)
     // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
@@ -233,6 +239,60 @@
     // Check if a specific field has an error
     function getFieldError(sectionKey, fieldKey) {
         return validationErrors[sectionKey]?.fields?.[fieldKey] || null;
+    }
+
+    // Search/filter settings
+    function handleSettingsSearch(term) {
+        searchTerm = term.toLowerCase().trim();
+
+        if (!searchTerm) {
+            filteredSections = null;
+            filteredFields = null;
+            renderSettings();
+            return;
+        }
+
+        filteredSections = new Set();
+        filteredFields = new Map();
+
+        // Search through schema sections and fields
+        for (const [sectionKey, sectionDef] of Object.entries(schema)) {
+            let sectionMatches = false;
+            const matchingFields = new Set();
+
+            // Check section-level match (key, label) - if section matches, show all fields
+            if (sectionKey.toLowerCase().includes(searchTerm) ||
+                sectionDef.label?.toLowerCase().includes(searchTerm)) {
+                sectionMatches = true;
+                // Section-level match: show all fields (don't filter)
+                filteredFields.set(sectionKey, null);
+            }
+
+            // Check field-level matches
+            if (sectionDef.fields) {
+                for (const [fieldKey, fieldDef] of Object.entries(sectionDef.fields)) {
+                    if (fieldKey.toLowerCase().includes(searchTerm) ||
+                        fieldDef.label?.toLowerCase().includes(searchTerm) ||
+                        fieldDef.description?.toLowerCase().includes(searchTerm)) {
+                        matchingFields.add(fieldKey);
+                    }
+                }
+            }
+
+            // If we have field matches but no section-level match, store the specific fields
+            if (matchingFields.size > 0) {
+                sectionMatches = true;
+                if (!filteredFields.has(sectionKey)) {
+                    filteredFields.set(sectionKey, matchingFields);
+                }
+            }
+
+            if (sectionMatches) {
+                filteredSections.add(sectionKey);
+            }
+        }
+
+        renderSettings();
     }
 
     async function handleUserChange(userId) {
@@ -2767,9 +2827,19 @@
         // Use getValue for proper three-tier cascade (global → profile → client)
         // Get section data for showWhen conditions
         const sectionData = getValue(sectionKey) || {};
+
+        // Get field filter for this section (if searching)
+        const sectionFieldFilter = filteredFields ? filteredFields.get(sectionKey) : null;
+
         const fieldsHtml = Object.entries(sectionDef.fields)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .map(([fieldKey, fieldDef]) => {
+                // Filter by search: if we have a field filter Set, only show matching fields
+                // (null means section-level match, so show all fields)
+                if (filteredFields && sectionFieldFilter !== null && !sectionFieldFilter.has(fieldKey)) {
+                    return '';
+                }
+
                 // Check showWhen condition (same logic as renderArraySection)
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
@@ -3622,9 +3692,13 @@
         // Sections that can be configured per-client (subset of perUserSections)
         const clientSections = ['filtering', 'network'];
 
+        let totalMatchingSections = 0;
+
         for (const group of groups) {
             const groupSections = Object.entries(schema).filter(([key, def]) => {
                 if (def.group !== group.id) return false;
+                // If search is active, only show matching sections
+                if (filteredSections !== null && !filteredSections.has(key)) return false;
                 // If a client is selected, only show client-configurable sections
                 if (selectedClientId && !clientSections.includes(key)) return false;
                 // If a user is selected (but not client), show per-user sections
@@ -3634,16 +3708,30 @@
 
             if (groupSections.length === 0) continue;
 
+            totalMatchingSections += groupSections.length;
             html += '<div class="settings-group"><h2 class="group-title">'+group.label+'</h2><div class="group-sections">'+groupSections.map(([key, def]) => renderSection(key, def)).join('')+'</div></div>';
+        }
+
+        // Show "no results" message if search found nothing
+        if (searchTerm && totalMatchingSections === 0) {
+            html += '<div style="text-align: center; padding: 3rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><p style="margin: 0;">No settings found for "<strong>' + searchTerm + '</strong>"</p><p style="margin: 0.5rem 0 0; font-size: 0.875rem;">Try a different search term</p></div>';
         }
 
         container.innerHTML = html;
 
-        // Restore previously open sections
-        openSections.forEach(sectionKey => {
-            const section = document.getElementById('section-'+sectionKey);
-            if (section) section.classList.add('open');
-        });
+        // Restore previously open sections (or auto-expand if searching)
+        if (searchTerm && filteredSections && filteredSections.size > 0) {
+            // Auto-expand all matching sections when searching
+            filteredSections.forEach(sectionKey => {
+                const section = document.getElementById('section-'+sectionKey);
+                if (section) section.classList.add('open');
+            });
+        } else {
+            openSections.forEach(sectionKey => {
+                const section = document.getElementById('section-'+sectionKey);
+                if (section) section.classList.add('open');
+            });
+        }
 
         if (window.location.hash) {
             const section = document.getElementById('section-'+window.location.hash.substring(1));
