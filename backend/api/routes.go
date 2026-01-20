@@ -39,6 +39,26 @@ func localhostOnlyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// devOnlyMiddleware restricts access to dev hosts (localhost + docker hostname)
+func devOnlyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		// Strip port if present
+		for i := len(host) - 1; i >= 0; i-- {
+			if host[i] == ':' {
+				host = host[:i]
+				break
+			}
+		}
+		// Allow localhost, 127.0.0.1, ::1, and docker hostname
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" && host != "docker" {
+			http.Error(w, "Dev endpoints only accessible from allowed hosts", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // corsMiddleware handles CORS for API routes
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +310,12 @@ func Register(
 	pprofRouter.HandleFunc("/heap", pprof.Handler("heap").ServeHTTP)
 	pprofRouter.HandleFunc("/mutex", pprof.Handler("mutex").ServeHTTP)
 	pprofRouter.HandleFunc("/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+
+	// Dev tools (localhost + docker hostname only, no auth required)
+	devHandler := handlers.NewDevHandler("/root/strmr/docs")
+	devRouter := api.PathPrefix("/dev").Subrouter()
+	devRouter.Use(devOnlyMiddleware)
+	devRouter.HandleFunc("/todo", devHandler.TodoEditor).Methods(http.MethodGet, http.MethodPost)
 
 	// Runtime stats endpoint (localhost only, no auth required for debugging)
 	runtimeRouter := api.PathPrefix("/debug/runtime").Subrouter()
