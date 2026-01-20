@@ -92,6 +92,10 @@ func (f *fakeMetadataService) BatchMovieReleases(_ context.Context, queries []mo
 	return results
 }
 
+func (f *fakeMetadataService) CollectionDetails(_ context.Context, _ int64) (*models.CollectionDetails, error) {
+	return nil, nil
+}
+
 func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ int) ([]models.TrendingItem, int, error) {
 	return nil, 0, nil
 }
