@@ -147,8 +147,7 @@ const createStyles = (theme: NovaTheme) => {
       position: 'relative',
     },
     imageContainerCompact: {
-      height: compactPosterHeight,
-      aspectRatio: 2 / 3, // Maintain 2:3 ratio on mobile
+      flex: 1, // Fill parent container (dimensions come from style prop or containerCompact)
     },
     poster: {
       width: '100%',

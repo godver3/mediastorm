@@ -19,7 +19,7 @@ import { useTVDimensions } from '../hooks/useTVDimensions';
 import type { ColumnOverride } from '../hooks/useResponsiveColumns';
 import { useTheme } from '../theme';
 import type { NovaTheme } from '../theme';
-import { isAndroidTablet } from '../theme/tokens/tvScale';
+import { isAndroidTablet, isTablet } from '../theme/tokens/tvScale';
 import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -389,8 +389,14 @@ const MediaGrid = React.memo(
     onItemFocus,
   }: MediaGridProps) {
     const theme = useTheme();
-    const { width: screenWidth } = useTVDimensions();
+    const { width: screenWidth, height: screenHeight } = useTVDimensions();
     const isCompact = theme.breakpoint === 'compact';
+
+    // Tablet-specific carousel card sizing
+    const isLandscape = screenWidth > screenHeight;
+    // Tablets get larger shelf cards: 200px portrait, 240px landscape
+    const tabletCarouselCardWidth = isLandscape ? 240 : 200;
+    const carouselCardWidth = isTablet ? tabletCarouselCardWidth : 160;
 
     // For grid layout on mobile, account for parent container padding (watchlist has theme.spacing.xl)
     const parentPadding = isCompact && layout === 'grid' ? theme.spacing.xl : 0;
@@ -718,28 +724,34 @@ const MediaGrid = React.memo(
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={[styles.carouselContent, styles.carouselContentCompact]}
             data={items}
-            extraData={badgeVisibility}
+            extraData={[badgeVisibility, carouselCardWidth]}
             keyExtractor={keyExtractor}
             initialNumToRender={isAndroid ? 3 : 5}
             maxToRenderPerBatch={isAndroid ? 2 : 5}
             windowSize={isAndroid ? 2 : 3}
             removeClippedSubviews={isAndroid}
-            renderItem={({ item, index }) => (
-              <View
-                style={[
-                  styles.carouselItem,
-                  {
-                    marginRight: index === items.length - 1 ? 0 : gap,
-                  },
-                ]}>
-                <MediaItem
-                  title={item}
-                  onPress={() => onItemPress?.(item)}
-                  onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
-                  badgeVisibility={badgeVisibility}
-                />
-              </View>
-            )}
+            renderItem={({ item, index }) => {
+              // Calculate card height based on 2:3 aspect ratio
+              const cardHeight = Math.round(carouselCardWidth * 1.5);
+              return (
+                <View
+                  style={[
+                    styles.carouselItem,
+                    {
+                      width: carouselCardWidth,
+                      marginRight: index === items.length - 1 ? 0 : gap,
+                    },
+                  ]}>
+                  <MediaItem
+                    title={item}
+                    onPress={() => onItemPress?.(item)}
+                    onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
+                    badgeVisibility={badgeVisibility}
+                    style={{ width: carouselCardWidth, height: cardHeight }}
+                  />
+                </View>
+              );
+            }}
           />
         );
       }
