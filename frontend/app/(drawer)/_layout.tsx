@@ -3,6 +3,7 @@ import { CustomMenu } from '@/components/CustomMenu';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { isTablet } from '@/theme/tokens/tvScale';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
@@ -41,11 +42,13 @@ export default function DrawerLayout() {
     [isBackendAvailable],
   );
 
-  // Lock orientation to portrait for drawer screens on mobile devices
+  // Lock orientation to portrait for phones only
+  // Tablets and TVs can use any orientation
   // Use useFocusEffect to re-lock orientation when returning from player
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS === 'web' || Platform.isTV) {
+      // Skip orientation lock for web, TV, and tablets
+      if (Platform.OS === 'web' || Platform.isTV || isTablet) {
         return;
       }
 
@@ -92,6 +95,14 @@ export default function DrawerLayout() {
               {
                 paddingBottom: Math.max(insets.bottom, theme.spacing.md),
                 height: 56 + Math.max(insets.bottom, theme.spacing.md),
+                // Center tabs on tablets with a max width
+                ...(isTablet && {
+                  maxWidth: 500,
+                  alignSelf: 'center' as const,
+                  width: '100%',
+                  borderRadius: 16,
+                  marginBottom: Math.max(insets.bottom, theme.spacing.sm),
+                }),
               },
             ],
             tabBarIcon: ({ color, focused }) => {

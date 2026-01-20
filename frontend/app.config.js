@@ -143,6 +143,7 @@ module.exports = ({ config }) => {
         bundleIdentifier: isTV ? 'com.strmr.app.tv' : 'com.strmr.app',
         buildNumber: '3',
         deploymentTarget: '15.1',
+        supportsTablet: true,
         icon: './assets/ios_icons/icon-1024.png',
         entitlements: {
           'com.apple.developer.networking.wifi-info': true,

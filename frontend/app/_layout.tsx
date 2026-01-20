@@ -35,6 +35,7 @@ import { MovieReleasesProvider } from '../components/MovieReleasesContext';
 import { NovaThemeProvider } from '../theme';
 import { GoBackConfiguration } from '@/services/remote-control/GoBackConfiguration';
 import { SpatialNavigationDeviceTypeProvider } from '@/services/tv-navigation';
+import { hasTouchSupport, useTVLayout } from '@/theme/tokens/tvScale';
 import LoginScreen from './login';
 
 import ConfigureRemoteControl from './configureRemoteControl';
@@ -95,10 +96,11 @@ function AuthGate() {
                               <Stack
                                 screenOptions={{
                                   headerShown: false,
-                                  // Enable native swipe-back gesture on mobile
-                                  gestureEnabled: !Platform.isTV,
+                                  // Enable native swipe-back gesture on touch devices (phones + tablets)
+                                  gestureEnabled: hasTouchSupport,
                                   gestureDirection: 'horizontal',
-                                  animation: Platform.isTV ? 'none' : 'default',
+                                  // Tablets keep animations despite TV layout; only actual TV disables them
+                                  animation: hasTouchSupport ? 'default' : 'none',
                                   // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
                                   freezeOnBlur: true,
                                 }}>
@@ -109,10 +111,10 @@ function AuthGate() {
                                   name="details"
                                   options={{
                                     headerShown: false,
-                                    // Enable swipe-back gesture on details page
-                                    gestureEnabled: !Platform.isTV,
+                                    // Enable swipe-back gesture on touch devices
+                                    gestureEnabled: hasTouchSupport,
                                     gestureDirection: 'horizontal',
-                                    animation: Platform.isTV ? 'none' : 'slide_from_right',
+                                    animation: hasTouchSupport ? 'slide_from_right' : 'none',
                                   }}
                                 />
                                 <Stack.Screen

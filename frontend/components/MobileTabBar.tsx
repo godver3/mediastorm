@@ -8,6 +8,7 @@ import type { ComponentProps } from 'react';
 
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { isTablet } from '@/theme/tokens/tvScale';
 
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
 import { useUserProfiles } from './UserProfilesContext';
@@ -185,6 +186,15 @@ const createStyles = (theme: NovaTheme, bottomInset: number) => {
       paddingTop: theme.spacing.xs,
       paddingBottom: bottomPadding,
       minHeight: BASE_TAB_HEIGHT + bottomPadding,
+      // Center tabs on tablets with a max width to match drawer layout
+      ...(isTablet && {
+        maxWidth: 500,
+        alignSelf: 'center' as const,
+        width: '100%',
+        borderRadius: 16,
+        marginBottom: Math.max(bottomInset, theme.spacing.sm),
+        paddingBottom: theme.spacing.md, // Override bottomPadding since marginBottom handles spacing
+      }),
     },
     tabButton: {
       flex: 1,

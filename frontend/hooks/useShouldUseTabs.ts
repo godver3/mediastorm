@@ -7,7 +7,7 @@ export const useShouldUseTabs = () => {
 
   return useMemo(() => {
     // On mobile devices (non-TV iOS/Android), always use tabs regardless of screen width
-    // This ensures phones, tablets, and foldables all get the mobile tab navigation
+    // This ensures phones AND tablets get the mobile tab navigation (scaled up for tablets)
     const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
     if (isMobileDevice) {
       return true;
