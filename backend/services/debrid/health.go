@@ -512,6 +512,7 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 		id       string
 		label    string
 		priority int
+		size     int64
 	}
 
 	if len(files) == 0 {
@@ -522,9 +523,15 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 	var candidates []candidate
 	var resolverCandidates []mediaresolve.Candidate
 	bestIdx := -1
+	isBDMV := false
 
 	for _, file := range files {
 		id := fmt.Sprintf("%d", file.ID)
+
+		// Detect BDMV (Blu-ray) structure
+		if strings.Contains(strings.ToUpper(file.Path), "/BDMV/STREAM/") {
+			isBDMV = true
+		}
 
 		ext := strings.ToLower(path.Ext(file.Path))
 		priority, ok := mediaExtensionPriority[ext]
@@ -540,6 +547,7 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 			id:       id,
 			label:    file.Path,
 			priority: priority,
+			size:     file.Bytes,
 		})
 		resolverCandidates = append(resolverCandidates, mediaresolve.Candidate{
 			Label:    file.Path,
@@ -564,6 +572,24 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 		selection.PreferredLabel = candidates[0].label
 		selection.PreferredReason = "only playable file found"
 		selection.promotePreferredToFront()
+		return selection
+	}
+
+	// For BDMV (Blu-ray) structures, select the largest file as it's the main feature.
+	// BDMV files are named numerically (00000.m2ts, 00001.m2ts, etc.) so title matching
+	// doesn't work. The main movie is always significantly larger than bonus content.
+	if isBDMV {
+		largestIdx := 0
+		for idx, cand := range candidates {
+			if cand.size > candidates[largestIdx].size {
+				largestIdx = idx
+			}
+		}
+		selection.PreferredID = candidates[largestIdx].id
+		selection.PreferredLabel = candidates[largestIdx].label
+		selection.PreferredReason = fmt.Sprintf("BDMV largest file (%d MB)", candidates[largestIdx].size/(1024*1024))
+		selection.promotePreferredToFront()
+		log.Printf("[debrid-playback] BDMV structure detected, selecting largest file: %s (%d bytes)", candidates[largestIdx].label, candidates[largestIdx].size)
 		return selection
 	}
 
