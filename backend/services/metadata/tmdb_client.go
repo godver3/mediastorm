@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -34,6 +35,7 @@ type tmdbClient struct {
 	apiKey   string
 	language string
 	httpc    *http.Client
+	cache    *fileCache // Optional cache for expensive lookups
 
 	// Rate limiting
 	throttleMu  sync.Mutex
@@ -41,7 +43,7 @@ type tmdbClient struct {
 	minInterval time.Duration
 }
 
-func newTMDBClient(apiKey, language string, httpc *http.Client) *tmdbClient {
+func newTMDBClient(apiKey, language string, httpc *http.Client, cache *fileCache) *tmdbClient {
 	if httpc == nil {
 		httpc = &http.Client{Timeout: 15 * time.Second}
 	}
@@ -49,6 +51,7 @@ func newTMDBClient(apiKey, language string, httpc *http.Client) *tmdbClient {
 		apiKey:      strings.TrimSpace(apiKey),
 		language:    language,
 		httpc:       httpc,
+		cache:       cache,
 		minInterval: 20 * time.Millisecond, // TMDB has generous rate limits
 	}
 }
@@ -398,6 +401,53 @@ func scoreFallback(popularity, voteAverage float64) float64 {
 		return voteAverage
 	}
 	return 0
+}
+
+// calculateRoleImportance computes a score that reflects how important a role was
+// for an actor, rather than just the title's global popularity.
+// This helps rank lead roles in quality productions higher than cameos in popular shows.
+func calculateRoleImportance(popularity, voteAverage float64, billingOrder, episodeCount, totalEpisodes int, isTV bool) float64 {
+	if popularity <= 0 {
+		popularity = 1.0
+	}
+
+	// Billing order weight: lower order = more prominent role
+	// order 0 = 1.0, order 5 = 0.8, order 10 = 0.67, order 20 = 0.5
+	billingWeight := 1.0 / (1.0 + float64(billingOrder)*0.05)
+
+	// Quality weight based on vote average (0-10 scale)
+	qualityWeight := 0.5 + (voteAverage / 20.0) // Range: 0.5 to 1.0
+
+	if isTV {
+		// For TV: use percentage of episodes appeared in
+		var episodeWeight float64
+
+		if totalEpisodes > 0 {
+			// Calculate percentage of show appeared in
+			percentage := float64(episodeCount) / float64(totalEpisodes)
+
+			if percentage < 0.05 {
+				// Guest appearance (<5% of show) - hard cap
+				episodeWeight = 0.05
+			} else {
+				// Scale from 0.1 (5%) to 1.0 (50%+)
+				// 5% = 0.1, 25% = 0.5, 50%+ = 1.0
+				episodeWeight = math.Min(percentage*2.0, 1.0)
+			}
+		} else {
+			// Fallback if we don't have total episodes: use absolute count
+			if episodeCount <= 2 {
+				episodeWeight = 0.05
+			} else {
+				episodeWeight = 0.1 + 0.9*math.Min(float64(episodeCount)/10.0, 1.0)
+			}
+		}
+
+		return popularity * episodeWeight * billingWeight * qualityWeight
+	}
+
+	// For movies: billing order and quality matter most
+	return popularity * billingWeight * qualityWeight
 }
 
 func (c *tmdbClient) fetchTrailers(ctx context.Context, mediaType string, tmdbID int64) ([]models.Trailer, error) {
@@ -864,6 +914,42 @@ func (c *tmdbClient) fetchTVCredits(ctx context.Context, tmdbID int64) (*models.
 	return &models.Credits{Cast: cast}, nil
 }
 
+// fetchTVShowTotalEpisodes fetches the total number of episodes for a TV show (cached)
+func (c *tmdbClient) fetchTVShowTotalEpisodes(ctx context.Context, tmdbID int64) (int, error) {
+	if !c.isConfigured() {
+		return 0, errors.New("tmdb api key not configured")
+	}
+
+	// Check cache first
+	cacheKey := fmt.Sprintf("tv:%d:episode_count", tmdbID)
+	if c.cache != nil {
+		var cached int
+		if ok, _ := c.cache.get(cacheKey, &cached); ok {
+			return cached, nil
+		}
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID))
+	if err != nil {
+		return 0, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+
+	var payload struct {
+		NumberOfEpisodes int `json:"number_of_episodes"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return 0, fmt.Errorf("tmdb tv/%d failed: %w", tmdbID, err)
+	}
+
+	// Cache the result
+	if c.cache != nil && payload.NumberOfEpisodes > 0 {
+		c.cache.set(cacheKey, payload.NumberOfEpisodes)
+	}
+
+	return payload.NumberOfEpisodes, nil
+}
+
 func (c *tmdbClient) movieReleaseDates(ctx context.Context, tmdbID int64) ([]models.Release, error) {
 	if !c.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
@@ -1193,15 +1279,58 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 			VoteAverage      float64 `json:"vote_average"`
 			Character        string  `json:"character"`
 			OriginalLanguage string  `json:"original_language"`
+			Order            int     `json:"order"`         // Billing order (lower = more prominent)
+			EpisodeCount     int     `json:"episode_count"` // Number of episodes (TV only)
+			GenreIDs         []int   `json:"genre_ids"`     // Genre IDs (10767 = Talk Show)
 		} `json:"cast"`
 	}
 	if err := c.doGET(ctx, endpoint, &payload); err != nil {
 		return nil, fmt.Errorf("tmdb person combined_credits for %d failed: %w", personID, err)
 	}
 
-	// Convert to Title slice and sort by popularity
+	// Collect TV show IDs to fetch total episode counts
+	tvShowIDs := make(map[int64]bool)
+	for _, credit := range payload.Cast {
+		if credit.MediaType == "tv" {
+			tvShowIDs[credit.ID] = true
+		}
+	}
+
+	// Fetch total episode counts for all TV shows in parallel
+	tvEpisodeCounts := make(map[int64]int)
+	if len(tvShowIDs) > 0 {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for tvID := range tvShowIDs {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				total, err := c.fetchTVShowTotalEpisodes(ctx, id)
+				if err == nil && total > 0 {
+					mu.Lock()
+					tvEpisodeCounts[id] = total
+					mu.Unlock()
+				}
+			}(tvID)
+		}
+		wg.Wait()
+	}
+
+	// Convert to Title slice and calculate role importance score
 	titles := make([]models.Title, 0, len(payload.Cast))
 	for _, credit := range payload.Cast {
+		// Skip talk shows (genre 10767) - these are typically interview appearances, not acting roles
+		isTalkShow := false
+		for _, gid := range credit.GenreIDs {
+			if gid == 10767 {
+				isTalkShow = true
+				break
+			}
+		}
+		if isTalkShow {
+			continue
+		}
+
 		// Determine media type and name
 		mediaType := "movie"
 		name := credit.Title
@@ -1231,12 +1360,38 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 		if backdrop := buildTMDBImage(credit.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
 			title.Backdrop = backdrop
 		}
-		title.Popularity = scoreFallback(credit.Popularity, credit.VoteAverage)
+
+		// Get total episodes for TV shows (0 for movies)
+		totalEpisodes := tvEpisodeCounts[credit.ID]
+
+		// Calculate role importance score using hybrid algorithm
+		// This considers: popularity, billing order, episode percentage (TV), and rating
+		title.Popularity = calculateRoleImportance(
+			credit.Popularity,
+			credit.VoteAverage,
+			credit.Order,
+			credit.EpisodeCount,
+			totalEpisodes,
+			credit.MediaType == "tv",
+		)
+
+		// Debug logging for score calculation
+		if credit.MediaType == "tv" {
+			pct := 0.0
+			if totalEpisodes > 0 {
+				pct = float64(credit.EpisodeCount) / float64(totalEpisodes) * 100
+			}
+			log.Printf("[metadata] score: %q pop=%.1f order=%d ep=%d/%d (%.1f%%) -> %.1f",
+				name, credit.Popularity, credit.Order, credit.EpisodeCount, totalEpisodes, pct, title.Popularity)
+		} else {
+			log.Printf("[metadata] score: %q pop=%.1f order=%d vote=%.1f -> %.1f",
+				name, credit.Popularity, credit.Order, credit.VoteAverage, title.Popularity)
+		}
 
 		titles = append(titles, title)
 	}
 
-	// Sort by popularity (highest first)
+	// Sort by role importance score (highest first)
 	sort.Slice(titles, func(i, j int) bool {
 		return titles[i].Popularity > titles[j].Popularity
 	})

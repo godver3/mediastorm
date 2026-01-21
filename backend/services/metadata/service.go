@@ -79,7 +79,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 
 	return &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
-		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}),
+		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
 		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled, ttlHours),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
 		idCache:          newFileCache(idCacheDir, ttlHours*stableIDCacheTTLMultiplier),
@@ -94,7 +94,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 // This allows hot reloading when settings change
 func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
 	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{}, s.ttlHours)
-	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{})
+	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{}, s.cache)
 
 	// Clear all cached metadata so fresh data is fetched with new API keys
 	if err := s.cache.clear(); err != nil {
@@ -2435,6 +2435,11 @@ func (s *Service) PersonDetails(ctx context.Context, personID int64) (*models.Pe
 		filmography = []models.Title{}
 	}
 
+	// Apply bio mention bonus - titles mentioned in biography get a boost
+	if person.Biography != "" && len(filmography) > 0 {
+		filmography = applyBioMentionBonus(person.Biography, filmography)
+	}
+
 	result := &models.PersonDetails{
 		Person:      *person,
 		Filmography: filmography,
@@ -2447,6 +2452,57 @@ func (s *Service) PersonDetails(ctx context.Context, personID int64) (*models.Pe
 
 	log.Printf("[metadata] person details fetch success personId=%d name=%q filmography=%d", personID, person.Name, len(filmography))
 	return result, nil
+}
+
+// applyBioMentionBonus boosts filmography entries that are mentioned in the person's biography.
+// This helps surface notable works that TMDB editors have highlighted.
+func applyBioMentionBonus(biography string, filmography []models.Title) []models.Title {
+	// Normalize biography for matching (lowercase)
+	bioLower := strings.ToLower(biography)
+
+	// Apply bonus to titles mentioned in bio
+	boostedCount := 0
+	for i := range filmography {
+		title := &filmography[i]
+		normalizedTitle := normalizeTitleForBioMatch(title.Name)
+
+		// Check if the normalized title appears in the biography
+		if normalizedTitle != "" && strings.Contains(bioLower, strings.ToLower(normalizedTitle)) {
+			oldScore := title.Popularity
+			// Apply 1.5x bonus for bio mentions
+			title.Popularity *= 1.5
+			log.Printf("[metadata] bio bonus: %q matched, score %.1f -> %.1f", title.Name, oldScore, title.Popularity)
+			boostedCount++
+		}
+	}
+	log.Printf("[metadata] bio bonus applied to %d/%d titles", boostedCount, len(filmography))
+
+	// Re-sort by updated popularity scores
+	sort.Slice(filmography, func(i, j int) bool {
+		return filmography[i].Popularity > filmography[j].Popularity
+	})
+
+	return filmography
+}
+
+// normalizeTitleForBioMatch strips common articles and prepares title for bio matching.
+// Returns empty string if title is too short or generic to match reliably.
+func normalizeTitleForBioMatch(title string) string {
+	// Strip leading articles
+	normalized := strings.TrimSpace(title)
+	for _, article := range []string{"The ", "A ", "An "} {
+		if strings.HasPrefix(normalized, article) {
+			normalized = strings.TrimPrefix(normalized, article)
+			break
+		}
+	}
+
+	// Skip very short titles (too likely to false match)
+	if len(normalized) < 4 {
+		return ""
+	}
+
+	return normalized
 }
 
 // movieDetailsInternal is the shared implementation for MovieInfo and MovieDetails.
