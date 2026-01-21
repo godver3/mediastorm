@@ -1325,7 +1325,8 @@
     }
     function addTag(basePath, fieldKey, tag) {
         const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
-        let tags = getValue(fullPath) || [];
+        // Create a copy to avoid mutating the original array (which could be from currentSettings)
+        let tags = [...(getValue(fullPath) || [])];
         if (!tags.includes(tag)) { tags.push(tag); setValue(fullPath, tags); renderSettings(); }
     }
     function removeTag(basePath, fieldKey, tag) {
@@ -1336,7 +1337,8 @@
     }
     function handleCheckboxChange(basePath, fieldKey, optionValue, isChecked) {
         const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
-        let values = getValue(fullPath) || [];
+        // Create a copy to avoid mutating the original array (which could be from currentSettings)
+        let values = [...(getValue(fullPath) || [])];
         if (!Array.isArray(values)) values = [];
         if (isChecked && !values.includes(optionValue)) {
             values.push(optionValue);
