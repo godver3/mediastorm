@@ -295,7 +295,12 @@ func (s *Service) SetIconURL(id, iconURL string) (models.User, error) {
 
 	// Download the image
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(iconURL)
+	req, err := http.NewRequest("GET", iconURL, nil)
+	if err != nil {
+		return models.User{}, fmt.Errorf("%w: %v", ErrIconDownloadFailed, err)
+	}
+	req.Header.Set("User-Agent", "strmr/1.0")
+	resp, err := client.Do(req)
 	if err != nil {
 		return models.User{}, fmt.Errorf("%w: %v", ErrIconDownloadFailed, err)
 	}
