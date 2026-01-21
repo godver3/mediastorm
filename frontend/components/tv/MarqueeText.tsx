@@ -103,8 +103,8 @@ const MarqueeText = memo(function MarqueeText({
 
   return (
     <View style={[styles.container, containerStyle]} onLayout={onContainerLayout}>
-      {/* Visible animated text - no numberOfLines so full text can scroll */}
-      <Animated.Text style={[style, animatedStyle, { width: fullTextWidth || undefined }]}>{children}</Animated.Text>
+      {/* Visible animated text - single line, scrolls horizontally when truncated */}
+      <Animated.Text style={[style, animatedStyle, { width: fullTextWidth || undefined }]} numberOfLines={1}>{children}</Animated.Text>
       {/* Measurement wrapper - positioned off screen with no width constraint */}
       <View style={styles.measureWrapper} pointerEvents="none">
         <Text style={[flatStyle, styles.measureText]} onLayout={onMeasureLayout}>
