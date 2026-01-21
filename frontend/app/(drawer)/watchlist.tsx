@@ -832,7 +832,85 @@ export default function WatchlistScreen() {
   // Person header component for ListHeaderComponent (scrolls with grid)
   const personHeaderComponent = useMemo(() => {
     if (!isPersonMode || !personDetails) return null;
-    return (
+
+    // TV sort button icon size scaled up 1.5x
+    const sortIconSize = Platform.isTV ? 27 : 18;
+
+    // Bio content - wrap in SpatialNavigationFocusableView on TV for D-pad navigation
+    const bioContent = personDetails.person.biography ? (
+      Platform.isTV ? (
+        <SpatialNavigationFocusableView onSelect={() => setBioModalVisible(true)}>
+          {({ isFocused }: { isFocused: boolean }) => (
+            <View style={[styles.bioPressable, isFocused && styles.bioPressableFocused]}>
+              <Text style={styles.personBioTop} numberOfLines={5}>
+                {personDetails.person.biography}
+              </Text>
+              <Text style={styles.bioReadMore}>Select to read more</Text>
+            </View>
+          )}
+        </SpatialNavigationFocusableView>
+      ) : (
+        <Pressable onPress={() => setBioModalVisible(true)}>
+          <Text style={styles.personBioTop} numberOfLines={5}>
+            {personDetails.person.biography}
+          </Text>
+          <Text style={styles.bioReadMore}>Tap to read more</Text>
+        </Pressable>
+      )
+    ) : null;
+
+    // Sort button - TV version with spatial navigation
+    const renderSortButton = (
+      sortType: 'popular' | 'chronological',
+      icon: 'flame' | 'calendar',
+      label: string,
+    ) => {
+      const isActive = filmographySort === sortType;
+      if (Platform.isTV) {
+        return (
+          <SpatialNavigationFocusableView onSelect={() => setFilmographySort(sortType)}>
+            {({ isFocused }: { isFocused: boolean }) => (
+              <View
+                style={[
+                  styles.sortButton,
+                  isActive && styles.sortButtonActive,
+                  isFocused && styles.sortButtonFocused,
+                ]}>
+                <Ionicons
+                  name={icon}
+                  size={sortIconSize}
+                  color={isFocused ? theme.colors.text.inverse : isActive ? theme.colors.accent.primary : theme.colors.text.muted}
+                />
+                <Text
+                  style={[
+                    styles.sortButtonText,
+                    isActive && styles.sortButtonTextActive,
+                    isFocused && styles.sortButtonTextFocused,
+                  ]}>
+                  {label}
+                </Text>
+              </View>
+            )}
+          </SpatialNavigationFocusableView>
+        );
+      }
+      return (
+        <Pressable
+          style={[styles.sortButton, isActive && styles.sortButtonActive]}
+          onPress={() => setFilmographySort(sortType)}>
+          <Ionicons
+            name={icon}
+            size={18}
+            color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
+          />
+          <Text style={[styles.sortButtonText, isActive && styles.sortButtonTextActive]}>
+            {label}
+          </Text>
+        </Pressable>
+      );
+    };
+
+    const headerContent = (
       <View style={styles.personHeader}>
         <View style={styles.personTopRow}>
           {personDetails.person.profileUrl && (
@@ -846,47 +924,25 @@ export default function WatchlistScreen() {
             {personDetails.person.knownFor && (
               <Text style={styles.personRole}>{personDetails.person.knownFor}</Text>
             )}
-            {personDetails.person.biography && (
-              <Pressable onPress={() => setBioModalVisible(true)}>
-                <Text style={styles.personBioTop} numberOfLines={5}>
-                  {personDetails.person.biography}
-                </Text>
-                <Text style={styles.bioReadMore}>Tap to read more</Text>
-              </Pressable>
-            )}
+            {bioContent}
           </View>
         </View>
         {/* Sort toggle for filmography */}
         <View style={styles.sortToggleRow}>
           <Text style={styles.sortLabel}>Sort by:</Text>
           <View style={styles.sortButtons}>
-            <Pressable
-              style={[styles.sortButton, filmographySort === 'popular' && styles.sortButtonActive]}
-              onPress={() => setFilmographySort('popular')}>
-              <Ionicons
-                name="flame"
-                size={18}
-                color={filmographySort === 'popular' ? theme.colors.accent.primary : theme.colors.text.muted}
-              />
-              <Text style={[styles.sortButtonText, filmographySort === 'popular' && styles.sortButtonTextActive]}>
-                Popular
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.sortButton, filmographySort === 'chronological' && styles.sortButtonActive]}
-              onPress={() => setFilmographySort('chronological')}>
-              <Ionicons
-                name="calendar"
-                size={18}
-                color={filmographySort === 'chronological' ? theme.colors.accent.primary : theme.colors.text.muted}
-              />
-              <Text style={[styles.sortButtonText, filmographySort === 'chronological' && styles.sortButtonTextActive]}>
-                Year
-              </Text>
-            </Pressable>
+            {renderSortButton('popular', 'flame', 'Popular')}
+            {renderSortButton('chronological', 'calendar', 'Year')}
           </View>
         </View>
       </View>
+    );
+
+    // Wrap in SpatialNavigationNode on TV for proper navigation ordering
+    return Platform.isTV ? (
+      <SpatialNavigationNode orientation="horizontal">{headerContent}</SpatialNavigationNode>
+    ) : (
+      headerContent
     );
   }, [isPersonMode, personDetails, styles, filmographySort, theme.colors]);
 
@@ -1000,20 +1056,36 @@ export default function WatchlistScreen() {
           transparent
           animationType="fade"
           onRequestClose={() => setBioModalVisible(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Pressable style={styles.modalCloseButton} onPress={() => setBioModalVisible(false)}>
-                <Ionicons name="close-circle" size={32} color={theme.colors.text.secondary} />
-              </Pressable>
-              <ScrollView
-                contentContainerStyle={styles.modalScrollContent}
-                showsVerticalScrollIndicator={true}>
-                <Text style={styles.modalBioText}>
-                  {personDetails?.person.biography ?? 'No biography available.'}
-                </Text>
-              </ScrollView>
+          <SpatialNavigationRoot isActive={bioModalVisible}>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                {Platform.isTV ? (
+                  <SpatialNavigationFocusableView onSelect={() => setBioModalVisible(false)}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.modalCloseButton, isFocused && styles.modalCloseButtonFocused]}>
+                        <Ionicons
+                          name="close-circle"
+                          size={48}
+                          color={isFocused ? theme.colors.accent.primary : theme.colors.text.secondary}
+                        />
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                ) : (
+                  <Pressable style={styles.modalCloseButton} onPress={() => setBioModalVisible(false)}>
+                    <Ionicons name="close-circle" size={32} color={theme.colors.text.secondary} />
+                  </Pressable>
+                )}
+                <ScrollView
+                  contentContainerStyle={styles.modalScrollContent}
+                  showsVerticalScrollIndicator={true}>
+                  <Text style={styles.modalBioText}>
+                    {personDetails?.person.biography ?? 'No biography available.'}
+                  </Text>
+                </ScrollView>
+              </View>
             </View>
-          </View>
+          </SpatialNavigationRoot>
         </Modal>
       )}
     </SpatialNavigationRoot>
@@ -1046,104 +1118,139 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: theme.spacing.lg,
     },
     personHeader: {
-      marginBottom: theme.spacing.lg,
+      marginBottom: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,
     },
     personTopRow: {
       flexDirection: 'row',
     },
     personPhoto: {
-      width: responsiveSize(100, 120, 150),
-      height: responsiveSize(150, 180, 225),
-      borderRadius: theme.radius.md,
+      width: Platform.isTV ? 225 : responsiveSize(100, 120, 150),
+      height: Platform.isTV ? 338 : responsiveSize(150, 180, 225),
+      borderRadius: Platform.isTV ? theme.radius.md * 1.5 : theme.radius.md,
       backgroundColor: theme.colors.background.surface,
-      marginRight: theme.spacing.lg,
+      marginRight: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,
     },
     personBioWrap: {
       flex: 1,
-      paddingTop: theme.spacing.xs,
+      paddingTop: Platform.isTV ? theme.spacing.xs * 1.5 : theme.spacing.xs,
     },
     personRole: {
       ...theme.typography.label.md,
+      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
+      lineHeight: Platform.isTV ? theme.typography.label.md.lineHeight * 1.5 : theme.typography.label.md.lineHeight,
       color: theme.colors.text.secondary,
-      marginBottom: theme.spacing.sm,
+      marginBottom: Platform.isTV ? theme.spacing.sm * 1.5 : theme.spacing.sm,
+    },
+    bioPressable: {
+      borderRadius: Platform.isTV ? theme.radius.sm * 1.5 : theme.radius.sm,
+      borderWidth: Platform.isTV ? 3 : 2,
+      borderColor: 'transparent',
+      padding: Platform.isTV ? theme.spacing.sm : 0,
+      margin: Platform.isTV ? -theme.spacing.sm : 0,
+    },
+    bioPressableFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.background.surface,
     },
     personBioTop: {
       ...theme.typography.body.sm,
+      fontSize: Platform.isTV ? theme.typography.body.sm.fontSize * 1.5 : theme.typography.body.sm.fontSize,
       color: theme.colors.text.secondary,
-      lineHeight: Platform.isTV ? tvScale(22) : 22,
+      lineHeight: Platform.isTV ? 33 : 22,
     },
     bioReadMore: {
-      ...theme.typography.label.sm,
+      ...theme.typography.label.md,
+      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
       color: theme.colors.accent.primary,
-      marginTop: theme.spacing.xs,
+      marginTop: Platform.isTV ? theme.spacing.sm : theme.spacing.xs,
     },
     sortToggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: theme.spacing.lg,
-      paddingTop: theme.spacing.md,
+      marginTop: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,
+      paddingTop: Platform.isTV ? theme.spacing.md * 1.5 : theme.spacing.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
     },
     sortLabel: {
-      ...theme.typography.label.sm,
+      ...theme.typography.label.md,
+      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
+      lineHeight: Platform.isTV ? theme.typography.label.md.lineHeight * 1.5 : theme.typography.label.md.lineHeight,
       color: theme.colors.text.muted,
-      marginRight: theme.spacing.md,
+      marginRight: Platform.isTV ? theme.spacing.md * 1.5 : theme.spacing.md,
     },
     sortButtons: {
       flexDirection: 'row',
-      gap: theme.spacing.sm,
+      gap: Platform.isTV ? theme.spacing.md : theme.spacing.sm,
     },
     sortButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.xs,
-      paddingVertical: theme.spacing.xs,
-      paddingHorizontal: theme.spacing.sm,
-      borderRadius: theme.radius.sm,
+      gap: Platform.isTV ? theme.spacing.sm : theme.spacing.xs,
+      paddingVertical: Platform.isTV ? theme.spacing.md : theme.spacing.xs,
+      paddingHorizontal: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
+      borderRadius: Platform.isTV ? theme.radius.md : theme.radius.sm,
       backgroundColor: theme.colors.background.surface,
+      borderWidth: Platform.isTV ? 3 : 2,
+      borderColor: 'transparent',
     },
     sortButtonActive: {
       backgroundColor: theme.colors.accent.primary + '20',
     },
+    sortButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary,
+    },
     sortButtonText: {
-      ...theme.typography.label.sm,
+      ...theme.typography.label.md,
+      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
+      lineHeight: Platform.isTV ? theme.typography.label.md.lineHeight * 1.5 : theme.typography.label.md.lineHeight,
       color: theme.colors.text.muted,
     },
     sortButtonTextActive: {
       color: theme.colors.accent.primary,
+    },
+    sortButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     modalOverlay: {
       flex: 1,
       backgroundColor: 'rgba(0, 0, 0, 0.9)',
       justifyContent: 'center',
       alignItems: 'center',
-      padding: theme.spacing.xl,
+      padding: Platform.isTV ? theme.spacing.xl * 1.5 : theme.spacing.xl,
     },
     modalContent: {
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.lg,
-      maxWidth: 600,
+      borderRadius: Platform.isTV ? theme.radius.lg * 1.5 : theme.radius.lg,
+      maxWidth: Platform.isTV ? 900 : 600,
       maxHeight: '85%',
       width: '100%',
     },
     modalCloseButton: {
       position: 'absolute',
-      top: theme.spacing.sm,
-      right: theme.spacing.sm,
+      top: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
+      right: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
       zIndex: 10,
-      padding: theme.spacing.xs,
+      padding: Platform.isTV ? theme.spacing.md : theme.spacing.xs,
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: 20,
+      borderRadius: Platform.isTV ? 30 : 20,
+      borderWidth: Platform.isTV ? 3 : 2,
+      borderColor: 'transparent',
+    },
+    modalCloseButtonFocused: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.background.surface,
     },
     modalScrollContent: {
-      padding: theme.spacing.xl,
-      paddingTop: theme.spacing['3xl'],
-      paddingBottom: theme.spacing['2xl'],
+      padding: Platform.isTV ? theme.spacing.xl * 1.5 : theme.spacing.xl,
+      paddingTop: Platform.isTV ? theme.spacing['3xl'] * 1.5 : theme.spacing['3xl'],
+      paddingBottom: Platform.isTV ? theme.spacing['2xl'] * 1.5 : theme.spacing['2xl'],
     },
     modalBioText: {
       ...theme.typography.body.md,
+      fontSize: Platform.isTV ? theme.typography.body.md.fontSize * 1.5 : theme.typography.body.md.fontSize,
       color: theme.colors.text.primary,
-      lineHeight: 26,
+      lineHeight: Platform.isTV ? 39 : 26,
     },
   });

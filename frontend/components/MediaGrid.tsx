@@ -787,6 +787,7 @@ const MediaGrid = React.memo(
               onScroll={handleScroll}
               scrollEventThrottle={100}
               removeClippedSubviews={isAndroidDevice}>
+              {ListHeaderComponent}
               {visibleRows.map((row, rowIndex) => (
                 <View
                   key={`row-${rowIndex}`}
@@ -862,6 +863,7 @@ const MediaGrid = React.memo(
           isTVSelectable={false}
           // @ts-ignore - TV-specific prop
           tvRemoveGestureEnabled={Platform.isTV}>
+          {ListHeaderComponent}
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;
