@@ -4657,7 +4657,7 @@ export default function DetailsScreen() {
                 onEpisodeFocus={handleEpisodeFocus}
                 onPlaySeason={handlePlaySeason}
                 onPlayEpisode={handlePlayEpisode}
-                onEpisodeLongPress={handleEpisodeLongPress}
+                onEpisodeLongPress={handleToggleEpisodeWatched}
                 onToggleEpisodeWatched={handleToggleEpisodeWatched}
                 isEpisodeWatched={isEpisodeWatched}
                 renderContent={!Platform.isTV}
@@ -4919,7 +4919,7 @@ export default function DetailsScreen() {
             onEpisodeFocus={handleEpisodeFocus}
             onPlaySeason={handlePlaySeason}
             onPlayEpisode={handlePlayEpisode}
-            onEpisodeLongPress={handleEpisodeLongPress}
+            onEpisodeLongPress={handleToggleEpisodeWatched}
             onToggleEpisodeWatched={handleToggleEpisodeWatched}
             isEpisodeWatched={isEpisodeWatched}
             renderContent={false}

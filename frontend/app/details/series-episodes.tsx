@@ -15,6 +15,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { View as RNView } from 'react-native';
 import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { episodesMatch, formatPublishDate, padNumber } from './utils';
+import MarqueeText from '@/components/tv/MarqueeText';
 
 // Helper function to determine if we're on TV platform
 const isTVPlatform = (): boolean => Platform.isTV;
@@ -83,6 +84,7 @@ export const SeriesEpisodes = ({
   const styles = useMemo(() => createSeriesEpisodesStyles(theme), [theme]);
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<number | null>(null);
   const [seasonPickerVisible, setSeasonPickerVisible] = useState(false);
+  const [flashingEpisode, setFlashingEpisode] = useState<string | null>(null);
   const initialEpisodeAppliedRef = useRef(false);
   const seasonFocusRefs = useRef<Map<number, SpatialNavigationNodeRef | null>>(new Map());
 
@@ -625,10 +627,14 @@ export const SeriesEpisodes = ({
                             isActive && styles.seasonCardActive,
                             isFocused && styles.seasonCardFocused,
                           ]}>
-                          <Text
-                            style={[styles.seasonCardTitle, (isFocused || isActive) && styles.seasonCardTitleActive]}>
+                          <MarqueeText
+                            style={[styles.seasonCardTitle, (isFocused || isActive) && styles.seasonCardTitleActive]}
+                            containerStyle={styles.seasonCardTitleContainer}
+                            focused={isFocused}
+                            speed={30}
+                            delay={400}>
                             {seasonLabel}
-                          </Text>
+                          </MarqueeText>
                           <Text
                             style={[styles.seasonCardMeta, (isFocused || isActive) && styles.seasonCardMetaActive]}
                             numberOfLines={1}>
@@ -670,31 +676,45 @@ export const SeriesEpisodes = ({
               {isTouchSeasonLayout ? (
                 <View style={[styles.episodeScrollContent, styles.episodeListTouch]}>
                   {selectedSeason.episodes.map((episode) => {
+                    const episodeFlashKey = `${episode.seasonNumber}-${episode.episodeNumber}`;
                     const isActive = episodesMatch(activeEpisode, episode);
                     const watched = isEpisodeWatched?.(episode) ?? false;
-                    const watchIconColor = isActive
-                      ? watched
-                        ? '#ffffff'
-                        : 'rgba(255, 255, 255, 0.7)'
-                      : watched
-                        ? theme.colors.accent.primary
-                        : theme.colors.text.secondary;
+                    const isFlashing = flashingEpisode === episodeFlashKey;
+                    const watchIconColor = isFlashing
+                      ? theme.colors.status.success
+                      : isActive
+                        ? watched
+                          ? '#ffffff'
+                          : 'rgba(255, 255, 255, 0.7)'
+                        : watched
+                          ? theme.colors.accent.primary
+                          : theme.colors.text.secondary;
                     return (
                       <Pressable
                         key={episode.id}
                         onPress={() => onEpisodeSelect(episode)}
-                        onLongPress={() => onEpisodeLongPress(episode)}
+                        onLongPress={() => {
+                          setFlashingEpisode(episodeFlashKey);
+                          setTimeout(() => setFlashingEpisode(null), 600);
+                          onEpisodeLongPress(episode);
+                        }}
                         delayLongPress={500}
-                        style={[styles.episodeCard, isActive && styles.episodeCardFocused]}>
+                        style={[
+                          styles.episodeCard,
+                          isActive && styles.episodeCardFocused,
+                          isFlashing && styles.episodeCardFlashing,
+                        ]}>
                         <View style={styles.episodeThumbnailColumn}>
                           {renderEpisodeThumbnail(episode, isActive)}
                           {onToggleEpisodeWatched && (
                             <Pressable
                               onPress={(e) => {
                                 e.stopPropagation();
+                                setFlashingEpisode(episodeFlashKey);
+                                setTimeout(() => setFlashingEpisode(null), 600);
                                 onToggleEpisodeWatched(episode);
                               }}
-                              style={styles.watchButtonTouch}>
+                              style={[styles.watchButtonTouch, isFlashing && styles.watchButtonFlashing]}>
                               <Ionicons name={watched ? 'eye' : 'eye-outline'} size={20} color={watchIconColor} />
                             </Pressable>
                           )}
@@ -727,8 +747,10 @@ export const SeriesEpisodes = ({
                     showsVerticalScrollIndicator>
                     {selectedSeason.episodes.map((episode, index) => {
                       const episodeKey = `episode-${episode.id}`;
+                      const episodeFlashKey = `${episode.seasonNumber}-${episode.episodeNumber}`;
                       const watched = isEpisodeWatched?.(episode) ?? false;
                       const isActiveEpisode = episodesMatch(activeEpisode, episode);
+                      const isFlashing = flashingEpisode === episodeFlashKey;
 
                       const handleEpisodeFocus = () => {
                         scrollToEpisode(episodeKey);
@@ -740,27 +762,39 @@ export const SeriesEpisodes = ({
                         onPlayEpisode(episode);
                       };
 
+                      const handleEpisodeLongPressWithFlash = () => {
+                        setFlashingEpisode(episodeFlashKey);
+                        setTimeout(() => setFlashingEpisode(null), 600);
+                        onEpisodeLongPress(episode);
+                      };
+
                       const focusable = (
                         <SpatialNavigationFocusableView
                           key={episode.id}
                           onFocus={handleEpisodeFocus}
                           onSelect={handleEpisodeSelect}
-                          onLongSelect={() => onEpisodeLongPress(episode)}
+                          onLongSelect={handleEpisodeLongPressWithFlash}
                           focusKey={episodeKey}>
                           {({ isFocused }: { isFocused: boolean }) => {
-                            const watchIconColor = isFocused
-                              ? watched
-                                ? '#ffffff'
-                                : 'rgba(255, 255, 255, 0.7)'
-                              : watched
-                                ? theme.colors.accent.primary
-                                : theme.colors.text.secondary;
+                            const watchIconColor = isFlashing
+                              ? theme.colors.status.success
+                              : isFocused
+                                ? watched
+                                  ? '#ffffff'
+                                  : 'rgba(255, 255, 255, 0.7)'
+                                : watched
+                                  ? theme.colors.accent.primary
+                                  : theme.colors.text.secondary;
                             return (
                               <Pressable
                                 onPress={handleEpisodeSelect}
-                                onLongPress={() => onEpisodeLongPress(episode)}
+                                onLongPress={handleEpisodeLongPressWithFlash}
                                 delayLongPress={500}
-                                style={[styles.episodeCard, isFocused && styles.episodeCardFocused]}>
+                                style={[
+                                  styles.episodeCard,
+                                  isFocused && styles.episodeCardFocused,
+                                  isFlashing && styles.episodeCardFlashing,
+                                ]}>
                                 <View
                                   ref={(ref) => {
                                     episodeRefs.current[episodeKey] = ref;
@@ -776,9 +810,11 @@ export const SeriesEpisodes = ({
                                       <Pressable
                                         onPress={(e) => {
                                           e.stopPropagation();
+                                          setFlashingEpisode(episodeFlashKey);
+                                          setTimeout(() => setFlashingEpisode(null), 600);
                                           onToggleEpisodeWatched(episode);
                                         }}
-                                        style={styles.watchButtonTV}>
+                                        style={[styles.watchButtonTV, isFlashing && styles.watchButtonFlashing]}>
                                         <Ionicons
                                           name={watched ? 'eye' : 'eye-outline'}
                                           size={24}
@@ -975,6 +1011,9 @@ const createSeriesEpisodesStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.accent.primary,
       borderColor: theme.colors.accent.primary,
     },
+    seasonCardTitleContainer: {
+      maxWidth: 90, // Truncate long titles (~10 chars), marquee scrolls on focus
+    },
     seasonCardTitle: {
       ...theme.typography.label.md,
       color: theme.colors.text.primary,
@@ -1033,6 +1072,10 @@ const createSeriesEpisodesStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.accent.primary,
       borderColor: theme.colors.accent.primary,
     },
+    episodeCardFlashing: {
+      borderColor: theme.colors.status.success,
+      borderWidth: 2,
+    },
     episodeThumbnail: {
       width: episodeThumbnailWidth,
       aspectRatio: 16 / 9,
@@ -1078,6 +1121,9 @@ const createSeriesEpisodesStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: theme.spacing.xs,
+    },
+    watchButtonFlashing: {
+      transform: [{ scale: 1.3 }],
     },
     episodeTitle: {
       ...theme.typography.title.md,

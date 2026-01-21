@@ -1,8 +1,8 @@
 import FocusablePressable from '@/components/FocusablePressable';
 import type { NovaTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useRef } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
 import {
   DefaultFocus,
@@ -46,6 +46,10 @@ export const BulkWatchModal = ({
   const scrollViewRef = useRef<ScrollView>(null);
   const itemRefsRef = useRef<Map<number, View>>(new Map());
 
+  // Track loading and success states for season buttons
+  const [loadingSeasons, setLoadingSeasons] = useState<Set<string>>(new Set());
+  const [successSeasons, setSuccessSeasons] = useState<Set<string>>(new Set());
+
   const handleMarkAllWatched = useCallback(async () => {
     await onMarkAllWatched();
     onClose();
@@ -55,6 +59,39 @@ export const BulkWatchModal = ({
     await onMarkAllUnwatched();
     onClose();
   }, [onMarkAllUnwatched, onClose]);
+
+  const handleMarkSeasonWithFeedback = useCallback(async (
+    seasonId: string,
+    action: 'watched' | 'unwatched',
+    handler: () => Promise<void>
+  ) => {
+    const key = `${seasonId}-${action}`;
+    setLoadingSeasons(prev => new Set(prev).add(key));
+    setSuccessSeasons(prev => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+
+    try {
+      await handler();
+      setSuccessSeasons(prev => new Set(prev).add(key));
+      // Clear success state after a brief delay
+      setTimeout(() => {
+        setSuccessSeasons(prev => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }, 1500);
+    } finally {
+      setLoadingSeasons(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, []);
 
   const handleItemFocus = useCallback((index: number) => {
     if (Platform.isTV && scrollViewRef.current) {
@@ -311,6 +348,13 @@ export const BulkWatchModal = ({
                           const watchedIndex = baseIndex + seasonIndex * 2;
                           const unwatchedIndex = watchedIndex + 1;
 
+                          const watchedKey = `${season.id}-watched`;
+                          const unwatchedKey = `${season.id}-unwatched`;
+                          const isWatchedLoading = loadingSeasons.has(watchedKey);
+                          const isWatchedSuccess = successSeasons.has(watchedKey);
+                          const isUnwatchedLoading = loadingSeasons.has(unwatchedKey);
+                          const isUnwatchedSuccess = successSeasons.has(unwatchedKey);
+
                           return (
                             <View key={season.id} style={styles.seasonGroup}>
                               <Text style={styles.seasonGroupTitle}>Season {season.number}</Text>
@@ -318,8 +362,9 @@ export const BulkWatchModal = ({
                               <SpatialNavigationFocusableView
                                 focusKey={`mark-season-${season.id}-watched`}
                                 onSelect={async () => {
-                                  await onMarkSeasonWatched(season);
-                                  onClose();
+                                  if (!isWatchedLoading) {
+                                    await handleMarkSeasonWithFeedback(season.id, 'watched', () => onMarkSeasonWatched(season));
+                                  }
                                 }}
                                 onFocus={() => handleItemFocus(watchedIndex)}>
                                 {({ isFocused }: { isFocused: boolean }) => (
@@ -329,24 +374,43 @@ export const BulkWatchModal = ({
                                     }}
                                     collapsable={false}>
                                     <Pressable
-                                      style={[styles.option, isFocused && styles.optionFocused]}
+                                      style={[
+                                        styles.option,
+                                        isFocused && styles.optionFocused,
+                                        isWatchedSuccess && styles.optionSuccess,
+                                      ]}
+                                      disabled={isWatchedLoading}
                                       onPress={
                                         !Platform.isTV
                                           ? async () => {
-                                              await onMarkSeasonWatched(season);
-                                              onClose();
+                                              if (!isWatchedLoading) {
+                                                await handleMarkSeasonWithFeedback(season.id, 'watched', () => onMarkSeasonWatched(season));
+                                              }
                                             }
                                           : undefined
                                       }>
                                       <View style={styles.optionContent}>
-                                        <Ionicons
-                                          name="checkmark"
-                                          size={Platform.isTV ? 24 : 20}
-                                          color={isFocused ? theme.colors.background.base : theme.colors.accent.primary}
-                                        />
+                                        {isWatchedLoading ? (
+                                          <ActivityIndicator
+                                            size="small"
+                                            color={isFocused ? theme.colors.background.base : theme.colors.accent.primary}
+                                          />
+                                        ) : (
+                                          <Ionicons
+                                            name={isWatchedSuccess ? 'checkmark-circle' : 'checkmark'}
+                                            size={Platform.isTV ? 24 : 20}
+                                            color={
+                                              isWatchedSuccess
+                                                ? theme.colors.status.success
+                                                : isFocused
+                                                  ? theme.colors.background.base
+                                                  : theme.colors.accent.primary
+                                            }
+                                          />
+                                        )}
                                         <View style={styles.optionText}>
                                           <Text style={[styles.optionTitle, isFocused && styles.optionTitleFocused]}>
-                                            Mark as Watched
+                                            {isWatchedSuccess ? 'Marked as Watched' : 'Mark as Watched'}
                                           </Text>
                                           <Text
                                             style={[
@@ -365,8 +429,9 @@ export const BulkWatchModal = ({
                               <SpatialNavigationFocusableView
                                 focusKey={`mark-season-${season.id}-unwatched`}
                                 onSelect={async () => {
-                                  await onMarkSeasonUnwatched(season);
-                                  onClose();
+                                  if (!isUnwatchedLoading) {
+                                    await handleMarkSeasonWithFeedback(season.id, 'unwatched', () => onMarkSeasonUnwatched(season));
+                                  }
                                 }}
                                 onFocus={() => handleItemFocus(unwatchedIndex)}>
                                 {({ isFocused }: { isFocused: boolean }) => (
@@ -376,24 +441,43 @@ export const BulkWatchModal = ({
                                     }}
                                     collapsable={false}>
                                     <Pressable
-                                      style={[styles.option, isFocused && styles.optionFocused]}
+                                      style={[
+                                        styles.option,
+                                        isFocused && styles.optionFocused,
+                                        isUnwatchedSuccess && styles.optionSuccess,
+                                      ]}
+                                      disabled={isUnwatchedLoading}
                                       onPress={
                                         !Platform.isTV
                                           ? async () => {
-                                              await onMarkSeasonUnwatched(season);
-                                              onClose();
+                                              if (!isUnwatchedLoading) {
+                                                await handleMarkSeasonWithFeedback(season.id, 'unwatched', () => onMarkSeasonUnwatched(season));
+                                              }
                                             }
                                           : undefined
                                       }>
                                       <View style={styles.optionContent}>
-                                        <Ionicons
-                                          name="close"
-                                          size={Platform.isTV ? 24 : 20}
-                                          color={isFocused ? theme.colors.background.base : theme.colors.text.secondary}
-                                        />
+                                        {isUnwatchedLoading ? (
+                                          <ActivityIndicator
+                                            size="small"
+                                            color={isFocused ? theme.colors.background.base : theme.colors.text.secondary}
+                                          />
+                                        ) : (
+                                          <Ionicons
+                                            name={isUnwatchedSuccess ? 'checkmark-circle' : 'close'}
+                                            size={Platform.isTV ? 24 : 20}
+                                            color={
+                                              isUnwatchedSuccess
+                                                ? theme.colors.status.success
+                                                : isFocused
+                                                  ? theme.colors.background.base
+                                                  : theme.colors.text.secondary
+                                            }
+                                          />
+                                        )}
                                         <View style={styles.optionText}>
                                           <Text style={[styles.optionTitle, isFocused && styles.optionTitleFocused]}>
-                                            Mark as Unwatched
+                                            {isUnwatchedSuccess ? 'Marked as Unwatched' : 'Mark as Unwatched'}
                                           </Text>
                                           <Text
                                             style={[
@@ -566,6 +650,9 @@ const createStyles = (theme: NovaTheme) => {
     optionFocused: {
       backgroundColor: theme.colors.accent.primary,
       borderColor: theme.colors.accent.primary,
+    },
+    optionSuccess: {
+      borderColor: theme.colors.status.success,
     },
     optionContent: {
       flexDirection: 'row',

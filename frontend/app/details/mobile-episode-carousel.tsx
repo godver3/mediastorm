@@ -3,13 +3,14 @@
  * Shows horizontal season selector + horizontal scrolling episode cards with thumbnails
  */
 
-import React, { memo, useMemo, useRef, useCallback, useEffect } from 'react';
+import React, { memo, useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions, ScrollView } from 'react-native';
 import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
+import MarqueeText from '@/components/tv/MarqueeText';
 
 interface MobileEpisodeCarouselProps {
   seasons: SeriesSeason[];
@@ -53,6 +54,9 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
   const seasonScrollRef = useRef<ScrollView>(null);
   const scrollX = useSharedValue(0);
 
+  // Track which episode was just toggled for visual feedback
+  const [flashingEpisode, setFlashingEpisode] = useState<string | null>(null);
+
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollX.value = event.contentOffset.x;
@@ -83,6 +87,10 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
 
   const handleEpisodeLongPress = useCallback(
     (episode: SeriesEpisode) => {
+      const episodeKey = `${episode.seasonNumber}-${episode.episodeNumber}`;
+      setFlashingEpisode(episodeKey);
+      // Clear flash after animation
+      setTimeout(() => setFlashingEpisode(null), 600);
       onEpisodeLongPress?.(episode);
     },
     [onEpisodeLongPress],
@@ -189,7 +197,14 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                 key={season.number}
                 style={[styles.seasonChip, isSelected && styles.seasonChipSelected]}
                 onPress={() => handleSeasonPress(season)}>
-                <Text style={[styles.seasonChipText, isSelected && styles.seasonChipTextSelected]}>{seasonLabel}</Text>
+                <MarqueeText
+                  style={[styles.seasonChipText, isSelected && styles.seasonChipTextSelected]}
+                  containerStyle={styles.seasonChipTextContainer}
+                  focused={isSelected}
+                  speed={25}
+                  delay={500}>
+                  {seasonLabel}
+                </MarqueeText>
               </Pressable>
             );
           })}
@@ -215,20 +230,27 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
             decelerationRate="fast"
             snapToAlignment="start">
             {episodes.map((episode, _index) => {
+              const episodeKey = `${episode.seasonNumber}-${episode.episodeNumber}`;
               const isActive =
                 activeEpisode?.seasonNumber === episode.seasonNumber &&
                 activeEpisode?.episodeNumber === episode.episodeNumber;
               const isWatched = isEpisodeWatched?.(episode) ?? false;
               const progress = getEpisodeProgress?.(episode) ?? 0;
+              const isFlashing = flashingEpisode === episodeKey;
 
               return (
                 <Pressable
-                  key={`${episode.seasonNumber}-${episode.episodeNumber}`}
+                  key={episodeKey}
                   style={[styles.episodeCard, isActive && styles.episodeCardActive]}
                   onPress={() => handleEpisodePress(episode)}
-                  onLongPress={() => handleEpisodeLongPress(episode)}>
+                  onLongPress={() => handleEpisodeLongPress(episode)}
+                  delayLongPress={500}>
                   {/* Thumbnail */}
-                  <View style={[styles.thumbnailContainer, isActive && styles.thumbnailContainerActive]}>
+                  <View style={[
+                    styles.thumbnailContainer,
+                    isActive && styles.thumbnailContainerActive,
+                    isFlashing && styles.thumbnailContainerFlashing,
+                  ]}>
                     {episode.image?.url ? (
                       <Image source={{ uri: episode.image.url }} style={styles.episodeThumbnail} contentFit="cover" />
                     ) : (
@@ -247,9 +269,9 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                       <View style={styles.progressBadge}>
                         <Text style={styles.progressBadgeText}>{Math.round(progress)}%</Text>
                       </View>
-                    ) : isWatched ? (
-                      <View style={styles.watchedBadge}>
-                        <Ionicons name="checkmark" size={14} color="#fff" />
+                    ) : (isWatched || isFlashing) ? (
+                      <View style={[styles.watchedBadge, isFlashing && styles.watchedBadgeFlashing]}>
+                        <Ionicons name={isWatched ? 'checkmark' : 'eye-outline'} size={14} color="#fff" />
                       </View>
                     ) : null}
 
@@ -263,6 +285,8 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
 
                     {/* Selected indicator border */}
                     {isActive && <View style={styles.selectedBorder} />}
+                    {/* Flash border */}
+                    {isFlashing && <View style={styles.flashBorder} />}
                   </View>
 
                   {/* Episode title */}
@@ -308,6 +332,9 @@ const createStyles = (theme: NovaTheme, _screenWidth: number) =>
     seasonChipSelected: {
       backgroundColor: theme.colors.accent.primary,
       borderColor: theme.colors.accent.primary,
+    },
+    seasonChipTextContainer: {
+      maxWidth: 70, // Truncate long season names, marquee scrolls when selected
     },
     seasonChipText: {
       ...theme.typography.body.sm,
@@ -383,6 +410,10 @@ const createStyles = (theme: NovaTheme, _screenWidth: number) =>
       justifyContent: 'center',
       alignItems: 'center',
     },
+    watchedBadgeFlashing: {
+      backgroundColor: theme.colors.status.success,
+      transform: [{ scale: 1.2 }],
+    },
     progressBadge: {
       position: 'absolute',
       top: theme.spacing.xs,
@@ -427,6 +458,19 @@ const createStyles = (theme: NovaTheme, _screenWidth: number) =>
       bottom: 0,
       borderWidth: 2,
       borderColor: theme.colors.accent.primary,
+      borderRadius: theme.radius.md,
+    },
+    thumbnailContainerFlashing: {
+      opacity: 0.85,
+    },
+    flashBorder: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderWidth: 3,
+      borderColor: theme.colors.status.success,
       borderRadius: theme.radius.md,
     },
     episodeTitle: {
