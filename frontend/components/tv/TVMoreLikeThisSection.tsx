@@ -20,7 +20,8 @@ const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 // Card dimensions - scaled for TV viewing distance (poster aspect ratio 2:3)
 const CARD_WIDTH = tvScale(170);
-const CARD_HEIGHT = tvScale(310);
+// Android TV needs extra height to fully show year text
+const CARD_HEIGHT = isAndroidTV ? tvScale(310) + 5 : tvScale(310);
 const POSTER_HEIGHT = tvScale(255);
 const CARD_GAP = tvScale(18);
 

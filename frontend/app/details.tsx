@@ -4983,7 +4983,7 @@ export default function DetailsScreen() {
         actions: Math.round(windowHeight * 0.15), // Show artwork with action row visible
         seasons: Math.round(windowHeight * 0.25), // Show action row + season selector
         episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
-        cast: Math.round(windowHeight * 0.8), // Show cast section with room for "More Like This" below
+        cast: Math.round(windowHeight * 1.0), // Show cast section fully visible
         similar: Math.round(windowHeight * 2), // Large value to scroll to bottom (clamped by ScrollView)
       };
       const targetY = scrollPositions[area];
