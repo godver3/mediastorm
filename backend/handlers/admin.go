@@ -203,8 +203,12 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 	consolidated := make(map[string]*StreamInfo)
 
 	for _, rs := range rawStreams {
-		// Skip "default" user streams - these are unclaimed prequeue entries
-		if strings.ToLower(rs.info.ProfileID) == "default" || strings.ToLower(rs.info.ProfileName) == "default" {
+		// Skip "default" user streams - but only if profileName is also empty/default
+		// A stream with profileID="default" but valid profileName should still be shown
+		// (e.g., a user profile might legitimately have ID "default")
+		isDefaultProfile := strings.ToLower(rs.info.ProfileID) == "default" || rs.info.ProfileID == ""
+		hasValidProfileName := rs.info.ProfileName != "" && strings.ToLower(rs.info.ProfileName) != "default"
+		if isDefaultProfile && !hasValidProfileName {
 			continue
 		}
 		info := rs.info
