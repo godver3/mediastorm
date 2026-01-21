@@ -2290,6 +2290,94 @@ func (s *Service) CollectionDetails(ctx context.Context, collectionID int64) (*m
 	return s.tmdb.fetchCollectionDetails(ctx, collectionID)
 }
 
+// Similar fetches similar movies or TV shows from TMDB.
+// Results are cached to avoid repeated API calls.
+func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) ([]models.Title, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, fmt.Errorf("tmdb client not configured")
+	}
+
+	if tmdbID <= 0 {
+		return nil, fmt.Errorf("tmdb id required")
+	}
+
+	// Normalize media type
+	normalizedType := strings.ToLower(strings.TrimSpace(mediaType))
+	if normalizedType != "movie" {
+		normalizedType = "series"
+	}
+
+	// Check cache first
+	cacheID := cacheKey("tmdb", "similar", normalizedType, fmt.Sprintf("%d", tmdbID))
+	var cached []models.Title
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		log.Printf("[metadata] similar cache hit type=%s tmdbId=%d count=%d", normalizedType, tmdbID, len(cached))
+		return cached, nil
+	}
+
+	// Fetch from TMDB
+	titles, err := s.tmdb.fetchSimilar(ctx, normalizedType, tmdbID)
+	if err != nil {
+		log.Printf("[metadata] similar fetch failed type=%s tmdbId=%d: %v", normalizedType, tmdbID, err)
+		return nil, err
+	}
+
+	// Cache the result
+	if err := s.cache.set(cacheID, titles); err != nil {
+		log.Printf("[metadata] failed to cache similar results: %v", err)
+	}
+
+	log.Printf("[metadata] similar fetch success type=%s tmdbId=%d count=%d", normalizedType, tmdbID, len(titles))
+	return titles, nil
+}
+
+// PersonDetails retrieves detailed information about a person and their filmography
+func (s *Service) PersonDetails(ctx context.Context, personID int64) (*models.PersonDetails, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, fmt.Errorf("tmdb client not configured")
+	}
+
+	if personID <= 0 {
+		return nil, fmt.Errorf("person id required")
+	}
+
+	// Check cache first
+	cacheID := cacheKey("tmdb", "person", "details", fmt.Sprintf("%d", personID))
+	var cached models.PersonDetails
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		log.Printf("[metadata] person details cache hit personId=%d filmography=%d", personID, len(cached.Filmography))
+		return &cached, nil
+	}
+
+	// Fetch person details
+	person, err := s.tmdb.fetchPersonDetails(ctx, personID)
+	if err != nil {
+		log.Printf("[metadata] person details fetch failed personId=%d: %v", personID, err)
+		return nil, err
+	}
+
+	// Fetch combined credits (filmography)
+	filmography, err := s.tmdb.fetchPersonCombinedCredits(ctx, personID)
+	if err != nil {
+		log.Printf("[metadata] person credits fetch failed personId=%d: %v", personID, err)
+		// Don't fail completely - return person details without filmography
+		filmography = []models.Title{}
+	}
+
+	result := &models.PersonDetails{
+		Person:      *person,
+		Filmography: filmography,
+	}
+
+	// Cache the result
+	if err := s.cache.set(cacheID, result); err != nil {
+		log.Printf("[metadata] failed to cache person details: %v", err)
+	}
+
+	log.Printf("[metadata] person details fetch success personId=%d name=%q filmography=%d", personID, person.Name, len(filmography))
+	return result, nil
+}
+
 // movieDetailsInternal is the shared implementation for MovieInfo and MovieDetails.
 func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDetailsQuery, includeRatings bool) (*models.Title, error) {
 	if s.client == nil {

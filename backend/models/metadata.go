@@ -177,6 +177,24 @@ type CollectionDetails struct {
 	Movies   []Title `json:"movies"`
 }
 
+// Person represents an actor/crew member with detailed info
+type Person struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Biography    string `json:"biography,omitempty"`
+	Birthday     string `json:"birthday,omitempty"`
+	Deathday     string `json:"deathday,omitempty"`
+	PlaceOfBirth string `json:"placeOfBirth,omitempty"`
+	ProfileURL   string `json:"profileUrl,omitempty"`
+	KnownFor     string `json:"knownFor,omitempty"` // "Acting", "Directing", etc.
+}
+
+// PersonDetails contains person info + filmography
+type PersonDetails struct {
+	Person      Person  `json:"person"`
+	Filmography []Title `json:"filmography"`
+}
+
 // BatchSeriesDetailsRequest represents a batch request for multiple series
 type BatchSeriesDetailsRequest struct {
 	Queries []SeriesDetailsQuery `json:"queries"`

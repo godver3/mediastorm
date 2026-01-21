@@ -22,6 +22,8 @@ type metadataService interface {
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
+	Similar(context.Context, string, int64) ([]models.Title, error)
+	PersonDetails(context.Context, int64) (*models.PersonDetails, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
 	StreamTrailer(context.Context, string, io.Writer) error
@@ -322,6 +324,77 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 	log.Printf("[metadata] collection details success collectionId=%d name=%q movieCount=%d", collectionID, details.Name, len(details.Movies))
 	for i, movie := range details.Movies {
 		log.Printf("[metadata]   movie[%d]: id=%s name=%q year=%d hasPoster=%v", i, movie.ID, movie.Name, movie.Year, movie.Poster != nil)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(details)
+}
+
+func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	mediaType := strings.ToLower(strings.TrimSpace(query.Get("type")))
+	tmdbIDStr := strings.TrimSpace(query.Get("tmdbId"))
+
+	if tmdbIDStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "tmdbId is required"})
+		return
+	}
+
+	tmdbID, err := strconv.ParseInt(tmdbIDStr, 10, 64)
+	if err != nil || tmdbID <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid tmdbId"})
+		return
+	}
+
+	titles, err := h.Service.Similar(r.Context(), mediaType, tmdbID)
+	if err != nil {
+		log.Printf("[metadata] similar error type=%s tmdbId=%d err=%v", mediaType, tmdbID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Return empty array instead of null if no results
+	if titles == nil {
+		titles = []models.Title{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(titles)
+}
+
+func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	personIDStr := strings.TrimSpace(query.Get("id"))
+	if personIDStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "person id is required"})
+		return
+	}
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil || personID <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid person id"})
+		return
+	}
+
+	details, err := h.Service.PersonDetails(r.Context(), personID)
+	if err != nil {
+		log.Printf("[metadata] person details error personId=%d err=%v", personID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

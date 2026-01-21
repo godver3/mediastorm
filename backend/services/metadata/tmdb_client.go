@@ -1100,3 +1100,207 @@ func mapTMDBReleaseType(releaseType int) string {
 		return ""
 	}
 }
+
+// tmdbSimilarResponse represents the response from TMDB's /similar endpoint
+type tmdbSimilarResponse struct {
+	Results []struct {
+		ID               int64   `json:"id"`
+		Name             string  `json:"name"`
+		Title            string  `json:"title"`
+		Overview         string  `json:"overview"`
+		OriginalLanguage string  `json:"original_language"`
+		PosterPath       string  `json:"poster_path"`
+		BackdropPath     string  `json:"backdrop_path"`
+		Popularity       float64 `json:"popularity"`
+		VoteAverage      float64 `json:"vote_average"`
+		FirstAirDate     string  `json:"first_air_date"`
+		ReleaseDate      string  `json:"release_date"`
+	} `json:"results"`
+}
+
+// fetchPersonDetails retrieves detailed information about a person from TMDB
+func (c *tmdbClient) fetchPersonDetails(ctx context.Context, personID int64) (*models.Person, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "person", fmt.Sprintf("%d", personID))
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		ID                 int64  `json:"id"`
+		Name               string `json:"name"`
+		Biography          string `json:"biography"`
+		Birthday           string `json:"birthday"`
+		Deathday           string `json:"deathday"`
+		PlaceOfBirth       string `json:"place_of_birth"`
+		ProfilePath        string `json:"profile_path"`
+		KnownForDepartment string `json:"known_for_department"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb person details for %d failed: %w", personID, err)
+	}
+
+	person := &models.Person{
+		ID:           payload.ID,
+		Name:         strings.TrimSpace(payload.Name),
+		Biography:    strings.TrimSpace(payload.Biography),
+		Birthday:     strings.TrimSpace(payload.Birthday),
+		Deathday:     strings.TrimSpace(payload.Deathday),
+		PlaceOfBirth: strings.TrimSpace(payload.PlaceOfBirth),
+		KnownFor:     strings.TrimSpace(payload.KnownForDepartment),
+	}
+	if payload.ProfilePath != "" {
+		person.ProfileURL = fmt.Sprintf("%s/%s%s", tmdbImageBaseURL, tmdbPosterSize, payload.ProfilePath)
+	}
+
+	return person, nil
+}
+
+// fetchPersonCombinedCredits retrieves all movie and TV credits for a person from TMDB
+func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID int64) ([]models.Title, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "person", fmt.Sprintf("%d", personID), "combined_credits")
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Cast []struct {
+			ID               int64   `json:"id"`
+			Title            string  `json:"title"`       // Movies
+			Name             string  `json:"name"`        // TV shows
+			Overview         string  `json:"overview"`
+			PosterPath       string  `json:"poster_path"`
+			BackdropPath     string  `json:"backdrop_path"`
+			MediaType        string  `json:"media_type"` // "movie" or "tv"
+			ReleaseDate      string  `json:"release_date"`
+			FirstAirDate     string  `json:"first_air_date"`
+			Popularity       float64 `json:"popularity"`
+			VoteAverage      float64 `json:"vote_average"`
+			Character        string  `json:"character"`
+			OriginalLanguage string  `json:"original_language"`
+		} `json:"cast"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb person combined_credits for %d failed: %w", personID, err)
+	}
+
+	// Convert to Title slice and sort by popularity
+	titles := make([]models.Title, 0, len(payload.Cast))
+	for _, credit := range payload.Cast {
+		// Determine media type and name
+		mediaType := "movie"
+		name := credit.Title
+		if credit.MediaType == "tv" {
+			mediaType = "series"
+			name = credit.Name
+		}
+
+		if name == "" {
+			continue // Skip entries without a name
+		}
+
+		title := models.Title{
+			ID:        fmt.Sprintf("tmdb:%s:%d", credit.MediaType, credit.ID),
+			Name:      name,
+			Overview:  credit.Overview,
+			MediaType: mediaType,
+			TMDBID:    credit.ID,
+			Language:  credit.OriginalLanguage,
+		}
+		if year := parseTMDBYear(credit.ReleaseDate, credit.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(credit.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(credit.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+		title.Popularity = scoreFallback(credit.Popularity, credit.VoteAverage)
+
+		titles = append(titles, title)
+	}
+
+	// Sort by popularity (highest first)
+	sort.Slice(titles, func(i, j int) bool {
+		return titles[i].Popularity > titles[j].Popularity
+	})
+
+	return titles, nil
+}
+
+// fetchSimilar retrieves similar movies or TV shows from TMDB
+// Returns up to 20 similar titles
+func (c *tmdbClient) fetchSimilar(ctx context.Context, mediaType string, tmdbID int64) ([]models.Title, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	// Map "series" to "tv" for TMDB API
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, apiMediaType, fmt.Sprintf("%d", tmdbID), "similar")
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload tmdbSimilarResponse
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb similar for %s/%d failed: %w", apiMediaType, tmdbID, err)
+	}
+
+	// Convert results to Title slice
+	titles := make([]models.Title, 0, len(payload.Results))
+	for _, r := range payload.Results {
+		// Determine the media type for the result
+		resultMediaType := "movie"
+		if apiMediaType == "tv" {
+			resultMediaType = "series"
+		}
+
+		title := models.Title{
+			ID:        fmt.Sprintf("tmdb:%s:%d", apiMediaType, r.ID),
+			Name:      pickTMDBName(apiMediaType, r.Name, r.Title),
+			Overview:  r.Overview,
+			Language:  r.OriginalLanguage,
+			MediaType: resultMediaType,
+			TMDBID:    r.ID,
+		}
+		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+		title.Popularity = scoreFallback(r.Popularity, r.VoteAverage)
+
+		titles = append(titles, title)
+	}
+
+	return titles, nil
+}
