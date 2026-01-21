@@ -36,6 +36,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
 import {
+  findNodeHandle,
   FlatList,
   Modal,
   NativeScrollEvent,
@@ -1565,6 +1566,12 @@ function IndexScreen() {
   const [isRemoveConfirmVisible, setIsRemoveConfirmVisible] = useState(false);
   const [pendingRemoveItem, setPendingRemoveItem] = useState<{ id: string; name: string } | null>(null);
 
+  // TV focus refs and handles for Remove modal
+  const removeCancelButtonRef = useRef<View>(null);
+  const removeConfirmButtonRef = useRef<View>(null);
+  const [removeCancelHandle, setRemoveCancelHandle] = useState<number | null>(null);
+  const [removeConfirmHandle, setRemoveConfirmHandle] = useState<number | null>(null);
+
   // Version mismatch modal state
   const [isVersionMismatchVisible, setIsVersionMismatchVisible] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
@@ -1596,6 +1603,22 @@ function IndexScreen() {
 
     checkVersion();
   }, [isBackendReachable]);
+
+  // Set up focus handles for Remove modal when visible (TV platforms)
+  useEffect(() => {
+    if (isRemoveConfirmVisible && Platform.isTV) {
+      const timer = setTimeout(() => {
+        const cancelHandle = removeCancelButtonRef.current ? findNodeHandle(removeCancelButtonRef.current) : null;
+        const confirmHandle = removeConfirmButtonRef.current ? findNodeHandle(removeConfirmButtonRef.current) : null;
+        setRemoveCancelHandle(cancelHandle);
+        setRemoveConfirmHandle(confirmHandle);
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setRemoveCancelHandle(null);
+      setRemoveConfirmHandle(null);
+    }
+  }, [isRemoveConfirmVisible]);
 
   const handleDismissVersionMismatch = useCallback(() => {
     setIsVersionMismatchVisible(false);
@@ -1982,6 +2005,20 @@ function IndexScreen() {
     setIsRemoveConfirmVisible(false);
     setPendingRemoveItem(null);
   }, []);
+
+  // Handle back button for Remove modal (TV platforms)
+  useEffect(() => {
+    if (!isRemoveConfirmVisible || !Platform.isTV) return;
+
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      handleCancelRemove();
+      return true;
+    });
+
+    return () => {
+      removeInterceptor();
+    };
+  }, [isRemoveConfirmVisible, handleCancelRemove]);
 
   // TV: Listen for LongEnter to remove items from Continue Watching
   useEffect(() => {
@@ -2627,39 +2664,72 @@ function IndexScreen() {
       )}
 
       {/* Remove from Continue Watching Confirmation Modal (TV) */}
-      <TvModal visible={isRemoveConfirmVisible} onRequestClose={handleCancelRemove}>
-        <View style={desktopStyles.styles.tvModalContainer}>
-          <Text style={desktopStyles.styles.tvModalTitle}>Remove from Continue Watching?</Text>
-          <Text style={desktopStyles.styles.tvModalSubtitle}>
-            Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
-          </Text>
-          <View style={desktopStyles.styles.tvModalActions}>
-            <FocusablePressable
-              autoFocus
-              text="Cancel"
-              onSelect={handleCancelRemove}
-              style={desktopStyles.styles.tvModalButton}
-              focusedStyle={desktopStyles.styles.tvModalButtonFocused}
-              textStyle={desktopStyles.styles.tvModalButtonText}
-              focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
-            />
-            <FocusablePressable
-              text="Remove"
-              onSelect={handleConfirmRemove}
-              style={[desktopStyles.styles.tvModalButton, desktopStyles.styles.tvModalButtonDanger]}
-              focusedStyle={[
-                desktopStyles.styles.tvModalButtonFocused,
-                desktopStyles.styles.tvModalButtonDangerFocused,
-              ]}
-              textStyle={[desktopStyles.styles.tvModalButtonText, desktopStyles.styles.tvModalButtonDangerText]}
-              focusedTextStyle={[
-                desktopStyles.styles.tvModalButtonTextFocused,
-                desktopStyles.styles.tvModalButtonDangerTextFocused,
-              ]}
-            />
+      {isRemoveConfirmVisible && (
+        <View style={desktopStyles.styles.tvModalOverlay} focusable={false}>
+          <Pressable
+            style={desktopStyles.styles.tvModalBackdrop}
+            onPress={handleCancelRemove}
+            tvParallaxProperties={{ enabled: false }}
+          />
+          <View style={desktopStyles.styles.tvModalContainer} focusable={false}>
+            <Text style={desktopStyles.styles.tvModalTitle}>Remove from Continue Watching?</Text>
+            <Text style={desktopStyles.styles.tvModalSubtitle}>
+              Are you sure you want to remove "{pendingRemoveItem?.name}" from Continue Watching?
+            </Text>
+            <View style={desktopStyles.styles.tvModalActions} focusable={false}>
+              <Pressable
+                ref={removeCancelButtonRef}
+                onPress={handleCancelRemove}
+                hasTVPreferredFocus={true}
+                tvParallaxProperties={{ enabled: false }}
+                nextFocusUp={removeCancelHandle}
+                nextFocusDown={removeCancelHandle}
+                nextFocusLeft={removeCancelHandle}
+                nextFocusRight={removeConfirmHandle}
+                style={({ focused }) => [
+                  desktopStyles.styles.tvModalButton,
+                  focused && desktopStyles.styles.tvModalButtonFocused,
+                ]}>
+                {({ focused }) => (
+                  <Text
+                    style={[
+                      desktopStyles.styles.tvModalButtonText,
+                      focused && desktopStyles.styles.tvModalButtonTextFocused,
+                    ]}>
+                    Cancel
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable
+                ref={removeConfirmButtonRef}
+                onPress={handleConfirmRemove}
+                tvParallaxProperties={{ enabled: false }}
+                nextFocusUp={removeConfirmHandle}
+                nextFocusDown={removeConfirmHandle}
+                nextFocusLeft={removeCancelHandle}
+                nextFocusRight={removeConfirmHandle}
+                style={({ focused }) => [
+                  desktopStyles.styles.tvModalButton,
+                  desktopStyles.styles.tvModalButtonDanger,
+                  focused && desktopStyles.styles.tvModalButtonFocused,
+                  focused && desktopStyles.styles.tvModalButtonDangerFocused,
+                ]}>
+                {({ focused }) => (
+                  <Text
+                    style={[
+                      desktopStyles.styles.tvModalButtonText,
+                      desktopStyles.styles.tvModalButtonDangerText,
+                      focused && desktopStyles.styles.tvModalButtonTextFocused,
+                      focused && desktopStyles.styles.tvModalButtonDangerTextFocused,
+                    ]}>
+                    Remove
+                  </Text>
+                )}
+              </Pressable>
+            </View>
           </View>
         </View>
-      </TvModal>
+      )}
 
       {/* Version Mismatch Warning Modal (TV) */}
       <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
@@ -3691,6 +3761,16 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       fontWeight: '600',
     },
     // TV Modal styles
+    tvModalOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 1000,
+    },
+    tvModalBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    },
     tvModalContainer: {
       backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.lg,
