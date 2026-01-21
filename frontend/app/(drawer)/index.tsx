@@ -76,6 +76,8 @@ type CardData = {
   theatricalRelease?: ReleaseWindow; // Movie theatrical release status
   homeRelease?: ReleaseWindow; // Movie home release status
   releaseIcon?: ReleaseIconInfo; // Pre-computed release icon to avoid computation at render time
+  watchState?: 'none' | 'partial' | 'complete'; // Watch state for series/movies
+  unwatchedCount?: number; // Number of unwatched episodes for series
 };
 
 type HeroContent = {
@@ -335,6 +337,21 @@ function enrichWithWatchStatus<T extends { id: string; mediaType: string; percen
     }
     return title;
   });
+}
+
+// Helper to enrich TrendingItem[] with watch status (enriches the .title property of each item)
+function enrichTrendingItemsWithWatchStatus(
+  items: TrendingItem[],
+  isWatched: (mediaType: string, id: string) => boolean,
+  watchStatusItems: WatchStatusItem[],
+  continueWatchingItems?: SeriesWatchState[],
+): TrendingItem[] {
+  const titles = items.map((item) => item.title);
+  const enrichedTitles = enrichWithWatchStatus(titles, isWatched, watchStatusItems, continueWatchingItems);
+  return items.map((item, index) => ({
+    ...item,
+    title: enrichedTitles[index] as Title,
+  }));
 }
 
 // Debug logging for index page render/load analysis
@@ -931,14 +948,17 @@ function IndexScreen() {
         `[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`,
       );
     }
-    const allCards = mapTrendingToCards(mapWatchlistToTrendingItems(watchlistItems, watchlistYears), movieReleases);
+    // Enrich with watch status before mapping to CardData (for TV shelf badges)
+    const trendingItems = mapWatchlistToTrendingItems(watchlistItems, watchlistYears);
+    const enrichedItems = enrichTrendingItemsWithWatchStatus(trendingItems, isWatched, watchStatusItems, continueWatchingItems);
+    const allCards = mapTrendingToCards(enrichedItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
     const exploreCard = createExploreCard('watchlist', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems]);
   const continueWatchingCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
       console.log(
@@ -2696,12 +2716,39 @@ type ShelfCardContentProps = {
   isFocused: boolean;
   isLastItem: boolean;
   showReleaseStatus: boolean;
+  showWatchState: boolean;
+  showUnwatchedCount: boolean;
+  watchStateIconStyle: 'colored' | 'white';
   styles: ReturnType<typeof createDesktopStyles>['styles'];
 };
 
 const ShelfCardContent = React.memo(
-  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, styles }: ShelfCardContentProps) {
+  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles }: ShelfCardContentProps) {
     const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
+
+    // Compute watch state icon (using MaterialCommunityIcons names)
+    const getWatchStateIcon = () => {
+      if (!card.watchState || card.watchState === 'none') return null;
+      const useWhite = watchStateIconStyle === 'white';
+      const greenColor = useWhite ? '#ffffff' : '#4ade80';
+      const yellowColor = useWhite ? '#ffffff' : '#facc15';
+      if (card.watchState === 'complete') {
+        return { icon: 'circle' as const, color: greenColor };
+      }
+      if (card.watchState === 'partial') {
+        return { icon: 'circle-half-full' as const, color: yellowColor };
+      }
+      return null;
+    };
+
+    const watchStateData = showWatchState ? getWatchStateIcon() : null;
+    const hasUnwatchedCount = showUnwatchedCount &&
+      (card.mediaType === 'series' || card.mediaType === 'tv') &&
+      card.unwatchedCount !== undefined &&
+      card.unwatchedCount > 0;
+
+    // Determine if we need the top-left badge container (combines watch state + release status + unwatched count)
+    const hasTopLeftBadge = (showReleaseStatus && card.releaseIcon) || watchStateData || hasUnwatchedCount;
 
     return (
       <View
@@ -2749,13 +2796,36 @@ const ShelfCardContent = React.memo(
               cachePolicy="disk"
               recyclingKey={cardKey}
             />
-            {showReleaseStatus && card.releaseIcon && (
-              <View style={isAndroidTV ? styles.releaseStatusBadgeAndroidTV : styles.releaseStatusBadge}>
-                <MaterialCommunityIcons
-                  name={card.releaseIcon.name}
-                  size={isAndroidTV ? styles.releaseStatusIconAndroidTV.fontSize : styles.releaseStatusIcon.fontSize}
-                  color={card.releaseIcon.color}
-                />
+            {/* Top-left badge container (watch state + unwatched count + release status) */}
+            {hasTopLeftBadge && (
+              <View style={isAndroidTV ? styles.topLeftBadgeContainerAndroidTV : styles.topLeftBadgeContainer}>
+                {/* Watch state and unwatched count badge */}
+                {(watchStateData || hasUnwatchedCount) && (
+                  <View style={isAndroidTV ? styles.topLeftBadgeItemAndroidTV : styles.topLeftBadgeItem}>
+                    {watchStateData && (
+                      <MaterialCommunityIcons
+                        name={watchStateData.icon}
+                        size={isAndroidTV ? styles.watchStateIconAndroidTV.fontSize : styles.watchStateIcon.fontSize}
+                        color={watchStateData.color}
+                      />
+                    )}
+                    {hasUnwatchedCount && (
+                      <Text style={isAndroidTV ? styles.unwatchedCountTextAndroidTV : styles.unwatchedCountText}>
+                        {card.unwatchedCount}
+                      </Text>
+                    )}
+                  </View>
+                )}
+                {/* Release status badge */}
+                {showReleaseStatus && card.releaseIcon && (
+                  <View style={isAndroidTV ? styles.topLeftBadgeItemAndroidTV : styles.topLeftBadgeItem}>
+                    <MaterialCommunityIcons
+                      name={card.releaseIcon.name}
+                      size={isAndroidTV ? styles.releaseStatusIconAndroidTV.fontSize : styles.releaseStatusIcon.fontSize}
+                      color={watchStateIconStyle === 'white' ? '#ffffff' : card.releaseIcon.color}
+                    />
+                  </View>
+                )}
               </View>
             )}
             {card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && (
@@ -2795,10 +2865,15 @@ const ShelfCardContent = React.memo(
       prev.card.percentWatched === next.card.percentWatched &&
       prev.card.releaseIcon === next.card.releaseIcon &&
       prev.card.year === next.card.year &&
+      prev.card.watchState === next.card.watchState &&
+      prev.card.unwatchedCount === next.card.unwatchedCount &&
       prev.cardKey === next.cardKey &&
       prev.isFocused === next.isFocused &&
       prev.isLastItem === next.isLastItem &&
-      prev.showReleaseStatus === next.showReleaseStatus
+      prev.showReleaseStatus === next.showReleaseStatus &&
+      prev.showWatchState === next.showWatchState &&
+      prev.showUnwatchedCount === next.showUnwatchedCount &&
+      prev.watchStateIconStyle === next.watchStateIconStyle
     );
   },
 );
@@ -2853,11 +2928,16 @@ function VirtualizedShelf({
   cardSpacing,
   shelfPadding,
   badgeVisibility,
+  watchStateIconStyle = 'colored',
   onFirstItemTagChange: _onFirstItemTagChange,
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
   }
+
+  // Compute which badges to show
+  const showWatchState = badgeVisibility?.includes('watchState') ?? false;
+  const showUnwatchedCount = badgeVisibility?.includes('unwatchedCount') ?? false;
   const containerRef = React.useRef<RNView | null>(null);
   const flatListRef = React.useRef<FlatList>(null);
   const isEmpty = cards.length === 0;
@@ -2976,6 +3056,9 @@ function VirtualizedShelf({
                 isFocused={isFocused}
                 isLastItem={isLastItem}
                 showReleaseStatus={showReleaseStatus}
+                showWatchState={showWatchState}
+                showUnwatchedCount={showUnwatchedCount}
+                watchStateIconStyle={watchStateIconStyle}
                 styles={styles}
               />
             )}
@@ -3003,13 +3086,16 @@ function VirtualizedShelf({
               isFocused={pressed}
               isLastItem={isLastItem}
               showReleaseStatus={showReleaseStatus}
+              showWatchState={showWatchState}
+              showUnwatchedCount={showUnwatchedCount}
+              watchStateIconStyle={watchStateIconStyle}
               styles={styles}
             />
           )}
         </Pressable>
       );
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle],
   );
 
   // Calculate row height for the virtualized list container
@@ -3039,6 +3125,9 @@ function VirtualizedShelf({
               isFocused={isFocused}
               isLastItem={isLastItem}
               showReleaseStatus={showReleaseStatus}
+              showWatchState={showWatchState}
+              showUnwatchedCount={showUnwatchedCount}
+              watchStateIconStyle={watchStateIconStyle}
               styles={styles}
             />
           )}
@@ -3051,7 +3140,7 @@ function VirtualizedShelf({
       }
       return cardElement;
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle],
   );
 
   // Early return for collapsed shelves - must be after all hooks
@@ -3546,6 +3635,61 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     releaseStatusIconAndroidTV: {
       fontSize: Math.round(14 * badgeScale),
     },
+    // Top-left badge container (stacks watch state and release status badges)
+    topLeftBadgeContainer: {
+      position: 'absolute',
+      top: theme.spacing.md,
+      left: theme.spacing.md,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: badgePaddingH,
+      paddingVertical: badgePaddingV,
+      borderRadius: badgeRadius,
+      zIndex: 2,
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: Math.round(2 * badgeScale),
+    },
+    topLeftBadgeContainerAndroidTV: {
+      position: 'absolute',
+      top: theme.spacing.md,
+      left: theme.spacing.md,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: androidTVBadgePaddingH,
+      paddingVertical: androidTVBadgePaddingV,
+      borderRadius: androidTVBadgeRadius,
+      zIndex: 2,
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: Math.round(2 * androidTVBadgeScale),
+    },
+    topLeftBadgeItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Math.round(4 * badgeScale),
+    },
+    topLeftBadgeItemAndroidTV: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Math.round(4 * androidTVBadgeScale),
+    },
+    watchStateIcon: {
+      fontSize: Math.round(14 * badgeScale),
+    },
+    watchStateIconAndroidTV: {
+      fontSize: Math.round(14 * badgeScale),
+    },
+    unwatchedCountText: {
+      fontSize: badgeTextFontSize,
+      lineHeight: badgeTextLineHeight,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
+    unwatchedCountTextAndroidTV: {
+      fontSize: androidTVBadgeTextFontSize,
+      lineHeight: androidTVBadgeTextLineHeight,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
     // TV Modal styles
     tvModalContainer: {
       backgroundColor: theme.colors.background.elevated,
@@ -3790,6 +3934,9 @@ function mapTrendingToCards(
           })
         : undefined;
 
+    // Extract watchState and unwatchedCount if they exist (from enriched titles)
+    const enrichedTitle = item.title as Title & { watchState?: 'none' | 'partial' | 'complete'; unwatchedCount?: number };
+
     return {
       id: item.title.id,
       title: item.title.name,
@@ -3812,6 +3959,8 @@ function mapTrendingToCards(
       theatricalRelease,
       homeRelease,
       releaseIcon,
+      watchState: enrichedTitle.watchState,
+      unwatchedCount: enrichedTitle.unwatchedCount,
     };
   });
 }
@@ -3932,6 +4081,10 @@ function mapContinueWatchingToCards(
           homeRelease,
         });
 
+        // Compute movie watch state: partial if has progress but not complete
+        const movieWatchState: 'none' | 'partial' | 'complete' =
+          displayPercent >= 90 ? 'complete' : displayPercent > 0 ? 'partial' : 'none';
+
         return {
           id: item.seriesId,
           title: item.seriesTitle,
@@ -3950,6 +4103,7 @@ function mapContinueWatchingToCards(
           theatricalRelease,
           homeRelease,
           releaseIcon,
+          watchState: movieWatchState,
         };
       }
 
@@ -3959,6 +4113,15 @@ function mapContinueWatchingToCards(
       const watchlistItem = watchlistItems?.find((w) => w.id === baseSeriesId);
       // Prefer overview from API response, then async-fetched cache, then watchlist
       const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistItem?.overview || '';
+
+      // Compute series watch state and unwatched count
+      const totalEpisodes = item.totalEpisodeCount ?? 0;
+      const watchedEpisodes = item.watchedEpisodeCount ?? 0;
+      const allEpisodesWatched = totalEpisodes > 0 && watchedEpisodes >= totalEpisodes;
+      const seriesWatchState: 'none' | 'partial' | 'complete' =
+        allEpisodesWatched ? 'complete' : watchedEpisodes > 0 || displayPercent > 0 ? 'partial' : 'none';
+      const seriesUnwatchedCount = totalEpisodes > 0 ? totalEpisodes - watchedEpisodes : undefined;
+
       return {
         id: `${item.seriesId}:${code}`,
         title: item.seriesTitle,
@@ -3974,6 +4137,8 @@ function mapContinueWatchingToCards(
         year: item.year,
         percentWatched: displayPercent,
         seriesOverview,
+        watchState: seriesWatchState,
+        unwatchedCount: seriesUnwatchedCount,
       } as CardData;
     })
     .filter((card): card is CardData => card !== null);

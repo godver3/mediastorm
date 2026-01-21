@@ -165,6 +165,7 @@ export default function TVShowsScreen() {
           error={error}
           onItemPress={handleTVShowPress}
           badgeVisibility={userSettings?.display?.badgeVisibility ?? settings?.display?.badgeVisibility}
+          watchStateIconStyle={userSettings?.display?.watchStateIconStyle ?? settings?.display?.watchStateIconStyle ?? 'colored'}
           useNativeFocus={false}
         />
       </View>
