@@ -4566,47 +4566,26 @@ export default function DetailsScreen() {
               )}
             </SpatialNavigationNode>
           )}
-          {/* TV Cast Section - always render wrapper node to maintain navigation order
-              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
-          {Platform.isTV && TVCastSection && (
-            <SpatialNavigationNode
-              orientation="horizontal"
-              focusKey="cast-section-wrapper"
-              onActive={() => console.log('[Details NAV DEBUG] cast-section-wrapper ACTIVE')}
-              onInactive={() => console.log('[Details NAV DEBUG] cast-section-wrapper INACTIVE')}>
-              {isMetadataLoadingForSkeleton || credits ? (
-                <TVCastSection
-                  credits={credits}
-                  isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-                  maxCast={10}
-                  onFocus={() => handleTVFocusAreaChange('cast')}
-                  compactMargin
-                  onCastMemberPress={handleCastMemberPress}
-                />
-              ) : (
-                <View />
-              )}
-            </SpatialNavigationNode>
+          {/* TV Cast Section - SpatialNavigationVirtualizedList has its own internal SpatialNavigationNode */}
+          {Platform.isTV && TVCastSection && (isMetadataLoadingForSkeleton || credits) && (
+            <TVCastSection
+              credits={credits}
+              isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+              maxCast={10}
+              onFocus={() => handleTVFocusAreaChange('cast')}
+              compactMargin
+              onCastMemberPress={handleCastMemberPress}
+            />
           )}
-          {/* TV More Like This Section */}
-          {Platform.isTV && TVMoreLikeThisSection && (
-            <SpatialNavigationNode
-              orientation="horizontal"
-              focusKey="more-like-this-wrapper"
-              onActive={() => console.log('[Details NAV DEBUG] more-like-this-wrapper ACTIVE')}
-              onInactive={() => console.log('[Details NAV DEBUG] more-like-this-wrapper INACTIVE')}>
-              {similarLoading || similarContent.length > 0 ? (
-                <TVMoreLikeThisSection
-                  titles={similarContent}
-                  isLoading={similarLoading}
-                  maxTitles={20}
-                  onFocus={() => handleTVFocusAreaChange('similar')}
-                  onTitlePress={handleSimilarTitlePress}
-                />
-              ) : (
-                <View />
-              )}
-            </SpatialNavigationNode>
+          {/* TV More Like This Section - SpatialNavigationVirtualizedList has its own internal SpatialNavigationNode */}
+          {Platform.isTV && TVMoreLikeThisSection && (similarLoading || similarContent.length > 0) && (
+            <TVMoreLikeThisSection
+              titles={similarContent}
+              isLoading={similarLoading}
+              maxTitles={20}
+              onFocus={() => handleTVFocusAreaChange('similar')}
+              onTitlePress={handleSimilarTitlePress}
+            />
           )}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>
@@ -4963,17 +4942,18 @@ export default function DetailsScreen() {
 
   // Handle focus area change - scroll to appropriate position for each focus area
   const handleTVFocusAreaChange = useCallback(
-    (area: 'seasons' | 'episodes' | 'actions' | 'cast') => {
+    (area: 'seasons' | 'episodes' | 'actions' | 'cast' | 'similar') => {
       if (!Platform.isTV || !tvScrollViewRef.current) return;
 
       // Scroll positions based on focus area:
-      // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast
+      // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast -> similar
       // Higher value = more scroll = content raised higher in viewport
       const scrollPositions = {
         actions: Math.round(windowHeight * 0.15), // Show artwork with action row visible
         seasons: Math.round(windowHeight * 0.25), // Show action row + season selector
         episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
-        cast: Math.round(windowHeight * 2), // Large value to scroll to bottom (clamped by ScrollView)
+        cast: Math.round(windowHeight * 0.8), // Show cast section with room for "More Like This" below
+        similar: Math.round(windowHeight * 2), // Large value to scroll to bottom (clamped by ScrollView)
       };
       const targetY = scrollPositions[area];
       tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
