@@ -68,6 +68,24 @@ import { useHlsSession, type HlsSessionResponse } from '@/hooks/useHlsSession';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { updateNowPlaying, updatePlaybackPosition, clearNowPlaying, setupRemoteCommands } from 'now-playing-manager';
+
+// Safe import for pip-manager (Android mobile only, may not be available in dev builds)
+let enableAutoPip: (() => void) | null = null;
+let disableAutoPip: (() => void) | null = null;
+if (Platform.OS === 'android' && !Platform.isTV) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pipManager = require('pip-manager');
+    console.log('[PiP Debug] pip-manager module loaded:', pipManager);
+    console.log('[PiP Debug] enableAutoPip:', typeof pipManager.enableAutoPip);
+    console.log('[PiP Debug] disableAutoPip:', typeof pipManager.disableAutoPip);
+    enableAutoPip = pipManager.enableAutoPip;
+    disableAutoPip = pipManager.disableAutoPip;
+  } catch (e) {
+    console.log('[PiP Debug] Failed to load pip-manager:', e);
+    // Module not available - auto-PiP will be disabled
+  }
+}
 import {
   type ConsoleLevel,
   type DebugLogEntry,
@@ -845,6 +863,29 @@ export default function PlayerScreen() {
 
     return () => {
       deactivateKeepAwake();
+    };
+  }, [paused]);
+
+  // Enable/disable Android auto-PiP based on playback state
+  // This controls whether the native onUserLeaveHint() should trigger PiP
+  useEffect(() => {
+    console.log('[PiP Debug] useEffect running, paused:', paused, 'enableAutoPip:', !!enableAutoPip, 'disableAutoPip:', !!disableAutoPip);
+    if (enableAutoPip && disableAutoPip) {
+      if (paused) {
+        console.log('[PiP Debug] Calling disableAutoPip()');
+        disableAutoPip();
+      } else {
+        console.log('[PiP Debug] Calling enableAutoPip()');
+        enableAutoPip();
+      }
+    } else {
+      console.log('[PiP Debug] Functions not available, skipping');
+    }
+
+    return () => {
+      // Ensure auto-PiP is disabled when player unmounts
+      console.log('[PiP Debug] Cleanup: disabling auto-PiP');
+      disableAutoPip?.();
     };
   }, [paused]);
 
@@ -3469,7 +3510,11 @@ export default function PlayerScreen() {
       return nextPaused;
     });
 
-    showControls();
+    // Only reset auto-hide timer if controls are already visible
+    // When controls are hidden, play/pause should just toggle playback without showing controls
+    if (controlsVisibleRef.current) {
+      showControls();
+    }
   };
 
   // Keep togglePausePlayRef updated
