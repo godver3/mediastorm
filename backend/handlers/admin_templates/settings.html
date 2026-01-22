@@ -73,6 +73,39 @@
         <div class="spinner"></div>
     </div>
 </div>
+
+<!-- Test Result Modal -->
+<div id="testModal" class="test-modal" onclick="closeTestModal(event)">
+    <div class="test-modal-content" onclick="event.stopPropagation()">
+        <div class="test-modal-header">
+            <h3 id="testModalTitle">
+                <svg id="testModalIconSuccess" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <svg id="testModalIconError" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="15" y1="9" x2="9" y2="15"/>
+                    <line x1="9" y1="9" x2="15" y2="15"/>
+                </svg>
+                <span id="testModalTitleText">Test Result</span>
+            </h3>
+            <button class="test-modal-close" onclick="closeTestModal()">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="test-modal-body">
+            <div id="testModalProvider" class="test-modal-provider"></div>
+            <div id="testModalMessage" class="test-modal-message"></div>
+        </div>
+        <div class="test-modal-footer">
+            <button class="btn btn-secondary" onclick="closeTestModal()">Close</button>
+        </div>
+    </div>
+</div>
 {{end}}
 {{end}}
 
@@ -1551,13 +1584,10 @@
     // Test provider functions
     async function testProvider(sectionKey, index) {
         const btn = document.getElementById('test-btn-'+sectionKey+'-'+index);
-        const resultSpan = document.getElementById('test-result-'+sectionKey+'-'+index);
         if (!btn) return;
 
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-small"></span> Testing...';
-        resultSpan.textContent = '';
-        resultSpan.className = 'test-result';
 
         let endpoint, payload;
         const sectionDef = schema[sectionKey];
@@ -1572,8 +1602,7 @@
         if (!item) {
             btn.disabled = false;
             btn.textContent = 'Test';
-            resultSpan.textContent = 'Item not found';
-            resultSpan.className = 'test-result error';
+            showTestResultModal('Unknown', false, 'Item not found');
             return;
         }
 
@@ -1604,8 +1633,7 @@
             default:
                 btn.disabled = false;
                 btn.textContent = 'Test';
-                resultSpan.textContent = 'Unknown section';
-                resultSpan.className = 'test-result error';
+                showTestResultModal(item.name || 'Provider', false, 'Unknown section type');
                 return;
         }
 
@@ -1621,18 +1649,70 @@
             btn.textContent = 'Test';
 
             if (result.success) {
-                resultSpan.textContent = result.message || 'Success';
-                resultSpan.className = 'test-result success';
+                showTestResultModal(item.name || 'Provider', true, result.message || 'Test successful');
             } else {
-                resultSpan.textContent = result.error || 'Test failed';
-                resultSpan.className = 'test-result error';
+                showTestResultModal(item.name || 'Provider', false, result.error || 'Test failed');
             }
         } catch (e) {
             btn.disabled = false;
             btn.textContent = 'Test';
-            resultSpan.textContent = 'Error: ' + e.message;
-            resultSpan.className = 'test-result error';
+            showTestResultModal(item.name || 'Provider', false, 'Error: ' + e.message);
         }
+    }
+
+    // Test result modal functions
+    function showTestResultModal(providerName, isSuccess, message) {
+        const modal = document.getElementById('testModal');
+        const titleEl = document.getElementById('testModalTitle');
+        const titleText = document.getElementById('testModalTitleText');
+        const iconSuccess = document.getElementById('testModalIconSuccess');
+        const iconError = document.getElementById('testModalIconError');
+        const providerEl = document.getElementById('testModalProvider');
+        const messageEl = document.getElementById('testModalMessage');
+
+        // Set title and icon based on success/error
+        if (isSuccess) {
+            titleText.textContent = 'Test Successful';
+            titleEl.className = 'success';
+            iconSuccess.style.display = 'block';
+            iconError.style.display = 'none';
+        } else {
+            titleText.textContent = 'Test Failed';
+            titleEl.className = 'error';
+            iconSuccess.style.display = 'none';
+            iconError.style.display = 'block';
+        }
+
+        // Set provider name and message
+        providerEl.innerHTML = '<strong>' + escapeHtml(providerName) + '</strong>';
+        messageEl.textContent = message;
+
+        // Show modal
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeTestModal(event) {
+        // If called from backdrop click, only close if clicking the backdrop itself
+        if (event && event.target !== event.currentTarget) return;
+
+        const modal = document.getElementById('testModal');
+        modal.classList.remove('visible');
+        document.body.style.overflow = '';
+    }
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeTestModal();
+        }
+    });
+
+    // Helper to escape HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // Testable sections
@@ -1928,8 +2008,7 @@
                 return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
-            const testResult = isTestable ? '<span id="test-result-'+sectionKey+'-'+index+'" class="test-result"></span>' : '';
-            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+testResult+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
+            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
         }).join('');
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
