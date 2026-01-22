@@ -663,3 +663,97 @@ func TestResults_RegressionMovieVsTVPatterns(t *testing.T) {
 		}
 	})
 }
+
+func TestTitleContainmentScore(t *testing.T) {
+	tests := []struct {
+		name     string
+		title1   string
+		title2   string
+		wantHigh bool // expect score >= 0.90
+	}{
+		{
+			name:     "F1 contained in F1 The Movie",
+			title1:   "f1 the movie",
+			title2:   "f1",
+			wantHigh: true,
+		},
+		{
+			name:     "Matrix contained in The Matrix Reloaded",
+			title1:   "the matrix reloaded",
+			title2:   "matrix",
+			wantHigh: true,
+		},
+		{
+			name:     "exact match",
+			title1:   "the matrix",
+			title2:   "the matrix",
+			wantHigh: true,
+		},
+		{
+			name:     "partial word match should not match",
+			title1:   "the matrix",
+			title2:   "mat",
+			wantHigh: false, // "mat" is not at word boundary
+		},
+		{
+			name:     "completely different titles",
+			title1:   "inception",
+			title2:   "interstellar",
+			wantHigh: false,
+		},
+		{
+			name:     "single character should not match",
+			title1:   "a movie",
+			title2:   "a",
+			wantHigh: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := titleContainmentScore(tt.title1, tt.title2)
+			if tt.wantHigh && score < 0.90 {
+				t.Errorf("titleContainmentScore(%q, %q) = %.2f, want >= 0.90", tt.title1, tt.title2, score)
+			}
+			if !tt.wantHigh && score >= 0.90 {
+				t.Errorf("titleContainmentScore(%q, %q) = %.2f, want < 0.90", tt.title1, tt.title2, score)
+			}
+		})
+	}
+}
+
+func TestResults_TitleContainment(t *testing.T) {
+	// Test the bug case: "F1 The Movie" releases should match when TMDB returns "F1"
+	// This tests the fix for non-English title matching where the original title
+	// (e.g., "F1") is shorter than the release title (e.g., "F1 The Movie")
+	t.Run("release title contains short TMDB title", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "F1.The.Movie.2025.1080p.BluRay.x264"},     // Should match - contains "F1"
+			{Title: "F1.2025.1080p.WEB-DL.x264"},               // Should match - exact
+			{Title: "Fast.And.Furious.2025.1080p.BluRay.x264"}, // Should NOT match
+		}
+
+		opts := Options{
+			ExpectedTitle: "F1", // Short original title from TMDB
+			ExpectedYear:  2025,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+
+		// Should keep both F1 releases
+		if len(filtered) != 2 {
+			t.Errorf("Expected 2 results (both F1 releases), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify Fast And Furious was filtered out
+		for _, r := range filtered {
+			if r.Title == "Fast.And.Furious.2025.1080p.BluRay.x264" {
+				t.Error("Non-matching title should have been filtered")
+			}
+		}
+	})
+}
