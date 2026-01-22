@@ -231,28 +231,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const logout = useCallback(async () => {
-    try {
-      // Call logout endpoint if we have a token
-      if (token) {
+    // Capture token before clearing state
+    const currentToken = token;
+
+    // Clear local auth state first so UI updates immediately
+    await clearStoredAuth();
+    apiService.setAuthToken(null);
+
+    if (mountedRef.current) {
+      setToken(null);
+      setAccount(null);
+      setError(null);
+    }
+
+    // Then try to notify backend (non-blocking, with short timeout)
+    if (currentToken) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      try {
         await fetch(`${apiService.getBaseUrl()}/auth/logout`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${currentToken}`,
             'Content-Type': 'application/json',
           },
-        }).catch(() => {
-          // Ignore logout errors - we'll clear local state anyway
+          signal: controller.signal,
         });
-      }
-    } finally {
-      // Clear local auth state
-      await clearStoredAuth();
-      apiService.setAuthToken(null);
-
-      if (mountedRef.current) {
-        setToken(null);
-        setAccount(null);
-        setError(null);
+      } catch {
+        // Ignore logout errors - local state already cleared
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
   }, [token]);

@@ -789,10 +789,64 @@ function SettingsScreen() {
 
   // Fetch backend version and client ID on mount
   useEffect(() => {
+    // Debug logging for backend connection diagnostics
+    const baseUrl = apiService.getBaseUrl();
+    const imageProxyBaseUrl = baseUrl.replace(/\/api$/, '');
+    console.log('[Settings:Debug] API Configuration:', {
+      baseUrl,
+      imageProxyBaseUrl,
+      authToken: apiService.getAuthToken() ? '[SET]' : '[NOT SET]',
+    });
+
+    // Test backend version endpoint
     apiService
       .getBackendVersion()
-      .then((res) => setBackendVersion(res.version))
-      .catch(() => setBackendVersion(null));
+      .then((res) => {
+        console.log('[Settings:Debug] Backend connection SUCCESS:', {
+          version: res.version,
+          baseUrl,
+        });
+        setBackendVersion(res.version);
+      })
+      .catch((err) => {
+        console.error('[Settings:Debug] Backend connection FAILED:', {
+          error: err?.message || String(err),
+          baseUrl,
+          status: err?.status,
+        });
+        setBackendVersion(null);
+      });
+
+    // Test image proxy endpoint with a known TMDB image
+    const testImageUrl = 'https://image.tmdb.org/t/p/w92/wwemzKWzjKYJFfCeiB57q3r4Bcm.png'; // TMDB logo
+    const proxyTestUrl = `${imageProxyBaseUrl}/api/images/proxy?url=${encodeURIComponent(testImageUrl)}&w=92&q=80`;
+    console.log('[Settings:Debug] Testing image proxy:', { proxyTestUrl });
+
+    fetch(proxyTestUrl)
+      .then((res) => {
+        if (res.ok) {
+          console.log('[Settings:Debug] Image proxy test SUCCESS:', {
+            status: res.status,
+            cacheHeader: res.headers.get('X-Cache'),
+            contentType: res.headers.get('Content-Type'),
+          });
+        } else {
+          res.text().then((body) => {
+            console.warn('[Settings:Debug] Image proxy test FAILED:', {
+              status: res.status,
+              statusText: res.statusText,
+              body: body?.substring(0, 200),
+              proxyTestUrl,
+            });
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('[Settings:Debug] Image proxy test ERROR:', {
+          error: err?.message || String(err),
+          proxyTestUrl,
+        });
+      });
 
     getClientId()
       .then((id) => setClientId(id))
@@ -972,10 +1026,16 @@ function SettingsScreen() {
   const handleBackendConnectionApply = useCallback(async () => {
     try {
       await setBackendUrl(backendUrlInput);
-      await refreshSettings();
-      showToast('Backend connection saved.', { tone: 'success' });
+      // URL saved successfully - now try to refresh settings
+      try {
+        await refreshSettings();
+        showToast('Backend connection saved.', { tone: 'success' });
+      } catch {
+        // URL was saved but couldn't connect - still show success since URL is saved
+        showToast('Server URL saved. Connection will be attempted on next login.', { tone: 'success' });
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update backend connection';
+      const message = err instanceof Error ? err.message : 'Failed to save backend URL';
       showToast(message, { tone: 'danger' });
     }
   }, [backendUrlInput, setBackendUrl, refreshSettings, showToast]);
@@ -1842,8 +1902,28 @@ function SettingsScreen() {
               {!Platform.isTV && activeTab === 'connection' && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Server</Text>
-                  <Text style={styles.sectionDescription}>Connected to {backendUrl || 'backend'}.</Text>
-                  <Text style={[styles.sectionDescription, { marginTop: 8, marginBottom: 12 }]}>
+                  <Text style={styles.sectionDescription}>
+                    Change the server URL below if you need to connect to a different backend.
+                  </Text>
+                  <View style={styles.fieldRow}>
+                    <Text style={styles.fieldLabel}>Server URL</Text>
+                    <TextInput
+                      value={backendUrlInput.replace(/\/api$/, '')}
+                      onChangeText={(text) => setBackendUrlInput(text.replace(/\/api$/, '') + '/api')}
+                      placeholder="http://192.168.1.100:7777"
+                      placeholderTextColor={theme.colors.text.muted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={styles.input}
+                    />
+                  </View>
+                  <FocusablePressable
+                    text={saving ? 'Connecting...' : 'Apply'}
+                    onSelect={handleBackendConnectionApply}
+                    disabled={saving || backendUrlInput === backendUrl}
+                    style={[styles.debugButton, { marginTop: 12 }]}
+                  />
+                  <Text style={[styles.sectionDescription, { marginTop: 16 }]}>
                     Server settings can be configured via the web UI at{' '}
                     <Text
                       style={styles.linkText}
