@@ -544,14 +544,94 @@ func bestTitleSimilarity(candidates []string, parsedTitle string) (float64, stri
 		bestScore     float64
 		bestCandidate string
 	)
+
+	// Normalize parsed title for containment checks
+	normalizedParsed := normalizeForContainment(parsedTitle)
+
 	for _, candidate := range candidates {
 		score := similarity.Similarity(candidate, parsedTitle)
+
+		// Also check containment: if one title contains the other as a whole word/phrase,
+		// consider it a high-confidence match. This handles cases like:
+		// - "F1 The Movie" contains "F1" (TMDB original title)
+		// - "The Matrix Reloaded" contains "Matrix Reloaded"
+		normalizedCandidate := normalizeForContainment(candidate)
+		if containmentScore := titleContainmentScore(normalizedParsed, normalizedCandidate); containmentScore > score {
+			score = containmentScore
+		}
+
 		if score > bestScore {
 			bestScore = score
 			bestCandidate = candidate
 		}
 	}
 	return bestScore, bestCandidate
+}
+
+// normalizeForContainment normalizes a title for containment comparison.
+// Converts to lowercase, replaces separators with spaces, and collapses whitespace.
+func normalizeForContainment(s string) string {
+	s = strings.ToLower(s)
+	// Replace common separators with spaces
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, ":", " ")
+	// Collapse multiple spaces and trim
+	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+}
+
+// titleContainmentScore returns a similarity score if one title contains the other.
+// Returns 0 if no containment is found or if the contained portion is too small.
+// The contained title must be at least 2 characters and represent a word boundary match.
+func titleContainmentScore(title1, title2 string) float64 {
+	longer, shorter := title1, title2
+	if len(title1) < len(title2) {
+		longer, shorter = title2, title1
+	}
+
+	// Require minimum length to avoid matching single characters
+	if len(shorter) < 2 {
+		return 0
+	}
+
+	// Check if the shorter title is contained in the longer one
+	if !strings.Contains(longer, shorter) {
+		return 0
+	}
+
+	// Verify word boundary: the match should be at word boundaries
+	// (start/end of string or adjacent to space)
+	idx := strings.Index(longer, shorter)
+	if idx == -1 {
+		return 0
+	}
+
+	// Check start boundary
+	validStart := idx == 0 || longer[idx-1] == ' '
+	// Check end boundary
+	endIdx := idx + len(shorter)
+	validEnd := endIdx == len(longer) || longer[endIdx] == ' '
+
+	if !validStart || !validEnd {
+		return 0
+	}
+
+	// Score based on how much of the longer title is matched
+	// A higher ratio means a better match
+	ratio := float64(len(shorter)) / float64(len(longer))
+
+	// For very short matches (e.g., "F1" in "F1 The Movie"), require the short title
+	// to be a significant starting portion or the ratio to be reasonable
+	if len(shorter) <= 3 && ratio < 0.2 {
+		// Short title like "F1" matching "F1 The Movie" - still valid if at word boundary
+		// Give it a moderate score since it's a valid match but could be coincidental
+		return 0.92
+	}
+
+	// Higher containment ratio = higher score
+	// 20% containment -> 0.92, 50% -> 0.95, 80% -> 0.98
+	return 0.90 + (ratio * 0.10)
 }
 
 func abs(x int) int {
