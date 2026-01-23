@@ -62,4 +62,6 @@ export interface VideoPlayerProps {
   resizeMode?: VideoResizeMode;
   /** Called when PiP status changes (iOS only) */
   onPictureInPictureStatusChanged?: (isActive: boolean) => void;
+  /** Called when native playback state changes (for syncing paused state on TV platforms) */
+  onPlaybackStateChanged?: (isPlaying: boolean) => void;
 }

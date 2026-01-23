@@ -364,6 +364,7 @@ export default function PlayerScreen() {
   }, [shouldPreferSystemPlayer]);
   const isTvPlatform = Platform.isTV;
   const [paused, setPaused] = useState<boolean>(false);
+  const pausedRef = useRef<boolean>(paused);
   const [isPipActive, setIsPipActive] = useState<boolean>(false);
   // Pause teardown state: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause and showing a poster overlay instead
@@ -2273,11 +2274,24 @@ export default function PlayerScreen() {
             router.back();
           }
           break;
+        case SupportedKeys.Enter:
+          // On TV platforms, Enter key should toggle play/pause when controls are hidden
+          if (!controlsVisibleRef.current) {
+            console.log('[player] Enter key toggling play/pause (controls hidden)');
+            togglePausePlayRef.current?.();
+          } else {
+            // When controls are visible, Enter activates focused element (spatial navigation)
+            showControlsRef.current?.();
+          }
+          break;
         case SupportedKeys.PlayPause: {
+          console.log('[player] PlayPause key received, paused:', pausedRef.current, 'lastToggle:', lastPlayPauseToggleRef.current);
           // TODO: tvOS sends duplicate events - debounce to ignore rapid duplicates
           const now = Date.now();
           const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 300 : 0;
-          if (now - lastPlayPauseToggleRef.current > debounceMs) {
+          const timeSinceLastToggle = now - lastPlayPauseToggleRef.current;
+          console.log('[player] PlayPause debounce check:', { now, debounceMs, timeSinceLastToggle, willToggle: timeSinceLastToggle > debounceMs });
+          if (timeSinceLastToggle > debounceMs) {
             lastPlayPauseToggleRef.current = now;
             togglePausePlayRef.current?.();
           }
@@ -3251,6 +3265,11 @@ export default function PlayerScreen() {
     controlsVisibleRef.current = controlsVisible;
   }, [controlsVisible]);
 
+  // Keep pausedRef in sync for use in event handlers (avoids stale closure)
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
   // Track previous modal state to detect modal close
   const prevIsModalOpenRef = useRef(isModalOpen);
   useEffect(() => {
@@ -3464,6 +3483,7 @@ export default function PlayerScreen() {
   );
 
   const togglePausePlay = () => {
+    console.log('[player] togglePausePlay called, current paused:', pausedRef.current);
     if (usesSystemManagedControls) {
       try {
         const result = videoRef.current?.play?.();
@@ -3480,6 +3500,7 @@ export default function PlayerScreen() {
 
     setPaused((previousPaused) => {
       const nextPaused = !previousPaused;
+      console.log('[player] setPaused toggling:', previousPaused, '->', nextPaused);
 
       if (nextPaused) {
         try {
@@ -3565,6 +3586,17 @@ export default function PlayerScreen() {
       }, 500);
     }
     console.log('[player] PiP status changed:', isActive);
+  }, []);
+
+  // Sync paused state with native playback state (for TV platforms where native
+  // media controls can toggle playback directly via MPRemoteCommandCenter)
+  const handleNativePlaybackStateChanged = useCallback((isPlaying: boolean) => {
+    const shouldBePaused = !isPlaying;
+    // Only sync if state differs to avoid unnecessary re-renders
+    if (pausedRef.current !== shouldBePaused) {
+      console.log('[player] syncing paused state from native:', pausedRef.current, '->', shouldBePaused);
+      setPaused(shouldBePaused);
+    }
   }, []);
 
   const seekBackwardSeconds = settings?.playback?.seekBackwardSeconds ?? 10;
@@ -5389,6 +5421,7 @@ export default function PlayerScreen() {
               subtitleSize={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
               mediaType={mediaType}
               onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
+              onPlaybackStateChanged={handleNativePlaybackStateChanged}
             />
           </View>
 

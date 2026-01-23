@@ -40,6 +40,7 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       nowPlaying,
       onVideoSize,
       onPictureInPictureStatusChanged,
+      onPlaybackStateChanged,
     },
     ref,
   ) => {
@@ -300,7 +301,13 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         playbackStartedAtRef.current = Date.now();
         console.log('[RNVideoPlayer] playback started, monitoring for stuck state');
       }
-    }, []);
+
+      // Notify parent of playback state changes (for syncing paused state on TV platforms
+      // where native media controls can toggle playback directly)
+      if (!state.isSeeking) {
+        onPlaybackStateChanged?.(state.isPlaying);
+      }
+    }, [onPlaybackStateChanged]);
 
     const handleVideoTracks = useCallback((data: { videoTracks: any[] }) => {
       console.log('[RNVideoPlayer] video tracks available', {

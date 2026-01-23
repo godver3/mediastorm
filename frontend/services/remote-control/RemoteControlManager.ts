@@ -364,8 +364,18 @@ class RemoteControlManager implements RemoteControlManagerInterface {
       return;
     }
 
+    // Debug logging for PlayPause events
+    if (event.eventType === 'playPause' || mappedKey === SupportedKeys.PlayPause) {
+      console.log('[RemoteControl] PlayPause event received:', { eventType: event.eventType, eventKeyAction: event.eventKeyAction, mappedKey, isKeyDown });
+    }
+
     if (mappedKey) {
-      if (this.shouldEmit(mappedKey)) {
+      const willEmit = this.shouldEmit(mappedKey);
+      // Debug logging for PlayPause events
+      if (mappedKey === SupportedKeys.PlayPause) {
+        console.log('[RemoteControl] PlayPause shouldEmit:', willEmit, { lastEmittedKey: this.lastEmittedKey, lastEmittedAt: this.lastEmittedAt });
+      }
+      if (willEmit) {
         if (!this.interceptIfNeeded(mappedKey)) {
           this.eventEmitter.emit('keyDown', mappedKey);
         }
