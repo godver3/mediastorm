@@ -568,6 +568,34 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 	}
 
 	if len(candidates) == 1 {
+		// For single-file torrents, validate the file matches the target episode
+		// This prevents playing the wrong episode when absolute numbering differs from S##E##
+		if hints.TargetSeason > 0 && hints.TargetEpisode > 0 {
+			targetCode := mediaresolve.EpisodeCode{Season: hints.TargetSeason, Episode: hints.TargetEpisode}
+			matchesSeasonEpisode := mediaresolve.CandidateMatchesEpisode(candidates[0].label, targetCode)
+			matchesAbsolute := hints.AbsoluteEpisodeNumber > 0 && mediaresolve.CandidateMatchesAbsoluteEpisode(candidates[0].label, hints.AbsoluteEpisodeNumber)
+
+			if !matchesSeasonEpisode && !matchesAbsolute {
+				var rejectionMsg string
+				if hints.AbsoluteEpisodeNumber > 0 {
+					rejectionMsg = fmt.Sprintf("single file %q does not match target S%02dE%02d or absolute ep %d",
+						candidates[0].label, hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber)
+				} else {
+					rejectionMsg = fmt.Sprintf("single file %q does not match target S%02dE%02d",
+						candidates[0].label, hints.TargetSeason, hints.TargetEpisode)
+				}
+				log.Printf("[debrid-playback] rejecting result: %s", rejectionMsg)
+				return &mediaFileSelection{
+					RejectionReason: rejectionMsg,
+				}
+			}
+
+			// Log which matching method succeeded
+			if matchesAbsolute && !matchesSeasonEpisode {
+				log.Printf("[debrid-playback] single file matched by absolute episode %d", hints.AbsoluteEpisodeNumber)
+			}
+		}
+
 		selection.PreferredID = candidates[0].id
 		selection.PreferredLabel = candidates[0].label
 		selection.PreferredReason = "only playable file found"
@@ -598,7 +626,12 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 		// Check if we were looking for a specific episode that wasn't found
 		// In this case, reject the result entirely rather than falling back
 		if hints.TargetEpisode > 0 && hints.TargetSeason > 0 {
-			rejectionMsg := fmt.Sprintf("target episode S%02dE%02d not found in torrent", hints.TargetSeason, hints.TargetEpisode)
+			var rejectionMsg string
+			if hints.AbsoluteEpisodeNumber > 0 {
+				rejectionMsg = fmt.Sprintf("target episode S%02dE%02d (abs: %d) not found in torrent", hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber)
+			} else {
+				rejectionMsg = fmt.Sprintf("target episode S%02dE%02d not found in torrent", hints.TargetSeason, hints.TargetEpisode)
+			}
 			log.Printf("[debrid-playback] rejecting result: %s", rejectionMsg)
 			return &mediaFileSelection{
 				RejectionReason: rejectionMsg,

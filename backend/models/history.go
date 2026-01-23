@@ -4,15 +4,16 @@ import "time"
 
 // EpisodeReference captures identifying information for a specific episode.
 type EpisodeReference struct {
-	SeasonNumber   int       `json:"seasonNumber"`
-	EpisodeNumber  int       `json:"episodeNumber"`
-	EpisodeID      string    `json:"episodeId,omitempty"`
-	TvdbID         string    `json:"tvdbId,omitempty"`
-	Title          string    `json:"title,omitempty"`
-	Overview       string    `json:"overview,omitempty"`
-	RuntimeMinutes int       `json:"runtimeMinutes,omitempty"`
-	AirDate        string    `json:"airDate,omitempty"`
-	WatchedAt      time.Time `json:"watchedAt,omitempty"`
+	SeasonNumber          int       `json:"seasonNumber"`
+	EpisodeNumber         int       `json:"episodeNumber"`
+	AbsoluteEpisodeNumber int       `json:"absoluteEpisodeNumber,omitempty"`
+	EpisodeID             string    `json:"episodeId,omitempty"`
+	TvdbID                string    `json:"tvdbId,omitempty"`
+	Title                 string    `json:"title,omitempty"`
+	Overview              string    `json:"overview,omitempty"`
+	RuntimeMinutes        int       `json:"runtimeMinutes,omitempty"`
+	AirDate               string    `json:"airDate,omitempty"`
+	WatchedAt             time.Time `json:"watchedAt,omitempty"`
 }
 
 // SeriesWatchState tracks a user's progress for a particular series.

@@ -73,15 +73,16 @@ type SearchResult struct {
 }
 
 type SeriesEpisode struct {
-	ID            string `json:"id"`
-	TVDBID        int64  `json:"tvdbId,omitempty"`
-	Name          string `json:"name"`
-	Overview      string `json:"overview"`
-	SeasonNumber  int    `json:"seasonNumber"`
-	EpisodeNumber int    `json:"episodeNumber"`
-	AiredDate     string `json:"airedDate,omitempty"`
-	Runtime       int    `json:"runtimeMinutes,omitempty"`
-	Image         *Image `json:"image,omitempty"`
+	ID                    string `json:"id"`
+	TVDBID                int64  `json:"tvdbId,omitempty"`
+	Name                  string `json:"name"`
+	Overview              string `json:"overview"`
+	SeasonNumber          int    `json:"seasonNumber"`
+	EpisodeNumber         int    `json:"episodeNumber"`
+	AbsoluteEpisodeNumber int    `json:"absoluteEpisodeNumber,omitempty"`
+	AiredDate             string `json:"airedDate,omitempty"`
+	Runtime               int    `json:"runtimeMinutes,omitempty"`
+	Image                 *Image `json:"image,omitempty"`
 }
 
 type SeriesSeason struct {
