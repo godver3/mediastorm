@@ -607,8 +607,9 @@ func (c *Client) GetServerUsers(server PlexResource) ([]PlexHomeUser, error) {
 	users := make([]PlexHomeUser, 0, len(accountsResp.MediaContainer.Account))
 	skipped := 0
 	for _, acc := range accountsResp.MediaContainer.Account {
-		// Skip system accounts (ID 0 or 1) and accounts with no name
-		if acc.ID <= 1 || acc.Name == "" {
+		// Skip system accounts (ID 0) and accounts with no name
+		// Note: ID 1 is typically the admin/owner account - don't skip it
+		if acc.ID <= 0 || acc.Name == "" {
 			skipped++
 			continue
 		}
