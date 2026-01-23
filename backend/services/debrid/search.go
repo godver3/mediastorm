@@ -32,17 +32,18 @@ type imdbResolver interface {
 
 // SearchOptions mirrors the indexer search contract but is scoped for debrid providers.
 type SearchOptions struct {
-	Query               string
-	Categories          []string
-	MaxResults          int
-	IMDBID              string                       // Optional IMDB ID to bypass metadata search
-	MediaType           string                       // Optional: "movie" or "series" - helps with filtering
-	Year                int                          // Optional: Release year - helps with filtering
-	AlternateTitles     []string                     // Optional: alternate or foreign titles for fuzzy filtering
-	UserID              string                       // Optional: user ID for per-user filtering settings
-	ClientID            string                       // Optional: client ID for per-client filtering settings
-	TotalSeriesEpisodes int                          // Deprecated: use EpisodeResolver instead
-	EpisodeResolver     filter.EpisodeCountResolver  // Optional: resolver for accurate episode counts from metadata
+	Query                 string
+	Categories            []string
+	MaxResults            int
+	IMDBID                string                      // Optional IMDB ID to bypass metadata search
+	MediaType             string                      // Optional: "movie" or "series" - helps with filtering
+	Year                  int                         // Optional: Release year - helps with filtering
+	AlternateTitles       []string                    // Optional: alternate or foreign titles for fuzzy filtering
+	UserID                string                      // Optional: user ID for per-user filtering settings
+	ClientID              string                      // Optional: client ID for per-client filtering settings
+	TotalSeriesEpisodes   int                         // Deprecated: use EpisodeResolver instead
+	EpisodeResolver       filter.EpisodeCountResolver // Optional: resolver for accurate episode counts from metadata
+	AbsoluteEpisodeNumber int                         // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
 }
 
 // SearchService coordinates queries against configured debrid providers.
@@ -374,6 +375,13 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		for _, res := range sr.results {
 			nzb := normalizeScrapeResult(res)
 			decorateResultWithParsedMetadata(&nzb, req.Parsed)
+			// Add absolute episode number if provided (for anime)
+			if opts.AbsoluteEpisodeNumber > 0 {
+				if nzb.Attributes == nil {
+					nzb.Attributes = map[string]string{}
+				}
+				nzb.Attributes["absoluteEpisodeNumber"] = fmt.Sprintf("%d", opts.AbsoluteEpisodeNumber)
+			}
 			if nzb.GUID == "" {
 				nzb.GUID = fmt.Sprintf("%s:%s:%d", sr.name, strings.ToLower(res.InfoHash), res.FileIndex)
 			}
@@ -401,20 +409,24 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)
 	if !bypassFiltering && ShouldFilter(parsed) {
 		hasResolver := opts.EpisodeResolver != nil
-		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s, hasEpisodeResolver=%v", parsed.Title, parsed.Year, parsed.MediaType, hasResolver)
+		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s, hasEpisodeResolver=%v, targetS%02dE%02d, absoluteEp=%d",
+			parsed.Title, parsed.Year, parsed.MediaType, hasResolver, parsed.Season, parsed.Episode, opts.AbsoluteEpisodeNumber)
 		filterOpts := FilterOptions{
-			ExpectedTitle:       parsed.Title,
-			ExpectedYear:        parsed.Year,
-			MediaType:           parsed.MediaType,
-			MaxSizeMovieGB:      models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
-			MaxSizeEpisodeGB:    models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
-			MaxResolution:       filterSettings.MaxResolution,
-			HDRDVPolicy:         filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-			PrioritizeHdr:       models.BoolVal(filterSettings.PrioritizeHdr, false),
-			AlternateTitles:     opts.AlternateTitles,
-			FilterOutTerms:      filterSettings.FilterOutTerms,
-			TotalSeriesEpisodes: opts.TotalSeriesEpisodes,
-			EpisodeResolver:     opts.EpisodeResolver,
+			ExpectedTitle:         parsed.Title,
+			ExpectedYear:          parsed.Year,
+			MediaType:             parsed.MediaType,
+			MaxSizeMovieGB:        models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
+			MaxSizeEpisodeGB:      models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
+			MaxResolution:         filterSettings.MaxResolution,
+			HDRDVPolicy:           filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
+			PrioritizeHdr:         models.BoolVal(filterSettings.PrioritizeHdr, false),
+			AlternateTitles:       opts.AlternateTitles,
+			FilterOutTerms:        filterSettings.FilterOutTerms,
+			TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
+			EpisodeResolver:       opts.EpisodeResolver,
+			TargetSeason:          parsed.Season,
+			TargetEpisode:         parsed.Episode,
+			TargetAbsoluteEpisode: opts.AbsoluteEpisodeNumber,
 		}
 		aggregate = FilterResults(aggregate, filterOpts)
 	}

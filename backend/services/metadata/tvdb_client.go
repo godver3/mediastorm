@@ -298,6 +298,20 @@ func (c *tvdbClient) seriesEpisodesBySeasonType(id int64, seasonType, lang strin
 			return nil, err
 		}
 		results = append(results, resp.Data.Episodes...)
+		// Debug: log sample of absolute episode numbers from TVDB response
+		if page == 0 && len(resp.Data.Episodes) > 0 {
+			withAbsNum := 0
+			for _, ep := range resp.Data.Episodes {
+				if ep.AbsoluteNumber > 0 {
+					withAbsNum++
+				}
+			}
+			log.Printf("[tvdb] episodes page 0: got %d episodes, %d have absoluteNumber", len(resp.Data.Episodes), withAbsNum)
+			if len(resp.Data.Episodes) > 0 {
+				ep := resp.Data.Episodes[0]
+				log.Printf("[tvdb] sample episode: S%02dE%02d absoluteNumber=%d name=%q", ep.SeasonNumber, ep.Number, ep.AbsoluteNumber, ep.Name)
+			}
+		}
 		if resp.Links.Next == nil || strings.TrimSpace(*resp.Links.Next) == "" {
 			break
 		}
@@ -486,18 +500,19 @@ type tvdbSeason struct {
 }
 
 type tvdbEpisode struct {
-	ID           int64                    `json:"id"`
-	SeriesID     int64                    `json:"seriesId"`
-	SeasonID     int64                    `json:"seasonId"`
-	SeasonNumber int                      `json:"seasonNumber"`
-	Number       int                      `json:"number"`
-	Name         string                   `json:"name"`
-	Abbreviation string                   `json:"abbreviation"`
-	Overview     string                   `json:"overview"`
-	Aired        string                   `json:"aired"`
-	Runtime      int                      `json:"runtime"`
-	Image        string                   `json:"image"`
-	Translations []tvdbEpisodeTranslation `json:"translations"`
+	ID             int64                    `json:"id"`
+	SeriesID       int64                    `json:"seriesId"`
+	SeasonID       int64                    `json:"seasonId"`
+	SeasonNumber   int                      `json:"seasonNumber"`
+	Number         int                      `json:"number"`
+	AbsoluteNumber int                      `json:"absoluteNumber"`
+	Name           string                   `json:"name"`
+	Abbreviation   string                   `json:"abbreviation"`
+	Overview       string                   `json:"overview"`
+	Aired          string                   `json:"aired"`
+	Runtime        int                      `json:"runtime"`
+	Image          string                   `json:"image"`
+	Translations   []tvdbEpisodeTranslation `json:"translations"`
 }
 
 type tvdbEpisodeTranslation struct {

@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -95,6 +96,10 @@ type Options struct {
 	FilterOutTerms      []string               // Terms to filter out from results (case-insensitive match in title)
 	TotalSeriesEpisodes int                    // Deprecated: use EpisodeResolver instead
 	EpisodeResolver     EpisodeCountResolver   // Resolver for accurate episode counts from metadata
+	// Target episode filtering (for TV shows)
+	TargetSeason          int // Target season number (e.g., 22 for S22E68)
+	TargetEpisode         int // Target episode number within season (e.g., 68 for S22E68)
+	TargetAbsoluteEpisode int // Target absolute episode number for anime (e.g., 1153 for One Piece)
 }
 
 // filteredResult holds a result with its HDR status for sorting
@@ -274,6 +279,15 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
 				result.Title)
 			continue
+		}
+
+		// Target episode filtering for TV shows
+		// This rejects season packs and episodes that obviously can't contain the target episode
+		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetAbsoluteEpisode > 0) {
+			if rejected, reason := shouldRejectByTargetEpisode(parsed, opts); rejected {
+				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+				continue
+			}
 		}
 
 		// For movies, also check year
@@ -679,4 +693,158 @@ func getPackEpisodeCount(seasons []int, isCompletePack bool, resolver EpisodeCou
 // Deprecated: use getPackEpisodeCount instead
 func estimatePackEpisodeCount(seasons []int, totalSeriesEpisodes int) int {
 	return getPackEpisodeCount(seasons, len(seasons) == 0, nil, totalSeriesEpisodes)
+}
+
+// shouldRejectByTargetEpisode checks if a result should be rejected based on target episode info.
+// Returns (shouldReject, reason) where reason explains why the result was rejected.
+func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (bool, string) {
+	if parsed == nil {
+		return false, ""
+	}
+
+	// Case 1: Season pack(s) - reject if none of the seasons match the target
+	// A season pack has seasons but no specific episodes
+	isSeasonPack := len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0
+
+	if isSeasonPack && opts.TargetSeason > 0 {
+		// Check if target season is in the pack's seasons
+		targetInPack := false
+		for _, s := range parsed.Seasons {
+			if s == opts.TargetSeason {
+				targetInPack = true
+				break
+			}
+		}
+		if !targetInPack {
+			return true, fmt.Sprintf("season pack contains seasons %v but target is S%02d", parsed.Seasons, opts.TargetSeason)
+		}
+	}
+
+	// Case 2: Single episode or episode range - check season and episode match
+	// This handles S01E01 style releases and fansub absolute releases
+	hasEpisodes := len(parsed.Episodes) > 0
+	hasSeason := len(parsed.Seasons) > 0
+
+	if hasEpisodes {
+		// Detect anime absolute format: either no season (fansub style) or S01E#### with high episode
+		isAnimeAbsoluteFormat := false
+		if !hasSeason {
+			// Fansub style: "[SubsPlease] Anime - 1153 (1080p)" - no season, just episode
+			isAnimeAbsoluteFormat = true
+		} else if len(parsed.Seasons) == 1 && parsed.Seasons[0] == 1 {
+			// S01E#### style - check if episode number suggests absolute (> typical season length)
+			for _, ep := range parsed.Episodes {
+				if ep > 100 {
+					isAnimeAbsoluteFormat = true
+					break
+				}
+			}
+		}
+
+		if isAnimeAbsoluteFormat && opts.TargetAbsoluteEpisode > 0 {
+			// For anime absolute format, check if any episode matches the target absolute
+			hasMatchingEpisode := false
+			for _, ep := range parsed.Episodes {
+				if ep == opts.TargetAbsoluteEpisode {
+					hasMatchingEpisode = true
+					break
+				}
+			}
+			if !hasMatchingEpisode {
+				// Check if it's a range that includes the target
+				if len(parsed.Episodes) > 1 {
+					minEp, maxEp := parsed.Episodes[0], parsed.Episodes[0]
+					for _, ep := range parsed.Episodes {
+						if ep < minEp {
+							minEp = ep
+						}
+						if ep > maxEp {
+							maxEp = ep
+						}
+					}
+					if opts.TargetAbsoluteEpisode >= minEp && opts.TargetAbsoluteEpisode <= maxEp {
+						hasMatchingEpisode = true
+					}
+				}
+			}
+			if !hasMatchingEpisode {
+				return true, fmt.Sprintf("anime episode %v does not match target absolute episode %d", parsed.Episodes, opts.TargetAbsoluteEpisode)
+			}
+		} else if !isAnimeAbsoluteFormat && hasSeason && opts.TargetSeason > 0 {
+			// Standard seasonal release - check if target season is in the release
+			seasonMatch := false
+			for _, s := range parsed.Seasons {
+				if s == opts.TargetSeason {
+					seasonMatch = true
+					break
+				}
+			}
+			if !seasonMatch {
+				return true, fmt.Sprintf("episode is from season(s) %v but target is S%02d", parsed.Seasons, opts.TargetSeason)
+			}
+		}
+	}
+
+	// Case 3: Absolute episode filtering for season packs
+	// If we have a target absolute episode and an episode resolver, we can check
+	// if a season pack could possibly contain the target absolute episode
+	if opts.TargetAbsoluteEpisode > 0 && opts.EpisodeResolver != nil && isSeasonPack {
+		// Calculate the absolute episode range for the seasons in this pack
+		minAbsolute, maxAbsolute := getAbsoluteEpisodeRange(parsed.Seasons, opts.EpisodeResolver)
+
+		if maxAbsolute > 0 && opts.TargetAbsoluteEpisode > maxAbsolute {
+			return true, fmt.Sprintf("season pack (seasons %v) contains absolute episodes %d-%d but target is absolute %d",
+				parsed.Seasons, minAbsolute, maxAbsolute, opts.TargetAbsoluteEpisode)
+		}
+		if minAbsolute > 0 && opts.TargetAbsoluteEpisode < minAbsolute {
+			return true, fmt.Sprintf("season pack (seasons %v) contains absolute episodes %d-%d but target is absolute %d",
+				parsed.Seasons, minAbsolute, maxAbsolute, opts.TargetAbsoluteEpisode)
+		}
+	}
+
+	return false, ""
+}
+
+// getAbsoluteEpisodeRange calculates the absolute episode range for given seasons.
+// Returns (minAbsolute, maxAbsolute). Returns (0, 0) if calculation is not possible.
+func getAbsoluteEpisodeRange(seasons []int, resolver EpisodeCountResolver) (int, int) {
+	if resolver == nil || len(seasons) == 0 {
+		return 0, 0
+	}
+
+	// We need the episode resolver to be a SeriesEpisodeResolver to access per-season counts
+	ser, ok := resolver.(*SeriesEpisodeResolver)
+	if !ok || ser.SeasonEpisodeCounts == nil {
+		return 0, 0
+	}
+
+	// Find min and max season in the pack
+	minSeason, maxSeason := seasons[0], seasons[0]
+	for _, s := range seasons {
+		if s < minSeason {
+			minSeason = s
+		}
+		if s > maxSeason {
+			maxSeason = s
+		}
+	}
+
+	// Calculate absolute episode numbers
+	// minAbsolute = sum of episodes in seasons 1 to (minSeason-1) + 1
+	// maxAbsolute = sum of episodes in seasons 1 to maxSeason
+	minAbsolute := 1
+	for s := 1; s < minSeason; s++ {
+		if count, ok := ser.SeasonEpisodeCounts[s]; ok {
+			minAbsolute += count
+		}
+	}
+
+	maxAbsolute := 0
+	for s := 1; s <= maxSeason; s++ {
+		if count, ok := ser.SeasonEpisodeCounts[s]; ok {
+			maxAbsolute += count
+		}
+	}
+
+	return minAbsolute, maxAbsolute
 }

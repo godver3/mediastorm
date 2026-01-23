@@ -19,6 +19,10 @@ type FilterOptions struct {
 	FilterOutTerms      []string                     // Terms to filter out from results (case-insensitive match in title)
 	TotalSeriesEpisodes int                          // Deprecated: use EpisodeResolver instead
 	EpisodeResolver     filter.EpisodeCountResolver  // Resolver for accurate episode counts from metadata
+	// Target episode filtering (for TV shows)
+	TargetSeason          int // Target season number (e.g., 22 for S22E68)
+	TargetEpisode         int // Target episode number within season (e.g., 68 for S22E68)
+	TargetAbsoluteEpisode int // Target absolute episode number for anime (e.g., 1153 for One Piece)
 }
 
 // FilterResults filters search results based on parsed title information
@@ -26,18 +30,21 @@ type FilterOptions struct {
 // For TV shows: filters by title similarity (90%+) only
 func FilterResults(results []models.NZBResult, opts FilterOptions) []models.NZBResult {
 	filterOpts := filter.Options{
-		ExpectedTitle:       opts.ExpectedTitle,
-		ExpectedYear:        opts.ExpectedYear,
-		IsMovie:             opts.MediaType == MediaTypeMovie,
-		MaxSizeMovieGB:      opts.MaxSizeMovieGB,
-		MaxSizeEpisodeGB:    opts.MaxSizeEpisodeGB,
-		MaxResolution:       opts.MaxResolution,
-		HDRDVPolicy:         opts.HDRDVPolicy,
-		PrioritizeHdr:       opts.PrioritizeHdr,
-		AlternateTitles:     opts.AlternateTitles,
-		FilterOutTerms:      opts.FilterOutTerms,
-		TotalSeriesEpisodes: opts.TotalSeriesEpisodes,
-		EpisodeResolver:     opts.EpisodeResolver,
+		ExpectedTitle:         opts.ExpectedTitle,
+		ExpectedYear:          opts.ExpectedYear,
+		IsMovie:               opts.MediaType == MediaTypeMovie,
+		MaxSizeMovieGB:        opts.MaxSizeMovieGB,
+		MaxSizeEpisodeGB:      opts.MaxSizeEpisodeGB,
+		MaxResolution:         opts.MaxResolution,
+		HDRDVPolicy:           opts.HDRDVPolicy,
+		PrioritizeHdr:         opts.PrioritizeHdr,
+		AlternateTitles:       opts.AlternateTitles,
+		FilterOutTerms:        opts.FilterOutTerms,
+		TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
+		EpisodeResolver:       opts.EpisodeResolver,
+		TargetSeason:          opts.TargetSeason,
+		TargetEpisode:         opts.TargetEpisode,
+		TargetAbsoluteEpisode: opts.TargetAbsoluteEpisode,
 	}
 	return filter.Results(results, filterOpts)
 }

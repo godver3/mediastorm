@@ -16,12 +16,13 @@ type Candidate struct {
 
 // SelectionHints contains release metadata used to narrow down multi-file selections.
 type SelectionHints struct {
-	ReleaseTitle      string
-	QueueName         string
-	Directory         string
-	TargetSeason      int
-	TargetEpisode     int
-	TargetEpisodeCode string
+	ReleaseTitle          string
+	QueueName             string
+	Directory             string
+	TargetSeason          int
+	TargetEpisode         int
+	TargetEpisodeCode     string
+	AbsoluteEpisodeNumber int // For anime: the absolute episode number (e.g., 1153 for One Piece)
 }
 
 // EpisodeCode captures a parsed SXXEXX code.
@@ -50,6 +51,31 @@ var (
 	episodeCodePattern    = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
 	episodeAltPattern     = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
 	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s](\d{1,2})[-_\s\[\.]`)   // Matches " - 01 - ", "_01_", "_01[", "_01." for anime
+
+	// Absolute episode patterns for anime (3-4 digit episode numbers)
+	// These patterns are specifically designed to match anime release formats
+	// while avoiding false positives from resolutions (1080p), years (2024), etc.
+
+	// Primary: "- NNNN" pattern with optional version suffix
+	// Matches: "One Piece - 1153 [1080p]", "Anime - 0042 (720p)", "Show - 1153v2"
+	absoluteEpisodeDashPattern = regexp.MustCompile(`[-–]\s*(\d{2,4})(?:v\d)?\s*[\[\(\s]`)
+
+	// Secondary: "Episode NNNN" or "Ep NNNN" keyword
+	// Matches: "Episode 1153", "Ep.42", "Ep 123", "Episode1153"
+	absoluteEpisodeKeywordPattern = regexp.MustCompile(`(?i)(?:episode|ep\.?)\s*(\d{2,4})(?:\s|$|[\[\(])`)
+
+	// Tertiary: "#NNNN" hash format
+	// Matches: "#1153", "# 042"
+	absoluteEpisodeHashPattern = regexp.MustCompile(`#\s*(\d{2,4})(?:\s|$|[\[\(])`)
+
+	// S01ENNNN format - common for anime using absolute episode in S01E format
+	// Matches: "S01E1153", "s01e0042" (where episode number is actually absolute)
+	s01AbsoluteEpisodePattern = regexp.MustCompile(`(?i)s01e(\d{3,4})(?:\s|$|[\.\-\[\(])`)
+
+	// Negative patterns to avoid false positives
+	resolutionPattern = regexp.MustCompile(`(?i)(\d{3,4})p`)         // 1080p, 720p, 480p
+	yearPattern       = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)    // (2024), [2024]
+	checksumPattern   = regexp.MustCompile(`[\[\(]([A-Fa-f0-9]{8})[\]\)]`) // [ABCD1234]
 )
 
 // SelectBestCandidate applies SXXEXX matching and fuzzy title similarity against a list of candidates.
@@ -125,10 +151,47 @@ func SelectBestCandidate(candidates []Candidate, hints SelectionHints) (int, str
 			}
 		}
 
-		// CRITICAL: If we have a target episode but NO candidates matched, reject this result.
+		// If no S##E## matches found, try matching by absolute episode number (for anime)
+		if len(matching) == 0 && hints.AbsoluteEpisodeNumber > 0 {
+			fmt.Printf("[selector] No S%02dE%02d matches, trying absolute episode %d\n", targetEpisode.Season, targetEpisode.Episode, hints.AbsoluteEpisodeNumber)
+			var absoluteMatching []int
+			for idx, cand := range candidates {
+				matches := CandidateMatchesAbsoluteEpisode(cand.Label, hints.AbsoluteEpisodeNumber)
+				fmt.Printf("[selector]   Candidate[%d]: %q - absoluteMatch=%v\n", idx, cand.Label, matches)
+				if matches {
+					absoluteMatching = append(absoluteMatching, idx)
+				}
+			}
+
+			fmt.Printf("[selector] Found %d matching candidates for absolute episode %d\n", len(absoluteMatching), hints.AbsoluteEpisodeNumber)
+
+			if len(absoluteMatching) == 1 {
+				return absoluteMatching[0], fmt.Sprintf("matched absolute episode %d", hints.AbsoluteEpisodeNumber)
+			}
+			if len(absoluteMatching) > 1 {
+				if len(releaseTokens) > 0 {
+					if idx, score := pickCandidateBySimilarity(candidates, absoluteMatching, releaseTokens, releaseFlat); idx != -1 {
+						return idx, fmt.Sprintf("absolute episode match + title similarity score %d", score)
+					}
+				}
+				if idx := pickBestPriorityIndex(candidates, absoluteMatching); idx != -1 {
+					return idx, fmt.Sprintf("absolute episode match fallback to extension priority (%d)", hints.AbsoluteEpisodeNumber)
+				}
+			}
+			// If absolute episode matching found candidates, don't reject
+			if len(absoluteMatching) > 0 {
+				matching = absoluteMatching
+			}
+		}
+
+		// CRITICAL: If we have a target episode but NO candidates matched (including absolute), reject this result.
 		// This prevents falling back to title similarity which would select the wrong episode
 		// (e.g., selecting S01E01 when we need S01E05 but the season pack only has eps 1-2).
 		if len(matching) == 0 {
+			if hints.AbsoluteEpisodeNumber > 0 {
+				fmt.Printf("[selector] No candidates match target episode S%02dE%02d or absolute %d - rejecting result\n", targetEpisode.Season, targetEpisode.Episode, hints.AbsoluteEpisodeNumber)
+				return -1, fmt.Sprintf("no file matches target episode S%02dE%02d (abs: %d)", targetEpisode.Season, targetEpisode.Episode, hints.AbsoluteEpisodeNumber)
+			}
 			fmt.Printf("[selector] No candidates match target episode S%02dE%02d - rejecting result\n", targetEpisode.Season, targetEpisode.Episode)
 			return -1, fmt.Sprintf("no file matches target episode S%02dE%02d", targetEpisode.Season, targetEpisode.Episode)
 		}
@@ -299,10 +362,15 @@ func CandidateMatchesEpisode(candidateLabel string, target EpisodeCode) bool {
 	}
 
 	// If standard SXXEXX didn't match, try alternative patterns
-	// assuming the target season (useful for season packs)
-	episode, ok = parseEpisodeNumber(candidateLabel)
-	if ok && target.Season > 0 && episode == target.Episode {
-		return true
+	// assuming the target season (useful for season packs).
+	// BUT only for season 1 - for higher seasons, the episode number alone
+	// is ambiguous (e.g., "- 01" in a multi-season pack is likely S01E01, not S02E01).
+	// For season 2+, require explicit S##E## match or use absolute episode matching.
+	if target.Season == 1 {
+		episode, ok = parseEpisodeNumber(candidateLabel)
+		if ok && episode == target.Episode {
+			return true
+		}
 	}
 
 	return false
@@ -356,4 +424,80 @@ func parseEpisodeNumber(value string) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// ParseAbsoluteEpisodeNumber extracts an absolute episode number from a filename.
+// This is designed for anime releases that use absolute numbering (e.g., "One Piece - 1153").
+// Returns the episode number and true if found, or 0 and false otherwise.
+func ParseAbsoluteEpisodeNumber(value string) (int, bool) {
+	if strings.TrimSpace(value) == "" {
+		return 0, false
+	}
+
+	// First, identify numbers we should exclude (resolutions, years, checksums)
+	excludeNums := make(map[int]bool)
+
+	// Exclude resolution numbers (1080, 720, 480, etc.)
+	for _, match := range resolutionPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) >= 2 {
+			if n, err := strconv.Atoi(match[1]); err == nil {
+				excludeNums[n] = true
+			}
+		}
+	}
+
+	// Exclude year numbers (2020-2029, etc.)
+	for _, match := range yearPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) >= 2 {
+			if n, err := strconv.Atoi(match[1]); err == nil {
+				excludeNums[n] = true
+			}
+		}
+	}
+
+	// Try primary pattern: "- NNNN"
+	if matches := absoluteEpisodeDashPattern.FindStringSubmatch(value); len(matches) >= 2 {
+		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
+			return episode, true
+		}
+	}
+
+	// Try secondary pattern: "Episode NNNN" or "Ep NNNN"
+	if matches := absoluteEpisodeKeywordPattern.FindStringSubmatch(value); len(matches) >= 2 {
+		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
+			return episode, true
+		}
+	}
+
+	// Try tertiary pattern: "#NNNN"
+	if matches := absoluteEpisodeHashPattern.FindStringSubmatch(value); len(matches) >= 2 {
+		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
+			return episode, true
+		}
+	}
+
+	// Try S01ENNNN pattern (anime using absolute episode in S01E format)
+	// This is common for long-running anime where releases use S01E1153 instead of S22E68
+	if matches := s01AbsoluteEpisodePattern.FindStringSubmatch(value); len(matches) >= 2 {
+		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
+			return episode, true
+		}
+	}
+
+	return 0, false
+}
+
+// CandidateMatchesAbsoluteEpisode checks if the candidate label contains the target absolute episode number.
+// This is used for anime where episodes are numbered absolutely (e.g., episode 1153 instead of S22E68).
+func CandidateMatchesAbsoluteEpisode(candidateLabel string, targetAbsoluteEpisode int) bool {
+	if targetAbsoluteEpisode <= 0 {
+		return false
+	}
+
+	parsedEpisode, ok := ParseAbsoluteEpisodeNumber(candidateLabel)
+	if !ok {
+		return false
+	}
+
+	return parsedEpisode == targetAbsoluteEpisode
 }

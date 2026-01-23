@@ -1603,7 +1603,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v4", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
@@ -1929,14 +1929,19 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		}
 		episodeModel := models.SeriesEpisode{
-			ID:            fmt.Sprintf("tvdb:episode:%d", episode.ID),
-			TVDBID:        episode.ID,
-			Name:          strings.TrimSpace(firstNonEmpty(translatedName, episode.Name, episode.Abbreviation)),
-			Overview:      strings.TrimSpace(firstNonEmpty(translatedOverview, episode.Overview)),
-			SeasonNumber:  episode.SeasonNumber,
-			EpisodeNumber: episode.Number,
-			AiredDate:     strings.TrimSpace(episode.Aired),
-			Runtime:       episode.Runtime,
+			ID:                    fmt.Sprintf("tvdb:episode:%d", episode.ID),
+			TVDBID:                episode.ID,
+			Name:                  strings.TrimSpace(firstNonEmpty(translatedName, episode.Name, episode.Abbreviation)),
+			Overview:              strings.TrimSpace(firstNonEmpty(translatedOverview, episode.Overview)),
+			SeasonNumber:          episode.SeasonNumber,
+			EpisodeNumber:         episode.Number,
+			AbsoluteEpisodeNumber: episode.AbsoluteNumber,
+			AiredDate:             strings.TrimSpace(episode.Aired),
+			Runtime:               episode.Runtime,
+		}
+		// Debug: log if we get absolute episode numbers
+		if episode.AbsoluteNumber > 0 && episode.SeasonNumber > 10 {
+			log.Printf("[metadata] Episode S%02dE%02d has absoluteNumber=%d", episode.SeasonNumber, episode.Number, episode.AbsoluteNumber)
 		}
 		if imgURL := normalizeTVDBImageURL(episode.Image); imgURL != "" {
 			episodeModel.Image = &models.Image{URL: imgURL, Type: "still"}
@@ -2054,7 +2059,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 			continue
 		}
 
-		cacheID := cacheKey("tvdb", "series", "details", "v4", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 			log.Printf("[metadata] batch series cache hit index=%d tvdbId=%d name=%q", i, tvdbID, query.Name)

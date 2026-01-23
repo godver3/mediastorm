@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/mediaresolve"
 	"novastream/models"
 	"novastream/services/history"
 	"novastream/services/indexer"
@@ -236,10 +237,15 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 		// If episode was explicitly provided, use it
 		if req.SeasonNumber > 0 && req.EpisodeNumber > 0 {
 			targetEpisode = &models.EpisodeReference{
-				SeasonNumber:  req.SeasonNumber,
-				EpisodeNumber: req.EpisodeNumber,
+				SeasonNumber:          req.SeasonNumber,
+				EpisodeNumber:         req.EpisodeNumber,
+				AbsoluteEpisodeNumber: req.AbsoluteEpisodeNumber,
 			}
-			log.Printf("[prequeue] Using explicit episode S%02dE%02d", req.SeasonNumber, req.EpisodeNumber)
+			if req.AbsoluteEpisodeNumber > 0 {
+				log.Printf("[prequeue] Using explicit episode S%02dE%02d (abs: %d)", req.SeasonNumber, req.EpisodeNumber, req.AbsoluteEpisodeNumber)
+			} else {
+				log.Printf("[prequeue] Using explicit episode S%02dE%02d", req.SeasonNumber, req.EpisodeNumber)
+			}
 		} else if h.historySvc != nil {
 			// Try to get next episode from watch history
 			watchState, err := h.historySvc.GetSeriesWatchState(req.UserID, req.TitleID)
@@ -276,7 +282,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode)
 
 	// Start background worker with all the info needed for search
-	go h.runPrequeueWorker(entry.ID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset)
+	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset)
 
 	// Return response
 	resp := playback.PrequeueResponse{
@@ -345,7 +351,7 @@ func (h *PrequeueHandler) Options(w http.ResponseWriter, r *http.Request) {
 }
 
 // runPrequeueWorker runs the prequeue background task
-func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64) {
+func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64) {
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -370,16 +376,21 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 	log.Printf("[prequeue] Searching with query: %q", query)
 
 	// Create episode resolver for TV shows to enable accurate pack size filtering
+	// Also lookup absolute episode number if not provided (for anime matching)
 	var episodeResolver *filter.SeriesEpisodeResolver
 	if mediaType == "series" && h.metadataSvc != nil {
-		episodeResolver = h.createEpisodeResolver(ctx, titleName, year, imdbID)
+		episodeResolver, targetEpisode = h.createEpisodeResolverAndLookupAbsoluteEp(ctx, titleID, titleName, year, imdbID, targetEpisode)
 		if episodeResolver != nil {
 			log.Printf("[prequeue] Episode resolver created: %d total episodes, %d seasons", episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
+		}
+		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
+			log.Printf("[prequeue] Target episode S%02dE%02d has absolute episode number: %d",
+				targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber)
 		}
 	}
 
 	// Search for results (match manual selection limit for consistent fallback coverage)
-	results, err := h.indexerSvc.Search(ctx, indexer.SearchOptions{
+	searchOpts := indexer.SearchOptions{
 		Query:           query,
 		MaxResults:      50,
 		MediaType:       mediaType,
@@ -388,7 +399,12 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 		UserID:          userID,
 		ClientID:        clientID,
 		EpisodeResolver: episodeResolver,
-	})
+	}
+	// Pass absolute episode number for anime matching (if available)
+	if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
+		searchOpts.AbsoluteEpisodeNumber = targetEpisode.AbsoluteEpisodeNumber
+	}
+	results, err := h.indexerSvc.Search(ctx, searchOpts)
 	if err != nil {
 		log.Printf("[prequeue] Search failed: %v", err)
 		h.failPrequeue(prequeueID, "search failed: "+err.Error())
@@ -490,6 +506,25 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleName, imdbID, media
 			h.failPrequeue(prequeueID, "cancelled")
 			return
 		default:
+		}
+
+		// Early rejection: skip results that clearly indicate a wrong episode
+		// This avoids expensive resolve operations for results that won't match
+		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
+			// Parse episode from result title
+			parsedEp, hasEpisode := mediaresolve.ParseAbsoluteEpisodeNumber(result.Title)
+			if hasEpisode {
+				// Check if it matches S##E## format first (don't reject if it matches the season/episode)
+				episodeCode := mediaresolve.EpisodeCode{Season: targetEpisode.SeasonNumber, Episode: targetEpisode.EpisodeNumber}
+				matchesSXXEXX := mediaresolve.CandidateMatchesEpisode(result.Title, episodeCode)
+
+				// If it doesn't match S##E## and doesn't match absolute episode, skip
+				if !matchesSXXEXX && parsedEp != targetEpisode.AbsoluteEpisodeNumber {
+					log.Printf("[prequeue] Skipping result [%d] - episode %d doesn't match target (S%02dE%02d/abs:%d): %s",
+						i, parsedEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber, result.Title)
+					continue
+				}
+			}
 		}
 
 		if result.ServiceType == models.ServiceTypeDebrid {
@@ -1020,33 +1055,36 @@ func padNumber(n int) string {
 	return fmt.Sprintf("%02d", n)
 }
 
-// createEpisodeResolver fetches series metadata and creates an episode resolver
-// for accurate pack size filtering
-func (h *PrequeueHandler) createEpisodeResolver(ctx context.Context, titleName string, year int, imdbID string) *filter.SeriesEpisodeResolver {
+// createEpisodeResolverAndLookupAbsoluteEp fetches series metadata, creates an episode resolver,
+// and looks up the absolute episode number for the target episode if not already set.
+// Returns the episode resolver and an updated targetEpisode (with AbsoluteEpisodeNumber set if found).
+func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.Context, titleID, titleName string, year int, imdbID string, targetEpisode *models.EpisodeReference) (*filter.SeriesEpisodeResolver, *models.EpisodeReference) {
 	if h.metadataSvc == nil {
-		return nil
+		return nil, targetEpisode
 	}
 
 	// Build query using available identifiers
 	query := models.SeriesDetailsQuery{
-		Name: titleName,
-		Year: year,
+		TitleID: titleID,
+		Name:    titleName,
+		Year:    year,
 	}
 
 	// Fetch series details from metadata service
 	details, err := h.metadataSvc.SeriesDetails(ctx, query)
 	if err != nil {
 		log.Printf("[prequeue] Failed to get series details for episode resolver: %v", err)
-		return nil
+		return nil, targetEpisode
 	}
 
 	if details == nil || len(details.Seasons) == 0 {
 		log.Printf("[prequeue] No season data available for episode resolver")
-		return nil
+		return nil, targetEpisode
 	}
 
-	// Build season -> episode count map
+	// Build season -> episode count map AND lookup absolute episode number
 	seasonCounts := make(map[int]int)
+	var foundAbsoluteEp int
 	for _, season := range details.Seasons {
 		// Skip specials (season 0) unless explicitly included
 		if season.Number > 0 {
@@ -1057,14 +1095,45 @@ func (h *PrequeueHandler) createEpisodeResolver(ctx context.Context, titleName s
 			}
 			seasonCounts[season.Number] = count
 		}
+
+		// Look for the target episode's absolute number if not already set
+		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber == 0 &&
+			season.Number == targetEpisode.SeasonNumber {
+			for _, ep := range season.Episodes {
+				if ep.EpisodeNumber == targetEpisode.EpisodeNumber && ep.AbsoluteEpisodeNumber > 0 {
+					foundAbsoluteEp = ep.AbsoluteEpisodeNumber
+					log.Printf("[prequeue] Found absolute episode number %d for S%02dE%02d from TVDB",
+						foundAbsoluteEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber)
+					break
+				}
+			}
+		}
+	}
+
+	// Update targetEpisode with absolute number if found
+	if foundAbsoluteEp > 0 && targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber == 0 {
+		// Create a copy to avoid modifying the original
+		updatedEpisode := &models.EpisodeReference{
+			SeasonNumber:          targetEpisode.SeasonNumber,
+			EpisodeNumber:         targetEpisode.EpisodeNumber,
+			AbsoluteEpisodeNumber: foundAbsoluteEp,
+			EpisodeID:             targetEpisode.EpisodeID,
+			TvdbID:                targetEpisode.TvdbID,
+			Title:                 targetEpisode.Title,
+			Overview:              targetEpisode.Overview,
+			RuntimeMinutes:        targetEpisode.RuntimeMinutes,
+			AirDate:               targetEpisode.AirDate,
+			WatchedAt:             targetEpisode.WatchedAt,
+		}
+		targetEpisode = updatedEpisode
 	}
 
 	if len(seasonCounts) == 0 {
 		log.Printf("[prequeue] No valid seasons found for episode resolver")
-		return nil
+		return nil, targetEpisode
 	}
 
-	return filter.NewSeriesEpisodeResolver(seasonCounts)
+	return filter.NewSeriesEpisodeResolver(seasonCounts), targetEpisode
 }
 
 // findAudioTrackByLanguage wraps the helper function for backward compatibility

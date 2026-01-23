@@ -38,6 +38,9 @@ func buildSelectionHints(candidate models.NZBResult, directory string) mediareso
 	if episode := parsePositiveInt(attrs["targetEpisode"]); episode > 0 {
 		hints.TargetEpisode = episode
 	}
+	if absEpisode := parsePositiveInt(attrs["absoluteEpisodeNumber"]); absEpisode > 0 {
+		hints.AbsoluteEpisodeNumber = absEpisode
+	}
 
 	if hints.TargetEpisodeCode == "" && hints.TargetSeason > 0 && hints.TargetEpisode > 0 {
 		hints.TargetEpisodeCode = fmt.Sprintf("S%02dE%02d", hints.TargetSeason, hints.TargetEpisode)
@@ -48,8 +51,8 @@ func buildSelectionHints(candidate models.NZBResult, directory string) mediareso
 	}
 
 	// Debug logging
-	fmt.Printf("[selection-hints] Final hints: Season=%d, Episode=%d, Code=%q, ReleaseTitle=%q\n",
-		hints.TargetSeason, hints.TargetEpisode, hints.TargetEpisodeCode, hints.ReleaseTitle)
+	fmt.Printf("[selection-hints] Final hints: Season=%d, Episode=%d, AbsoluteEp=%d, Code=%q, ReleaseTitle=%q\n",
+		hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber, hints.TargetEpisodeCode, hints.ReleaseTitle)
 
 	return hints
 }
