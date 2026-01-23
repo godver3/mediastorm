@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -23,6 +24,7 @@ type usersService interface {
 	Rename(id, name string) (models.User, error)
 	SetColor(id, color string) (models.User, error)
 	SetIconURL(id, iconURL string) (models.User, error)
+	SetIconFile(id string, data []byte, contentType string) (models.User, error)
 	ClearIconURL(id string) (models.User, error)
 	GetIconPath(id string) (string, error)
 	Delete(id string) error
@@ -237,6 +239,65 @@ func (h *UsersHandler) SetIconURL(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusBadRequest
 		case errors.Is(err, users.ErrIconDownloadFailed):
 			status = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// UploadProfileIcon accepts a multipart form upload and sets it as the profile icon.
+func (h *UsersHandler) UploadProfileIcon(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify profile belongs to the logged-in account
+	accountID := auth.GetAccountID(r)
+	if !h.Service.BelongsToAccount(id, accountID) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse multipart form with 5MB limit
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		http.Error(w, "file too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("icon")
+	if err != nil {
+		http.Error(w, "icon file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Read file data
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Get content type from header or detect from file
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+
+	user, err := h.Service.SetIconFile(id, data, contentType)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, users.ErrUserNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, users.ErrInvalidImageFormat):
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return

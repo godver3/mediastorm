@@ -377,6 +377,8 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/icon", usersHandler.ClearIconURL).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/icon", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/icon/upload", usersHandler.UploadProfileIcon).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/icon/upload", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.SetPin).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.ClearPin).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/pin", usersHandler.Options).Methods(http.MethodOptions)

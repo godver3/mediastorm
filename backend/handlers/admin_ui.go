@@ -2918,6 +2918,69 @@ func (h *AdminUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// UploadProfileIcon accepts a multipart form upload and sets it as the profile icon
+func (h *AdminUIHandler) UploadProfileIcon(w http.ResponseWriter, r *http.Request) {
+	if h.usersService == nil {
+		http.Error(w, "Users service not available", http.StatusInternalServerError)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse multipart form with 5MB limit
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		http.Error(w, "File too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("icon")
+	if err != nil {
+		http.Error(w, "icon file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Read file data
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Get content type from header or detect from file
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+
+	user, err := h.usersService.SetIconFile(profileID, data, contentType)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ProfileWithPinStatus{
+		ID:            user.ID,
+		Name:          user.Name,
+		Color:         user.Color,
+		IconURL:       user.IconURL,
+		HasPin:        user.HasPin(),
+		HasIcon:       user.HasIcon(),
+		IsKidsProfile: user.IsKidsProfile,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	})
+}
+
 // ServeProfileIcon serves the profile icon image file
 func (h *AdminUIHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request) {
 	if h.usersService == nil {

@@ -414,14 +414,26 @@ function showEditProfileModal(profileId) {
 
     const iconSection = `
         <div class="form-group">
-            <label class="form-label">Profile Icon URL</label>
+            <label class="form-label">Profile Icon</label>
             ${hasIcon
                 ? `<p style="color: var(--text-muted); font-size: 0.875rem;">Custom icon is set. <button type="button" class="btn btn-sm btn-danger" onclick="clearProfileIcon('${profileId}')">Remove Icon</button></p>`
-                : `<div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <input type="url" id="iconUrlInput" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1; min-width: 200px;" oninput="toggleEditColorPicker(this.value)">
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="setProfileIcon('${profileId}')">Set Icon</button>
+                : `<div style="margin-bottom: 0.75rem;">
+                    <label class="form-label" style="font-size: 0.8rem; color: var(--text-muted);">Upload from device</label>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                        <input type="file" id="iconFileInput" accept="image/png,image/jpeg" style="display: none;" onchange="previewIconFile(this)">
+                        <label for="iconFileInput" class="btn btn-sm btn-secondary" style="cursor: pointer; margin: 0;">Choose File</label>
+                        <span id="iconFileName" style="color: var(--text-muted); font-size: 0.875rem;">No file selected</span>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="uploadProfileIcon('${profileId}')" id="uploadIconBtn" disabled>Upload</button>
+                    </div>
+                    <p id="iconFilePreview" style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;"></p>
                 </div>
-                <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">Enter URL to PNG/JPG image. When set, replaces color avatar.</p>`
+                <div style="border-top: 1px solid var(--border); padding-top: 0.75rem;">
+                    <label class="form-label" style="font-size: 0.8rem; color: var(--text-muted);">Or enter URL</label>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <input type="url" id="iconUrlInput" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1; min-width: 200px;" oninput="toggleEditColorPicker(this.value)">
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="setProfileIcon('${profileId}')">Set URL</button>
+                    </div>
+                </div>`
             }
         </div>
     `;
@@ -550,6 +562,58 @@ async function clearProfileIcon(profileId) {
         });
         if (!res.ok) throw new Error(await res.text());
         showToast('Profile icon removed');
+        loadData();
+        hideModal();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function previewIconFile(input) {
+    const preview = document.getElementById('iconFilePreview');
+    const fileName = document.getElementById('iconFileName');
+    const uploadBtn = document.getElementById('uploadIconBtn');
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        fileName.textContent = file.name;
+        const maxSize = 5 * 1024 * 1024; // 5MB
+        if (file.size > maxSize) {
+            preview.textContent = 'File too large (max 5MB)';
+            preview.style.color = 'var(--danger)';
+            uploadBtn.disabled = true;
+            return;
+        }
+        if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+            preview.textContent = 'Invalid format (PNG or JPG only)';
+            preview.style.color = 'var(--danger)';
+            uploadBtn.disabled = true;
+            return;
+        }
+        preview.textContent = `${(file.size / 1024).toFixed(1)} KB`;
+        preview.style.color = 'var(--text-muted)';
+        uploadBtn.disabled = false;
+    } else {
+        fileName.textContent = 'No file selected';
+        preview.textContent = '';
+        uploadBtn.disabled = true;
+    }
+}
+
+async function uploadProfileIcon(profileId) {
+    const fileInput = document.getElementById('iconFileInput');
+    if (!fileInput.files || !fileInput.files[0]) {
+        showToast('Please select a file', 'error');
+        return;
+    }
+    const formData = new FormData();
+    formData.append('icon', fileInput.files[0]);
+    try {
+        const res = await fetch(basePath + '/api/profiles/icon/upload?profileId=' + profileId, {
+            method: 'POST',
+            body: formData
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Profile icon uploaded');
         loadData();
         hideModal();
     } catch (err) {

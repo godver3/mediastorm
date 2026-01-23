@@ -386,6 +386,88 @@ func (s *Service) SetIconURL(id, iconURL string) (models.User, error) {
 	return user, nil
 }
 
+// SetIconFile saves uploaded file data as the user's profile icon.
+// The contentType must be "image/png" or "image/jpeg".
+func (s *Service) SetIconFile(id string, data []byte, contentType string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	if len(data) == 0 {
+		return models.User{}, ErrInvalidIconURL
+	}
+
+	// Enforce 5MB limit
+	if len(data) > 5*1024*1024 {
+		return models.User{}, fmt.Errorf("icon file too large (max 5MB)")
+	}
+
+	// Determine file extension from content type
+	var ext string
+	switch {
+	case strings.Contains(contentType, "image/png"):
+		ext = ".png"
+	case strings.Contains(contentType, "image/jpeg"), strings.Contains(contentType, "image/jpg"):
+		ext = ".jpg"
+	default:
+		return models.User{}, ErrInvalidImageFormat
+	}
+
+	// Check user exists
+	s.mu.RLock()
+	_, ok := s.users[id]
+	s.mu.RUnlock()
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Create profile-icons directory if needed
+	iconsDir := filepath.Join(s.storageDir, "profile-icons")
+	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
+		return models.User{}, fmt.Errorf("create icons dir: %w", err)
+	}
+
+	// Generate filename
+	filename := fmt.Sprintf("%s%s", id, ext)
+	localPath := filepath.Join(iconsDir, filename)
+
+	// Delete old icon if exists with different extension
+	oldPng := filepath.Join(iconsDir, id+".png")
+	oldJpg := filepath.Join(iconsDir, id+".jpg")
+	if ext == ".png" {
+		os.Remove(oldJpg)
+	} else {
+		os.Remove(oldPng)
+	}
+
+	// Save the file
+	if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		return models.User{}, fmt.Errorf("save icon: %w", err)
+	}
+
+	// Update user with local filename
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		os.Remove(localPath)
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.IconURL = filename
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		os.Remove(localPath)
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
 // ClearIconURL removes the user's profile icon.
 func (s *Service) ClearIconURL(id string) (models.User, error) {
 	id = strings.TrimSpace(id)

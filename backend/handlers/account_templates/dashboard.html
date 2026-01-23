@@ -140,13 +140,27 @@
                     <input type="text" id="editProfileName" class="form-input" required>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Profile Icon URL</label>
-                    <div style="display: flex; gap: 0.5rem; align-items: center;">
-                        <input type="url" id="editIconUrl" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1;" oninput="toggleColorPickerByUrl(this.value)">
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="setProfileIcon()" id="setIconBtn">Set Icon</button>
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="clearProfileIcon()" id="clearIconBtn" style="display: none;">Clear</button>
+                    <label class="form-label">Profile Icon</label>
+                    <div id="iconUploadSection" style="margin-bottom: 0.75rem;">
+                        <label class="form-label" style="font-size: 0.8rem; color: var(--text-muted);">Upload from device</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="file" id="editIconFile" accept="image/png,image/jpeg" style="display: none;" onchange="previewIconFile(this)">
+                            <label for="editIconFile" class="btn btn-secondary btn-sm" style="cursor: pointer; margin: 0;">Choose File</label>
+                            <span id="iconFileName" style="color: var(--text-muted); font-size: 0.875rem;">No file selected</span>
+                            <button type="button" class="btn btn-primary btn-sm" onclick="uploadProfileIcon()" id="uploadIconBtn" disabled>Upload</button>
+                        </div>
+                        <p id="iconFilePreview" class="form-hint"></p>
                     </div>
-                    <p class="form-hint">Enter a URL to a PNG or JPG image. When set, this replaces the color avatar.</p>
+                    <div id="iconUrlSection" style="border-top: 1px solid var(--border); padding-top: 0.75rem;">
+                        <label class="form-label" style="font-size: 0.8rem; color: var(--text-muted);">Or enter URL</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="url" id="editIconUrl" class="form-input" placeholder="https://example.com/icon.png" style="flex: 1;" oninput="toggleColorPickerByUrl(this.value)">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="setProfileIcon()" id="setIconBtn">Set URL</button>
+                        </div>
+                    </div>
+                    <div id="iconClearSection" style="display: none; margin-top: 0.5rem;">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="clearProfileIcon()" id="clearIconBtn">Remove Icon</button>
+                    </div>
                 </div>
                 <div class="form-group" id="colorPickerGroup">
                     <label class="form-label">Color</label>
@@ -273,8 +287,13 @@
         // Handle icon state
         const hasIcon = profile.hasIcon || profile.iconUrl;
         updateColorPickerState(hasIcon);
-        document.getElementById('clearIconBtn').style.display = hasIcon ? 'inline-flex' : 'none';
-        document.getElementById('setIconBtn').style.display = hasIcon ? 'none' : 'inline-flex';
+        document.getElementById('iconUploadSection').style.display = hasIcon ? 'none' : 'block';
+        document.getElementById('iconUrlSection').style.display = hasIcon ? 'none' : 'block';
+        document.getElementById('iconClearSection').style.display = hasIcon ? 'block' : 'none';
+        document.getElementById('editIconFile').value = '';
+        document.getElementById('iconFileName').textContent = 'No file selected';
+        document.getElementById('iconFilePreview').textContent = '';
+        document.getElementById('uploadIconBtn').disabled = true;
 
         document.getElementById('editModal').style.display = 'flex';
     }
@@ -329,7 +348,69 @@
             showToast('Error setting icon: ' + err.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Set Icon';
+            btn.textContent = 'Set URL';
+        }
+    }
+
+    function previewIconFile(input) {
+        const preview = document.getElementById('iconFilePreview');
+        const fileName = document.getElementById('iconFileName');
+        const uploadBtn = document.getElementById('uploadIconBtn');
+        if (input.files && input.files[0]) {
+            const file = input.files[0];
+            fileName.textContent = file.name;
+            const maxSize = 5 * 1024 * 1024; // 5MB
+            if (file.size > maxSize) {
+                preview.textContent = 'File too large (max 5MB)';
+                preview.style.color = 'var(--danger)';
+                uploadBtn.disabled = true;
+                return;
+            }
+            if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+                preview.textContent = 'Invalid format (PNG or JPG only)';
+                preview.style.color = 'var(--danger)';
+                uploadBtn.disabled = true;
+                return;
+            }
+            preview.textContent = `${(file.size / 1024).toFixed(1)} KB`;
+            preview.style.color = 'var(--text-muted)';
+            uploadBtn.disabled = false;
+        } else {
+            fileName.textContent = 'No file selected';
+            preview.textContent = '';
+            uploadBtn.disabled = true;
+        }
+    }
+
+    async function uploadProfileIcon() {
+        const profileId = document.getElementById('editProfileId').value;
+        const fileInput = document.getElementById('editIconFile');
+        if (!fileInput.files || !fileInput.files[0]) {
+            showToast('Please select a file', 'error');
+            return;
+        }
+        const formData = new FormData();
+        formData.append('icon', fileInput.files[0]);
+        const btn = document.getElementById('uploadIconBtn');
+        btn.disabled = true;
+        btn.textContent = 'Uploading...';
+        try {
+            const response = await fetch('/account/api/profiles/icon/upload?profileId=' + encodeURIComponent(profileId), {
+                method: 'POST',
+                body: formData
+            });
+            if (response.ok) {
+                showToast('Profile icon uploaded');
+                location.reload();
+            } else {
+                const error = await response.text();
+                showToast(error || 'Failed to upload icon', 'error');
+            }
+        } catch (err) {
+            showToast('Error uploading icon: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Upload';
         }
     }
 

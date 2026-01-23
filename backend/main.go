@@ -478,6 +478,7 @@ func main() {
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.SetProfileIcon)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ClearProfileIcon)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ServeProfileIcon)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/profiles/icon/upload", adminUIHandler.RequireAuth(adminUIHandler.UploadProfileIcon)).Methods(http.MethodPost)
 
 	// Live TV endpoints for admin panel
 	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.GetCategories)).Methods(http.MethodGet)
@@ -613,6 +614,7 @@ func main() {
 	r.HandleFunc("/account/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.SetProfileIcon)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ClearProfileIcon)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ServeProfileIcon)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/profiles/icon/upload", adminUIHandler.RequireAuth(adminUIHandler.UploadProfileIcon)).Methods(http.MethodPost)
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.SetProfilePin)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
