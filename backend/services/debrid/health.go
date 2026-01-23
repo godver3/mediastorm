@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"novastream/config"
@@ -20,15 +21,33 @@ import (
 	"novastream/utils"
 )
 
+// trackCacheEntry stores cached track probe results
+type trackCacheEntry struct {
+	audioTracks    []AudioTrackInfo
+	subtitleTracks []SubtitleTrackInfo
+	probeError     string
+	expiresAt      time.Time
+}
+
 // HealthService checks debrid item health by verifying cached status.
 type HealthService struct {
 	cfg         *config.Manager
 	ffprobePath string
+	// Track cache keyed by info hash
+	trackCache   map[string]*trackCacheEntry
+	trackCacheMu sync.RWMutex
+	// Track which hashes are currently being probed
+	probing   map[string]bool
+	probingMu sync.Mutex
 }
 
 // NewHealthService creates a new debrid health check service.
 func NewHealthService(cfg *config.Manager) *HealthService {
-	return &HealthService{cfg: cfg}
+	return &HealthService{
+		cfg:        cfg,
+		trackCache: make(map[string]*trackCacheEntry),
+		probing:    make(map[string]bool),
+	}
 }
 
 // SetFFProbePath sets the ffprobe path for probing pre-resolved streams.
@@ -44,6 +63,30 @@ type DebridHealthCheck struct {
 	Provider     string `json:"provider"`
 	InfoHash     string `json:"infoHash,omitempty"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
+	// Track info (populated when cached)
+	AudioTracks     []AudioTrackInfo    `json:"audioTracks,omitempty"`
+	SubtitleTracks  []SubtitleTrackInfo `json:"subtitleTracks,omitempty"`
+	TrackProbeError string              `json:"trackProbeError,omitempty"`
+	TracksLoading   bool                `json:"tracksLoading,omitempty"`
+}
+
+// AudioTrackInfo contains metadata for an audio track.
+type AudioTrackInfo struct {
+	Index    int    `json:"index"`
+	Language string `json:"language"`
+	Codec    string `json:"codec"`
+	Title    string `json:"title,omitempty"`
+}
+
+// SubtitleTrackInfo contains metadata for a subtitle track.
+type SubtitleTrackInfo struct {
+	Index      int    `json:"index"`
+	Language   string `json:"language"`
+	Codec      string `json:"codec"`
+	Title      string `json:"title,omitempty"`
+	Forced     bool   `json:"forced"`
+	IsBitmap   bool   `json:"isBitmap"`
+	BitmapType string `json:"bitmapType,omitempty"`
 }
 
 // CheckHealth verifies if a debrid result is healthy (cached and available).
@@ -161,12 +204,27 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 			log.Printf("[debrid-health] pre-resolved stream %s verified with %d audio streams", result.Title, audioCount)
 		}
 
-		return &DebridHealthCheck{
+		// Probe for track info
+		healthResult := &DebridHealthCheck{
 			Healthy:  true,
 			Status:   "cached",
 			Cached:   true,
 			Provider: result.Attributes["tracker"],
-		}, nil
+		}
+
+		// Probe tracks in background with timeout (don't block if it fails)
+		if s.ffprobePath != "" && streamURL != "" {
+			tracks, err := s.probeAllTracks(ctx, streamURL)
+			if err != nil {
+				log.Printf("[debrid-health] track probe failed for %s: %v", result.Title, err)
+				healthResult.TrackProbeError = err.Error()
+			} else {
+				healthResult.AudioTracks = tracks.AudioTracks
+				healthResult.SubtitleTracks = tracks.SubtitleTracks
+			}
+		}
+
+		return healthResult, nil
 	}
 
 	// Extract info hash from result attributes (may be empty for torrent file uploads)
@@ -410,6 +468,97 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 	isCached := strings.ToLower(info.Status) == "downloaded"
 	log.Printf("[debrid-health] %s torrent %s status=%s cached=%t", providerName, torrentID, info.Status, isCached)
 
+	// Prepare the result
+	healthResult := &DebridHealthCheck{
+		Healthy:  isCached,
+		Status:   "not_cached",
+		Cached:   isCached,
+		Provider: providerName,
+		InfoHash: infoHash,
+	}
+	if isCached {
+		healthResult.Status = "cached"
+	}
+
+	// If cached and has links, check track cache or start async probe
+	if isCached && len(info.Links) > 0 && s.ffprobePath != "" && infoHash != "" {
+		// Find the link for the preferred file (not just the first link)
+		// Links are ordered by original file ID, not selection order
+		preferredLinkIdx := 0
+		if selection != nil && selection.PreferredID != "" {
+			preferredFileID := 0
+			fmt.Sscanf(selection.PreferredID, "%d", &preferredFileID)
+			if preferredFileID > 0 {
+				// Build list of selected file IDs in order (this matches links order)
+				var selectedFileIDs []int
+				for _, f := range info.Files {
+					if f.Selected == 1 {
+						selectedFileIDs = append(selectedFileIDs, f.ID)
+					}
+				}
+				// Find index of preferred file in selected files list
+				for idx, fid := range selectedFileIDs {
+					if fid == preferredFileID {
+						preferredLinkIdx = idx
+						break
+					}
+				}
+				log.Printf("[debrid-health] preferred file ID=%d, link index=%d (of %d links)",
+					preferredFileID, preferredLinkIdx, len(info.Links))
+			}
+		}
+		// Ensure link index is valid
+		if preferredLinkIdx >= len(info.Links) {
+			preferredLinkIdx = 0
+		}
+
+		// Check track cache first
+		s.trackCacheMu.RLock()
+		cached, hasCached := s.trackCache[infoHash]
+		s.trackCacheMu.RUnlock()
+
+		if hasCached && time.Now().Before(cached.expiresAt) {
+			// Return cached tracks
+			healthResult.AudioTracks = cached.audioTracks
+			healthResult.SubtitleTracks = cached.subtitleTracks
+			healthResult.TrackProbeError = cached.probeError
+			log.Printf("[debrid-health] track cache HIT for %s: %d audio, %d subtitle",
+				infoHash, len(cached.audioTracks), len(cached.subtitleTracks))
+		} else {
+			// Check if already probing
+			s.probingMu.Lock()
+			isProbing := s.probing[infoHash]
+			if !isProbing {
+				s.probing[infoHash] = true
+			}
+			s.probingMu.Unlock()
+
+			if isProbing {
+				// Already probing, return loading state
+				healthResult.TracksLoading = true
+				log.Printf("[debrid-health] track probe in progress for %s", infoHash)
+			} else {
+				// Start async probe - need to unrestrict link first (before torrent is deleted)
+				unrestricted, err := client.UnrestrictLink(ctx, info.Links[preferredLinkIdx])
+				if err != nil {
+					log.Printf("[debrid-health] failed to unrestrict link for track probe: %v", err)
+					healthResult.TrackProbeError = fmt.Sprintf("unrestrict failed: %v", err)
+					// Clear probing state
+					s.probingMu.Lock()
+					delete(s.probing, infoHash)
+					s.probingMu.Unlock()
+				} else if unrestricted.DownloadURL != "" {
+					// Start async probe with the download URL
+					downloadURL := unrestricted.DownloadURL
+					healthResult.TracksLoading = true
+					go s.probeTracksAsync(infoHash, downloadURL)
+					log.Printf("[debrid-health] started async track probe for %s (link %d: %s)",
+						infoHash, preferredLinkIdx, unrestricted.Filename)
+				}
+			}
+		}
+	}
+
 	// Always remove the torrent after checking - especially important for non-cached torrents
 	// which may have started downloading (e.g., Torbox starts downloads immediately)
 	if !isCached {
@@ -420,23 +569,7 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 		log.Printf("[debrid-health] warning: failed to delete torrent %s: %v", torrentID, deleteErr)
 	}
 
-	if isCached {
-		return &DebridHealthCheck{
-			Healthy:  true,
-			Status:   "cached",
-			Cached:   true,
-			Provider: providerName,
-			InfoHash: infoHash,
-		}, nil
-	}
-
-	return &DebridHealthCheck{
-		Healthy:  false,
-		Status:   "not_cached",
-		Cached:   false,
-		Provider: providerName,
-		InfoHash: infoHash,
-	}, nil
+	return healthResult, nil
 }
 
 // extractInfoHashFromMagnet extracts the info hash from a magnet URI.
@@ -762,4 +895,150 @@ func (s *HealthService) probeAudioStreamCount(ctx context.Context, streamURL str
 	}
 
 	return len(result.Streams), nil
+}
+
+// bitmapSubtitleCodecs maps codec names to their display type
+var bitmapSubtitleCodecs = map[string]string{
+	"hdmv_pgs_subtitle": "PGS",
+	"dvd_subtitle":      "VOBSUB",
+	"dvdsub":            "VOBSUB",
+	"pgssub":            "PGS",
+}
+
+// TrackProbeResult holds audio and subtitle track information from probing.
+type TrackProbeResult struct {
+	AudioTracks    []AudioTrackInfo
+	SubtitleTracks []SubtitleTrackInfo
+}
+
+// probeAllTracks probes a URL for audio and subtitle track information.
+// Unlike the HLS probe, this function includes bitmap subtitles with isBitmap flag.
+func (s *HealthService) probeAllTracks(ctx context.Context, streamURL string) (*TrackProbeResult, error) {
+	if s.ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not configured")
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-analyzeduration", "10000000", // 10 seconds
+		"-probesize", "10000000",       // 10MB
+		streamURL,
+	}
+
+	cmd := exec.CommandContext(probeCtx, s.ffprobePath, args...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffprobe failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	var result struct {
+		Streams []struct {
+			Index       int               `json:"index"`
+			CodecType   string            `json:"codec_type"`
+			CodecName   string            `json:"codec_name"`
+			Tags        map[string]string `json:"tags"`
+			Disposition map[string]int    `json:"disposition"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return nil, fmt.Errorf("parse ffprobe output: %w", err)
+	}
+
+	probeResult := &TrackProbeResult{}
+
+	for _, stream := range result.Streams {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+
+		switch stream.CodecType {
+		case "audio":
+			lang := ""
+			title := ""
+			if stream.Tags != nil {
+				lang = stream.Tags["language"]
+				title = stream.Tags["title"]
+			}
+			probeResult.AudioTracks = append(probeResult.AudioTracks, AudioTrackInfo{
+				Index:    stream.Index,
+				Language: lang,
+				Codec:    codec,
+				Title:    title,
+			})
+
+		case "subtitle":
+			lang := ""
+			title := ""
+			isForced := false
+			if stream.Tags != nil {
+				lang = stream.Tags["language"]
+				title = stream.Tags["title"]
+			}
+			if stream.Disposition != nil {
+				isForced = stream.Disposition["forced"] > 0
+			}
+
+			// Check if this is a bitmap subtitle
+			isBitmap := false
+			bitmapType := ""
+			if bt, ok := bitmapSubtitleCodecs[codec]; ok {
+				isBitmap = true
+				bitmapType = bt
+			}
+
+			probeResult.SubtitleTracks = append(probeResult.SubtitleTracks, SubtitleTrackInfo{
+				Index:      stream.Index,
+				Language:   lang,
+				Codec:      codec,
+				Title:      title,
+				Forced:     isForced,
+				IsBitmap:   isBitmap,
+				BitmapType: bitmapType,
+			})
+		}
+	}
+
+	log.Printf("[debrid-health] track probe: audio=%d subtitle=%d", len(probeResult.AudioTracks), len(probeResult.SubtitleTracks))
+	return probeResult, nil
+}
+
+// probeTracksAsync probes tracks in the background and caches the results.
+func (s *HealthService) probeTracksAsync(infoHash, downloadURL string) {
+	defer func() {
+		// Clear probing state when done
+		s.probingMu.Lock()
+		delete(s.probing, infoHash)
+		s.probingMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	entry := &trackCacheEntry{
+		expiresAt: time.Now().Add(2 * time.Hour), // Cache for 2 hours
+	}
+
+	tracks, err := s.probeAllTracks(ctx, downloadURL)
+	if err != nil {
+		log.Printf("[debrid-health] async track probe failed for %s: %v", infoHash, err)
+		entry.probeError = err.Error()
+	} else {
+		entry.audioTracks = tracks.AudioTracks
+		entry.subtitleTracks = tracks.SubtitleTracks
+		log.Printf("[debrid-health] async track probe complete for %s: %d audio, %d subtitle",
+			infoHash, len(tracks.AudioTracks), len(tracks.SubtitleTracks))
+	}
+
+	// Store in cache
+	s.trackCacheMu.Lock()
+	s.trackCache[infoHash] = entry
+	s.trackCacheMu.Unlock()
 }
