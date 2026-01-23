@@ -835,6 +835,164 @@ func (m *SubtitleExtractManager) probeSubtitleStreamsWithMetadata(ctx context.Co
 	return tracks, nil
 }
 
+// mergeKaraokeCues post-processes VTT content to merge single-character cues
+// that ffmpeg creates when converting ASS karaoke subtitles.
+// These cues have overlapping timestamps and single characters that should be combined.
+func mergeKaraokeCues(content string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 3 {
+		return content
+	}
+
+	// Parse all cues
+	type vttCue struct {
+		startTime string
+		endTime   string
+		text      string
+	}
+	var cues []vttCue
+	var header []string
+
+	i := 0
+	// Collect header lines (before first timestamp)
+	for i < len(lines) && !strings.Contains(lines[i], "-->") {
+		header = append(header, lines[i])
+		i++
+	}
+
+	// Parse cues
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+		if strings.Contains(line, "-->") {
+			parts := strings.Split(line, "-->")
+			if len(parts) == 2 {
+				startTime := strings.TrimSpace(parts[0])
+				// End time may have positioning info after a space, extract just the timestamp
+				endPart := strings.TrimSpace(parts[1])
+				endFields := strings.Fields(endPart)
+				if len(endFields) == 0 {
+					i++
+					continue
+				}
+				endTime := endFields[0]
+
+				// Collect text lines
+				var textLines []string
+				i++
+				for i < len(lines) && strings.TrimSpace(lines[i]) != "" && !strings.Contains(lines[i], "-->") {
+					textLines = append(textLines, strings.TrimSpace(lines[i]))
+					i++
+				}
+
+				if len(textLines) > 0 {
+					cues = append(cues, vttCue{
+						startTime: startTime,
+						endTime:   endTime,
+						text:      strings.Join(textLines, "\n"),
+					})
+				}
+			} else {
+				i++
+			}
+		} else {
+			i++
+		}
+	}
+
+	// Check if this looks like karaoke (many single-char cues with similar timestamps)
+	singleCharCount := 0
+	for _, cue := range cues {
+		if len([]rune(cue.text)) == 1 {
+			singleCharCount++
+		}
+	}
+
+	// If less than 30% are single-char, don't merge (probably normal subtitles)
+	if len(cues) == 0 || float64(singleCharCount)/float64(len(cues)) < 0.3 {
+		return content
+	}
+
+	log.Printf("[subtitle-extract] detected karaoke VTT (%d/%d single-char cues), applying karaoke cleanup...", singleCharCount, len(cues))
+
+	// Helper to check if text is garbage (drawing commands, random letters, etc.)
+	isGarbageText := func(text string) bool {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return true
+		}
+		// ASS drawings start with "m " or "p " followed by numbers
+		if (strings.HasPrefix(trimmed, "m ") || strings.HasPrefix(trimmed, "p ")) && len(trimmed) > 10 {
+			numCount := 0
+			for _, c := range trimmed {
+				if c >= '0' && c <= '9' || c == '.' || c == '-' || c == ' ' {
+					numCount++
+				}
+			}
+			if float64(numCount)/float64(len(trimmed)) > 0.5 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Strategy: Filter garbage and skip short cues (from karaoke), keep dialogue intact.
+	// Also deduplicate identical cues at same timestamp.
+	var result strings.Builder
+	for _, h := range header {
+		result.WriteString(h)
+		result.WriteString("\n")
+	}
+
+	// Track seen cues to avoid duplicates (same timestamp + text)
+	seen := make(map[string]bool)
+
+	outputCount := 0
+	for _, cue := range cues {
+		text := cue.text
+
+		// Skip garbage text (drawing commands, etc.)
+		if isGarbageText(text) {
+			continue
+		}
+
+		// Skip short cues (karaoke syllables are typically 1-4 chars like "chi", "hyo", "sho")
+		// Real dialogue is longer
+		runeLen := len([]rune(text))
+		if runeLen <= 5 {
+			continue
+		}
+
+		// Skip text that looks like merged garbage (long strings without spaces or newlines)
+		// These are typically from karaoke effects that got concatenated
+		if runeLen > 50 && !strings.Contains(text, " ") && !strings.Contains(text, "\n") {
+			continue
+		}
+
+		// Skip text that contains obvious ASS tag garbage that wasn't stripped
+		if strings.Contains(text, "{Kara Effector") || strings.Contains(text, "\\pos(") || strings.Contains(text, "\\fscx") {
+			continue
+		}
+
+		// Deduplicate identical cues at same timestamp
+		key := cue.startTime + "|" + cue.endTime + "|" + text
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		result.WriteString(cue.startTime)
+		result.WriteString(" --> ")
+		result.WriteString(cue.endTime)
+		result.WriteString("\n")
+		result.WriteString(text)
+		result.WriteString("\n\n")
+		outputCount++
+	}
+
+	log.Printf("[subtitle-extract] karaoke filter: kept %d cues from %d (removed %d short/garbage/duplicate)", outputCount, len(cues), len(cues)-outputCount)
+	return result.String()
+}
+
 // ServeSubtitles serves the VTT file for a session
 func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, session *SubtitleExtractSession) {
 	session.mu.Lock()
@@ -913,11 +1071,14 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	log.Printf("[subtitle-extract] serve %s: %d bytes, %d cues, range: %.2f-%.2fs, startOffset: %.1f, status: %s",
 		sessionID[:8], stat.Size(), cueCount, firstCueStart, lastCueEnd, startOffset, status)
 
+	// Post-process VTT to merge karaoke character cues (from ASS conversion)
+	processedContent := mergeKaraokeCues(contentStr)
+
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
-	w.Write(content)
+	w.Header().Set("Content-Length", strconv.Itoa(len(processedContent)))
+	w.Write([]byte(processedContent))
 }
 
 // StartSubtitleExtract is the HTTP handler to start/get a subtitle extraction session
