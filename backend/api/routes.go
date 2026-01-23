@@ -289,7 +289,7 @@ func Register(
 
 	// Image proxy endpoint (public - no auth required for image loading)
 	if imageHandler != nil {
-		api.HandleFunc("/images/proxy", imageHandler.Proxy).Methods(http.MethodGet)
+		api.HandleFunc("/images/proxy", imageHandler.Proxy).Methods(http.MethodGet, http.MethodHead)
 		api.HandleFunc("/images/proxy", imageHandler.Options).Methods(http.MethodOptions)
 	}
 
