@@ -3531,6 +3531,16 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, limit int) 
 					title.Overview = tvdbDetails.Overview
 					found = true
 
+					// Fetch translated name/overview if available
+					if translation, err := s.client.movieTranslations(*item.TVDBID, s.client.language); err == nil && translation != nil {
+						if translation.Name != "" {
+							title.Name = translation.Name
+						}
+						if translation.Overview != "" {
+							title.Overview = translation.Overview
+						}
+					}
+
 					// Get artwork
 					if ext, err := s.client.movieExtended(*item.TVDBID, []string{"artwork"}); err == nil {
 						applyTVDBArtworks(&title, ext.Artworks)
@@ -3545,6 +3555,16 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, limit int) 
 						title.Popularity = tvdbDetails.Score
 					}
 					found = true
+
+					// Fetch translated overview if available
+					if translation, err := s.client.seriesTranslations(*item.TVDBID, s.client.language); err == nil && translation != nil {
+						if translation.Name != "" {
+							title.Name = translation.Name
+						}
+						if translation.Overview != "" {
+							title.Overview = translation.Overview
+						}
+					}
 
 					// Get artwork
 					if ext, err := s.client.seriesExtended(*item.TVDBID, []string{"artworks"}); err == nil {
