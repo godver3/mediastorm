@@ -65,9 +65,12 @@ def ass_to_vtt(ass_content: str) -> str:
                 vtt_start = convert_timestamp(start)
                 vtt_end = convert_timestamp(end)
 
-                # Remove ASS styling tags like {\pos(x,y)} {\an8} etc
-                text = re.sub(r'\{[^}]*\}', '', text)
-                # Convert \N to newline
+                # Preserve ASS styling tags - the frontend handles them for:
+                # - Positioning: {\an1} to {\an9} (numpad alignment)
+                # - Styling: {\i1}, {\b1}, {\u1} (italic, bold, underline)
+                # - Colors: {\c&HBBGGRR&} (primary color)
+                # The frontend will parse and render these appropriately.
+                # Only convert \N to actual newlines for VTT format.
                 text = text.replace('\\N', '\n').replace('\\n', '\n')
 
                 if text.strip():

@@ -3292,13 +3292,16 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		content, _ = os.ReadFile(vttPath)
 	}
 
+	// Post-process VTT to merge karaoke character cues (from ASS conversion)
+	processedContent := mergeKaraokeCues(string(content))
+
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache") // Don't cache since file is growing
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+	w.Header().Set("Content-Length", strconv.Itoa(len(processedContent)))
 
-	w.Write(content)
-	log.Printf("[hls] served subtitles for session %s track %d, size=%d bytes", sessionID, requestedTrack, len(content))
+	w.Write([]byte(processedContent))
+	log.Printf("[hls] served subtitles for session %s track %d, size=%d bytes", sessionID, requestedTrack, len(processedContent))
 }
 
 // extractSubtitleTrackToVTT extracts a specific subtitle track to a VTT file on-demand

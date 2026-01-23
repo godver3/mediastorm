@@ -6,10 +6,21 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
 import { ANDROID_TV_TO_TVOS_RATIO, getTVScaleMultiplier, tvScale } from '@/theme/tokens/tvScale';
 
+/**
+ * ASS subtitle alignment (numpad-style positioning)
+ * 7 8 9  = top-left, top-center, top-right
+ * 4 5 6  = middle-left, middle-center, middle-right
+ * 1 2 3  = bottom-left, bottom-center, bottom-right
+ */
+export type ASSAlignment = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
 /** A segment of styled text within a subtitle cue */
 export interface StyledTextSegment {
   text: string;
   italic: boolean;
+  bold?: boolean;
+  underline?: boolean;
+  color?: string; // Hex color like '#FFFFFF'
 }
 
 export interface VTTCue {
@@ -17,6 +28,7 @@ export interface VTTCue {
   endTime: number; // seconds
   text: string; // Plain text (for compatibility)
   segments: StyledTextSegment[]; // Styled segments for rendering
+  alignment?: ASSAlignment; // ASS-style numpad alignment (1-9), default 2 (bottom-center)
 }
 
 /** Time range of available subtitle cues */
@@ -152,6 +164,100 @@ function parseStyledText(text: string): StyledTextSegment[] {
 }
 
 /**
+ * Parse ASS-styled text with tags like {\an8}, {\i1}, {\b1}, {\c&HBBGGRR&}
+ * Returns both the alignment and styled text segments
+ */
+function parseASSStyledText(text: string): { alignment?: ASSAlignment; segments: StyledTextSegment[] } {
+  // Default alignment is 2 (bottom-center)
+  let alignment: ASSAlignment | undefined = undefined;
+
+  // Extract alignment tag {\anN} - must be at start
+  const alignMatch = text.match(/^\{\\an([1-9])\}/);
+  if (alignMatch) {
+    alignment = parseInt(alignMatch[1], 10) as ASSAlignment;
+    text = text.slice(alignMatch[0].length);
+  }
+
+  // Parse remaining text for styling tags
+  const segments: StyledTextSegment[] = [];
+
+  // Current style state
+  let currentItalic = false;
+  let currentBold = false;
+  let currentUnderline = false;
+  let currentColor: string | undefined = undefined;
+
+  // Split text by ASS tags, keeping the tags
+  // Tags like {\i1}, {\i0}, {\b1}, {\b0}, {\u1}, {\u0}, {\c&HBBGGRR&}, {\r}
+  const tagRegex = /(\{[^}]*\})/g;
+  const parts = text.split(tagRegex);
+
+  for (const part of parts) {
+    if (!part) continue;
+
+    if (part.startsWith('{') && part.endsWith('}')) {
+      // This is a tag - parse it for style changes
+      const tagContent = part.slice(1, -1); // Remove { and }
+
+      // Handle multiple tags in one block like {\i1\b1}
+      const tagCommands = tagContent.split('\\').filter(Boolean);
+
+      for (const cmd of tagCommands) {
+        if (cmd === 'i1' || cmd === 'i') {
+          currentItalic = true;
+        } else if (cmd === 'i0') {
+          currentItalic = false;
+        } else if (cmd === 'b1' || cmd === 'b') {
+          currentBold = true;
+        } else if (cmd === 'b0') {
+          currentBold = false;
+        } else if (cmd === 'u1' || cmd === 'u') {
+          currentUnderline = true;
+        } else if (cmd === 'u0') {
+          currentUnderline = false;
+        } else if (cmd === 'r') {
+          // Reset all styles
+          currentItalic = false;
+          currentBold = false;
+          currentUnderline = false;
+          currentColor = undefined;
+        } else if (cmd.startsWith('c&H') || cmd.startsWith('1c&H')) {
+          // Color tag: {\c&HBBGGRR&} or {\1c&HBBGGRR&}
+          // Note: ASS uses BGR format, need to convert to RGB
+          const colorMatch = cmd.match(/c&H([0-9A-Fa-f]{6})&?/);
+          if (colorMatch) {
+            const bgr = colorMatch[1];
+            // Convert BGR to RGB
+            const b = bgr.slice(0, 2);
+            const g = bgr.slice(2, 4);
+            const r = bgr.slice(4, 6);
+            currentColor = `#${r}${g}${b}`;
+          }
+        }
+      }
+    } else {
+      // This is text content - add it with current styles
+      if (part.trim()) {
+        segments.push({
+          text: part,
+          italic: currentItalic,
+          bold: currentBold || undefined,
+          underline: currentUnderline || undefined,
+          color: currentColor,
+        });
+      }
+    }
+  }
+
+  // If no segments were created, return the original text as plain
+  if (segments.length === 0 && text.trim()) {
+    segments.push({ text: text.trim(), italic: false });
+  }
+
+  return { alignment, segments };
+}
+
+/**
  * Parse VTT file content into an array of cues
  */
 function parseVTT(content: string): VTTCue[] {
@@ -198,12 +304,26 @@ function parseVTT(content: string): VTTCue[] {
 
       if (textLines.length > 0 || rawLines.length > 0) {
         const rawText = rawLines.join('\n');
-        const segments = parseStyledText(rawText);
+
+        // Detect ASS tags ({\...}) and use ASS parser, otherwise use HTML parser
+        const hasASSTags = rawText.includes('{\\');
+        let segments: StyledTextSegment[];
+        let alignment: ASSAlignment | undefined;
+
+        if (hasASSTags) {
+          const assResult = parseASSStyledText(rawText);
+          segments = assResult.segments;
+          alignment = assResult.alignment;
+        } else {
+          segments = parseStyledText(rawText);
+        }
+
         cues.push({
           startTime,
           endTime,
           text: textLines.join('\n'),
           segments: segments.length > 0 ? segments : [{ text: textLines.join('\n'), italic: false }],
+          alignment,
         });
       }
     } else {
@@ -650,29 +770,115 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     return { color: greyColor };
   }, [isHDRContent]);
 
+  // Group active cues by vertical position for ASS alignment
+  // 7,8,9 = top; 4,5,6 = middle; 1,2,3 = bottom (default)
+  const groupedCues = useMemo(() => {
+    const top: VTTCue[] = [];
+    const middle: VTTCue[] = [];
+    const bottom: VTTCue[] = [];
+
+    for (const cue of activeCues) {
+      const align = cue.alignment || 2; // Default to bottom-center
+      if (align >= 7) {
+        top.push(cue);
+      } else if (align >= 4) {
+        middle.push(cue);
+      } else {
+        bottom.push(cue);
+      }
+    }
+
+    return { top, middle, bottom };
+  }, [activeCues]);
+
+  // Get horizontal alignment style based on ASS alignment
+  const getHorizontalAlign = (alignment: ASSAlignment | undefined): 'flex-start' | 'center' | 'flex-end' => {
+    const align = alignment || 2;
+    const col = align % 3; // 1,4,7 = left; 2,5,8 = center; 0(3,6,9) = right
+    if (col === 1) return 'flex-start';
+    if (col === 0) return 'flex-end';
+    return 'center';
+  };
+
+  // Get text alignment style based on ASS alignment
+  const getTextAlign = (alignment: ASSAlignment | undefined): 'left' | 'center' | 'right' => {
+    const align = alignment || 2;
+    const col = align % 3;
+    if (col === 1) return 'left';
+    if (col === 0) return 'right';
+    return 'center';
+  };
+
+  // Render a single cue with proper styling
+  const renderCue = (cue: VTTCue, index: number) => {
+    const textAlign = getTextAlign(cue.alignment);
+
+    return (
+      <Text
+        key={`${cue.startTime}-${index}`}
+        style={[styles.subtitleText, scaledTextStyles, hdrTextColor, { textAlign }]}
+      >
+        {cue.segments.map((segment, segIndex) => {
+          const segmentStyle: any[] = [];
+          if (segment.italic) segmentStyle.push(styles.italicText);
+          if (segment.bold) segmentStyle.push(styles.boldText);
+          if (segment.underline) segmentStyle.push(styles.underlineText);
+          if (segment.color && !isHDRContent) segmentStyle.push({ color: segment.color });
+          if (hdrTextColor) segmentStyle.push(hdrTextColor);
+
+          return (
+            <Text key={`seg-${segIndex}`} style={segmentStyle.length > 0 ? segmentStyle : undefined}>
+              {segment.text}
+            </Text>
+          );
+        })}
+      </Text>
+    );
+  };
+
+  // Render a group of cues in a container
+  const renderCueGroup = (cues: VTTCue[], position: 'top' | 'middle' | 'bottom') => {
+    if (cues.length === 0) return null;
+
+    // Use alignment of first cue for container positioning
+    const horizontalAlign = getHorizontalAlign(cues[0].alignment);
+
+    const positionStyle: any = {
+      position: 'absolute' as const,
+      left: 0,
+      right: 0,
+      paddingHorizontal: Platform.isTV ? 60 : 20,
+      alignItems: horizontalAlign,
+    };
+
+    if (position === 'top') {
+      positionStyle.top = Platform.isTV ? 40 : 20;
+    } else if (position === 'middle') {
+      positionStyle.top = '50%';
+      positionStyle.transform = [{ translateY: -50 }];
+    } else {
+      positionStyle.bottom = subtitleBottomOffset;
+    }
+
+    return (
+      <View style={positionStyle}>
+        <View style={[styles.cueContainer, { alignItems: horizontalAlign }]}>
+          {cues.map((cue, index) => renderCue(cue, index))}
+        </View>
+      </View>
+    );
+  };
+
   // Always render container to capture dimensions via onLayout
   // Only render subtitle content when enabled and we have active cues
   return (
     <View style={styles.container} pointerEvents="none" onLayout={handleLayout}>
       {shouldShowSubtitles && (
-        <View style={[styles.subtitlePositioner, { bottom: subtitleBottomOffset }]}>
-          <View style={styles.cueContainer}>
-            {activeCues.map((cue, index) => (
-              <React.Fragment key={`${cue.startTime}-${index}`}>
-                {/* White text (or grey for HDR content) */}
-                {/* Note: hdrTextColor is applied to both outer and inner Text elements because
-                    TV platforms (tvOS/Android TV) don't properly inherit text color from parent */}
-                <Text style={[styles.subtitleText, scaledTextStyles, hdrTextColor]}>
-                  {cue.segments.map((segment, segIndex) => (
-                    <Text key={`seg-${segIndex}`} style={[segment.italic ? styles.italicText : undefined, hdrTextColor]}>
-                      {segment.text}
-                    </Text>
-                  ))}
-                </Text>
-              </React.Fragment>
-            ))}
-          </View>
-        </View>
+        <>
+          {renderCueGroup(groupedCues.top, 'top')}
+          {renderCueGroup(groupedCues.middle, 'middle')}
+          {renderCueGroup(groupedCues.bottom, 'bottom')}
+        </>
       )}
     </View>
   );
@@ -726,6 +932,14 @@ const styles = StyleSheet.create({
   // Italic text style for <i> tags in VTT
   italicText: {
     fontStyle: 'italic',
+  },
+  // Bold text style for ASS {\b1} tags
+  boldText: {
+    fontWeight: '800',
+  },
+  // Underline text style for ASS {\u1} tags
+  underlineText: {
+    textDecorationLine: 'underline',
   },
 });
 
