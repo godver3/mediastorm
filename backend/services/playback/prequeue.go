@@ -46,6 +46,14 @@ type PrequeueResponse struct {
 	Status        PrequeueStatus           `json:"status"`
 }
 
+// AudioTrackInfo represents an audio track with metadata
+type AudioTrackInfo struct {
+	Index    int    `json:"index"`    // Track index (ffprobe stream index)
+	Language string `json:"language"` // Language code (e.g., "eng", "spa")
+	Codec    string `json:"codec"`    // Codec name (e.g., "aac", "ac3", "truehd")
+	Title    string `json:"title"`    // Track title/name
+}
+
 // SubtitleTrackInfo represents a subtitle track with metadata
 type SubtitleTrackInfo struct {
 	Index         int    `json:"index"`         // Track index (0-based, for selection in UI)
@@ -54,6 +62,7 @@ type SubtitleTrackInfo struct {
 	Title         string `json:"title"`         // Track title/name
 	Codec         string `json:"codec"`         // Codec name
 	Forced        bool   `json:"forced"`        // Whether this is a forced subtitle track
+	IsBitmap      bool   `json:"isBitmap"`      // Whether this is a bitmap subtitle (PGS, VOBSUB)
 }
 
 // PrequeueStatusResponse is the full status of a prequeue entry
@@ -85,6 +94,10 @@ type PrequeueStatusResponse struct {
 	// Selected tracks (based on user preferences)
 	SelectedAudioTrack    int `json:"selectedAudioTrack,omitempty"`    // -1 = default/all
 	SelectedSubtitleTrack int `json:"selectedSubtitleTrack,omitempty"` // -1 = none
+
+	// Available tracks (for display in UI)
+	AudioTracks    []AudioTrackInfo    `json:"audioTracks,omitempty"`
+	SubtitleTracks []SubtitleTrackInfo `json:"subtitleTracks,omitempty"`
 
 	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
 	SubtitleSessions map[int]*models.SubtitleSessionInfo `json:"subtitleSessions,omitempty"`
@@ -132,8 +145,8 @@ type PrequeueEntry struct {
 	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
 	SubtitleSessions map[int]*models.SubtitleSessionInfo
 
-	// Subtitle track info for lazy extraction (SDR content)
-	// Stored during prequeue, extraction triggered later with correct offset
+	// Track info for display in UI
+	AudioTracks    []AudioTrackInfo
 	SubtitleTracks []SubtitleTrackInfo
 
 	// AIOStreams passthrough format
@@ -367,25 +380,27 @@ func (s *PrequeueStore) cleanup() {
 // ToResponse converts an entry to a status response
 func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 	return &PrequeueStatusResponse{
-		PrequeueID:            e.ID,
-		Status:                e.Status,
-		UserID:                e.UserID,
-		TargetEpisode:         e.TargetEpisode,
-		StreamPath:            e.StreamPath,
-		FileSize:              e.FileSize,
-		HealthStatus:          e.HealthStatus,
-		HasDolbyVision:        e.HasDolbyVision,
-		HasHDR10:              e.HasHDR10,
-		DolbyVisionProfile:    e.DolbyVisionProfile,
-		NeedsAudioTranscode:   e.NeedsAudioTranscode,
-		HLSSessionID:          e.HLSSessionID,
-		HLSPlaylistURL:        e.HLSPlaylistURL,
-		Duration:              e.Duration,
-		SelectedAudioTrack:    e.SelectedAudioTrack,
-		SelectedSubtitleTrack: e.SelectedSubtitleTrack,
-		SubtitleSessions:      e.SubtitleSessions,
-		PassthroughName:       e.PassthroughName,
+		PrequeueID:             e.ID,
+		Status:                 e.Status,
+		UserID:                 e.UserID,
+		TargetEpisode:          e.TargetEpisode,
+		StreamPath:             e.StreamPath,
+		FileSize:               e.FileSize,
+		HealthStatus:           e.HealthStatus,
+		HasDolbyVision:         e.HasDolbyVision,
+		HasHDR10:               e.HasHDR10,
+		DolbyVisionProfile:     e.DolbyVisionProfile,
+		NeedsAudioTranscode:    e.NeedsAudioTranscode,
+		HLSSessionID:           e.HLSSessionID,
+		HLSPlaylistURL:         e.HLSPlaylistURL,
+		Duration:               e.Duration,
+		SelectedAudioTrack:     e.SelectedAudioTrack,
+		SelectedSubtitleTrack:  e.SelectedSubtitleTrack,
+		AudioTracks:            e.AudioTracks,
+		SubtitleTracks:         e.SubtitleTracks,
+		SubtitleSessions:       e.SubtitleSessions,
+		PassthroughName:        e.PassthroughName,
 		PassthroughDescription: e.PassthroughDescription,
-		Error:                 e.Error,
+		Error:                  e.Error,
 	}
 }

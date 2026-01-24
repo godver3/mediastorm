@@ -834,6 +834,47 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			}
 		})
 
+		// Store audio/subtitle track info for UI display
+		if len(audioStreams) > 0 || len(subtitleStreams) > 0 {
+			// Convert audio streams to track info
+			audioTracks := make([]playback.AudioTrackInfo, len(audioStreams))
+			for i, s := range audioStreams {
+				audioTracks[i] = playback.AudioTrackInfo{
+					Index:    s.Index,
+					Language: s.Language,
+					Codec:    s.Codec,
+					Title:    s.Title,
+				}
+			}
+
+			// Convert subtitle streams to track info with bitmap detection
+			bitmapCodecs := map[string]bool{
+				"hdmv_pgs_subtitle": true,
+				"dvd_subtitle":      true,
+				"dvdsub":            true,
+				"pgssub":            true,
+			}
+			subtitleTracks := make([]playback.SubtitleTrackInfo, len(subtitleStreams))
+			for i, s := range subtitleStreams {
+				codec := strings.ToLower(s.Codec)
+				subtitleTracks[i] = playback.SubtitleTrackInfo{
+					Index:         i,       // Relative index for frontend
+					AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
+					Language:      s.Language,
+					Title:         s.Title,
+					Codec:         s.Codec,
+					Forced:        s.IsForced,
+					IsBitmap:      bitmapCodecs[codec],
+				}
+			}
+
+			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+				e.AudioTracks = audioTracks
+				e.SubtitleTracks = subtitleTracks
+			})
+			log.Printf("[prequeue] Stored %d audio tracks and %d subtitle tracks for UI display", len(audioTracks), len(subtitleTracks))
+		}
+
 		// Handle HDR content or incompatible audio (TrueHD, DTS, etc.)
 		// When TrueHD/DTS is present, we need transmux to exclude those tracks even if compatible audio exists
 		// This is because the player may still encounter the incompatible codec in the container
@@ -885,31 +926,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 					log.Printf("[prequeue] Created HLS session: %s", hlsResult.SessionID)
 				}
 			}
-		} else if len(subtitleStreams) > 0 {
-			// Non-HLS path (SDR content): Store subtitle track info for lazy extraction
-			// Extraction will be triggered by frontend with correct startOffset when user plays
-			log.Printf("[prequeue] Storing %d subtitle tracks for lazy extraction (SDR path)", len(subtitleStreams))
-
-			// Convert to SubtitleTrackInfo format
-			// Index = relative (0, 1, 2) for frontend track selection
-			// AbsoluteIndex = ffprobe stream index (13, 14, 15) for ffmpeg -map
-			tracks := make([]playback.SubtitleTrackInfo, len(subtitleStreams))
-			for i, s := range subtitleStreams {
-				tracks[i] = playback.SubtitleTrackInfo{
-					Index:         i,       // Relative index for frontend
-					AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
-					Language:      s.Language,
-					Title:         s.Title,
-					Codec:         s.Codec,
-					Forced:        s.IsForced,
-				}
-			}
-
-			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
-				e.SubtitleTracks = tracks
-			})
-			log.Printf("[prequeue] Stored %d subtitle tracks for lazy extraction", len(tracks))
 		}
+		// Note: Subtitle tracks for lazy extraction are already stored above for UI display
 	}
 
 	// Mark as ready
