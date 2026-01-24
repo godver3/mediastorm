@@ -29,6 +29,18 @@ import (
 	"novastream/utils"
 )
 
+// cdnClient is a shared HTTP client optimized for CDN connections.
+// Uses connection pooling with longer idle timeout to reuse connections across seeks.
+var cdnClient = &http.Client{
+	Timeout: 0, // No timeout - we handle this per-request
+	Transport: &http.Transport{
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     120 * time.Second, // Keep connections alive longer
+		DisableCompression:  true,              // Video is already compressed
+	},
+}
+
 // debugReader wraps an io.Reader to log bytes read and detect EOF
 type debugReader struct {
 	r           io.Reader
@@ -130,6 +142,25 @@ func newThrottlingProxy(targetURL string, session *HLSSession) (*throttlingProxy
 	localURL := fmt.Sprintf("http://127.0.0.1:%d/stream", proxy.port)
 	log.Printf("[hls] session %s: started throttling proxy on port %d for URL: %s", session.ID, proxy.port, targetURL)
 
+	// Pre-warm the CDN connection by making a HEAD request
+	// This establishes TCP + TLS before FFmpeg needs it, reducing seek latency
+	// Uses cdnClient for connection pooling - the connection will be reused by handleStream
+	go func() {
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer warmCancel()
+		req, err := http.NewRequestWithContext(warmCtx, http.MethodHead, targetURL, nil)
+		if err != nil {
+			return
+		}
+		resp, err := cdnClient.Do(req)
+		if err != nil {
+			log.Printf("[hls] session %s: CDN warm-up failed (non-fatal): %v", session.ID, err)
+			return
+		}
+		resp.Body.Close()
+		log.Printf("[hls] session %s: CDN connection pre-warmed", session.ID)
+	}()
+
 	return proxy, localURL, nil
 }
 
@@ -162,8 +193,8 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[hls] session %s: proxy forwarding Range: %s", p.session.ID, rangeHeader)
 	}
 
-	// Make request to target
-	resp, err := http.DefaultClient.Do(req)
+	// Make request to target using cdnClient for connection pooling
+	resp, err := cdnClient.Do(req)
 	if err != nil {
 		log.Printf("[hls] session %s: proxy request failed: %v", p.session.ID, err)
 		http.Error(w, "upstream request failed", http.StatusBadGateway)
@@ -2241,8 +2272,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	session.mu.RLock()
 	currentPid := session.FFmpegPID
 	session.mu.RUnlock()
-	if currentPid != thisPid && currentPid != 0 {
-		log.Printf("[hls] session %s: FFmpeg (pid=%d) superseded by newer FFmpeg (pid=%d), skipping completion handling",
+	if currentPid != thisPid {
+		// Either superseded by a new FFmpeg (currentPid != 0) or reset during seek (currentPid == 0)
+		log.Printf("[hls] session %s: FFmpeg (pid=%d) superseded (current pid=%d), skipping completion handling",
 			session.ID, thisPid, currentPid)
 		return nil
 	}
