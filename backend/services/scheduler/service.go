@@ -12,6 +12,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/epg"
 	"novastream/services/plex"
 	"novastream/services/trakt"
 	"novastream/services/watchlist"
@@ -23,6 +24,7 @@ type Service struct {
 	plexClient       *plex.Client
 	traktClient      *trakt.Client
 	watchlistService *watchlist.Service
+	epgService       *epg.Service
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -231,6 +233,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executePlexWatchlistSync(task)
 	case config.ScheduledTaskTypeTraktListSync:
 		result, err = s.executeTraktListSync(task)
+	case config.ScheduledTaskTypeEPGRefresh:
+		result, err = s.executeEPGRefresh(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -343,6 +347,13 @@ func (s *Service) IsTaskRunning(taskID string) bool {
 	s.taskMu.RLock()
 	defer s.taskMu.RUnlock()
 	return s.taskRunning[taskID]
+}
+
+// SetEPGService sets the EPG service for scheduled EPG refresh tasks.
+func (s *Service) SetEPGService(epgService *epg.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.epgService = epgService
 }
 
 // executePlexWatchlistSync syncs a Plex watchlist to/from a profile
@@ -1499,4 +1510,30 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 
 	result.Count = synced
 	return result, nil
+}
+
+// executeEPGRefresh refreshes the EPG data from all configured sources.
+func (s *Service) executeEPGRefresh(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	epgSvc := s.epgService
+	s.mu.RUnlock()
+
+	if epgSvc == nil {
+		return SyncResult{}, errors.New("EPG service not configured")
+	}
+
+	// Create a context with timeout for the refresh
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := epgSvc.Refresh(ctx); err != nil {
+		return SyncResult{}, fmt.Errorf("EPG refresh failed: %w", err)
+	}
+
+	// Get the status to report the counts
+	status := epgSvc.GetStatus()
+
+	return SyncResult{
+		Count: status.ProgramCount,
+	}, nil
 }

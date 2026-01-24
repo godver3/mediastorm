@@ -2924,15 +2924,20 @@
                 // Check showWhen condition (same logic as renderArraySection)
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
+                    // Helper to get nested field value (e.g., "epg.enabled" -> sectionData.epg.enabled)
+                    const getNestedValue = (obj, path) => {
+                        if (!path.includes('.')) return obj[path];
+                        return path.split('.').reduce((o, k) => o?.[k], obj);
+                    };
                     let shouldShow = false;
                     if (typeof showWhen === 'string' && showWhen.includes('=')) {
                         // Simple string format: "field=value"
                         const [field, value] = showWhen.split('=');
-                        shouldShow = sectionData[field] === value;
+                        shouldShow = getNestedValue(sectionData, field) === value;
                     } else if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
-                        shouldShow = showWhen.conditions.some(cond => sectionData[cond.field] === cond.value);
+                        shouldShow = showWhen.conditions.some(cond => getNestedValue(sectionData, cond.field) === cond.value);
                     } else if (showWhen.field) {
-                        shouldShow = sectionData[showWhen.field] === showWhen.value;
+                        shouldShow = getNestedValue(sectionData, showWhen.field) === showWhen.value;
                     }
                     if (!shouldShow) return '';
                 }

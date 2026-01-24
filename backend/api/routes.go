@@ -99,6 +99,7 @@ func Register(
 	debugHandler *handlers.DebugHandler,
 	logsHandler *handlers.LogsHandler,
 	liveHandler *handlers.LiveHandler,
+	epgHandler *handlers.EPGHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
 	clientsHandler *handlers.ClientsHandler,
@@ -247,6 +248,20 @@ func Register(
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/hls/start", videoHandler.StartLiveHLSSession).Methods(http.MethodGet, http.MethodOptions)
+
+	// EPG (Electronic Program Guide) endpoints
+	if epgHandler != nil {
+		protected.HandleFunc("/live/epg/now", epgHandler.GetNowPlaying).Methods(http.MethodGet)
+		protected.HandleFunc("/live/epg/now", epgHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/epg/schedule", epgHandler.GetSchedule).Methods(http.MethodGet)
+		protected.HandleFunc("/live/epg/schedule", epgHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/epg/channel/{id}", epgHandler.GetChannelSchedule).Methods(http.MethodGet)
+		protected.HandleFunc("/live/epg/channel/{id}", epgHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/epg/status", epgHandler.GetStatus).Methods(http.MethodGet)
+		protected.HandleFunc("/live/epg/status", epgHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/epg/refresh", epgHandler.Refresh).Methods(http.MethodPost)
+		protected.HandleFunc("/live/epg/refresh", epgHandler.Options).Methods(http.MethodOptions)
+	}
 
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)

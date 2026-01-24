@@ -24,6 +24,7 @@ import (
 	"novastream/internal/webdav"
 	"novastream/services/accounts"
 	"novastream/services/debrid"
+	"novastream/services/epg"
 	"novastream/services/history"
 	"novastream/services/indexer"
 	"novastream/services/invitations"
@@ -371,6 +372,10 @@ func main() {
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager)
 
+	// Create EPG service and handler for Electronic Program Guide
+	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
+	epgHandler := handlers.NewEPGHandler(epgService)
+
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
 
@@ -393,6 +398,7 @@ func main() {
 		debugHandler,
 		logsHandler,
 		liveHandler,
+		epgHandler,
 		userSettingsHandler,
 		subtitlesHandler,
 		clientsHandler,
@@ -413,6 +419,7 @@ func main() {
 
 	// Create scheduler service for background tasks
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
+	schedulerService.SetEPGService(epgService)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
 	// Register admin UI routes

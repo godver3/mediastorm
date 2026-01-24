@@ -209,6 +209,25 @@ type LiveTVFilterSettings struct {
 	MaxChannels       int      `json:"maxChannels"`       // Overall channel limit (0 = no limit)
 }
 
+// EPGSource represents a single EPG data source.
+type EPGSource struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`     // "xmltv"
+	URL      string `json:"url"`
+	Priority int    `json:"priority"` // Lower = higher priority
+	Enabled  bool   `json:"enabled"`
+}
+
+// EPGSettings controls Electronic Program Guide configuration.
+type EPGSettings struct {
+	Enabled              bool        `json:"enabled"`
+	XmltvUrl             string      `json:"xmltvUrl,omitempty"`   // Simple XMLTV URL (alternative to Sources array)
+	Sources              []EPGSource `json:"sources,omitempty"`
+	RefreshIntervalHours int         `json:"refreshIntervalHours"` // Default: 12
+	RetentionDays        int         `json:"retentionDays"`        // Default: 7
+}
+
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
 	Mode                  string               `json:"mode"`                  // "m3u" or "xtream" - how to source the playlist
@@ -221,6 +240,7 @@ type LiveSettings struct {
 	AnalyzeDurationSec    int                  `json:"analyzeDurationSec"`    // FFmpeg analyzeduration in seconds (0 = default ~5s)
 	LowLatency            bool                 `json:"lowLatency"`            // Enable low-latency mode (nobuffer + low_delay flags)
 	Filtering             LiveTVFilterSettings `json:"filtering"`             // Backend-side channel filtering
+	EPG                   EPGSettings          `json:"epg"`                   // Electronic Program Guide settings
 }
 
 // GetEffectivePlaylistURL returns the playlist URL based on the configured mode.
@@ -441,6 +461,7 @@ type ScheduledTaskType string
 const (
 	ScheduledTaskTypePlexWatchlistSync ScheduledTaskType = "plex_watchlist_sync"
 	ScheduledTaskTypeTraktListSync     ScheduledTaskType = "trakt_list_sync"
+	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
 )
 
 // ScheduledTaskFrequency defines how often a task runs
@@ -893,6 +914,13 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill Mode to "m3u" for backward compatibility
 	if s.Live.Mode == "" {
 		s.Live.Mode = "m3u"
+	}
+	// Backfill EPG settings
+	if s.Live.EPG.RefreshIntervalHours == 0 {
+		s.Live.EPG.RefreshIntervalHours = 12
+	}
+	if s.Live.EPG.RetentionDays == 0 {
+		s.Live.EPG.RetentionDays = 7
 	}
 
 	// Backfill Indexers: migrate torznab to newznab (usenet indexers use newznab)

@@ -362,6 +362,11 @@ var SettingsSchema = map[string]interface{}{
 			"lowLatency":                   map[string]interface{}{"type": "boolean", "label": "Low Latency Mode", "description": "Reduce buffering for lower latency (may cause instability with poor connections)", "order": 8},
 			"filtering.enabledCategories": map[string]interface{}{"type": "multiselect", "label": "Enabled Categories", "description": "Only show channels in these categories (empty = show all)", "optionsEndpoint": "/live/categories", "order": 9},
 			"filtering.maxChannels":       map[string]interface{}{"type": "number", "label": "Max Total Channels", "description": "Overall channel limit (0 = no limit)", "order": 10},
+			// EPG (Electronic Program Guide) settings
+			"epg.enabled":              map[string]interface{}{"type": "boolean", "label": "Enable EPG", "description": "Enable Electronic Program Guide for live TV channels", "order": 11},
+			"epg.xmltvUrl":             map[string]interface{}{"type": "text", "label": "XMLTV URL", "description": "URL to XMLTV EPG data (supports .xml and .xml.gz). For Xtream mode, leave empty to auto-fetch from provider.", "placeholder": "http://example.com/epg.xml.gz", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 12},
+			"epg.refreshIntervalHours": map[string]interface{}{"type": "number", "label": "EPG Refresh Interval (hours)", "description": "How often to refresh EPG data (default: 12)", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 13},
+			"epg.retentionDays":        map[string]interface{}{"type": "number", "label": "EPG Retention (days)", "description": "How many days of EPG data to keep (default: 7)", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 14},
 		},
 	},
 	"indexers": map[string]interface{}{
