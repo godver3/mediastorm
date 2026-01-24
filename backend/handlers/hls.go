@@ -1222,7 +1222,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	var usingPipe bool
 	var headerPrefix []byte
 	var requireMatroskaAlign bool
-	var proxyURL string       // URL for FFmpeg to use (via throttling proxy)
+	var proxyURL string // URL for FFmpeg to use (via throttling proxy)
+
 	var proxy *throttlingProxy // proxy server to close when done
 
 	// For direct URLs, use a throttling proxy so FFmpeg can use HTTP Range requests for seeking
