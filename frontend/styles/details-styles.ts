@@ -207,20 +207,18 @@ export const createDetailsStyles = (theme: NovaTheme) => {
         : null),
     },
     releaseInfoItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
       marginRight: theme.spacing.lg,
       marginBottom: theme.spacing.sm,
     },
-    releaseInfoLabel: {
+    releaseInfoIcon: {
+      marginRight: 6,
+    },
+    releaseInfoValue: {
       color: theme.colors.text.secondary,
       // Design for tvOS, Android TV auto-scales
       fontSize: Math.round(14 * tvTextScale),
-      marginBottom: 2,
-    },
-    releaseInfoValue: {
-      color: theme.colors.text.primary,
-      // Design for tvOS, Android TV auto-scales
-      fontSize: Math.round(16 * tvTextScale),
-      fontWeight: '600',
     },
     releaseInfoLoading: {
       color: theme.colors.text.secondary,
@@ -252,19 +250,6 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       color: theme.colors.text.muted,
       fontSize: 14,
       marginTop: 4,
-    },
-    movieRuntime: {
-      ...theme.typography.caption.sm,
-      color: theme.colors.text.muted,
-      fontStyle: 'italic',
-      marginTop: theme.spacing.sm,
-      ...(isTV
-        ? {
-            fontSize: Math.round(theme.typography.body.md.fontSize * tvTitleScale),
-            lineHeight: Math.round(theme.typography.body.md.lineHeight * tvTitleScale),
-            marginLeft: tvScale * 48,
-          }
-        : null),
     },
     descriptionHidden: {
       position: 'absolute',

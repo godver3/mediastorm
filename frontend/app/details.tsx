@@ -1879,33 +1879,20 @@ export default function DetailsScreen() {
     if (release.country) {
       parts.push(release.country.toUpperCase());
     }
-    if (release.note) {
-      parts.push(release.note);
-    }
     return parts.filter(Boolean).join(' • ');
   }, []);
 
-  const formatTheatricalLabel = useCallback((release?: Title['theatricalRelease']) => {
-    if (release?.type?.toLowerCase() === 'theatricallimited') {
-      return 'Theatrical (Limited)';
-    }
-    if (release?.type?.toLowerCase() === 'premiere') {
-      return 'Premiere';
-    }
-    return 'Theatrical Release';
-  }, []);
-
-  const formatHomeLabel = useCallback((release?: Title['homeRelease']) => {
+  const getHomeReleaseIcon = useCallback((release?: Title['homeRelease']): keyof typeof Ionicons.glyphMap => {
     const type = release?.type?.toLowerCase();
     switch (type) {
       case 'digital':
-        return 'Digital Release';
+        return 'cloud-outline';
       case 'physical':
-        return 'Physical Release';
+        return 'disc-outline';
       case 'tv':
-        return 'TV Premiere';
+        return 'tv-outline';
       default:
-        return 'Home Release';
+        return 'home-outline';
     }
   }, []);
 
@@ -1913,13 +1900,13 @@ export default function DetailsScreen() {
     if (isSeries || !movieDetails) {
       return [];
     }
-    const rows: { key: string; label: string; value: string }[] = [];
+    const rows: { key: string; icon: keyof typeof Ionicons.glyphMap; value: string }[] = [];
     if (movieDetails.theatricalRelease) {
       const value = describeRelease(movieDetails.theatricalRelease);
       if (value) {
         rows.push({
           key: 'theatrical',
-          label: formatTheatricalLabel(movieDetails.theatricalRelease),
+          icon: 'film-outline',
           value,
         });
       }
@@ -1929,13 +1916,13 @@ export default function DetailsScreen() {
       if (value) {
         rows.push({
           key: 'home',
-          label: formatHomeLabel(movieDetails.homeRelease),
+          icon: getHomeReleaseIcon(movieDetails.homeRelease),
           value,
         });
       }
     }
     return rows;
-  }, [describeRelease, formatHomeLabel, formatTheatricalLabel, isSeries, movieDetails]);
+  }, [describeRelease, getHomeReleaseIcon, isSeries, movieDetails]);
 
   const shouldShowReleaseSkeleton = !isSeries && movieDetailsLoading && releaseRows.length === 0;
   const releaseErrorMessage =
@@ -1965,8 +1952,8 @@ export default function DetailsScreen() {
   const releaseSkeletonRows = useMemo(() => {
     if (isSeries || !shouldShowReleaseSkeleton) return [];
     return [
-      { key: 'theatrical-skeleton', label: 'Theatrical', value: '—' },
-      { key: 'home-skeleton', label: 'Home Release', value: '—' },
+      { key: 'theatrical-skeleton', icon: 'film-outline' as keyof typeof Ionicons.glyphMap, value: '—' },
+      { key: 'home-skeleton', icon: 'home-outline' as keyof typeof Ionicons.glyphMap, value: '—' },
     ];
   }, [isSeries, shouldShowReleaseSkeleton]);
 
@@ -4327,14 +4314,20 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
+        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage || (!isSeries && movieDetails?.runtimeMinutes)) && (
           <View style={styles.releaseInfoRow}>
             {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
               <View key={row.key} style={styles.releaseInfoItem}>
-                <Text style={styles.releaseInfoLabel}>{row.label}</Text>
+                <Ionicons name={row.icon} size={14 * tvScale} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
                 <Text style={styles.releaseInfoValue}>{row.value}</Text>
               </View>
             ))}
+            {!isSeries && movieDetails?.runtimeMinutes && (
+              <View style={styles.releaseInfoItem}>
+                <Ionicons name="time-outline" size={14 * tvScale} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
+                <Text style={styles.releaseInfoValue}>{movieDetails.runtimeMinutes} min</Text>
+              </View>
+            )}
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
@@ -4394,9 +4387,6 @@ export default function DetailsScreen() {
           </Pressable>
         ) : (
           <Text style={styles.description}>{displayDescription}</Text>
-        )}
-        {!isSeries && movieDetails?.runtimeMinutes && (
-          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} minutes</Text>
         )}
       </View>
       <SpatialNavigationNode
@@ -4873,23 +4863,26 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage) && (
+        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage || (!isSeries && movieDetails?.runtimeMinutes)) && (
           <View style={styles.releaseInfoRow}>
             {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
               <View key={row.key} style={styles.releaseInfoItem}>
-                <Text style={styles.releaseInfoLabel}>{row.label}</Text>
+                <Ionicons name={row.icon} size={14} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
                 <Text style={styles.releaseInfoValue}>{row.value}</Text>
               </View>
             ))}
+            {!isSeries && movieDetails?.runtimeMinutes && (
+              <View style={styles.releaseInfoItem}>
+                <Ionicons name="time-outline" size={14} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
+                <Text style={styles.releaseInfoValue}>{movieDetails.runtimeMinutes} min</Text>
+              </View>
+            )}
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
         <Text style={[styles.description, { maxWidth: '100%' }]}>
           {displayDescription}
         </Text>
-        {!isSeries && movieDetails?.runtimeMinutes && (
-          <Text style={styles.movieRuntime}>{movieDetails.runtimeMinutes} minutes</Text>
-        )}
       </View>
 
       {/* Action buttons - icon only for mobile */}
