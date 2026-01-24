@@ -339,6 +339,9 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginLeft: isTV ? tvScale * 48 : 0,
       marginBottom: isTV ? tvScale * 24 : 0,
     },
+    prequeueInfoMinHeight: {
+      minHeight: isTV ? tvScale * 55 : 45,
+    },
     prequeueFilename: {
       ...theme.typography.body.sm,
       color: theme.colors.text.primary,
@@ -349,17 +352,18 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
       alignItems: 'center',
       marginTop: isTV ? theme.spacing.sm : theme.spacing.xs,
-      gap: isTV ? theme.spacing.md : theme.spacing.sm,
-    },
-    prequeueTrackLabel: {
-      ...theme.typography.caption.sm,
-      color: theme.colors.text.secondary,
-      fontWeight: '600',
-      ...(isTV ? { fontSize: tvScale * 15 } : null),
+      gap: isTV ? theme.spacing.sm : theme.spacing.xs,
     },
     prequeueTrackValue: {
       ...theme.typography.caption.sm,
       color: theme.colors.text.primary,
+      flexShrink: 1,
+      ...(isTV ? { fontSize: tvScale * 15 } : null),
+    },
+    prequeueTrackSeparator: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      marginHorizontal: isTV ? theme.spacing.sm : theme.spacing.xs,
       ...(isTV ? { fontSize: tvScale * 15 } : null),
     },
     prequeueTrackBadge: {

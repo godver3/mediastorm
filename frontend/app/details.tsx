@@ -987,11 +987,24 @@ export default function DetailsScreen() {
 
   // Pulse animation for prequeue loading state
   const prequeuePulseOpacity = useSharedValue(1);
+  // Fade-in animation for when prequeue content first appears
+  const prequeueFadeIn = useSharedValue(0);
   const prequeuePulseStyle = useAnimatedStyle(() => {
     return {
-      opacity: prequeuePulseOpacity.value,
+      opacity: prequeuePulseOpacity.value * prequeueFadeIn.value,
     };
   });
+
+  // Handle fade-in when prequeue info first appears
+  useEffect(() => {
+    if (prequeueDisplayInfo) {
+      // Fade in the content
+      prequeueFadeIn.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.ease) });
+    } else {
+      // Reset fade for next appearance
+      prequeueFadeIn.value = 0;
+    }
+  }, [!!prequeueDisplayInfo]);
 
   // Start/stop pulse animation based on prequeue status
   useEffect(() => {
@@ -4759,106 +4772,117 @@ export default function DetailsScreen() {
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
-          {/* Prequeue stream info display */}
-          {prequeueDisplayInfo && (
-            <Animated.View style={[styles.prequeueInfoContainer, prequeuePulseStyle]}>
-              {/* Status message for early stages */}
-              {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
-                <Text style={styles.prequeueFilename}>
-                  {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
-                  {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
-                </Text>
-              )}
-              {/* Failed status */}
-              {prequeueDisplayInfo.status === 'failed' && (
-                <Text style={styles.prequeueFilename}>
-                  Failed: {prequeueDisplayInfo.error || 'Unknown error'}
-                </Text>
-              )}
-              {/* Show filename once available (resolving, probing, or ready) */}
-              {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
-                <>
-                  <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
-                    {prequeueDisplayInfo.displayName ||
-                      prequeueDisplayInfo.passthroughName ||
-                      (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
-                      (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+          {/* Prequeue stream info display - always render container to reserve space */}
+          <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, prequeuePulseStyle]}>
+            {prequeueDisplayInfo && (
+              <>
+                {/* Status message for early stages */}
+                {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
+                  <Text style={styles.prequeueFilename}>
+                    {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+                    {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
                   </Text>
-                  {/* Show loading state for tracks during probing */}
-                  {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
-                   !prequeueDisplayInfo.audioTracks?.length && (
-                    <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
-                  )}
-                  {/* Audio track - show once tracks are available */}
-                  {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                    <View style={styles.prequeueTrackRow}>
-                      <Text style={styles.prequeueTrackLabel}>Audio:</Text>
-                      <Text style={styles.prequeueTrackValue}>
-                        {(() => {
-                          const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
-                          const track = selectedIdx !== undefined && selectedIdx >= 0
-                            ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                            : prequeueDisplayInfo.audioTracks?.[0];
-                          if (!track) return 'Default';
-                          return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                        })()}
-                      </Text>
-                      {(() => {
-                        const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
-                        const track = selectedIdx !== undefined && selectedIdx >= 0
-                          ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                          : prequeueDisplayInfo.audioTracks?.[0];
-                        if (track?.codec) {
-                          return (
-                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                              {track.codec.toUpperCase()}
+                )}
+                {/* Failed status */}
+                {prequeueDisplayInfo.status === 'failed' && (
+                  <Text style={styles.prequeueFilename}>
+                    Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+                  </Text>
+                )}
+                {/* Show filename once available (resolving, probing, or ready) */}
+                {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
+                  <>
+                    <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
+                      {prequeueDisplayInfo.displayName ||
+                        prequeueDisplayInfo.passthroughName ||
+                        (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
+                        (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+                    </Text>
+                    {/* Show loading state for tracks during probing */}
+                    {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
+                     !prequeueDisplayInfo.audioTracks?.length && (
+                      <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
+                    )}
+                    {/* Audio & Subtitle tracks on one line */}
+                    {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
+                      <View style={styles.prequeueTrackRow}>
+                        {/* Audio track */}
+                        {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
+                          <>
+                            <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
+                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                              {(() => {
+                                const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                                const track = selectedIdx !== undefined && selectedIdx >= 0
+                                  ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                                  : prequeueDisplayInfo.audioTracks?.[0];
+                                if (!track) return 'Default';
+                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                              })()}
                             </Text>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </View>
-                  )}
-                  {/* Subtitle track - show once tracks are available */}
-                  {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                    <View style={styles.prequeueTrackRow}>
-                      <Text style={styles.prequeueTrackLabel}>Subtitles:</Text>
-                      <Text style={styles.prequeueTrackValue}>
-                        {(() => {
-                          const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
-                          if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                          const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                          if (!track) return 'Off';
-                          return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                        })()}
-                      </Text>
-                      {(() => {
-                        const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
-                        if (selectedIdx === undefined || selectedIdx < 0) return null;
-                        const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                        if (!track) return null;
-                        if (track.forced) {
-                          return (
-                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
-                              FORCED
+                            {(() => {
+                              const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                              const track = selectedIdx !== undefined && selectedIdx >= 0
+                                ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                                : prequeueDisplayInfo.audioTracks?.[0];
+                              if (track?.codec) {
+                                return (
+                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                    {track.codec.toUpperCase()}
+                                  </Text>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </>
+                        )}
+                        {/* Separator */}
+                        {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
+                          <Text style={styles.prequeueTrackSeparator}>•</Text>
+                        )}
+                        {/* Subtitle track */}
+                        {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                          <>
+                            <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
+                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                              {(() => {
+                                const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                                if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                                const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                                if (!track) return 'Off';
+                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                              })()}
                             </Text>
-                          );
-                        }
-                        if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
-                          return (
-                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
-                              SDH
-                            </Text>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </View>
-                  )}
+                            {(() => {
+                              const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                              if (selectedIdx === undefined || selectedIdx < 0) return null;
+                              const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                              if (!track) return null;
+                              if (track.forced) {
+                                return (
+                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
+                                    FORCED
+                                  </Text>
+                                );
+                              }
+                              if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
+                                return (
+                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
+                                    SDH
+                                  </Text>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </>
+                        )}
+                      </View>
+                    ) : null}
                 </>
               )}
-            </Animated.View>
+            </>
           )}
+          </Animated.View>
           {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
           {Platform.isTV && isSeries && (
@@ -5192,106 +5216,117 @@ export default function DetailsScreen() {
         )}
       </View>
 
-      {/* Prequeue stream info display (mobile) */}
-      {prequeueDisplayInfo && (
-        <Animated.View style={[styles.prequeueInfoContainer, prequeuePulseStyle]}>
-          {/* Status message for early stages */}
-          {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
-            <Text style={styles.prequeueFilename}>
-              {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
-              {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
-            </Text>
-          )}
-          {/* Failed status */}
-          {prequeueDisplayInfo.status === 'failed' && (
-            <Text style={styles.prequeueFilename}>
-              Failed: {prequeueDisplayInfo.error || 'Unknown error'}
-            </Text>
-          )}
-          {/* Show filename once available (resolving, probing, or ready) */}
-          {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
-            <>
-              <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
-                {prequeueDisplayInfo.displayName ||
-                  prequeueDisplayInfo.passthroughName ||
-                  (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
-                  (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+      {/* Prequeue stream info display (mobile) - always render container to reserve space */}
+      <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, prequeuePulseStyle]}>
+        {prequeueDisplayInfo && (
+          <>
+            {/* Status message for early stages */}
+            {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
+              <Text style={styles.prequeueFilename}>
+                {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+                {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
               </Text>
-              {/* Show loading state for tracks during probing */}
-              {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
-               !prequeueDisplayInfo.audioTracks?.length && (
-                <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
-              )}
-              {/* Audio track - show once tracks are available */}
-              {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                <View style={styles.prequeueTrackRow}>
-                  <Text style={styles.prequeueTrackLabel}>Audio:</Text>
-                  <Text style={styles.prequeueTrackValue}>
-                    {(() => {
-                      const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
-                      const track = selectedIdx !== undefined && selectedIdx >= 0
-                        ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                        : prequeueDisplayInfo.audioTracks?.[0];
-                      if (!track) return 'Default';
-                      return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                    })()}
-                  </Text>
-                  {(() => {
-                    const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
-                    const track = selectedIdx !== undefined && selectedIdx >= 0
-                      ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                      : prequeueDisplayInfo.audioTracks?.[0];
-                    if (track?.codec) {
-                      return (
-                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                          {track.codec.toUpperCase()}
+            )}
+            {/* Failed status */}
+            {prequeueDisplayInfo.status === 'failed' && (
+              <Text style={styles.prequeueFilename}>
+                Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+              </Text>
+            )}
+            {/* Show filename once available (resolving, probing, or ready) */}
+            {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
+              <>
+                <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
+                  {prequeueDisplayInfo.displayName ||
+                    prequeueDisplayInfo.passthroughName ||
+                    (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
+                    (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+                </Text>
+                {/* Show loading state for tracks during probing */}
+                {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
+                 !prequeueDisplayInfo.audioTracks?.length && (
+                  <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
+                )}
+                {/* Audio & Subtitle tracks on one line */}
+                {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
+                  <View style={styles.prequeueTrackRow}>
+                    {/* Audio track */}
+                    {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
+                      <>
+                        <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} />
+                        <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                          {(() => {
+                            const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                            const track = selectedIdx !== undefined && selectedIdx >= 0
+                              ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                              : prequeueDisplayInfo.audioTracks?.[0];
+                            if (!track) return 'Default';
+                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                          })()}
                         </Text>
-                      );
-                    }
-                    return null;
-                  })()}
-                </View>
-              )}
-              {/* Subtitle track - show once tracks are available */}
-              {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                <View style={styles.prequeueTrackRow}>
-                  <Text style={styles.prequeueTrackLabel}>Subtitles:</Text>
-                  <Text style={styles.prequeueTrackValue}>
-                    {(() => {
-                      const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
-                      if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                      const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                      if (!track) return 'Off';
-                      return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                    })()}
-                  </Text>
-                  {(() => {
-                    const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
-                    if (selectedIdx === undefined || selectedIdx < 0) return null;
-                    const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                    if (!track) return null;
-                    if (track.forced) {
-                      return (
-                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
-                          FORCED
+                        {(() => {
+                          const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                          const track = selectedIdx !== undefined && selectedIdx >= 0
+                            ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                            : prequeueDisplayInfo.audioTracks?.[0];
+                          if (track?.codec) {
+                            return (
+                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                {track.codec.toUpperCase()}
+                              </Text>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </>
+                    )}
+                    {/* Separator */}
+                    {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
+                      <Text style={styles.prequeueTrackSeparator}>•</Text>
+                    )}
+                    {/* Subtitle track */}
+                    {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                      <>
+                        <Ionicons name="text" size={14} color={theme.colors.text.secondary} />
+                        <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                          {(() => {
+                            const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                            if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                            const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                            if (!track) return 'Off';
+                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                          })()}
                         </Text>
-                      );
-                    }
-                    if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
-                      return (
-                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
-                          SDH
-                        </Text>
-                      );
-                    }
-                    return null;
-                  })()}
-                </View>
-              )}
-            </>
-          )}
-        </Animated.View>
-      )}
+                        {(() => {
+                          const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                          if (selectedIdx === undefined || selectedIdx < 0) return null;
+                          const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                          if (!track) return null;
+                          if (track.forced) {
+                            return (
+                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
+                                FORCED
+                              </Text>
+                            );
+                          }
+                          if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
+                            return (
+                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
+                                SDH
+                              </Text>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </>
+                    )}
+                  </View>
+                ) : null}
+              </>
+            )}
+          </>
+        )}
+      </Animated.View>
 
       {/* Episode carousel for series */}
       {isSeries && seasons.length > 0 && (
