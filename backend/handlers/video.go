@@ -1559,7 +1559,14 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := []string{"-v", "error", "-print_format", "json", "-show_streams", "-show_format"}
+	args := []string{
+		"-v", "error",
+		"-probesize", "1000000",      // 1MB (faster startup)
+		"-analyzeduration", "500000", // 0.5s (faster startup)
+		"-print_format", "json",
+		"-show_streams",
+		"-show_format",
+	}
 	if reader != nil {
 		args = append(args, "-i", "pipe:0")
 	} else {

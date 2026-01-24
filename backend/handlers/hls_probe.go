@@ -209,6 +209,8 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 
 	args := []string{
 		"-v", "error",
+		"-probesize", "1000000",      // 1MB (faster startup)
+		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
@@ -239,6 +241,8 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 
 	args := []string{
 		"-v", "error",
+		"-probesize", "1000000",      // 1MB (faster startup)
+		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
@@ -966,6 +970,8 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 	// Format: -read_intervals START%+#COUNT means "read COUNT frames starting from START seconds"
 	args := []string{
 		"-v", "error",
+		"-probesize", "1000000",      // 1MB (faster startup)
+		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-i", url,
 		"-select_streams", "v:0",
 		"-skip_frame", "nokey",
@@ -982,6 +988,8 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 		log.Printf("[hls] keyframe probe with skip_frame failed: %v, trying without skip_frame", err)
 		args = []string{
 			"-v", "error",
+			"-probesize", "1000000",      // 1MB (faster startup)
+			"-analyzeduration", "500000", // 0.5s (faster startup)
 			"-i", url,
 			"-select_streams", "v:0",
 			"-show_frames",

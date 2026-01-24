@@ -1309,6 +1309,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		"-nostdin",
 		"-y", // Overwrite output files - prevents race condition with on-demand subtitle extraction
 		"-loglevel", "error",
+		// Reduce probe/analyze time for faster startup (default is 5MB/5s)
+		"-probesize", "1000000",      // 1MB
+		"-analyzeduration", "500000", // 0.5s
 		// A/V sync flags: generate PTS if missing, discard corrupt packets
 		"-fflags", "+genpts+discardcorrupt",
 	}
@@ -2721,8 +2724,8 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	}
 	session.mu.Unlock()
 
-	// Wait briefly for FFmpeg to stop
-	time.Sleep(50 * time.Millisecond)
+	// Wait briefly for FFmpeg to stop (reduced from 50ms)
+	time.Sleep(25 * time.Millisecond)
 
 	// Clear all existing segments since they're at the old time offset
 	if err := m.clearSessionSegments(session); err != nil {
