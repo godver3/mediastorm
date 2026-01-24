@@ -476,6 +476,8 @@ const RNVideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             playWhenInactive={true}
             // Suppress "LIVE" indicator on Android TV for HLS streams
             controlsStyles={{ liveLabel: '' }}
+            // Disable PiP on iOS temporarily for debugging
+            pictureInPicture={false}
             // PiP status callback (iOS only)
             onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
           />

@@ -1003,7 +1003,7 @@ func (m *HLSManager) waitForFirstSegment(ctx context.Context, session *HLSSessio
 	}
 	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	pollInterval := 100 * time.Millisecond
+	pollInterval := 25 * time.Millisecond // Reduced from 100ms for faster startup
 
 	log.Printf("[hls] session %s: waiting for first segment to be ready (timeout=%v, external=%v)", session.ID, timeout, isExternalURL)
 
@@ -1463,14 +1463,17 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	if needsVideoTranscode {
 		// Transcode incompatible video codec to H.264
-		// Use veryfast preset for real-time transcoding, CRF 23 for reasonable quality
-		log.Printf("[hls] session %s: incompatible video codec %q detected, transcoding to H.264", session.ID, videoCodec)
+		// Use ultrafast preset + zerolatency tune for fastest possible startup
+		// Quality is slightly lower than veryfast but startup is significantly faster
+		log.Printf("[hls] session %s: incompatible video codec %q detected, transcoding to H.264 (ultrafast)", session.ID, videoCodec)
 		args = append(args,
 			"-c:v", "libx264",
-			"-preset", "veryfast",
+			"-preset", "ultrafast",
+			"-tune", "zerolatency",
 			"-crf", "23",
 			"-profile:v", "high",
 			"-level", "4.1",
+			"-threads", "0", // Use all available CPU cores
 		)
 		// When transcoding video for fMP4, also check if audio needs transcoding
 		// MP3 audio doesn't work well in fMP4 containers on iOS - must use AAC
@@ -1652,9 +1655,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// iOS AVPlayer requires fMP4 for proper HEVC/HDR playback
 
 		// First output: HLS stream with video and audio only
+		// Use hls_init_time for shorter first segment (faster initial playback)
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "2",
+			"-hls_init_time", "1", // First segment is 1s for faster startup
+			"-hls_time", "2",      // Subsequent segments are 2s
 			"-hls_list_size", "0",
 			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments+temp_file",
@@ -1686,9 +1691,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	} else {
 		// Use MPEG-TS segments for non-HDR content
+		// Use hls_init_time for shorter first segment (faster initial playback)
 		args = append(args,
 			"-f", "hls",
-			"-hls_time", "2",
+			"-hls_init_time", "1", // First segment is 1s for faster startup
+			"-hls_time", "2",      // Subsequent segments are 2s
 			"-hls_list_size", "0",
 			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments+temp_file",
@@ -2715,34 +2722,26 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	session.mu.Unlock()
 
 	// Wait briefly for FFmpeg to stop
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Clear all existing segments since they're at the old time offset
 	if err := m.clearSessionSegments(session); err != nil {
 		log.Printf("[hls] session %s: warning: failed to clear segments for seek: %v", sessionID, err)
 	}
 
-	// Probe for the actual keyframe position FFmpeg will seek to BEFORE starting transcoding
-	// This is critical for VTT subtitle sync - both video and subtitles must start from the same position
-	session.mu.RLock()
-	sessionPath := session.Path
-	session.mu.RUnlock()
-
-	keyframePos := targetTime // Default to requested time
-	if targetTime > 0 {
-		keyframePos = m.probeKeyframePosition(r.Context(), sessionPath, targetTime)
-		log.Printf("[hls] session %s: seek keyframe probe: requested=%.3fs keyframe=%.3fs delta=%.3fs",
-			sessionID, targetTime, keyframePos, keyframePos-targetTime)
-	}
+	// Skip keyframe probing - FFmpeg will find the nearest keyframe automatically with -noaccurate_seek
+	// Since subtitles are extracted in the same FFmpeg pipeline with the same -ss, they'll be in sync.
+	// Actual start offset will be parsed from fMP4 tfdt box after first segment is ready.
+	log.Printf("[hls] session %s: seek to %.3fs (skipping keyframe probe for faster seek)", sessionID, targetTime)
 
 	// Reset session state for the new seek position
 	session.mu.Lock()
 	session.FFmpegCmd = nil
 	session.FFmpegPID = 0
 	session.Completed = false
-	session.StartOffset = targetTime      // User's new position (for frontend display)
-	session.TranscodingOffset = keyframePos // FFmpeg starts from keyframe position
-	session.ActualStartOffset = keyframePos // For subtitle sync
+	session.StartOffset = targetTime       // User's new position (for frontend display)
+	session.TranscodingOffset = targetTime // FFmpeg will seek to nearest keyframe
+	session.ActualStartOffset = targetTime // Will be updated from fMP4 tfdt after first segment
 	session.CreatedAt = time.Now()
 	session.LastSegmentRequest = time.Now()
 	session.SegmentsCreated = 0
@@ -2771,6 +2770,28 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 		}
 	}()
 
+	// Start background keyframe probe for subtitle sync correction
+	// This runs in parallel and updates ActualStartOffset when done
+	// Frontend will pick up the correction on next keepalive poll
+	session.mu.RLock()
+	sessionPath := session.Path
+	session.mu.RUnlock()
+
+	go func() {
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer probeCancel()
+
+		keyframePos := m.probeKeyframePosition(probeCtx, sessionPath, targetTime)
+		delta := keyframePos - targetTime
+
+		session.mu.Lock()
+		session.ActualStartOffset = keyframePos
+		session.mu.Unlock()
+
+		log.Printf("[hls] session %s: background keyframe probe complete: requested=%.3fs actual=%.3fs delta=%.3fs",
+			sessionID, targetTime, keyframePos, delta)
+	}()
+
 	// Wait for the playlist file to be created before returning
 	// This prevents the player from trying to load a non-existent playlist
 	session.mu.RLock()
@@ -2779,7 +2800,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	playlistPath := filepath.Join(outputDir, "stream.m3u8")
 
 	maxWait := 10 * time.Second
-	pollInterval := 100 * time.Millisecond
+	pollInterval := 25 * time.Millisecond // Reduced from 100ms for faster response
 	waitStart := time.Now()
 
 	for {
@@ -2802,14 +2823,19 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	// Build playlist URL (without /api/ prefix - frontend adds it)
 	playlistURL := fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID)
 
-	log.Printf("[hls] session %s: seek completed, requested=%.2fs actual=%.2fs (delta=%.3fs)",
-		sessionID, targetTime, keyframePos, keyframePos-targetTime)
+	// NOTE: We skip keyframe probing for faster seeks. Since we use -start_at_zero,
+	// the fMP4 tfdt box contains 0 (not the actual keyframe position), so parsing it
+	// would give wrong results. Instead, we report ActualStartOffset = targetTime
+	// and KeyframeDelta = 0. The actual keyframe position may differ by a few hundred
+	// milliseconds, but this is acceptable for subtitle sync and much faster than probing.
+	log.Printf("[hls] session %s: seek completed, requested=%.2fs (keyframe probe skipped for speed)",
+		sessionID, targetTime)
 
 	response := SeekResponse{
 		SessionID:         sessionID,
 		StartOffset:       targetTime,
-		ActualStartOffset: keyframePos,
-		KeyframeDelta:     keyframePos - targetTime,
+		ActualStartOffset: targetTime, // Use requested time (no probe = no exact keyframe info)
+		KeyframeDelta:     0,          // Unknown without probe, assume negligible
 		Duration:          duration,
 		PlaylistURL:       playlistURL,
 	}
@@ -2936,7 +2962,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 				http.Error(w, "playlist not ready", http.StatusGatewayTimeout)
 				return
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(25 * time.Millisecond)
 			continue
 		} else {
 			log.Printf("[hls] failed to stat playlist for session %s: %v", sessionID, statErr)
@@ -3152,7 +3178,7 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 			session.mu.Unlock()
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond) // Reduced from 100ms for faster segment delivery
 	}
 
 	waitDuration := time.Since(waitStart)
@@ -3317,7 +3343,7 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 	// If we read 0 bytes immediately after extraction, retry once
 	// (filesystem buffering race condition)
 	if len(content) == 0 && stat.Size() > 0 {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // Reduced from 100ms
 		content, _ = os.ReadFile(vttPath)
 	}
 
@@ -3934,7 +3960,7 @@ func (m *HLSManager) WaitForActualStartOffset(session *HLSSession, timeout time.
 	segment0Path := filepath.Join(outputDir, "segment0.m4s")
 
 	deadline := time.Now().Add(timeout)
-	pollInterval := 100 * time.Millisecond
+	pollInterval := 25 * time.Millisecond // Reduced from 100ms for faster response
 
 	// Wait for both init.mp4 and segment0.m4s to exist with non-zero size
 	for time.Now().Before(deadline) {

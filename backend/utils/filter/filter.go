@@ -67,11 +67,14 @@ func NewSeriesEpisodeResolver(seasonCounts map[int]int) *SeriesEpisodeResolver {
 }
 
 func (r *SeriesEpisodeResolver) GetTotalSeriesEpisodes() int {
+	if r == nil {
+		return 0
+	}
 	return r.TotalEpisodes
 }
 
 func (r *SeriesEpisodeResolver) GetEpisodesForSeasons(seasons []int) int {
-	if r.SeasonEpisodeCounts == nil {
+	if r == nil || r.SeasonEpisodeCounts == nil {
 		return 0
 	}
 	total := 0
@@ -829,7 +832,7 @@ func getAbsoluteEpisodeRange(seasons []int, resolver EpisodeCountResolver) (int,
 
 	// We need the episode resolver to be a SeriesEpisodeResolver to access per-season counts
 	ser, ok := resolver.(*SeriesEpisodeResolver)
-	if !ok || ser.SeasonEpisodeCounts == nil {
+	if !ok || ser == nil || ser.SeasonEpisodeCounts == nil {
 		return 0, 0
 	}
 

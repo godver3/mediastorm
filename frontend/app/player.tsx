@@ -994,6 +994,8 @@ export default function PlayerScreen() {
   const actualPlaybackOffsetRef = useRef<number>(initialActualStartOffset ?? initialStartOffset); // Keyframe-aligned start for subtitle sync
   // Keyframe delta: difference between actual keyframe and requested position (negative = keyframe earlier)
   const keyframeDeltaRef = useRef<number>(0);
+  // Track when keyframe sync was last applied (for debug display)
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   // Track if we've done a warm seek (session recreation) since initial load
   // Initial warm start doesn't need delta, but subsequent warm seeks do
   const hasWarmSeekedRef = useRef<boolean>(false);
@@ -1449,8 +1451,10 @@ export default function PlayerScreen() {
     };
   }, [showToast, router]);
 
-  // Sync keyframeDelta from hook state for subtitle sync
+  // Track keyframeDelta from hook state for subtitle sync
   // keyframeDelta is the offset between actual keyframe and requested position
+  // NOTE: Video seeks to keyframe but subtitles are extracted from requested position,
+  // so we need keyframeDelta to correct the desync
   useEffect(() => {
     const newKeyframeDelta = hlsSessionState.keyframeDelta;
     console.log('[player] keyframeDelta effect triggered', {
@@ -1459,11 +1463,26 @@ export default function PlayerScreen() {
       hookActualStartOffset: hlsSessionState.actualStartOffset,
     });
     if (typeof newKeyframeDelta === 'number' && newKeyframeDelta !== keyframeDeltaRef.current) {
+      const oldDelta = keyframeDeltaRef.current;
       console.log('[player] syncing keyframeDeltaRef from hook state', {
-        old: keyframeDeltaRef.current,
+        old: oldDelta,
         new: newKeyframeDelta,
       });
       keyframeDeltaRef.current = newKeyframeDelta;
+
+      // Show notification when background keyframe probe completes with meaningful delta
+      if (Math.abs(newKeyframeDelta) > 0.1) {
+        const deltaMs = Math.round(newKeyframeDelta * 1000);
+        const sign = deltaMs >= 0 ? '+' : '';
+        const syncMsg = `${sign}${deltaMs}ms`;
+        console.log('[player] keyframe sync applied', { deltaMs, oldDelta, newKeyframeDelta, hasWarmSeeked: hasWarmSeekedRef.current });
+        setLastSyncTime(syncMsg);
+        showToast(`Keyframe sync: ${syncMsg}`, { tone: 'neutral', duration: 2000 });
+      } else if (Math.abs(newKeyframeDelta) <= 0.1 && oldDelta !== 0) {
+        // Seek happened, delta reset to ~0, clear sync indicator until new probe completes
+        console.log('[player] keyframe delta reset (new seek), waiting for probe', { oldDelta, newKeyframeDelta });
+        setLastSyncTime(null);
+      }
     }
     // Also sync actualStartOffset
     if (
@@ -1473,7 +1492,7 @@ export default function PlayerScreen() {
     ) {
       actualPlaybackOffsetRef.current = hlsSessionState.actualStartOffset;
     }
-  }, [hlsSessionState.keyframeDelta, hlsSessionState.actualStartOffset]);
+  }, [hlsSessionState.keyframeDelta, hlsSessionState.actualStartOffset, showToast]);
 
   // Send keepalive pings and poll for session status to detect stream errors
   // The backend kills FFmpeg after 60s of no segment requests, but players buffer aggressively
@@ -2421,8 +2440,7 @@ export default function PlayerScreen() {
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
 
-        // CRITICAL: Sync keyframeDelta synchronously BEFORE triggering subtitle cache bust
-        // This prevents a race condition where subtitles re-render with stale keyframeDelta
+        // Sync keyframeDelta for subtitle timing correction
         if (typeof response.keyframeDelta === 'number') {
           keyframeDeltaRef.current = response.keyframeDelta;
         }
@@ -2430,7 +2448,6 @@ export default function PlayerScreen() {
         // Reset pending seek attempt tracking
         pendingSeekAttemptRef.current.attempts = 0;
         pendingSeekAttemptRef.current.lastAttemptMs = 0;
-        // Mark that we've done a warm seek - subsequent seeks need keyframeDelta for subtitle sync
         hasWarmSeekedRef.current = true;
 
         console.log('[player] warmStartHLS offsets set', {
@@ -5458,7 +5475,7 @@ export default function PlayerScreen() {
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
               currentTimeRef={currentTimeRef}
-              timeOffset={-playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset}
+              timeOffset={-playbackOffsetRef.current + (hlsSessionState.keyframeDelta ?? 0) - subtitleOffset}
               enabled={selectedSubtitleTrackIndex !== null && selectedSubtitleTrackIndex >= 0}
               videoWidth={videoSize?.width}
               videoHeight={videoSize?.height}
@@ -5839,7 +5856,7 @@ export default function PlayerScreen() {
                   marginBottom: Platform.isTV ? 8 : 4,
                 }}>
                 VTT Lookup Time:{' '}
-                {(currentTime - playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
+                {(currentTime - playbackOffsetRef.current + (hlsSessionState.keyframeDelta ?? 0) - subtitleOffset).toFixed(3)}s
               </Text>
               <Text
                 style={{
@@ -5884,8 +5901,20 @@ export default function PlayerScreen() {
                   fontSize: Platform.isTV ? 20 : 10,
                   marginBottom: Platform.isTV ? 4 : 2,
                 }}>
-                keyframeDelta: {keyframeDeltaRef.current.toFixed(3)}s
+                keyframeDelta: {(hlsSessionState.keyframeDelta ?? 0).toFixed(3)}s
               </Text>
+              {lastSyncTime && (
+                <Text
+                  style={{
+                    color: '#0f0',
+                    fontFamily: 'monospace',
+                    fontSize: Platform.isTV ? 20 : 10,
+                    marginBottom: Platform.isTV ? 4 : 2,
+                    fontWeight: 'bold',
+                  }}>
+                  ✓ SYNCED: {lastSyncTime}
+                </Text>
+              )}
               <Text
                 style={{
                   color: '#aaa',
@@ -5903,7 +5932,7 @@ export default function PlayerScreen() {
                   fontSize: Platform.isTV ? 20 : 10,
                   marginBottom: Platform.isTV ? 4 : 2,
                 }}>
-                timeOffset = -{playbackOffsetRef.current.toFixed(1)} + {keyframeDeltaRef.current.toFixed(1)} -{' '}
+                timeOffset = -{playbackOffsetRef.current.toFixed(1)} + {(hlsSessionState.keyframeDelta ?? 0).toFixed(1)} -{' '}
                 {subtitleOffset.toFixed(1)}
               </Text>
               <Text
@@ -5913,7 +5942,7 @@ export default function PlayerScreen() {
                   fontSize: Platform.isTV ? 20 : 10,
                   marginBottom: Platform.isTV ? 8 : 4,
                 }}>
-                = {(-playbackOffsetRef.current + keyframeDeltaRef.current - subtitleOffset).toFixed(3)}s
+                = {(-playbackOffsetRef.current + (hlsSessionState.keyframeDelta ?? 0) - subtitleOffset).toFixed(3)}s
               </Text>
               <Text
                 style={{
