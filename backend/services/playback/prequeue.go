@@ -37,6 +37,9 @@ type PrequeueRequest struct {
 	EpisodeNumber         int     `json:"episodeNumber,omitempty"`
 	AbsoluteEpisodeNumber int     `json:"absoluteEpisodeNumber,omitempty"` // For anime: absolute episode number
 	StartOffset           float64 `json:"startOffset,omitempty"`           // Resume position in seconds for subtitle extraction
+	// Prequeue reason: "details" (user opened details page) or "next_episode" (auto-queue for next episode)
+	// Defaults to "details" if not specified
+	Reason string `json:"reason,omitempty"`
 }
 
 // PrequeueResponse is returned when a prequeue request is initiated
@@ -119,6 +122,7 @@ type PrequeueEntry struct {
 	UserID        string
 	MediaType     string
 	TargetEpisode *models.EpisodeReference
+	Reason        string // "details" or "next_episode" - affects HLS startup timeout
 
 	Status       PrequeueStatus
 	StreamPath   string
@@ -196,7 +200,8 @@ func titleUserKey(titleID, userID string) string {
 
 // Create creates a new prequeue entry and returns its ID
 // If an entry already exists for this title+user, it's cancelled and replaced
-func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference) (*PrequeueEntry, bool) {
+// reason should be "details" (details page prequeue) or "next_episode" (auto-queue for next episode)
+func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason string) (*PrequeueEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -217,6 +222,10 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 
 	// Create new entry
 	id := generateID()
+	// Default reason to "details" if not specified
+	if reason == "" {
+		reason = "details"
+	}
 	entry := &PrequeueEntry{
 		ID:                    id,
 		TitleID:               titleID,
@@ -225,6 +234,7 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 		UserID:                userID,
 		MediaType:             mediaType,
 		TargetEpisode:         targetEpisode,
+		Reason:                reason,
 		Status:                PrequeueStatusQueued,
 		SelectedAudioTrack:    -1, // Default: use all/default
 		SelectedSubtitleTrack: -1, // Default: none

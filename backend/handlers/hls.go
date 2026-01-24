@@ -219,61 +219,52 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 	_ = t.session.HasHDR
 	t.session.mu.RUnlock()
 
-	// Only throttle if player has started requesting segments
-	if maxRequested >= 0 {
-		// Check actual segment files on disk (more accurate than SegmentsCreated counter)
-		// TESTING: Always use .m4s for all content
-		segmentExt := ".m4s"
-		// if hasDV || hasHDR {
-		// 	segmentExt = ".m4s"
-		// }
-		pattern := filepath.Join(outputDir, "segment*"+segmentExt)
-		segmentFiles, _ := filepath.Glob(pattern)
+	// Check actual segment files on disk (more accurate than SegmentsCreated counter)
+	segmentExt := ".m4s"
+	pattern := filepath.Join(outputDir, "segment*"+segmentExt)
+	segmentFiles, _ := filepath.Glob(pattern)
 
-		// Find highest segment number
-		highestSegment := -1
-		for _, f := range segmentFiles {
-			base := filepath.Base(f)
-			var segNum int
-			if _, err := fmt.Sscanf(base, "segment%d", &segNum); err == nil {
-				if segNum > highestSegment {
-					highestSegment = segNum
-				}
+	// Find highest segment number
+	highestSegment := -1
+	for _, f := range segmentFiles {
+		base := filepath.Base(f)
+		var segNum int
+		if _, err := fmt.Sscanf(base, "segment%d", &segNum); err == nil {
+			if segNum > highestSegment {
+				highestSegment = segNum
 			}
 		}
+	}
 
-		if highestSegment >= 0 {
-			bufferAhead := highestSegment - maxRequested
+	if highestSegment >= 0 {
+		// Treat "no segments requested yet" as requesting segment 0
+		// This ensures throttling applies uniformly to all sessions including prequeue
+		effectiveMaxRequested := maxRequested
+		if effectiveMaxRequested < 0 {
+			effectiveMaxRequested = 0
+		}
 
-			// Start throttling when 15+ segments ahead (~60 seconds at 4s/segment)
-			// Apply aggressive delays to prevent runaway buffering
-			const throttleStartThreshold = 15
-			if bufferAhead > throttleStartThreshold {
-				// Calculate delay: scales aggressively with buffer size
-				// At 16 segments ahead: 500ms, at 30 ahead: 2000ms+
-				excessSegments := bufferAhead - throttleStartThreshold
-				delayMs := 500 + (excessSegments * 100) // 500ms base + 100ms per excess segment
+		bufferAhead := highestSegment - effectiveMaxRequested
 
-				// Cap at 15 seconds to avoid HTTP connection timeouts from the source.
-				// Most servers have read timeouts of 30-60s, so 15s should be safe.
-				//
-				// TODO: If this still causes issues with very fast connections, consider
-				// implementing buffered throttling instead: read from source at full speed
-				// into a memory buffer, then feed ffmpeg at a controlled rate. This would
-				// keep the source connection alive while still controlling disk usage.
-				if delayMs > 15000 {
-					delayMs = 15000
-				}
+		// Throttle when 15+ segments ahead (~30 seconds at 2s/segment)
+		const throttleStartThreshold = 15
+		if bufferAhead > throttleStartThreshold {
+			excessSegments := bufferAhead - throttleStartThreshold
+			delayMs := 500 + (excessSegments * 100) // 500ms base + 100ms per excess segment
 
-				time.Sleep(time.Duration(delayMs) * time.Millisecond)
-				t.throttleCount++
+			// Cap at 15 seconds to avoid HTTP connection timeouts from the source
+			if delayMs > 15000 {
+				delayMs = 15000
+			}
 
-				// Log throttling periodically (every 10 seconds)
-				if time.Since(t.lastThrottle) > 10*time.Second {
-					log.Printf("[hls] session %s: THROTTLE - %d segments ahead (highest=%d, requested=%d), delay=%dms, total throttles=%d",
-						sessionID, bufferAhead, highestSegment, maxRequested, delayMs, t.throttleCount)
-					t.lastThrottle = time.Now()
-				}
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+			t.throttleCount++
+
+			// Log throttling periodically (every 10 seconds)
+			if time.Since(t.lastThrottle) > 10*time.Second {
+				log.Printf("[hls] session %s: THROTTLE - %d segments ahead (highest=%d, requested=%d), delay=%dms, total throttles=%d",
+					sessionID, bufferAhead, highestSegment, maxRequested, delayMs, t.throttleCount)
+				t.lastThrottle = time.Now()
 			}
 		}
 	}
@@ -352,6 +343,9 @@ type HLSSession struct {
 
 	// Live TV session fields
 	IsLive bool // True for live TV streams (no duration, no seeking)
+
+	// Prequeue tracking
+	PrequeueType string // "", "details" (details page), or "next_episode" (auto-play next)
 }
 
 const (
@@ -360,9 +354,14 @@ const (
 	// Frontend sends keepalives every 10s, so this allows for missed keepalives
 	hlsIdleTimeout = 60 * time.Second
 
-	// How long to wait for the first segment request before killing FFmpeg
-	// (prevents sessions that never receive any requests from lingering)
+	// How long to wait before checking if FFmpeg is stuck (not generating segments)
+	// If FFmpeg IS generating segments, we let it run - throttle limits buffering
+	// and the 30-minute cleanup handles abandoned sessions
 	hlsStartupTimeout = 30 * time.Second
+
+	// Timeout for details page prequeue - user opened details but might not play
+	// Kill after 2 minutes if they don't start watching
+	hlsDetailsPrequeueTimeout = 2 * time.Minute
 
 	// Matroska-specific tuning for pipe-based seeks
 	matroskaHeaderPrefixBytes int64 = 2 * 1024 * 1024 // copy 2MB of header metadata
@@ -669,7 +668,7 @@ func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
 }
 
 // CreateSession starts a new HLS transcoding session
-func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string) (*HLSSession, error) {
+func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string, prequeueType string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -769,6 +768,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		LastSegmentServed:       -1,  // Initialize to -1 (no segments served yet)
 		EarliestBufferedSegment: -1,  // Initialize to -1 (no buffer info reported yet)
 		ProbeData:               probeData, // Cache unified probe results for startTranscoding
+		PrequeueType:            prequeueType, // "", "details", or "next_episode"
 	}
 
 	m.mu.Lock()
@@ -943,6 +943,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 				idleTime := time.Since(lastRequest)
 
 				// Startup timeout: if no segment requests after 30s, kill FFmpeg
+				// (Live sessions don't use prequeue, so always apply startup timeout)
 				if segmentCount == 0 && idleTime > hlsStartupTimeout {
 					log.Printf("[hls] live session %s: STARTUP_TIMEOUT - no segment requests after %v",
 						session.ID, idleTime)
@@ -1832,6 +1833,16 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					}
 				}
 
+				// Detect output directory missing errors (unexplained directory deletion)
+				// This helps debug the mysterious directory deletion issue
+				if strings.Contains(msg, "No such file or directory") && strings.Contains(msg, session.OutputDir) {
+					log.Printf("[hls] CRITICAL: session %s output directory appears to be missing! dir=%s", session.ID, session.OutputDir)
+					// Check if directory actually exists
+					if _, statErr := os.Stat(session.OutputDir); os.IsNotExist(statErr) {
+						log.Printf("[hls] CONFIRMED: session %s output directory was deleted by external process! dir=%s", session.ID, session.OutputDir)
+					}
+				}
+
 				// Detect bitstream filter errors (vost/copy errors)
 				// These indicate the source stream has malformed data that can't be processed
 				// This is a FATAL error - the stream is fundamentally broken and recovery won't help
@@ -2036,25 +2047,43 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				idleTime := time.Since(lastRequest)
 				sessionAge := time.Since(session.CreatedAt)
 
-				// Check for startup timeout: no segments requested within hlsStartupTimeout
-				if segmentCount == 0 && sessionAge > hlsStartupTimeout {
-					log.Printf("[hls] session %s: STARTUP_TIMEOUT triggered after %v (no segments requested)",
-						session.ID, sessionAge)
+				// Check for startup timeout when no segments have been requested yet
+				if segmentCount == 0 {
+					var shouldKill bool
+					var reason string
 
-					session.mu.Lock()
-					session.IdleTimeoutTriggered = true
-					session.mu.Unlock()
+					// Check if FFmpeg has generated any segments
+					highestGenerated := m.findHighestSegmentNumber(session)
 
-					if session.Cancel != nil {
-						session.Cancel()
+					if highestGenerated < 0 && sessionAge > hlsStartupTimeout {
+						// No segments generated after 30s - FFmpeg is truly stuck
+						shouldKill = true
+						reason = fmt.Sprintf("no segments generated after %v", sessionAge.Round(time.Second))
+					} else if session.PrequeueType == "details" && sessionAge > hlsDetailsPrequeueTimeout {
+						// Details page prequeue - user opened details but didn't play within 2 min
+						shouldKill = true
+						reason = fmt.Sprintf("details prequeue not started after %v", sessionAge.Round(time.Second))
 					}
+					// Next episode prequeue: no timeout - throttle limits buffering, cleanup handles abandonment
 
-					if cmd != nil && cmd.Process != nil {
-						log.Printf("[hls] session %s: killing startup-timeout FFmpeg process (PID=%d)",
-							session.ID, cmd.Process.Pid)
-						_ = cmd.Process.Kill()
+					if shouldKill {
+						log.Printf("[hls] session %s: STARTUP_TIMEOUT - %s", session.ID, reason)
+
+						session.mu.Lock()
+						session.IdleTimeoutTriggered = true
+						session.mu.Unlock()
+
+						if session.Cancel != nil {
+							session.Cancel()
+						}
+
+						if cmd != nil && cmd.Process != nil {
+							log.Printf("[hls] session %s: killing startup-timeout FFmpeg process (PID=%d)",
+								session.ID, cmd.Process.Pid)
+							_ = cmd.Process.Kill()
+						}
+						return
 					}
-					return
 				}
 
 				// Enforce idle timeout if we've had at least one segment request
@@ -3510,10 +3539,15 @@ func alignMatroskaCluster(r io.Reader, maxScanBytes int64) (io.Reader, int64, er
 
 // CleanupSession removes a session and its files
 func (m *HLSManager) CleanupSession(sessionID string) {
+	// Log who is calling cleanup for debugging mysterious directory deletion
+	_, file, line, _ := runtime.Caller(1)
+	log.Printf("[hls] CleanupSession called for session %s from %s:%d", sessionID, filepath.Base(file), line)
+
 	m.mu.Lock()
 	session, exists := m.sessions[sessionID]
 	if !exists {
 		m.mu.Unlock()
+		log.Printf("[hls] CleanupSession: session %s not found, already cleaned up", sessionID)
 		return
 	}
 	delete(m.sessions, sessionID)

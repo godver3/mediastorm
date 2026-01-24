@@ -100,7 +100,7 @@ type VideoFullProber interface {
 
 // HLSCreator interface for creating HLS sessions
 type HLSCreator interface {
-	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string, startOffset float64) (*HLSSessionResult, error)
+	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string, startOffset float64, prequeueType string) (*HLSSessionResult, error)
 }
 
 // HLSSessionResult contains HLS session info
@@ -279,7 +279,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create prequeue entry
-	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode)
+	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason)
 
 	// Start background worker with all the info needed for search
 	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset)
@@ -913,6 +913,12 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 			// Create HLS session for HDR content or incompatible audio
 			if h.hlsCreator != nil {
+				// Get prequeue reason to determine HLS startup timeout behavior
+				prequeueType := "details" // default
+				if entry, ok := h.store.Get(prequeueID); ok && entry.Reason != "" {
+					prequeueType = entry.Reason
+				}
+
 				hlsResult, err := h.hlsCreator.CreateHLSSession(
 					ctx,
 					resolution.WebDAVPath,
@@ -923,6 +929,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 					selectedSubtitleTrack,
 					userID,
 					startOffset,
+					prequeueType, // "details" or "next_episode" - affects startup timeout
 				)
 				if err != nil {
 					log.Printf("[prequeue] HLS session creation failed (non-fatal): %v", err)
