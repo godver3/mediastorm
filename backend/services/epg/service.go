@@ -571,6 +571,37 @@ func (s *Service) GetSchedule(channelID string, start, end time.Time) []models.E
 	return result
 }
 
+// GetScheduleMultiple returns programs for multiple channels within a time range.
+// This is optimized for the EPG grid view by fetching all data in a single call.
+func (s *Service) GetScheduleMultiple(channelIDs []string, start, end time.Time) map[string][]models.EPGProgram {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string][]models.EPGProgram, len(channelIDs))
+
+	for _, channelID := range channelIDs {
+		// Try to find programs with exact channel ID
+		programs := s.schedule.Programs[channelID]
+
+		// If no match, try to find by normalized ID
+		if len(programs) == 0 {
+			programs = s.findProgramsByChannelMatch(channelID)
+		}
+
+		var channelPrograms []models.EPGProgram
+		for _, prog := range programs {
+			// Include programs that overlap with the time range
+			if prog.Stop.After(start) && prog.Start.Before(end) {
+				channelPrograms = append(channelPrograms, prog)
+			}
+		}
+
+		result[channelID] = channelPrograms
+	}
+
+	return result
+}
+
 // GetChannelSchedule returns the full day schedule for a channel.
 func (s *Service) GetChannelSchedule(channelID string, date time.Time) []models.EPGProgram {
 	// Get start and end of the day in UTC

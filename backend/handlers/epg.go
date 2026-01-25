@@ -95,6 +95,54 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetScheduleMultiple returns program schedules for multiple channels within a time range.
+// GET /api/live/epg/schedule/batch?channels=ch1,ch2,ch3&hours=4
+func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request) {
+	if h.epgService == nil {
+		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	channelsParam := r.URL.Query().Get("channels")
+	if channelsParam == "" {
+		http.Error(w, `{"error":"missing channels parameter"}`, http.StatusBadRequest)
+		return
+	}
+
+	channelIDs := strings.Split(channelsParam, ",")
+	for i := range channelIDs {
+		channelIDs[i] = strings.TrimSpace(channelIDs[i])
+	}
+
+	// Default to 4 hours window
+	hours := 4
+	if hoursParam := r.URL.Query().Get("hours"); hoursParam != "" {
+		var h int
+		if _, err := parseIntParam(hoursParam, &h); err == nil && h > 0 && h <= 24 {
+			hours = h
+		}
+	}
+
+	// Optional start time offset (in minutes from now, can be negative for past programs)
+	startOffset := 0
+	if offsetParam := r.URL.Query().Get("startOffset"); offsetParam != "" {
+		var o int
+		if _, err := parseIntParam(offsetParam, &o); err == nil {
+			startOffset = o
+		}
+	}
+
+	start := time.Now().UTC().Add(time.Duration(startOffset) * time.Minute)
+	end := start.Add(time.Duration(hours) * time.Hour)
+
+	schedules := h.epgService.GetScheduleMultiple(channelIDs, start, end)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(schedules); err != nil {
+		log.Printf("[epg] GetScheduleMultiple JSON encode error: %v", err)
+	}
+}
+
 // GetChannelSchedule returns the full day schedule for a channel.
 // GET /api/live/epg/channel/{id}?date=2024-01-15
 func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) {

@@ -190,20 +190,22 @@ export const MultiscreenProvider: React.FC<{ children: React.ReactNode }> = ({ c
     await saveSession(null);
   }, [saveSession]);
 
-  // Update active audio index
-  const setActiveAudioIndex = useCallback(
-    (index: number) => {
-      if (!session) return;
+  // Update active audio index - use ref to avoid dependency on session
+  // which would cause infinite loops when this callback is used in useEffect dependencies
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
-      const updatedSession: MultiscreenSession = {
-        ...session,
-        activeAudioIndex: index,
-      };
-      setSession(updatedSession);
-      // Don't persist audio index changes (too frequent)
-    },
-    [session],
-  );
+  const setActiveAudioIndex = useCallback((index: number) => {
+    const currentSession = sessionRef.current;
+    if (!currentSession) return;
+
+    const updatedSession: MultiscreenSession = {
+      ...currentSession,
+      activeAudioIndex: index,
+    };
+    setSession(updatedSession);
+    // Don't persist audio index changes (too frequent)
+  }, []);
 
   const hasSavedSession = useMemo(() => {
     return session !== null && session.channels.length >= 2;

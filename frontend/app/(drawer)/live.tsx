@@ -47,7 +47,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLiveChannels, type LiveChannel } from '@/hooks/useLiveChannels';
 import { useChannelEPG, type EPGDataMap } from '@/hooks/useChannelEPG';
 import { EPGInlineDisplay, EPGGridOverlay } from '@/components/EPGNowPlaying';
+import { EPGGrid } from '@/components/EPGGrid';
 import apiService from '@/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// View mode for Live TV - list or grid (EPG guide)
+type LiveViewMode = 'list' | 'grid';
+
+// Storage key for persisting view mode preference
+const LIVE_VIEW_MODE_KEY = 'live_tv_view_mode';
 
 // Spatial navigation header button for TV - matches TVActionButton styling
 const SpatialHeaderButton = ({
@@ -554,6 +562,9 @@ const TVChannelGridCard = React.memo(
     prevProps.cardWidth === nextProps.cardWidth,
 );
 
+// Static screen options to prevent re-creation on each render
+const SCREEN_OPTIONS = { headerShown: false } as const;
+
 function LiveScreen() {
   const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useTVDimensions();
@@ -583,13 +594,35 @@ function LiveScreen() {
   const { showToast } = useToast();
   const { refreshSettings } = useBackendSettings();
   const { pendingPinUserId } = useUserProfiles();
+
+  // Track mounted state to prevent state updates during unmount (causes infinite render loops)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false);
   const [actionChannel, setActionChannel] = useState<LiveChannel | null>(null);
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
   const [filterText, setFilterText] = useState('');
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
+  const [viewMode, setViewMode] = useState<LiveViewMode>('list');
   const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
+
+  // Load saved view mode preference on mount
+  useEffect(() => {
+    AsyncStorage.getItem(LIVE_VIEW_MODE_KEY).then((saved) => {
+      if (saved === 'list' || saved === 'grid') {
+        setViewMode(saved);
+      }
+    }).catch(() => {
+      // Ignore errors loading preference
+    });
+  }, []);
 
   // Tablet grid configuration
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -781,7 +814,15 @@ function LiveScreen() {
         return;
       }
 
-      const matchesFilter = !filterLower || channel.name?.toLowerCase().includes(filterLower);
+      // Check if channel name matches filter
+      const nameMatches = channel.name?.toLowerCase().includes(filterLower);
+
+      // Check if current or next program title matches filter
+      const epg = channel.tvgId ? epgData.get(channel.tvgId) : undefined;
+      const currentTitleMatches = epg?.current?.title?.toLowerCase().includes(filterLower);
+      const nextTitleMatches = epg?.next?.title?.toLowerCase().includes(filterLower);
+
+      const matchesFilter = !filterLower || nameMatches || currentTitleMatches || nextTitleMatches;
       const isChannelFavorite = isFavorite(channel.id);
 
       // Always include favorites, even if they don't match the filter
@@ -794,11 +835,11 @@ function LiveScreen() {
     });
 
     return { favoriteChannels: favorites, regularChannels: regular };
-  }, [channels, isFavorite, isHidden, filterText]);
+  }, [channels, isFavorite, isHidden, filterText, epgData]);
 
   // Reset visible count when filters change (mobile infinite scroll)
   useEffect(() => {
-    if (!Platform.isTV) {
+    if (!Platform.isTV && isMountedRef.current) {
       setVisibleChannelCount(INITIAL_VISIBLE_COUNT);
     }
   }, [filterText, selectedCategories]);
@@ -851,6 +892,9 @@ function LiveScreen() {
 
   const handleChannelSelect = useCallback(
     async (channel: LiveChannel) => {
+      // Don't handle selections during unmount
+      if (!isMountedRef.current) return;
+
       // In selection mode, toggle channel selection instead of playing
       if (isSelectionMode) {
         const selectionOrder = getChannelSelectionOrder(channel.id);
@@ -1003,6 +1047,16 @@ function LiveScreen() {
     }
   }, []);
 
+  const handleToggleViewMode = useCallback(() => {
+    setViewMode((prev) => {
+      const newMode = prev === 'list' ? 'grid' : 'list';
+      AsyncStorage.setItem(LIVE_VIEW_MODE_KEY, newMode).catch(() => {
+        // Ignore errors saving preference
+      });
+      return newMode;
+    });
+  }, []);
+
   const handleToggleFilter = useCallback(() => {
     // Prevent toggling if we're currently closing
     if (filterClosingRef.current) return;
@@ -1029,8 +1083,8 @@ function LiveScreen() {
   }, [withSelectGuard, filterText]);
 
   const handleCloseFilter = useCallback(() => {
-    // Prevent multiple close attempts
-    if (filterClosingRef.current) return;
+    // Prevent multiple close attempts or calls during unmount
+    if (filterClosingRef.current || !isMountedRef.current) return;
 
     withSelectGuard(() => {
       filterClosingRef.current = true;
@@ -1046,6 +1100,7 @@ function LiveScreen() {
 
       // Defer the state update to ensure blur completes
       setTimeout(() => {
+        if (!isMountedRef.current) return;
         setIsFilterActive(false);
         // Don't clear filter text on close - keep it active
         setTimeout(() => {
@@ -1114,7 +1169,12 @@ function LiveScreen() {
     console.log('[live] ========== FILTER INTERCEPTOR INSTALLED ==========');
 
     return () => {
-      console.log('[live] Unmount cleanup - filter interceptor will be removed by delayed cleanup if scheduled');
+      // Cleanup on unmount - remove interceptor if it's still registered
+      if (filterInterceptorRef.current) {
+        console.log('[live] Unmount cleanup - removing filter interceptor');
+        filterInterceptorRef.current();
+        filterInterceptorRef.current = null;
+      }
     };
   }, [isFilterActive]);
 
@@ -1174,7 +1234,12 @@ function LiveScreen() {
     console.log('[live] ========== ACTION MODAL INTERCEPTOR INSTALLED ==========');
 
     return () => {
-      console.log('[live] Unmount cleanup - action modal interceptor will be removed by delayed cleanup if scheduled');
+      // Cleanup on unmount - remove interceptor if it's still registered
+      if (actionModalInterceptorRef.current) {
+        console.log('[live] Unmount cleanup - removing action modal interceptor');
+        actionModalInterceptorRef.current();
+        actionModalInterceptorRef.current = null;
+      }
     };
   }, [isActionModalVisible]);
 
@@ -1201,7 +1266,7 @@ function LiveScreen() {
     let isHandling = false;
 
     const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
-      if (isHandling) {
+      if (isHandling || !isMountedRef.current) {
         return true;
       }
 
@@ -1220,12 +1285,17 @@ function LiveScreen() {
     selectionModeInterceptorRef.current = removeInterceptor;
 
     return () => {
-      // Cleanup on unmount
+      // Cleanup on unmount - remove interceptor if it's still registered
+      if (selectionModeInterceptorRef.current) {
+        selectionModeInterceptorRef.current();
+        selectionModeInterceptorRef.current = null;
+      }
     };
   }, [isSelectionMode]);
 
   // Handlers for selection confirmation modal
   const handleSelectionConfirmCancel = useCallback(() => {
+    if (!isMountedRef.current) return;
     setIsSelectionConfirmVisible(false);
     // Explicitly remove both interceptors to avoid timing issues
     if (selectionConfirmInterceptorRef.current) {
@@ -1241,6 +1311,7 @@ function LiveScreen() {
   }, [exitSelectionMode, showToast]);
 
   const handleSelectionConfirmLaunch = useCallback(() => {
+    if (!isMountedRef.current) return;
     setIsSelectionConfirmVisible(false);
     // Explicitly remove both interceptors to avoid timing issues
     if (selectionConfirmInterceptorRef.current) {
@@ -1262,7 +1333,8 @@ function LiveScreen() {
   }, [launchMultiscreen, showToast, router]);
 
   const handleSelectionConfirmClose = useCallback(() => {
-    // Just close modal, keep selection mode active
+    // Just close modal, keep selection mode active - but not during unmount
+    if (!isMountedRef.current) return;
     setIsSelectionConfirmVisible(false);
     // Explicitly remove modal interceptor
     if (selectionConfirmInterceptorRef.current) {
@@ -1309,7 +1381,11 @@ function LiveScreen() {
     selectionConfirmInterceptorRef.current = removeInterceptor;
 
     return () => {
-      // Cleanup handled by delayed cleanup
+      // Cleanup on unmount - remove interceptor if it's still registered
+      if (selectionConfirmInterceptorRef.current) {
+        selectionConfirmInterceptorRef.current();
+        selectionConfirmInterceptorRef.current = null;
+      }
     };
   }, [isSelectionConfirmVisible]);
 
@@ -1469,7 +1545,9 @@ function LiveScreen() {
 
   // Reset rendered count when channels change
   useEffect(() => {
-    setRenderedRowCount(INITIAL_ROW_COUNT);
+    if (isMountedRef.current) {
+      setRenderedRowCount(INITIAL_ROW_COUNT);
+    }
   }, [combinedChannels.length]);
 
   // Rows to actually render (progressive loading)
@@ -1580,6 +1658,7 @@ function LiveScreen() {
   }, [isActionModalVisible, actionChannel]);
 
   const handleCloseActionModal = useCallback(() => {
+    if (!isMountedRef.current) return;
     withSelectGuard(() => {
       setIsActionModalVisible(false);
       setActionChannel(null);
@@ -1654,6 +1733,15 @@ function LiveScreen() {
           onSelect={handleToggleFilter}
           theme={theme}
         />
+        {isEPGEnabled && (
+          <SpatialHeaderButton
+            text={viewMode === 'grid' ? 'List' : 'Guide'}
+            icon={viewMode === 'grid' ? 'list-outline' : 'calendar-outline'}
+            onSelect={handleToggleViewMode}
+            isActive={viewMode === 'grid'}
+            theme={theme}
+          />
+        )}
         {hasSavedSession && !isSelectionMode && (
           <SpatialHeaderButton
             text="Resume"
@@ -1673,9 +1761,14 @@ function LiveScreen() {
     </SpatialNavigationNode>
   );
 
-  // Mobile header buttons using native focus
+  // Mobile header buttons using native focus - wrapped in ScrollView for iOS overflow
   const renderMobileHeaderButtons = () => (
-    <View style={styles.actionsRow}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.actionsRow}
+      style={styles.actionsScrollView}
+    >
       <FocusablePressable
         icon="refresh-outline"
         onSelect={handleRefreshPlaylist}
@@ -1693,6 +1786,13 @@ function LiveScreen() {
         onSelect={handleToggleFilter}
         style={styles.headerActionButton}
       />
+      {isEPGEnabled && (
+        <FocusablePressable
+          icon={viewMode === 'grid' ? 'list-outline' : 'calendar-outline'}
+          onSelect={handleToggleViewMode}
+          style={[styles.headerActionButton, viewMode === 'grid' && styles.headerActionButtonActive]}
+        />
+      )}
       {hasSavedSession && !isSelectionMode && (
         <FocusablePressable
           icon="play-circle-outline"
@@ -1710,19 +1810,20 @@ function LiveScreen() {
           <Text style={styles.selectionCountText}>{selectedChannels.length}</Text>
         </View>
       )}
-    </View>
+    </ScrollView>
   );
 
   const pageContent = (
-    <EPGDataContext.Provider value={epgData}>
-      <Stack.Screen options={{ headerShown: false }} />
-      <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
+    <>
+      <Stack.Screen options={SCREEN_OPTIONS} />
+      <EPGDataContext.Provider value={epgData}>
+        <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
           {Platform.isTV ? (
             /* TV: Wrap header and content in single vertical node for proper navigation */
             <SpatialNavigationNode orientation="vertical">
               {/* Fixed header with title and action buttons */}
-              <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
+              <View style={styles.headerRow} >
                 <Text style={styles.title}>Live TV</Text>
               </View>
               {/* Action buttons as direct child of vertical node for proper navigation back from grid */}
@@ -1750,7 +1851,17 @@ function LiveScreen() {
                       : 'No channels found in the configured playlist.'}
                   </Text>
                 </View>
+              ) : viewMode === 'grid' ? (
+                /* EPG Grid View */
+                <View style={styles.scrollWrapper}>
+                  <EPGGrid
+                    channels={[...favoriteChannels, ...regularChannels]}
+                    onChannelSelect={handleChannelSelect}
+                    favoriteChannelIds={new Set(favoriteChannels.map((c) => c.id))}
+                  />
+                </View>
               ) : (
+                /* List/Card View */
                 <View style={styles.scrollWrapper}>
                   <TVGridHandlersContext.Provider value={tvGridHandlers}>
                     <ScrollView
@@ -1804,7 +1915,7 @@ function LiveScreen() {
             </SpatialNavigationNode>
           ) : (
             /* Mobile: Fixed header with title and action buttons */
-            <View style={styles.headerRow} key={`header-buttons-${hasSavedSession}-${isSelectionMode}`}>
+            <View style={styles.headerRow} >
               <Text style={styles.title}>Live TV</Text>
               {renderMobileHeaderButtons()}
             </View>
@@ -1815,7 +1926,7 @@ function LiveScreen() {
               <TextInput
                 ref={filterInputRef}
                 style={styles.filterInput}
-                placeholder="Filter channels by name..."
+                placeholder="Filter by channel or program..."
                 placeholderTextColor={theme.colors.text.muted}
                 value={filterText}
                 onChangeText={setFilterText}
@@ -1854,7 +1965,14 @@ function LiveScreen() {
                   ) : null}
                   {!loading && !error ? (
                     <View style={styles.scrollWrapper}>
-                      {isTablet ? (
+                      {viewMode === 'grid' ? (
+                        /* EPG Grid View */
+                        <EPGGrid
+                          channels={[...favoriteChannels, ...regularChannels]}
+                          onChannelSelect={handleChannelSelect}
+                          favoriteChannelIds={new Set(favoriteChannels.map((c) => c.id))}
+                        />
+                      ) : isTablet ? (
                         /* Tablet: Grid layout using FlatList */
                         <FlatList
                           data={[...favoriteChannels, ...displayedRegularChannels]}
@@ -2040,7 +2158,8 @@ function LiveScreen() {
         onSelectAll={handleSelectAllCategories}
         onClearAll={handleClearAllCategories}
       />
-    </EPGDataContext.Provider>
+      </EPGDataContext.Provider>
+    </>
   );
 
   // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus
@@ -2062,10 +2181,12 @@ function LiveScreen() {
   const [modalButton3Handle, setModalButton3Handle] = useState<number | null>(null);
 
   // Get node handles for focus trapping - use setTimeout to ensure refs are set after mount
+  // Check isMountedRef to prevent state updates during unmount which can cause infinite render loops
   useEffect(() => {
     if (isSelectionConfirmVisible) {
       // Small delay to ensure refs are populated after modal mounts
       const timer = setTimeout(() => {
+        if (!isMountedRef.current) return;
         const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
         const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
         const handle3 = modalButton3Ref.current ? findNodeHandle(modalButton3Ref.current) : null;
@@ -2075,10 +2196,12 @@ function LiveScreen() {
       }, 50);
       return () => clearTimeout(timer);
     } else {
-      // Reset handles when modal closes
-      setModalButton1Handle(null);
-      setModalButton2Handle(null);
-      setModalButton3Handle(null);
+      // Reset handles when modal closes - but not during unmount
+      if (isMountedRef.current) {
+        setModalButton1Handle(null);
+        setModalButton2Handle(null);
+        setModalButton3Handle(null);
+      }
     }
   }, [isSelectionConfirmVisible]);
 
@@ -2164,6 +2287,7 @@ function LiveScreen() {
   useEffect(() => {
     if (isFilterActive && Platform.isTV) {
       const timer = setTimeout(() => {
+        if (!isMountedRef.current) return;
         const inputHandle = filterInputWrapperRef.current ? findNodeHandle(filterInputWrapperRef.current) : null;
         const closeHandle = filterCloseButtonRef.current ? findNodeHandle(filterCloseButtonRef.current) : null;
         setFilterInputHandle(inputHandle);
@@ -2171,8 +2295,11 @@ function LiveScreen() {
       }, 50);
       return () => clearTimeout(timer);
     } else {
-      setFilterInputHandle(null);
-      setFilterCloseHandle(null);
+      // Reset handles when filter closes - but not during unmount
+      if (isMountedRef.current) {
+        setFilterInputHandle(null);
+        setFilterCloseHandle(null);
+      }
     }
   }, [isFilterActive]);
 
@@ -2181,7 +2308,7 @@ function LiveScreen() {
       <View style={styles.filterModalContainer} focusable={false}>
         <View style={styles.filterModalHeader}>
           <Text style={styles.filterModalTitle}>Filter Channels</Text>
-          <Text style={styles.filterModalSubtitle}>Enter a channel name to filter</Text>
+          <Text style={styles.filterModalSubtitle}>Search by channel name or program title</Text>
         </View>
 
         <View style={styles.filterModalInputContainer} focusable={false}>
@@ -2204,7 +2331,7 @@ function LiveScreen() {
               <TextInput
                 ref={filterInputRef}
                 style={[styles.filterModalInput, inputFocused && styles.filterModalInputFocused]}
-                placeholder="Type to filter channels..."
+                placeholder="Filter by channel or program..."
                 placeholderTextColor={theme.colors.text.muted}
                 {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
                 onChangeText={handleFilterChangeText}
@@ -2386,11 +2513,14 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       alignItems: 'center',
       marginBottom: theme.spacing.lg * scaleFactor,
     },
+    actionsScrollView: {
+      marginLeft: theme.spacing.md,
+      flexGrow: 0,
+    },
     actionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.lg,
-      marginBottom: theme.spacing.lg,
+      gap: theme.spacing.sm,
     },
     headerActionButton: {
       paddingHorizontal: isTV ? theme.spacing['2xl'] : theme.spacing.md,

@@ -255,6 +255,8 @@ func Register(
 		protected.HandleFunc("/live/epg/now", epgHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/live/epg/schedule", epgHandler.GetSchedule).Methods(http.MethodGet)
 		protected.HandleFunc("/live/epg/schedule", epgHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/epg/schedule/batch", epgHandler.GetScheduleMultiple).Methods(http.MethodGet)
+		protected.HandleFunc("/live/epg/schedule/batch", epgHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/live/epg/channel/{id}", epgHandler.GetChannelSchedule).Methods(http.MethodGet)
 		protected.HandleFunc("/live/epg/channel/{id}", epgHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/live/epg/status", epgHandler.GetStatus).Methods(http.MethodGet)

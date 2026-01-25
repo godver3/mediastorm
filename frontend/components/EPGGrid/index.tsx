@@ -26,7 +26,7 @@ import {
 } from '@/services/tv-navigation';
 
 // Grid dimensions
-const CHANNEL_COLUMN_WIDTH = Platform.isTV ? tvScale(180, 140) : 100;
+const CHANNEL_COLUMN_WIDTH = Platform.isTV ? tvScale(220, 180) : 120;
 const TIME_SLOT_WIDTH = Platform.isTV ? tvScale(150, 120) : 100;
 const ROW_HEIGHT = Platform.isTV ? tvScale(70, 56) : 50;
 const HEADER_HEIGHT = Platform.isTV ? tvScale(50, 40) : 36;

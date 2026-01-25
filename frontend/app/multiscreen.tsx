@@ -171,6 +171,9 @@ const getLayoutPositions = (
   return getNormalLayoutPositions(count, screenWidth, screenHeight);
 };
 
+// Static screen options to prevent re-creation on each render
+const SCREEN_OPTIONS = { headerShown: false } as const;
+
 export default function MultiscreenPage() {
   const theme = useTheme();
   const router = useRouter();
@@ -178,6 +181,15 @@ export default function MultiscreenPage() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { channels: channelsParam } = useLocalSearchParams<{ channels: string }>();
   const { setActiveAudioIndex } = useMultiscreen();
+
+  // Track mounted state to prevent state updates during unmount
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Parse channels from params
   const channels = useMemo<MultiscreenChannel[]>(() => {
@@ -200,7 +212,9 @@ export default function MultiscreenPage() {
   // Sync active audio index to context via useEffect to avoid setState during render
   // (onFocus can be called synchronously during SpatialNavigationFocusableView render)
   useEffect(() => {
-    setActiveAudioIndex(activeIndex);
+    if (isMountedRef.current) {
+      setActiveAudioIndex(activeIndex);
+    }
   }, [activeIndex, setActiveAudioIndex]);
 
   // Keep screen awake during multiscreen playback
@@ -243,9 +257,12 @@ export default function MultiscreenPage() {
     if (overlayTimeoutRef.current) {
       clearTimeout(overlayTimeoutRef.current);
     }
+    if (!isMountedRef.current) return;
     setShowOverlay(true);
     overlayTimeoutRef.current = setTimeout(() => {
-      setShowOverlay(false);
+      if (isMountedRef.current) {
+        setShowOverlay(false);
+      }
     }, 3000);
   }, []);
 
@@ -362,16 +379,19 @@ export default function MultiscreenPage() {
 
   if (channels.length < 2) {
     return (
-      <View style={styles.container}>
-        <Stack.Screen options={{ headerShown: false }} />
-        <Text style={styles.errorText}>Not enough channels for multiscreen</Text>
-      </View>
+      <>
+        <Stack.Screen options={SCREEN_OPTIONS} />
+        <View style={styles.container}>
+          <Text style={styles.errorText}>Not enough channels for multiscreen</Text>
+        </View>
+      </>
     );
   }
 
   return (
-    <SpatialNavigationRoot isActive={Platform.isTV}>
-      <Stack.Screen options={{ headerShown: false }} />
+    <>
+      <Stack.Screen options={SCREEN_OPTIONS} />
+      <SpatialNavigationRoot isActive={Platform.isTV}>
       <View style={styles.container}>
         {/* TV: Separate video layer from navigation layer to prevent remounting */}
         {Platform.isTV ? (
@@ -561,7 +581,8 @@ export default function MultiscreenPage() {
           </Pressable>
         )}
       </View>
-    </SpatialNavigationRoot>
+      </SpatialNavigationRoot>
+    </>
   );
 }
 

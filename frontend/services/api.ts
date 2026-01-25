@@ -1584,6 +1584,32 @@ class ApiService {
     });
   }
 
+  /**
+   * Fetch EPG schedule for multiple channels within a time window.
+   * Used by the EPG grid view for efficient batch fetching.
+   * @param channelIds - Array of channel IDs (tvgId values)
+   * @param hours - Number of hours to fetch (default 4)
+   * @param startOffsetMinutes - Offset in minutes from now (can be negative for past)
+   * @returns Map of channelId -> array of programs
+   */
+  async getEPGScheduleBatch(
+    channelIds: string[],
+    hours = 4,
+    startOffsetMinutes = 0,
+    signal?: AbortSignal,
+  ): Promise<Record<string, EPGProgram[]>> {
+    if (channelIds.length === 0) {
+      return {};
+    }
+    const params = new URLSearchParams();
+    params.set('channels', channelIds.join(','));
+    params.set('hours', hours.toString());
+    if (startOffsetMinutes !== 0) {
+      params.set('startOffset', startOffsetMinutes.toString());
+    }
+    return this.request<Record<string, EPGProgram[]>>(`/live/epg/schedule/batch?${params.toString()}`, { signal });
+  }
+
   async searchIndexer(
     query: string,
     limit = 50,
