@@ -287,7 +287,7 @@ const createStyles = (theme: NovaTheme) =>
       bottom: 0,
     },
     modalContainer: {
-      width: '45%',
+      width: Platform.isTV ? '45%' : '90%',
       maxWidth: 500,
       maxHeight: '80%',
       backgroundColor: theme.colors.background.elevated,
