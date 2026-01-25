@@ -335,14 +335,10 @@ func ComputeSimilarityScore(candidateName string, releaseTokens []string, releas
 		}
 	}
 
+	// Heavy penalty for sample/extras files - these are never the actual content
 	lower := strings.ToLower(normalized)
 	if strings.Contains(lower, "sample") || strings.Contains(lower, "extras") {
-		if score > 0 {
-			score -= 20
-			if score < 0 {
-				score = 0
-			}
-		}
+		score = 0
 	}
 
 	return score
