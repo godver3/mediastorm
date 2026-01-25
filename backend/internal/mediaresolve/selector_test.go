@@ -306,6 +306,14 @@ func TestParseAbsoluteEpisodeNumber(t *testing.T) {
 		{"Episode with hyphen separator", "One Piece - 1063 - Some Title [1080p].mkv", 1063, true},
 		{"Episode at end", "Anime Title - 999 [FIN].mkv", 999, true},
 		{"Four digit episode", "Long Running Anime - 1234 [1080p].mkv", 1234, true},
+
+		// Standalone E## format (anime without season prefix)
+		{"Standalone E01 with quote", "[OZC]RahXephon E01 'Invasion of the Capital' [720p].mkv", 1, true},
+		{"Standalone E01 with space", "Anime E01 Title.mkv", 1, true},
+		{"Standalone E42 in brackets", "[Group] Anime [E42] [1080p].mkv", 42, true},
+		{"Standalone E123", "Show E123 - The Episode.mkv", 123, true},
+		{"Lowercase e05", "anime e05.mkv", 5, true},
+		// Standalone E## should NOT match S01E01 (already tested above as should not parse)
 	}
 
 	for _, tt := range tests {
@@ -332,6 +340,10 @@ func TestCandidateMatchesAbsoluteEpisode(t *testing.T) {
 		{"SubsPlease match", "[SubsPlease] One Piece - 1153 (1080p).mkv", 1153, true},
 		{"Erai-raws match", "[Erai-raws] Anime - 42 [1080p].mkv", 42, true},
 		{"Episode keyword match", "Anime Episode 100 [1080p].mkv", 100, true},
+
+		// Standalone E## format (anime without season prefix)
+		{"RahXephon E01 format", "[OZC]RahXephon E01 'Invasion of the Capital' [720p].mkv", 1, true},
+		{"Standalone E05", "Anime E05 Title.mkv", 5, true},
 
 		// S01ENNNN format (anime using absolute episode in S01E format)
 		{"S01E1153 format", "One Piece S01E1153 Title [1080p].mkv", 1153, true},

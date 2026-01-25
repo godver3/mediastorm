@@ -59,12 +59,17 @@ var (
 	// while avoiding false positives from resolutions (1080p), years (2024), etc.
 
 	// Primary: "- NNNN" pattern with optional version suffix
-	// Matches: "One Piece - 1153 [1080p]", "Anime - 0042 (720p)", "Show - 1153v2"
-	absoluteEpisodeDashPattern = regexp.MustCompile(`[-–]\s*(\d{2,4})(?:v\d)?\s*[\[\(\s]`)
+	// Matches: "One Piece - 1153 [1080p]", "Anime - 0042 (720p)", "Show - 1153v2", "Anime_-_1153_"
+	absoluteEpisodeDashPattern = regexp.MustCompile(`[-–][\s_]*(\d{2,4})(?:v\d)?[\s_]*[\[\(\s_]`)
 
 	// Secondary: "Episode NNNN" or "Ep NNNN" keyword
-	// Matches: "Episode 1153", "Ep.42", "Ep 123", "Episode1153"
-	absoluteEpisodeKeywordPattern = regexp.MustCompile(`(?i)(?:episode|ep\.?)\s*(\d{2,4})(?:\s|$|[\[\(])`)
+	// Matches: "Episode 1153", "Ep.42", "Ep 123", "Episode1153", "episode 42.mkv"
+	absoluteEpisodeKeywordPattern = regexp.MustCompile(`(?i)(?:episode|ep\.?)\s*(\d{2,4})(?:\s|$|[\[\(\.])`)
+
+	// Standalone E## format (anime without season prefix)
+	// Matches: " E01 ", "[E42]", "_E01_", "Show E01 'Title'" - common in anime releases
+	// Does NOT match: "S01E01" (the E is preceded by a digit from season number)
+	standaloneEpisodePattern = regexp.MustCompile(`(?i)(?:^|[^\d])e(\d{1,4})(?:[\s\]\)\-_\.'"v]|$)`)
 
 	// Tertiary: "#NNNN" hash format
 	// Matches: "#1153", "# 042"
@@ -511,6 +516,14 @@ func ParseAbsoluteEpisodeNumber(value string) (int, bool) {
 
 	// Try secondary pattern: "Episode NNNN" or "Ep NNNN"
 	if matches := absoluteEpisodeKeywordPattern.FindStringSubmatch(value); len(matches) >= 2 {
+		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
+			return episode, true
+		}
+	}
+
+	// Try standalone E## pattern (anime without season prefix)
+	// Matches: " E01 ", "[E42]", "Show E01 'Title'" but NOT "S01E01"
+	if matches := standaloneEpisodePattern.FindStringSubmatch(value); len(matches) >= 2 {
 		if episode, err := strconv.Atoi(matches[1]); err == nil && episode > 0 && !excludeNums[episode] {
 			return episode, true
 		}
