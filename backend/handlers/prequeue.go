@@ -443,13 +443,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		case <-ctx.Done():
 			h.failPrequeue(prequeueID, "cancelled")
 			return
-		case usenetResult := <-usenetChan:
-			usenetResults = usenetResult.Results
-			usenetErr = usenetResult.Err
-			if usenetErr != nil {
-				log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+		case usenetResult, ok := <-usenetChan:
+			if ok {
+				usenetResults = usenetResult.Results
+				usenetErr = usenetResult.Err
+				if usenetErr != nil {
+					log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+				} else {
+					log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+				}
 			} else {
-				log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+				log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
 			}
 		}
 		// If no usenet results, wait for debrid as fallback
@@ -459,13 +463,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			case <-ctx.Done():
 				h.failPrequeue(prequeueID, "cancelled")
 				return
-			case debridResult := <-debridChan:
-				debridResults = debridResult.Results
-				debridErr = debridResult.Err
-				if debridErr != nil {
-					log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+			case debridResult, ok := <-debridChan:
+				if ok {
+					debridResults = debridResult.Results
+					debridErr = debridResult.Err
+					if debridErr != nil {
+						log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+					} else {
+						log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+					}
 				} else {
-					log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+					log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
 				}
 			}
 		}
@@ -477,13 +485,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		case <-ctx.Done():
 			h.failPrequeue(prequeueID, "cancelled")
 			return
-		case debridResult := <-debridChan:
-			debridResults = debridResult.Results
-			debridErr = debridResult.Err
-			if debridErr != nil {
-				log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+		case debridResult, ok := <-debridChan:
+			if ok {
+				debridResults = debridResult.Results
+				debridErr = debridResult.Err
+				if debridErr != nil {
+					log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+				} else {
+					log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+				}
 			} else {
-				log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+				log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
 			}
 		}
 		// If no debrid results, wait for usenet as fallback
@@ -493,13 +505,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			case <-ctx.Done():
 				h.failPrequeue(prequeueID, "cancelled")
 				return
-			case usenetResult := <-usenetChan:
-				usenetResults = usenetResult.Results
-				usenetErr = usenetResult.Err
-				if usenetErr != nil {
-					log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+			case usenetResult, ok := <-usenetChan:
+				if ok {
+					usenetResults = usenetResult.Results
+					usenetErr = usenetResult.Err
+					if usenetErr != nil {
+						log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+					} else {
+						log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+					}
 				} else {
-					log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+					log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
 				}
 			}
 		}
@@ -507,51 +523,115 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	default:
 		// No priority (or unknown): race both, use whichever has results first
 		log.Printf("[prequeue] TIMING: no priority - racing debrid and usenet")
+
+		// Track which sources have been consumed (closed channels return immediately)
+		debridConsumed := false
+		usenetConsumed := false
+
 		select {
 		case <-ctx.Done():
 			h.failPrequeue(prequeueID, "cancelled")
 			return
-		case debridResult := <-debridChan:
-			debridResults = debridResult.Results
-			debridErr = debridResult.Err
-			if debridErr != nil {
-				log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-			} else {
-				log.Printf("[prequeue] TIMING: debrid search complete (race winner), got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-			}
-		case usenetResult := <-usenetChan:
-			usenetResults = usenetResult.Results
-			usenetErr = usenetResult.Err
-			if usenetErr != nil {
-				log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-			} else {
-				log.Printf("[prequeue] TIMING: usenet search complete (race winner), got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-			}
-		}
-		// If the winner had no results, wait for the other
-		if len(debridResults) == 0 && len(usenetResults) == 0 {
-			log.Printf("[prequeue] TIMING: race winner had no results, waiting for other source (elapsed: %v)", time.Since(workerStart))
-			select {
-			case <-ctx.Done():
-				h.failPrequeue(prequeueID, "cancelled")
-				return
-			case debridResult := <-debridChan:
+		case debridResult, ok := <-debridChan:
+			debridConsumed = true
+			if ok {
 				debridResults = debridResult.Results
 				debridErr = debridResult.Err
 				if debridErr != nil {
 					log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
 				} else {
-					log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+					log.Printf("[prequeue] TIMING: debrid search complete (race winner), got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
 				}
-			case usenetResult := <-usenetChan:
+			} else {
+				log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
+			}
+		case usenetResult, ok := <-usenetChan:
+			usenetConsumed = true
+			if ok {
 				usenetResults = usenetResult.Results
 				usenetErr = usenetResult.Err
 				if usenetErr != nil {
 					log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
 				} else {
-					log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+					log.Printf("[prequeue] TIMING: usenet search complete (race winner), got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+				}
+			} else {
+				log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
+			}
+		}
+
+		// If the winner had no results, wait for the other source (only if not already consumed)
+		if len(debridResults) == 0 && len(usenetResults) == 0 {
+			log.Printf("[prequeue] TIMING: race winner had no results, waiting for other source (elapsed: %v)", time.Since(workerStart))
+
+			// Only wait for sources that haven't been consumed yet
+			if !debridConsumed && !usenetConsumed {
+				// Both still available - race again
+				select {
+				case <-ctx.Done():
+					h.failPrequeue(prequeueID, "cancelled")
+					return
+				case debridResult, ok := <-debridChan:
+					if ok {
+						debridResults = debridResult.Results
+						debridErr = debridResult.Err
+						if debridErr != nil {
+							log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+						} else {
+							log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+						}
+					}
+				case usenetResult, ok := <-usenetChan:
+					if ok {
+						usenetResults = usenetResult.Results
+						usenetErr = usenetResult.Err
+						if usenetErr != nil {
+							log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+						} else {
+							log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+						}
+					}
+				}
+			} else if !debridConsumed {
+				// Only debrid left to check
+				select {
+				case <-ctx.Done():
+					h.failPrequeue(prequeueID, "cancelled")
+					return
+				case debridResult, ok := <-debridChan:
+					if ok {
+						debridResults = debridResult.Results
+						debridErr = debridResult.Err
+						if debridErr != nil {
+							log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
+						} else {
+							log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
+						}
+					} else {
+						log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
+					}
+				}
+			} else if !usenetConsumed {
+				// Only usenet left to check
+				select {
+				case <-ctx.Done():
+					h.failPrequeue(prequeueID, "cancelled")
+					return
+				case usenetResult, ok := <-usenetChan:
+					if ok {
+						usenetResults = usenetResult.Results
+						usenetErr = usenetResult.Err
+						if usenetErr != nil {
+							log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
+						} else {
+							log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
+						}
+					} else {
+						log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
+					}
 				}
 			}
+			// else: both consumed, nothing more to wait for
 		}
 	}
 
