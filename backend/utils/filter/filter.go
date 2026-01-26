@@ -233,13 +233,9 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			}
 		}
 
-		// For daily shows, filter out results that don't match the target air date
-		if opts.IsDaily && opts.TargetAirDate != "" {
-			if !mediaresolve.CandidateMatchesDailyDate(result.Title, opts.TargetAirDate, 0) {
-				log.Printf("[filter] Rejecting %q: daily show date doesn't match target %s", result.Title, opts.TargetAirDate)
-				continue
-			}
-		}
+		// NOTE: Daily show date filtering is handled below alongside S##E## matching.
+		// Some "daily" shows (like SNL) use standard S##E## naming, not dates.
+		// We accept results with EITHER matching date OR matching S##E##.
 
 		// Get the parsed result from the batch
 		parsed := parsedMap[result.Title]
