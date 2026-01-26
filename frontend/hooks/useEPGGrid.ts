@@ -290,7 +290,7 @@ export const useEPGGrid = (): UseEPGGridResult => {
   }, []);
 
   const setTimeWindowHours = useCallback((hours: number) => {
-    const clampedHours = Math.max(2, Math.min(12, hours));
+    const clampedHours = Math.max(1.5, Math.min(12, hours));
     setGridState((prev) => ({
       ...prev,
       timeWindowHours: clampedHours,

@@ -62,7 +62,15 @@ export const EPGGrid = ({
     fetchSchedules,
     getTimeSlots,
     getCurrentTimePosition,
+    setTimeWindowHours,
   } = useEPGGrid();
+
+  // Use shorter time window on mobile for better readability
+  useEffect(() => {
+    if (!isTV) {
+      setTimeWindowHours(1.5);
+    }
+  }, [isTV, setTimeWindowHours]);
 
   const [currentTimePosition, setCurrentTimePosition] = useState<number | null>(null);
 
