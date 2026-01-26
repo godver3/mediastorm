@@ -439,7 +439,6 @@ class RemoteControlManager implements RemoteControlManagerInterface {
 
         if (holdDuration < ACCEL_START_DELAY) {
           // Before acceleration kicks in, emit single event
-          console.log(`[Accel] ${key} - pre-accel, holdDuration=${holdDuration}ms`);
           this.lastEmittedKey = key;
           this.lastEmittedAt = now;
           return true;
@@ -448,8 +447,6 @@ class RemoteControlManager implements RemoteControlManagerInterface {
           this.accelEventCount++;
           const progress = Math.min(this.accelEventCount / ACCEL_RAMP_EVENTS, 1);
           const multiplier = Math.round(1 + progress * (ACCEL_MAX_MULTIPLIER - 1));
-
-          console.log(`[Accel] ${key} - ACCELERATING! count=${this.accelEventCount}, multiplier=${multiplier}x, progress=${Math.round(progress * 100)}%`);
 
           // Emit extra events (multiplier - 1 extra, since we return true for the first one)
           for (let i = 1; i < multiplier; i++) {
@@ -467,7 +464,6 @@ class RemoteControlManager implements RemoteControlManagerInterface {
         this.accelKey = key;
         this.accelStartTime = now;
         this.accelEventCount = 0;
-        console.log(`[Accel] ${key} - NEW press, resetting acceleration`);
 
         // Apply normal dedup for first press
         if (isSameKey && timeSinceLastEmit < 50) {
