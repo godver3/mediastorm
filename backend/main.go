@@ -381,6 +381,7 @@ func main() {
 
 	// Create image proxy handler for resizing and caching TMDB images
 	imageHandler := handlers.NewImageHandler(settings.Cache.Directory)
+	settingsHandler.SetImageHandler(imageHandler) // Enable clearing image cache
 
 	api.Register(
 		r,

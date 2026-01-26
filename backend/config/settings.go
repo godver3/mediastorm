@@ -473,6 +473,7 @@ const (
 	ScheduledTaskTypePlexWatchlistSync ScheduledTaskType = "plex_watchlist_sync"
 	ScheduledTaskTypeTraktListSync     ScheduledTaskType = "trakt_list_sync"
 	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
+	ScheduledTaskTypePlaylistRefresh   ScheduledTaskType = "playlist_refresh"
 )
 
 // ScheduledTaskFrequency defines how often a task runs
@@ -1003,6 +1004,9 @@ func (m *Manager) Load() (Settings, error) {
 	if s.ScheduledTasks.Tasks == nil {
 		s.ScheduledTasks.Tasks = []ScheduledTask{}
 	}
+	// Note: Auto-creation of EPG and playlist refresh tasks is handled in
+	// handlers/settings.go PutSettings() when features are enabled, not here.
+	// This prevents tasks from being recreated after user manually deletes them.
 
 	// Backfill Ranking settings
 	if len(s.Ranking.Criteria) == 0 {

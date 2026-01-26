@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -235,6 +236,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeTraktListSync(task)
 	case config.ScheduledTaskTypeEPGRefresh:
 		result, err = s.executeEPGRefresh(task)
+	case config.ScheduledTaskTypePlaylistRefresh:
+		result, err = s.executePlaylistRefresh(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -1536,4 +1539,39 @@ func (s *Service) executeEPGRefresh(task config.ScheduledTask) (SyncResult, erro
 	return SyncResult{
 		Count: status.ProgramCount,
 	}, nil
+}
+
+// executePlaylistRefresh clears the cached Live TV playlist to force a fresh fetch.
+func (s *Service) executePlaylistRefresh(task config.ScheduledTask) (SyncResult, error) {
+	cacheDir := "cache/live"
+
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Cache directory doesn't exist, nothing to clear
+			log.Printf("[scheduler] playlist cache directory doesn't exist, nothing to clear")
+			return SyncResult{Count: 0}, nil
+		}
+		return SyncResult{}, fmt.Errorf("failed to read cache directory: %w", err)
+	}
+
+	cleared := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Only remove .m3u and .meta files
+		if strings.HasSuffix(name, ".m3u") || strings.HasSuffix(name, ".meta") {
+			path := cacheDir + "/" + name
+			if err := os.Remove(path); err != nil {
+				log.Printf("[scheduler] failed to remove cache file %s: %v", name, err)
+			} else {
+				cleared++
+			}
+		}
+	}
+
+	log.Printf("[scheduler] cleared %d cached playlist files", cleared)
+	return SyncResult{Count: cleared}, nil
 }
