@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, Platform } from 'react-native';
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
@@ -29,10 +29,8 @@ const ActorCard = memo(function ActorCard({
 
   const showPlaceholder = !actor.profileUrl || imageError;
 
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.actorCard, pressed && styles.actorCardPressed]}>
+  const content = (
+    <>
       {showPlaceholder ? (
         <View style={[styles.actorPhoto, styles.actorPhotoPlaceholder]}>
           <Ionicons name="person" size={32} color={theme.colors.text.muted} />
@@ -51,6 +49,19 @@ const ActorCard = memo(function ActorCard({
       <Text style={styles.characterName} numberOfLines={2}>
         {actor.character}
       </Text>
+    </>
+  );
+
+  // On TV platforms, use View to avoid native focus conflicts
+  if (Platform.isTV) {
+    return <View style={styles.actorCard}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.actorCard, pressed && styles.actorCardPressed]}>
+      {content}
     </Pressable>
   );
 });

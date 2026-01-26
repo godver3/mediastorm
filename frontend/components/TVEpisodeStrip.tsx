@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo } from 'react';
 import { Image } from './Image';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import type { SeriesEpisode } from '../services/api';
@@ -377,9 +377,8 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
             onFocus={onFocus}
             onBlur={onBlur}>
             {({ isFocused }: { isFocused: boolean }) => (
-              <Pressable
-                style={[styles.selectedEpisodeContainer, isFocused && styles.selectedEpisodeContainerFocused]}
-                tvParallaxProperties={{ enabled: false }}>
+              <View
+                style={[styles.selectedEpisodeContainer, isFocused && styles.selectedEpisodeContainerFocused]}>
                 <View style={styles.selectedImageContainer}>
                   <Image
                     source={activeEpisode.image?.url || ''}
@@ -418,7 +417,7 @@ const TVEpisodeStrip = memo(function TVEpisodeStrip({
                     <Text style={styles.progressBadgeText}>{`${percentWatched ?? 0}%`}</Text>
                   </View>
                 </View>
-              </Pressable>
+              </View>
             )}
           </SpatialNavigationFocusableView>
         </View>

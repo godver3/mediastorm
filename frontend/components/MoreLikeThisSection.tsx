@@ -1,5 +1,5 @@
 import React, { memo, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, Platform } from 'react-native';
 import { Image } from '@/components/Image';
 import type { NovaTheme } from '@/theme';
 import type { Title } from '@/services/api';
@@ -42,26 +42,38 @@ const MoreLikeThisSection = memo(function MoreLikeThisSection({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         style={styles.scrollView}>
-        {titles.map((title) => (
-          <Pressable
-            key={title.id}
-            style={styles.card}
-            onPress={() => onTitlePress?.(title)}>
-            {title.poster?.url ? (
-              <Image source={{ uri: title.poster.url }} style={styles.poster} contentFit="cover" />
-            ) : (
-              <View style={[styles.poster, styles.posterPlaceholder]}>
-                <Text style={styles.placeholderText}>{title.name.charAt(0)}</Text>
+        {titles.map((title) => {
+          const content = (
+            <>
+              {title.poster?.url ? (
+                <Image source={{ uri: title.poster.url }} style={styles.poster} contentFit="cover" />
+              ) : (
+                <View style={[styles.poster, styles.posterPlaceholder]}>
+                  <Text style={styles.placeholderText}>{title.name.charAt(0)}</Text>
+                </View>
+              )}
+              <Text style={styles.titleName} numberOfLines={2}>
+                {title.name}
+              </Text>
+              {title.year > 0 && <Text style={styles.titleYear}>{title.year}</Text>}
+            </>
+          );
+
+          // On TV platforms, use View to avoid native focus conflicts
+          if (Platform.isTV) {
+            return (
+              <View key={title.id} style={styles.card}>
+                {content}
               </View>
-            )}
-            <Text style={styles.titleName} numberOfLines={2}>
-              {title.name}
-            </Text>
-            {title.year > 0 && (
-              <Text style={styles.titleYear}>{title.year}</Text>
-            )}
-          </Pressable>
-        ))}
+            );
+          }
+
+          return (
+            <Pressable key={title.id} style={styles.card} onPress={() => onTitlePress?.(title)}>
+              {content}
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </View>
   );
