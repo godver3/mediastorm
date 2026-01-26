@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -7,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import type { View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -64,6 +65,45 @@ export const EPGGrid = ({
   } = useEPGGrid();
 
   const [currentTimePosition, setCurrentTimePosition] = useState<number | null>(null);
+
+  // Refs for manual vertical scrolling on TV
+  const scrollViewRef = useRef<ScrollView>(null);
+  const rowRefs = useRef<{ [channelId: string]: RNView | null }>({});
+  const focusedChannelRef = useRef<string | null>(null);
+
+  // Scroll to a specific row when focus changes
+  const scrollToRow = useCallback((channelId: string) => {
+    if (!isTV) return;
+
+    const rowRef = rowRefs.current[channelId];
+    const scrollView = scrollViewRef.current;
+    if (!rowRef || !scrollView) return;
+
+    rowRef.measureLayout(
+      scrollView as unknown as number,
+      (_left, top) => {
+        // Scroll so the row is near the top with some padding
+        const targetY = Math.max(0, top - ROW_HEIGHT);
+        scrollView.scrollTo({ y: targetY, animated: true });
+      },
+      () => {
+        // Silently fail
+      },
+    );
+  }, [isTV]);
+
+  // Callback for when a row receives focus
+  const handleRowFocus = useCallback((channelId: string) => {
+    if (focusedChannelRef.current !== channelId) {
+      focusedChannelRef.current = channelId;
+      scrollToRow(channelId);
+    }
+  }, [scrollToRow]);
+
+  // Register row ref
+  const registerRowRef = useCallback((channelId: string, ref: RNView | null) => {
+    rowRefs.current[channelId] = ref;
+  }, []);
 
   // Fixed channel width
   const channelWidth = CHANNEL_COLUMN_WIDTH;
@@ -165,7 +205,7 @@ export const EPGGrid = ({
           </View>
 
           {/* Vertical scroll for channel rows */}
-          <ScrollView showsVerticalScrollIndicator={false} style={styles.bodyScroll}>
+          <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} style={styles.bodyScroll}>
             {isTV ? (
               <SpatialNavigationNode orientation="vertical">
                 {channels.map((channel) => (
@@ -178,6 +218,8 @@ export const EPGGrid = ({
                     isFavorite={favoriteChannelIds.has(channel.id)}
                     currentTimePosition={currentTimePosition}
                     onPress={() => handleChannelPress(channel)}
+                    onFocus={() => handleRowFocus(channel.id)}
+                    registerRef={(ref) => registerRowRef(channel.id, ref)}
                     theme={theme}
                     isTV={isTV}
                   />
@@ -221,6 +263,8 @@ interface EPGRowProps {
   isFavorite: boolean;
   currentTimePosition: number | null;
   onPress: () => void;
+  onFocus?: () => void;
+  registerRef?: (ref: RNView | null) => void;
   theme: NovaTheme;
   isTV: boolean;
 }
@@ -233,10 +277,21 @@ const EPGRow = React.memo(function EPGRow({
   isFavorite,
   currentTimePosition,
   onPress,
+  onFocus,
+  registerRef,
   theme,
   isTV,
 }: EPGRowProps) {
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const rowRef = useRef<RNView>(null);
+
+  // Register ref with parent for scroll tracking
+  useEffect(() => {
+    if (registerRef) {
+      registerRef(rowRef.current);
+      return () => registerRef(null);
+    }
+  }, [registerRef]);
 
   const rowContent = (
     <>
@@ -287,9 +342,9 @@ const EPGRow = React.memo(function EPGRow({
 
   if (isTV) {
     return (
-      <SpatialNavigationFocusableView onSelect={onPress}>
+      <SpatialNavigationFocusableView onSelect={onPress} onFocus={onFocus}>
         {({ isFocused }: { isFocused: boolean }) => (
-          <View style={[styles.row, isFocused && styles.rowFocused]}>
+          <View ref={rowRef} style={[styles.row, isFocused && styles.rowFocused]}>
             {rowContent}
           </View>
         )}
