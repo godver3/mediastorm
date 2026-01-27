@@ -398,9 +398,9 @@ var SettingsSchema = map[string]interface{}{
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa"}, "description": "Scraper type", "order": 1},
-			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "Torrentio URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
-			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams: full Stremio addon URL)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}}}, "order": 3},
+			"type":    map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa", "comet"}, "description": "Scraper type", "order": 1},
+			"options": map[string]interface{}{"type": "text", "label": "Options", "description": "URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
+			"url":     map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams/Comet: full Stremio addon URL)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}}}, "order": 3},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
 			"config.passthroughFormat": map[string]interface{}{"type": "boolean", "label": "Passthrough Format", "description": "Show raw AIOStreams format in manual selection (emoji-formatted details)", "showWhen": map[string]interface{}{"field": "type", "value": "aiostreams"}, "order": 5},
 			"config.category": map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
@@ -627,6 +627,7 @@ type AdminUIHandler struct {
 	loginTemplate         *template.Template
 	registerTemplate      *template.Template
 	accountsTemplate      *template.Template
+	kidsSettingsTemplate  *template.Template
 	settingsPath          string
 	hlsManager            *HLSManager
 	usersService          *users.Service
@@ -815,15 +816,16 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 	}
 
 	return &AdminUIHandler{
-		settingsTemplate:    createPageTemplate("settings.html"),
-		statusTemplate:      createPageTemplate("status.html"),
-		historyTemplate:     createPageTemplate("history.html"),
-		toolsTemplate:       createPageTemplate("tools.html"),
-		searchTemplate:      createPageTemplate("search.html"),
-		loginTemplate:       loginTmpl,
-		registerTemplate:    registerTmpl,
-		accountsTemplate:    createPageTemplate("accounts.html"),
-		settingsPath:        settingsPath,
+		settingsTemplate:     createPageTemplate("settings.html"),
+		statusTemplate:       createPageTemplate("status.html"),
+		historyTemplate:      createPageTemplate("history.html"),
+		toolsTemplate:        createPageTemplate("tools.html"),
+		searchTemplate:       createPageTemplate("search.html"),
+		loginTemplate:        loginTmpl,
+		registerTemplate:     registerTmpl,
+		accountsTemplate:     createPageTemplate("accounts.html"),
+		kidsSettingsTemplate: createPageTemplate("kids_settings.html"),
+		settingsPath:         settingsPath,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
 		userSettingsService: userSettingsService,
@@ -1990,6 +1992,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		h.testAIOStreamsScraper(w, req)
 	case "nyaa":
 		h.testNyaaScraper(w)
+	case "comet":
+		h.testCometScraper(w, req)
 	case "torrentio":
 		fallthrough
 	default:
@@ -2338,6 +2342,124 @@ func (h *AdminUIHandler) testNyaaScraper(w http.ResponseWriter) {
 	})
 }
 
+// testCometScraper tests a Comet instance by fetching its manifest and a test stream
+func (h *AdminUIHandler) testCometScraper(w http.ResponseWriter, req TestScraperRequest) {
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	// Determine base URL
+	baseURL := strings.TrimSpace(req.URL)
+	if baseURL == "" {
+		baseURL = "https://comet.elfhosted.com"
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/manifest.json")
+
+	// Build manifest URL with options if present
+	options := strings.TrimSpace(req.Options)
+	var manifestURL string
+	if options != "" {
+		manifestURL = fmt.Sprintf("%s/%s/manifest.json", baseURL, options)
+	} else {
+		manifestURL = fmt.Sprintf("%s/manifest.json", baseURL)
+	}
+
+	// Test by fetching manifest
+	manifestReq, err := http.NewRequest(http.MethodGet, manifestURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	addBrowserHeaders(manifestReq)
+
+	resp, err := client.Do(manifestReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Comet connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Comet returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Parse manifest to verify it's a valid Stremio addon
+	var manifest struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to parse manifest: %v", err),
+		})
+		return
+	}
+
+	// Try to fetch a test stream (The Matrix - tt0133093)
+	var streamURL string
+	if options != "" {
+		streamURL = fmt.Sprintf("%s/%s/stream/movie/tt0133093.json", baseURL, options)
+	} else {
+		streamURL = fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL)
+	}
+
+	streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
+	if err != nil {
+		// Manifest worked, just report that
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
+		})
+		return
+	}
+	addBrowserHeaders(streamReq)
+
+	streamResp, err := client.Do(streamReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
+		})
+		return
+	}
+	defer streamResp.Body.Close()
+
+	if streamResp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
+		})
+		return
+	}
+
+	var streamResult struct {
+		Streams []interface{} `json:"streams"`
+	}
+	if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Comet is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
+	})
+}
+
 // TestUsenetProviderRequest represents a request to test a usenet provider
 type TestUsenetProviderRequest struct {
 	Name     string `json:"name"`
@@ -2475,17 +2597,20 @@ type TestDebridProviderRequest struct {
 
 // ProfileWithPinStatus represents a profile with its PIN status
 type ProfileWithPinStatus struct {
-	ID             string    `json:"id"`
-	AccountID      string    `json:"accountId,omitempty"`
-	Name           string    `json:"name"`
-	Color          string    `json:"color,omitempty"`
-	IconURL        string    `json:"iconUrl,omitempty"`
-	HasPin         bool      `json:"hasPin"`
-	HasIcon        bool      `json:"hasIcon"`
-	IsKidsProfile  bool      `json:"isKidsProfile"`
-	TraktAccountID string    `json:"traktAccountId,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID               string    `json:"id"`
+	AccountID        string    `json:"accountId,omitempty"`
+	Name             string    `json:"name"`
+	Color            string    `json:"color,omitempty"`
+	IconURL          string    `json:"iconUrl,omitempty"`
+	HasPin           bool      `json:"hasPin"`
+	HasIcon          bool      `json:"hasIcon"`
+	IsKidsProfile    bool      `json:"isKidsProfile"`
+	KidsMode         string    `json:"kidsMode,omitempty"`
+	KidsMaxRating    string    `json:"kidsMaxRating,omitempty"`
+	KidsAllowedLists []string  `json:"kidsAllowedLists,omitempty"`
+	TraktAccountID   string    `json:"traktAccountId,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // GetProfiles returns all profiles with their PIN status (for admin dashboard)
@@ -2502,17 +2627,20 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 	profiles := make([]ProfileWithPinStatus, len(users))
 	for i, u := range users {
 		profiles[i] = ProfileWithPinStatus{
-			ID:             u.ID,
-			AccountID:      u.AccountID,
-			Name:           u.Name,
-			Color:          u.Color,
-			IconURL:        u.IconURL,
-			HasPin:         u.HasPin(),
-			HasIcon:        u.HasIcon(),
-			IsKidsProfile:  u.IsKidsProfile,
-			TraktAccountID: u.TraktAccountID,
-			CreatedAt:      u.CreatedAt,
-			UpdatedAt:      u.UpdatedAt,
+			ID:               u.ID,
+			AccountID:        u.AccountID,
+			Name:             u.Name,
+			Color:            u.Color,
+			IconURL:          u.IconURL,
+			HasPin:           u.HasPin(),
+			HasIcon:          u.HasIcon(),
+			IsKidsProfile:    u.IsKidsProfile,
+			KidsMode:         u.KidsMode,
+			KidsMaxRating:    u.KidsMaxRating,
+			KidsAllowedLists: u.KidsAllowedLists,
+			TraktAccountID:   u.TraktAccountID,
+			CreatedAt:        u.CreatedAt,
+			UpdatedAt:        u.UpdatedAt,
 		}
 	}
 
@@ -2558,14 +2686,18 @@ func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:        user.ID,
-		Name:      user.Name,
-		Color:     user.Color,
-		IconURL:   user.IconURL,
-		HasPin:    user.HasPin(),
-		HasIcon:   user.HasIcon(),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2594,14 +2726,18 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:        user.ID,
-		Name:      user.Name,
-		Color:     user.Color,
-		IconURL:   user.IconURL,
-		HasPin:    user.HasPin(),
-		HasIcon:   user.HasIcon(),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2655,16 +2791,19 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		AccountID:     user.AccountID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		AccountID:        user.AccountID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2706,14 +2845,18 @@ func (h *AdminUIHandler) RenameProfile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:        user.ID,
-		Name:      user.Name,
-		Color:     user.Color,
-		IconURL:   user.IconURL,
-		HasPin:    user.HasPin(),
-		HasIcon:   user.HasIcon(),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2782,15 +2925,18 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2830,15 +2976,18 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2880,15 +3029,18 @@ func (h *AdminUIHandler) SetProfileIcon(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2917,15 +3069,18 @@ func (h *AdminUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -2980,15 +3135,18 @@ func (h *AdminUIHandler) UploadProfileIcon(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ProfileWithPinStatus{
-		ID:            user.ID,
-		Name:          user.Name,
-		Color:         user.Color,
-		IconURL:       user.IconURL,
-		HasPin:        user.HasPin(),
-		HasIcon:       user.HasIcon(),
-		IsKidsProfile: user.IsKidsProfile,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:               user.ID,
+		Name:             user.Name,
+		Color:            user.Color,
+		IconURL:          user.IconURL,
+		HasPin:           user.HasPin(),
+		HasIcon:          user.HasIcon(),
+		IsKidsProfile:    user.IsKidsProfile,
+		KidsMode:         user.KidsMode,
+		KidsMaxRating:    user.KidsMaxRating,
+		KidsAllowedLists: user.KidsAllowedLists,
+		CreatedAt:        user.CreatedAt,
+		UpdatedAt:        user.UpdatedAt,
 	})
 }
 
@@ -4128,6 +4286,51 @@ func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.accountsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Accounts template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// KidsSettingsPage serves the kids profile settings page
+func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	// Verify the profile ID exists and belongs to the account (for non-admin)
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Redirect(w, r, basePath+"/accounts", http.StatusFound)
+		return
+	}
+
+	// Non-admin users can only configure their own account's profiles
+	if !isAdmin && !h.profileBelongsToAccount(profileID, accountID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/kids-settings",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Settings:    settings,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.kidsSettingsTemplate == nil {
+		http.Error(w, "Kids settings template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.kidsSettingsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Kids settings template error: %v\n", err)
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }

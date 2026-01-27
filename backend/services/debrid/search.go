@@ -139,6 +139,13 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			}
 			log.Printf("[debrid] Initializing Nyaa scraper: %s at %s (category: %s, filter: %s)", scraperCfg.Name, baseURL, category, filter)
 			scrapers = append(scrapers, NewNyaaScraper(baseURL, scraperCfg.Name, category, filter, httpClient))
+		case "comet":
+			baseURL := scraperCfg.URL
+			if baseURL == "" {
+				baseURL = cometDefaultBaseURL
+			}
+			log.Printf("[debrid] Initializing Comet scraper: %s at %s (options: %s)", scraperCfg.Name, baseURL, scraperCfg.Options)
+			scrapers = append(scrapers, NewCometScraper(httpClient, baseURL, scraperCfg.Options, scraperCfg.Name))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
