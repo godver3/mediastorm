@@ -172,6 +172,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
   // Refs for mutable state (exposed for synchronous access)
   const sessionIdRef = useRef<string | null>(null);
   const sessionBufferEndRef = useRef<number>(initialStartOffset);
+  const sessionStartOffsetRef = useRef<number>(initialStartOffset); // Track session start for offset validation
   const isRecreatingRef = useRef(false);
   const skipTrackPreferencesRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
@@ -264,8 +265,9 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
         const keyframeDelta =
           typeof response.keyframeDelta === 'number' ? response.keyframeDelta : actualSessionStart - sessionStart;
 
-        // Update buffer end to match session start
+        // Update buffer end and start offset to match session start
         sessionBufferEndRef.current = sessionStart;
+        sessionStartOffsetRef.current = sessionStart;
 
         // Calculate pending seek (difference between requested and actual start)
         const pendingSeek = Math.max(0, safeTarget - sessionStart);
@@ -372,6 +374,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
                 : actualSessionStart - sessionStart;
 
             sessionBufferEndRef.current = sessionStart;
+            sessionStartOffsetRef.current = sessionStart;
             const pendingSeek = Math.max(0, safeTarget - sessionStart);
             pendingSeekRef.current = pendingSeek > 0.5 ? pendingSeek : null;
 
@@ -482,17 +485,18 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           }));
         }
 
-        // Validate playback offset matches server's startOffset
+        // Validate session start offset matches server's startOffset
+        // This detects if the server's session was recreated or drifted from what the client expects
         if (response.startOffset !== undefined && onOffsetCorrection) {
-          const offsetDelta = Math.abs(response.startOffset - sessionBufferEndRef.current);
+          const offsetDelta = Math.abs(response.startOffset - sessionStartOffsetRef.current);
           if (offsetDelta > 0.5) {
-            console.warn('[useHlsSession] Keepalive: playback offset mismatch, correcting', {
+            console.warn('[useHlsSession] Keepalive: session start offset mismatch, correcting', {
               serverStartOffset: response.startOffset,
-              serverActualStartOffset: response.actualStartOffset,
-              serverKeyframeDelta: response.keyframeDelta,
-              clientBufferEnd: sessionBufferEndRef.current,
+              clientStartOffset: sessionStartOffsetRef.current,
               delta: offsetDelta,
             });
+            // Update our tracked start offset to match server
+            sessionStartOffsetRef.current = response.startOffset;
             onOffsetCorrection(response.startOffset);
           }
         }
@@ -545,6 +549,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
     skipTrackPreferencesRef.current = false;
     pendingSeekRef.current = null;
     sessionBufferEndRef.current = 0;
+    sessionStartOffsetRef.current = 0;
     setState({
       playlistUrl: null,
       sessionId: null,

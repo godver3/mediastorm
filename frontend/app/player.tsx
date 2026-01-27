@@ -1025,6 +1025,13 @@ export default function PlayerScreen() {
   const warmStartDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoEndedNaturallyRef = useRef(false); // Track if video ended naturally (vs user exit)
   const userNavigatedToEpisodeRef = useRef(false); // Track if user explicitly navigated (via Next/Prev button)
+  // Stall detection refs - track when playback stops progressing with exhausted buffer
+  const lastProgressTimeRef = useRef<number>(0); // Last time currentTime increased
+  const lastCurrentTimeRef = useRef<number>(0); // Last recorded currentTime
+  const lastPlayableDurationRef = useRef<number>(0); // Last recorded playableDuration
+  const lastBufferGrowthTimeRef = useRef<number>(0); // Last time playableDuration increased (buffer growing)
+  const stallDetectedAtRef = useRef<number | null>(null); // When stall was first detected
+  const isRecoveringFromStallRef = useRef(false); // Prevent multiple recovery attempts
   const warmStartDebounceResolveRef = useRef<((value: boolean) => void) | null>(null);
   // Note: pendingSessionSeekRef is now provided by useHlsSession hook
   const pendingSeekAttemptRef = useRef<{ attempts: number; lastAttemptMs: number }>({
@@ -1564,6 +1571,124 @@ export default function PlayerScreen() {
       hasShownFatalErrorRef.current = false;
     };
   }, [isHlsStream, hlsSessionActions, hlsSessionIdRef, showToast, router]);
+
+  // Stall detection and recovery for HLS streams
+  // Detects when playback has stalled (buffer exhausted, no progress) and recreates the session
+  useEffect(() => {
+    if (!isHlsStream || !initialSourcePath) {
+      return;
+    }
+
+    const STALL_DETECTION_INTERVAL = 1000; // Check every 1 second
+    const STALL_THRESHOLD = 3000; // Trigger recovery after 3 seconds of stall
+    const BUFFER_EXHAUSTED_THRESHOLD = 1.0; // Consider buffer exhausted if < 1 second ahead
+
+    const intervalId = setInterval(async () => {
+      // Skip if paused, recovering, or no session
+      if (pausedRef.current || isRecoveringFromStallRef.current || !hlsSessionIdRef.current) {
+        return;
+      }
+
+      const now = Date.now();
+      const timeSinceProgress = now - lastProgressTimeRef.current;
+      const timeSinceBufferGrowth = now - lastBufferGrowthTimeRef.current;
+      const currentTime = lastCurrentTimeRef.current;
+      const playableDuration = lastPlayableDurationRef.current;
+      const bufferRemaining = playableDuration - currentTime;
+
+      // Detect stall: buffer is exhausted AND playback hasn't progressed AND buffer isn't growing
+      // If buffer is still growing, we're just buffering normally (segments downloading) - don't trigger recovery
+      const isBufferGrowing = timeSinceBufferGrowth < STALL_THRESHOLD;
+      const isStalled =
+        bufferRemaining < BUFFER_EXHAUSTED_THRESHOLD &&
+        timeSinceProgress > STALL_DETECTION_INTERVAL &&
+        !isBufferGrowing &&
+        currentTime > 0 &&
+        playableDuration > 0;
+
+      if (isStalled) {
+        if (stallDetectedAtRef.current === null) {
+          // First detection of stall
+          stallDetectedAtRef.current = now;
+          console.warn('[player] stall detection: buffer exhausted and not growing, monitoring...', {
+            currentTime,
+            playableDuration,
+            bufferRemaining,
+            timeSinceProgress,
+            timeSinceBufferGrowth,
+          });
+        } else if (now - stallDetectedAtRef.current > STALL_THRESHOLD) {
+          // Stall persisted beyond threshold - trigger recovery
+          console.warn('[player] stall recovery: triggering session recreation', {
+            currentTime,
+            playableDuration,
+            stallDuration: now - stallDetectedAtRef.current,
+            timeSinceBufferGrowth,
+          });
+
+          isRecoveringFromStallRef.current = true;
+          stallDetectedAtRef.current = null;
+
+          try {
+            // Get current track selections
+            const audioTrack = selectedAudioTrackIndexRef.current ?? undefined;
+            const subtitleTrack = selectedSubtitleTrackIndexRef.current ?? undefined;
+
+            // Show toast to inform user
+            showToast('Reconnecting stream...', { tone: 'info', duration: 3000 });
+
+            // Recreate session from current position
+            const response = await hlsSessionActions.createSession(currentTime, {
+              audioTrack,
+              subtitleTrack,
+            });
+
+            if (response) {
+              console.log('[player] stall recovery: session recreated successfully', {
+                newSessionId: response.sessionId,
+                startOffset: response.startOffset,
+              });
+
+              // Update the video source to use new playlist
+              setCurrentMovieUrl(response.playlistUrl);
+
+              // Reset stall tracking
+              lastProgressTimeRef.current = Date.now();
+              lastPlayableDurationRef.current = 0;
+            } else {
+              console.error('[player] stall recovery: session creation failed');
+              showToast('Failed to reconnect stream', { tone: 'danger', duration: 3000 });
+            }
+          } catch (error) {
+            console.error('[player] stall recovery: error during session recreation', error);
+            showToast('Failed to reconnect stream', { tone: 'danger', duration: 3000 });
+          } finally {
+            // Allow future recovery attempts after a delay
+            setTimeout(() => {
+              isRecoveringFromStallRef.current = false;
+            }, 5000);
+          }
+        }
+      } else {
+        // Not stalled - clear detection
+        if (stallDetectedAtRef.current !== null) {
+          stallDetectedAtRef.current = null;
+        }
+      }
+    }, STALL_DETECTION_INTERVAL);
+
+    // Initialize tracking refs
+    lastProgressTimeRef.current = Date.now();
+    lastBufferGrowthTimeRef.current = Date.now();
+    lastCurrentTimeRef.current = 0;
+    lastPlayableDurationRef.current = 0;
+    stallDetectedAtRef.current = null;
+    isRecoveringFromStallRef.current = false;
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isHlsStream, initialSourcePath, hlsSessionActions, hlsSessionIdRef, showToast]);
 
   useEffect(() => {
     setCurrentMovieUrl(resolvedMovie ?? null);
@@ -2756,6 +2881,26 @@ export default function PlayerScreen() {
           sessionBufferEndRef.current = absolutePlayable;
         }
         updateDuration(meta.playable, 'progress.playable');
+
+        // Update stall detection tracking for HLS streams
+        if (isHlsStream && !paused) {
+          const now = Date.now();
+          // Track if currentTime is progressing
+          if (absoluteTime > lastCurrentTimeRef.current + 0.1) {
+            lastProgressTimeRef.current = now;
+            lastCurrentTimeRef.current = absoluteTime;
+            // Clear stall detection if we're making progress
+            if (stallDetectedAtRef.current !== null) {
+              console.log('[player] stall recovery: playback resumed, clearing stall detection');
+              stallDetectedAtRef.current = null;
+            }
+          }
+          // Track if buffer is growing (segments still downloading)
+          if (absolutePlayable > lastPlayableDurationRef.current + 0.1) {
+            lastPlayableDurationRef.current = absolutePlayable;
+            lastBufferGrowthTimeRef.current = now;
+          }
+        }
       }
 
       // Report progress to the backend for tracking (skip for live TV)
