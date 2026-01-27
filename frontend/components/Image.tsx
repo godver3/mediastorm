@@ -8,7 +8,7 @@ import {
   StyleProp,
   View,
 } from 'react-native';
-import { API_CONFIG } from '../config/api';
+import { apiService } from '../services/api';
 
 // Use disk-only caching on TV and Android to reduce memory pressure
 // Android emulators and lower-end devices struggle with memory-disk caching
@@ -47,7 +47,10 @@ function getProxyUrl(url: string, targetWidth?: number): string {
 
 
   // Build proxy URL with resize parameters
-  const baseUrl = API_CONFIG.BASE_URL.replace(/\/api$/, ''); // Remove /api suffix
+  // Use apiService.getBaseUrl() to get the current backend URL (which may have been
+  // updated by the user or network-based switching) rather than the static API_CONFIG
+  const currentApiUrl = apiService.getBaseUrl();
+  const baseUrl = currentApiUrl.replace(/\/api$/, ''); // Remove /api suffix
   const params = new URLSearchParams({
     url: url,
   });
