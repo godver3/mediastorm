@@ -2638,7 +2638,7 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 			if hlsTime < 0 {
 				hlsTime = 0
 			}
-			// Calculate segment number from HLS stream time (hlsSegmentDuration = 4 seconds)
+			// Calculate segment number from HLS stream time
 			segmentNum := int(hlsTime / hlsSegmentDuration)
 			if segmentNum > session.MaxSegmentRequested {
 				session.MaxSegmentRequested = segmentNum
