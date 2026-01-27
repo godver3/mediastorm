@@ -28,11 +28,16 @@ var CompatibleAudioCodecs = map[string]bool{
 	"aac": true, "ac3": true, "eac3": true, "mp3": true,
 }
 
-// IsIncompatibleAudioCodec returns true for codecs that need transcoding (TrueHD, DTS, etc.)
+// IsIncompatibleAudioCodec returns true for codecs that need transcoding.
+// This includes TrueHD, DTS, FLAC, PCM, and any other codec not in CompatibleAudioCodecs.
+// HLS/fMP4 only supports AAC, AC-3, and E-AC-3 for Apple devices.
 func IsIncompatibleAudioCodec(codec string) bool {
 	c := strings.ToLower(strings.TrimSpace(codec))
-	return c == "truehd" || c == "dts" || strings.HasPrefix(c, "dts-") ||
-		c == "dts_hd" || c == "dtshd" || c == "mlp"
+	if c == "" {
+		return false // Unknown codec, let FFmpeg handle it
+	}
+	// If not in the compatible list, it needs transcoding
+	return !CompatibleAudioCodecs[c]
 }
 
 // IsTrueHDCodec returns true specifically for TrueHD/MLP codecs which are particularly
