@@ -843,6 +843,9 @@ export default function DetailsScreen() {
   const { activeUserId, activeUser } = useUserProfiles();
   const { showLoadingScreen, hideLoadingScreen, setOnCancel } = useLoadingScreen();
 
+  // Kids profiles have restricted navigation - disable cast/crew and similar content links
+  const isKidsProfile = activeUser?.isKidsProfile ?? false;
+
   const [isResolving, setIsResolving] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
@@ -2140,6 +2143,11 @@ export default function DetailsScreen() {
   const genres = useMemo(() => {
     const rawGenres = isSeries ? (seriesDetailsForBackdrop?.genres ?? []) : (movieDetails?.genres ?? []);
     return rawGenres.slice(0, 3);
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
+  // Get certification (content rating) from movie or series details
+  const certification = useMemo(() => {
+    return isSeries ? seriesDetailsForBackdrop?.certification : movieDetails?.certification;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
 
   // Placeholder release rows while loading (movies only)
@@ -4479,8 +4487,16 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {genres.length > 0 && (
+        {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
+            {certification && (
+              <View style={styles.genreBadge}>
+                <Text style={styles.genreText}>{certification}</Text>
+              </View>
+            )}
+            {certification && genres.length > 0 && (
+              <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 * tvScale }]}>|</Text>
+            )}
             {genres.map((genre) => (
               <View key={genre} style={styles.genreBadge}>
                 <Text style={styles.genreText}>{genre}</Text>
@@ -5039,7 +5055,8 @@ export default function DetailsScreen() {
             </SpatialNavigationNode>
           )}
           {/* TV Cast Section - always render wrapper node to maintain navigation order
-              (nodes register in DOM order, so late-loading content would otherwise end up at wrong position) */}
+              (nodes register in DOM order, so late-loading content would otherwise end up at wrong position)
+              Navigation disabled for kids profiles */}
           {Platform.isTV && TVCastSection && (
             <SpatialNavigationNode orientation="horizontal" focusKey="details-cast-section">
               {(isMetadataLoadingForSkeleton || credits) ? (
@@ -5049,14 +5066,15 @@ export default function DetailsScreen() {
                   maxCast={10}
                   onFocus={() => handleTVFocusAreaChange('cast')}
                   compactMargin
-                  onCastMemberPress={handleCastMemberPress}
+                  onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
                 />
               ) : (
                 <View />
               )}
             </SpatialNavigationNode>
           )}
-          {/* TV More Like This Section - always render wrapper node to maintain navigation order */}
+          {/* TV More Like This Section - always render wrapper node to maintain navigation order
+              Navigation disabled for kids profiles */}
           {Platform.isTV && TVMoreLikeThisSection && (
             <SpatialNavigationNode orientation="horizontal" focusKey="details-similar-section">
               {(similarLoading || similarContent.length > 0) ? (
@@ -5065,7 +5083,7 @@ export default function DetailsScreen() {
                   isLoading={similarLoading}
                   maxTitles={20}
                   onFocus={() => handleTVFocusAreaChange('similar')}
-                  onTitlePress={handleSimilarTitlePress}
+                  onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
                 />
               ) : (
                 <View />
@@ -5188,8 +5206,16 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {genres.length > 0 && (
+        {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
+            {certification && (
+              <View style={styles.genreBadge}>
+                <Text style={styles.genreText}>{certification}</Text>
+              </View>
+            )}
+            {certification && genres.length > 0 && (
+              <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 }]}>|</Text>
+            )}
             {genres.map((genre) => (
               <View key={genre} style={styles.genreBadge}>
                 <Text style={styles.genreText}>{genre}</Text>
@@ -5496,15 +5522,15 @@ export default function DetailsScreen() {
         </View>
       )}
 
-      {/* Cast section */}
-      <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} onCastMemberPress={handleCastMemberPress} />
+      {/* Cast section - disable navigation for kids profiles */}
+      <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress} />
 
-      {/* More Like This section */}
+      {/* More Like This section - disable navigation for kids profiles */}
       <MoreLikeThisSection
         titles={similarContent}
         isLoading={similarLoading}
         theme={theme}
-        onTitlePress={handleSimilarTitlePress}
+        onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
       />
 
       {/* Hidden SeriesEpisodes component to load data (same as in renderDetailsContent) */}

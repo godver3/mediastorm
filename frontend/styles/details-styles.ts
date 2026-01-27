@@ -175,6 +175,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     genresRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
+      alignItems: 'center',
       gap: Math.round(8 * tvTextScale),
       marginBottom: theme.spacing.md,
       ...(isTV
