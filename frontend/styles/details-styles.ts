@@ -391,6 +391,13 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       fontStyle: 'italic',
       ...(isTV ? { fontSize: tvScale * 15 } : null),
     },
+    prequeueTrackPressable: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: isTV ? theme.spacing.sm : theme.spacing.xs,
+      // On mobile, limit width so both audio and subtitle fit on one line
+      ...(isTV ? {} : { flex: 1, maxWidth: '48%' }),
+    },
     episodeNavigationRow: {
       flexDirection: 'row',
       alignItems: 'center',

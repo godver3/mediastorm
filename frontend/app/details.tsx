@@ -71,7 +71,8 @@ import Animated, {
 
 // Import extracted modules
 import { BulkWatchModal } from './details/bulk-watch-modal';
-import { ManualSelection, useManualHealthChecks } from './details/manual-selection';
+import { ManualSelection, useManualHealthChecks, type ManualTrackOverrides } from './details/manual-selection';
+import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import {
   buildExternalPlayerTargets,
   getHealthFailureReason,
@@ -985,6 +986,14 @@ export default function DetailsScreen() {
   // Cache prequeue status from navigation (player already resolved it)
   const navigationPrequeueStatusRef = useRef<PrequeueStatusResponse | null>(null);
 
+  // Track override state - user's manual selection that differs from prequeue
+  const [trackOverrideAudio, setTrackOverrideAudio] = useState<number | null>(null);
+  const [trackOverrideSubtitle, setTrackOverrideSubtitle] = useState<number | null>(null);
+
+  // Modal visibility for track selection
+  const [showAudioTrackModal, setShowAudioTrackModal] = useState(false);
+  const [showSubtitleTrackModal, setShowSubtitleTrackModal] = useState(false);
+
   // Pulse animation for prequeue loading state
   const prequeuePulseOpacity = useSharedValue(1);
   // Fade-in animation for when prequeue content first appears
@@ -1023,6 +1032,48 @@ export default function DetailsScreen() {
       prequeuePulseOpacity.value = 1;
     }
   }, [prequeueDisplayInfo?.status, prequeueReady]);
+
+  // Build audio track options for selection modal
+  const buildPrequeueAudioOptions = useCallback(() => {
+    if (!prequeueDisplayInfo?.audioTracks) return [];
+    return prequeueDisplayInfo.audioTracks.map((track) => ({
+      id: String(track.index),
+      label: `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`,
+      description: track.codec?.toUpperCase(),
+    }));
+  }, [prequeueDisplayInfo?.audioTracks]);
+
+  // Build subtitle track options for selection modal
+  const buildPrequeueSubtitleOptions = useCallback(() => {
+    if (!prequeueDisplayInfo?.subtitleTracks) return [];
+    const options = [{ id: '-1', label: 'Off' }];
+    options.push(
+      ...prequeueDisplayInfo.subtitleTracks.map((track) => ({
+        id: String(track.index),
+        label: `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`,
+        description: track.forced ? 'FORCED' : undefined,
+      })),
+    );
+    return options;
+  }, [prequeueDisplayInfo?.subtitleTracks]);
+
+  // Computed current audio track ID (accounting for overrides)
+  const currentAudioTrackId = useMemo(() => {
+    if (trackOverrideAudio !== null) return String(trackOverrideAudio);
+    const selected = prequeueDisplayInfo?.selectedAudioTrack;
+    return selected !== undefined && selected >= 0
+      ? String(selected)
+      : prequeueDisplayInfo?.audioTracks?.[0]?.index !== undefined
+        ? String(prequeueDisplayInfo.audioTracks[0].index)
+        : null;
+  }, [trackOverrideAudio, prequeueDisplayInfo?.selectedAudioTrack, prequeueDisplayInfo?.audioTracks]);
+
+  // Computed current subtitle track ID (accounting for overrides)
+  const currentSubtitleTrackId = useMemo(() => {
+    if (trackOverrideSubtitle !== null) return String(trackOverrideSubtitle);
+    const selected = prequeueDisplayInfo?.selectedSubtitleTrack;
+    return selected !== undefined && selected >= 0 ? String(selected) : '-1';
+  }, [trackOverrideSubtitle, prequeueDisplayInfo?.selectedSubtitleTrack]);
 
   // Debug: Track resume modal visibility changes
   useEffect(() => {
@@ -1211,6 +1262,9 @@ export default function DetailsScreen() {
     setPrequeueId(null);
     setPrequeueTargetEpisode(null);
     setPrequeueReady(false);
+    // Reset track overrides when prequeue changes
+    setTrackOverrideAudio(null);
+    setTrackOverrideSubtitle(null);
 
     if (!activeUserId || !titleId || !title) {
       console.log('[prequeue] Skipping prequeue - missing:', {
@@ -2098,7 +2152,11 @@ export default function DetailsScreen() {
   }, [isSeries, shouldShowReleaseSkeleton]);
 
   const handleInitiatePlayback = useCallback(
-    async (result: NZBResult, signal?: AbortSignal, overrides?: { useDebugPlayer?: boolean }) => {
+    async (
+      result: NZBResult,
+      signal?: AbortSignal,
+      overrides?: { useDebugPlayer?: boolean; trackOverrides?: ManualTrackOverrides },
+    ) => {
       // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
       // so users see it immediately when they click play, not after the stream resolves
 
@@ -2157,6 +2215,8 @@ export default function DetailsScreen() {
           profileName: activeUser?.name,
           // Shuffle mode for random episode playback (use ref for synchronous access)
           shuffleMode: pendingShuffleModeRef.current || isShuffleMode,
+          // Manual track selection override from manual selection modal
+          trackOverrides: overrides?.trackOverrides,
         },
       );
     },
@@ -2324,6 +2384,8 @@ export default function DetailsScreen() {
       let hlsActualStartOffset: number | undefined;
 
       // Log the decision factors for HLS path
+      const audioOverrideDiffersFromPrequeue =
+        trackOverrideAudio !== null && trackOverrideAudio !== prequeueStatus.selectedAudioTrack;
       console.log('[prequeue] HLS decision factors:', {
         hasAnyHDR,
         needsAudioTranscode: prequeueStatus.needsAudioTranscode ?? false,
@@ -2332,15 +2394,32 @@ export default function DetailsScreen() {
         hasStartOffset: typeof startOffset === 'number',
         startOffset,
         platformOS: Platform.OS,
-        willUsePrequeueHLS: needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number',
-        willCreateNewHLS: needsHLS && (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number'),
+        trackOverrideAudio,
+        prequeueSelectedAudio: prequeueStatus.selectedAudioTrack,
+        audioOverrideDiffersFromPrequeue,
+        willUsePrequeueHLS:
+          needsHLS &&
+          prequeueStatus.hlsPlaylistUrl &&
+          typeof startOffset !== 'number' &&
+          !audioOverrideDiffersFromPrequeue,
+        willCreateNewHLS:
+          needsHLS &&
+          (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number' || audioOverrideDiffersFromPrequeue),
       });
 
       // Check if we can use the pre-created HLS session
-      // Skip if: no HLS URL, need resume offset, or prequeue userId doesn't match current user
+      // Skip if: no HLS URL, need resume offset, prequeue userId doesn't match current user,
+      // or user has overridden the audio track to something different than what's baked into the HLS session
       const prequeueUserIdMatches = !prequeueStatus.userId || prequeueStatus.userId === activeUserId;
+      const audioTrackMatchesPrequeue =
+        trackOverrideAudio === null ||
+        trackOverrideAudio === prequeueStatus.selectedAudioTrack;
       const canUsePreCreatedHLS =
-        needsHLS && prequeueStatus.hlsPlaylistUrl && typeof startOffset !== 'number' && prequeueUserIdMatches;
+        needsHLS &&
+        prequeueStatus.hlsPlaylistUrl &&
+        typeof startOffset !== 'number' &&
+        prequeueUserIdMatches &&
+        audioTrackMatchesPrequeue;
 
       // Track selected audio/subtitle tracks for passing to player (declared here so accessible in router.push)
       let selectedAudioTrack: number | undefined;
@@ -2350,6 +2429,13 @@ export default function DetailsScreen() {
         console.log('[prequeue] ⚠️ Pre-created HLS userId mismatch, will create new session', {
           prequeueUserId: prequeueStatus.userId,
           activeUserId,
+        });
+      }
+
+      if (!audioTrackMatchesPrequeue && prequeueStatus.hlsPlaylistUrl) {
+        console.log('[prequeue] ⚠️ Audio track override differs from prequeue, will create new HLS session', {
+          trackOverrideAudio,
+          prequeueSelectedAudio: prequeueStatus.selectedAudioTrack,
         });
       }
 
@@ -2364,17 +2450,24 @@ export default function DetailsScreen() {
           console.log('[prequeue] Using duration from prequeue:', hlsDuration);
         }
         // Extract prequeue-selected tracks so player knows what's baked into the HLS session
+        // Use user override if set, otherwise fall back to prequeue-selected tracks
         selectedAudioTrack =
-          prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-            ? prequeueStatus.selectedAudioTrack
-            : undefined;
+          trackOverrideAudio !== null
+            ? trackOverrideAudio
+            : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
+              ? prequeueStatus.selectedAudioTrack
+              : undefined;
         selectedSubtitleTrack =
-          prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-            ? prequeueStatus.selectedSubtitleTrack
-            : undefined;
+          trackOverrideSubtitle !== null
+            ? trackOverrideSubtitle
+            : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
+              ? prequeueStatus.selectedSubtitleTrack
+              : undefined;
         console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl, {
           selectedAudioTrack,
           selectedSubtitleTrack,
+          trackOverrideAudio,
+          trackOverrideSubtitle,
         });
       } else if (needsHLS && Platform.OS !== 'web') {
         // HDR/TrueHD content - create HLS session with start offset
@@ -2393,24 +2486,29 @@ export default function DetailsScreen() {
         setSelectionInfo(`Creating HLS session for ${contentType}...`);
 
         try {
-          // Use prequeue-selected tracks if available, otherwise fall back to fetching metadata
+          // Use user override if set, otherwise fall back to prequeue-selected tracks
           selectedAudioTrack =
-            prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-              ? prequeueStatus.selectedAudioTrack
-              : undefined;
+            trackOverrideAudio !== null
+              ? trackOverrideAudio
+              : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
+                ? prequeueStatus.selectedAudioTrack
+                : undefined;
           selectedSubtitleTrack =
-            prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-              ? prequeueStatus.selectedSubtitleTrack
-              : undefined;
+            trackOverrideSubtitle !== null
+              ? trackOverrideSubtitle
+              : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
+                ? prequeueStatus.selectedSubtitleTrack
+                : undefined;
 
-          // Log if using prequeue-selected tracks
+          // Log if using override or prequeue-selected tracks
           if (selectedAudioTrack !== undefined || selectedSubtitleTrack !== undefined) {
             console.log(
-              `[prequeue] Using prequeue-selected tracks: audio=${selectedAudioTrack}, subtitle=${selectedSubtitleTrack}`,
+              `[prequeue] Using tracks: audio=${selectedAudioTrack}, subtitle=${selectedSubtitleTrack}`,
+              { trackOverrideAudio, trackOverrideSubtitle },
             );
           }
 
-          // Only fetch metadata if prequeue didn't provide track selection
+          // Only fetch metadata if neither override nor prequeue provided track selection
           if (
             selectedAudioTrack === undefined &&
             selectedSubtitleTrack === undefined &&
@@ -2606,6 +2704,8 @@ export default function DetailsScreen() {
       hideLoadingScreen,
       setSelectionError,
       isShuffleMode,
+      trackOverrideAudio,
+      trackOverrideSubtitle,
     ],
   );
 
@@ -3659,7 +3759,7 @@ export default function DetailsScreen() {
   }, []);
 
   const handleManualSelection = useCallback(
-    async (result: NZBResult) => {
+    async (result: NZBResult, trackOverrides?: ManualTrackOverrides) => {
       if (!result) {
         return;
       }
@@ -3679,13 +3779,18 @@ export default function DetailsScreen() {
       setSelectionError(null);
       setIsResolving(true);
 
+      // Log track overrides if provided
+      if (trackOverrides) {
+        console.log('[manual] Using track overrides:', trackOverrides);
+      }
+
       // Define the playback action to be wrapped in resume check
       const playAction = async () => {
         // Show loading screen now that user has confirmed playback
         await showLoadingScreenIfEnabled();
 
         try {
-          await handleInitiatePlayback(result, abortController.signal);
+          await handleInitiatePlayback(result, abortController.signal, { trackOverrides });
 
           // Check if aborted after playback
           if (abortController.signal.aborted) {
@@ -4806,13 +4911,17 @@ export default function DetailsScreen() {
                     {/* Audio & Subtitle tracks on one line */}
                     {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
                       <View style={styles.prequeueTrackRow}>
-                        {/* Audio track */}
+                        {/* Audio track - tappable when multiple tracks available */}
                         {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                          <>
+                          <Pressable
+                            onPress={() => setShowAudioTrackModal(true)}
+                            disabled={prequeueDisplayInfo.audioTracks.length <= 1}
+                            style={styles.prequeueTrackPressable}
+                          >
                             <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
                             <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                               {(() => {
-                                const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                                const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
                                 const track = selectedIdx !== undefined && selectedIdx >= 0
                                   ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
                                   : prequeueDisplayInfo.audioTracks?.[0];
@@ -4821,7 +4930,7 @@ export default function DetailsScreen() {
                               })()}
                             </Text>
                             {(() => {
-                              const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                              const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
                               const track = selectedIdx !== undefined && selectedIdx >= 0
                                 ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
                                 : prequeueDisplayInfo.audioTracks?.[0];
@@ -4834,19 +4943,25 @@ export default function DetailsScreen() {
                               }
                               return null;
                             })()}
-                          </>
+                            {prequeueDisplayInfo.audioTracks.length > 1 && (
+                              <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
+                            )}
+                          </Pressable>
                         )}
                         {/* Separator */}
                         {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
                           <Text style={styles.prequeueTrackSeparator}>•</Text>
                         )}
-                        {/* Subtitle track */}
+                        {/* Subtitle track - tappable when subtitles available */}
                         {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                          <>
+                          <Pressable
+                            onPress={() => setShowSubtitleTrackModal(true)}
+                            style={styles.prequeueTrackPressable}
+                          >
                             <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
                             <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                               {(() => {
-                                const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                                const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
                                 if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
                                 const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
                                 if (!track) return 'Off';
@@ -4854,7 +4969,7 @@ export default function DetailsScreen() {
                               })()}
                             </Text>
                             {(() => {
-                              const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                              const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
                               if (selectedIdx === undefined || selectedIdx < 0) return null;
                               const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
                               if (!track) return null;
@@ -4874,7 +4989,8 @@ export default function DetailsScreen() {
                               }
                               return null;
                             })()}
-                          </>
+                            <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
+                          </Pressable>
                         )}
                       </View>
                     ) : null}
@@ -5250,13 +5366,17 @@ export default function DetailsScreen() {
                 {/* Audio & Subtitle tracks on one line */}
                 {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
                   <View style={styles.prequeueTrackRow}>
-                    {/* Audio track */}
+                    {/* Audio track - tappable when multiple tracks available */}
                     {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                      <>
+                      <Pressable
+                        onPress={() => setShowAudioTrackModal(true)}
+                        disabled={prequeueDisplayInfo.audioTracks.length <= 1}
+                        style={styles.prequeueTrackPressable}
+                      >
                         <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} />
                         <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                           {(() => {
-                            const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                            const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
                             const track = selectedIdx !== undefined && selectedIdx >= 0
                               ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
                               : prequeueDisplayInfo.audioTracks?.[0];
@@ -5265,7 +5385,7 @@ export default function DetailsScreen() {
                           })()}
                         </Text>
                         {(() => {
-                          const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                          const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
                           const track = selectedIdx !== undefined && selectedIdx >= 0
                             ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
                             : prequeueDisplayInfo.audioTracks?.[0];
@@ -5278,19 +5398,25 @@ export default function DetailsScreen() {
                           }
                           return null;
                         })()}
-                      </>
+                        {prequeueDisplayInfo.audioTracks.length > 1 && (
+                          <Ionicons name="chevron-forward" size={10} color={theme.colors.text.muted} />
+                        )}
+                      </Pressable>
                     )}
                     {/* Separator */}
                     {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
                       <Text style={styles.prequeueTrackSeparator}>•</Text>
                     )}
-                    {/* Subtitle track */}
+                    {/* Subtitle track - tappable when subtitles available */}
                     {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                      <>
+                      <Pressable
+                        onPress={() => setShowSubtitleTrackModal(true)}
+                        style={styles.prequeueTrackPressable}
+                      >
                         <Ionicons name="text" size={14} color={theme.colors.text.secondary} />
                         <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                           {(() => {
-                            const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                            const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
                             if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
                             const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
                             if (!track) return 'Off';
@@ -5298,7 +5424,7 @@ export default function DetailsScreen() {
                           })()}
                         </Text>
                         {(() => {
-                          const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                          const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
                           if (selectedIdx === undefined || selectedIdx < 0) return null;
                           const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
                           if (!track) return null;
@@ -5318,7 +5444,8 @@ export default function DetailsScreen() {
                           }
                           return null;
                         })()}
-                      </>
+                        <Ionicons name="chevron-forward" size={10} color={theme.colors.text.muted} />
+                      </Pressable>
                     )}
                   </View>
                 ) : null}
@@ -5683,6 +5810,30 @@ export default function DetailsScreen() {
         onEpisodeSelect={handleEpisodeSelectorSelect}
         isEpisodeWatched={isEpisodeWatched}
         theme={theme}
+      />
+      {/* Audio Track Selection Modal for prequeue override */}
+      <TrackSelectionModal
+        visible={showAudioTrackModal}
+        title="Audio Track"
+        options={buildPrequeueAudioOptions()}
+        selectedId={currentAudioTrackId}
+        onSelect={(id) => {
+          setTrackOverrideAudio(parseInt(id, 10));
+          setShowAudioTrackModal(false);
+        }}
+        onClose={() => setShowAudioTrackModal(false)}
+      />
+      {/* Subtitle Track Selection Modal for prequeue override */}
+      <TrackSelectionModal
+        visible={showSubtitleTrackModal}
+        title="Subtitles"
+        options={buildPrequeueSubtitleOptions()}
+        selectedId={currentSubtitleTrackId}
+        onSelect={(id) => {
+          setTrackOverrideSubtitle(parseInt(id, 10));
+          setShowSubtitleTrackModal(false);
+        }}
+        onClose={() => setShowSubtitleTrackModal(false)}
       />
       {/* Black overlay for smooth transition to player */}
       {showBlackOverlay && (

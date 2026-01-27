@@ -50,6 +50,11 @@ interface ManualResultHealthState {
 const isResultUnplayable = (health?: ManualResultHealthState) =>
   health?.state === 'unhealthy' || health?.state === 'error' || health?.state === 'stream_error';
 
+export interface ManualTrackOverrides {
+  audioTrack?: number;
+  subtitleTrack?: number; // -1 means "Off"
+}
+
 interface ManualSelectionProps {
   visible: boolean;
   loading: boolean;
@@ -57,7 +62,7 @@ interface ManualSelectionProps {
   results: NZBResult[];
   healthChecks: Record<string, ManualResultHealthState>;
   onClose: () => void;
-  onSelect: (result: NZBResult) => void;
+  onSelect: (result: NZBResult, trackOverrides?: ManualTrackOverrides) => void;
   onCheckHealth: (result: NZBResult) => void;
   theme: NovaTheme;
   isWebTouch: boolean;
@@ -95,6 +100,9 @@ export const ManualSelection = ({
   // Track expansion state for showing audio/subtitle tracks (mobile only)
   const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set());
 
+  // Track override state - user's manual selection per result (keyed by result key)
+  const [trackOverrides, setTrackOverrides] = useState<Record<string, ManualTrackOverrides>>({});
+
   // TV: Track which result is currently focused for side panel display
   const [tvFocusedKey, setTvFocusedKey] = useState<string | null>(null);
 
@@ -109,6 +117,30 @@ export const ManualSelection = ({
       return next;
     });
   }, []);
+
+  // Helper to set audio track override for a result
+  const setAudioTrackOverride = useCallback((key: string, trackIndex: number) => {
+    setTrackOverrides((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], audioTrack: trackIndex },
+    }));
+  }, []);
+
+  // Helper to set subtitle track override for a result (-1 means "Off")
+  const setSubtitleTrackOverride = useCallback((key: string, trackIndex: number) => {
+    setTrackOverrides((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], subtitleTrack: trackIndex },
+    }));
+  }, []);
+
+  // Reset overrides when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setTrackOverrides({});
+      setExpandedTracks(new Set());
+    }
+  }, [visible]);
 
   // Auto-refetch tracks when tracksLoading is true
   useEffect(() => {
@@ -400,15 +432,30 @@ export const ManualSelection = ({
     return { index: null, willSearchExternal: true };
   }, [subModePref, subLangPref, matchesLanguage]);
 
-  // Helper to render track panel
+  // Helper to render track panel (with tappable tracks for override selection)
   const renderTrackPanel = useCallback(
-    (audioTracks: AudioTrackInfo[] | undefined, subtitleTracks: SubtitleTrackInfo[] | undefined, isFocused: boolean) => {
+    (
+      audioTracks: AudioTrackInfo[] | undefined,
+      subtitleTracks: SubtitleTrackInfo[] | undefined,
+      isFocused: boolean,
+      resultKey: string,
+    ) => {
       if (!audioTracks?.length && !subtitleTracks?.length) {
         return null;
       }
 
-      const { index: selectedAudioIdx, reason: audioReason } = findSelectedAudioTrack(audioTracks);
-      const { index: selectedSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+      // Get default selection from preferences
+      const { index: defaultAudioIdx } = findSelectedAudioTrack(audioTracks);
+      const { index: defaultSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+
+      // Check for user overrides
+      const overrides = trackOverrides[resultKey];
+      const selectedAudioIdx = overrides?.audioTrack ?? defaultAudioIdx;
+      // For subtitles: -1 means "Off", undefined means use default
+      const selectedSubIdx = overrides?.subtitleTrack !== undefined
+        ? (overrides.subtitleTrack === -1 ? null : overrides.subtitleTrack)
+        : defaultSubIdx;
+      const isSubtitleOff = overrides?.subtitleTrack === -1 || (overrides?.subtitleTrack === undefined && defaultSubIdx === null);
 
       return (
         <View style={[styles.trackPanel, isFocused && styles.trackPanelFocused]}>
@@ -418,7 +465,14 @@ export const ManualSelection = ({
               {audioTracks.map((track) => {
                 const isSelected = track.index === selectedAudioIdx;
                 return (
-                  <View key={track.index} style={styles.trackItemRow}>
+                  <Pressable
+                    key={track.index}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      setAudioTrackOverride(resultKey, track.index);
+                    }}
+                    style={styles.trackItemRow}
+                  >
                     {isSelected && <Text style={styles.selectedIndicator}>▶</Text>}
                     <Text style={[
                       styles.trackItem,
@@ -430,29 +484,48 @@ export const ManualSelection = ({
                       {track.title ? ` - ${track.title}` : ''}
                       {track.codec ? ` (${track.codec.toUpperCase()})` : ''}
                     </Text>
-                  </View>
+                  </Pressable>
                 );
               })}
             </View>
           )}
-          {(subtitleTracks && subtitleTracks.length > 0) || subModePref !== 'off' ? (
+          {(subtitleTracks && subtitleTracks.length > 0) || true ? (
             <View style={styles.trackSection}>
               <Text style={[styles.trackSectionTitle, isFocused && styles.trackSectionTitleFocused]}>Subtitles</Text>
-              {/* Show "Off" option when subtitle mode is off */}
-              {subModePref === 'off' && (
-                <View style={styles.trackItemRow}>
-                  <Text style={styles.selectedIndicator}>▶</Text>
-                  <Text style={[styles.trackItem, isFocused && styles.trackItemFocused, styles.trackItemSelected]}>
-                    Off
-                  </Text>
-                </View>
-              )}
+              {/* Always show "Off" option - tappable */}
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setSubtitleTrackOverride(resultKey, -1);
+                }}
+                style={styles.trackItemRow}
+              >
+                {isSubtitleOff && <Text style={styles.selectedIndicator}>▶</Text>}
+                <Text style={[
+                  styles.trackItem,
+                  isFocused && styles.trackItemFocused,
+                  isSubtitleOff && styles.trackItemSelected,
+                  !isSubtitleOff && styles.trackItemDimmed,
+                ]}>
+                  Off
+                </Text>
+              </Pressable>
               {/* Show subtitle tracks */}
               {subtitleTracks?.map((track) => {
                 const isSelected = track.index === selectedSubIdx;
                 const isUnusable = track.isBitmap;
                 return (
-                  <View key={track.index} style={styles.trackItemRow}>
+                  <Pressable
+                    key={track.index}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      if (!isUnusable) {
+                        setSubtitleTrackOverride(resultKey, track.index);
+                      }
+                    }}
+                    disabled={isUnusable}
+                    style={styles.trackItemRow}
+                  >
                     {isSelected && <Text style={styles.selectedIndicator}>▶</Text>}
                     <Text style={[
                       styles.trackItem,
@@ -468,11 +541,11 @@ export const ManualSelection = ({
                     {track.isBitmap && (
                       <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>
                     )}
-                  </View>
+                  </Pressable>
                 );
               })}
-              {/* Show external search indicator */}
-              {willSearchExternal && (
+              {/* Show external search indicator when no subtitle selected and would search */}
+              {willSearchExternal && !isSubtitleOff && selectedSubIdx === null && (
                 <View style={styles.trackItemRow}>
                   <Text style={styles.selectedIndicator}>▶</Text>
                   <Text style={[styles.trackItem, isFocused && styles.trackItemFocused, styles.trackItemSelected]}>
@@ -481,14 +554,12 @@ export const ManualSelection = ({
                   <Text style={styles.externalSearchBadge}>SEARCH</Text>
                 </View>
               )}
-              {/* Show "Off" when no tracks and mode is off */}
-              {!subtitleTracks?.length && subModePref === 'off' && null}
             </View>
           ) : null}
         </View>
       );
     },
-    [formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref],
+    [formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides, setAudioTrackOverride, setSubtitleTrackOverride],
   );
 
   // TV: Render the tracks side panel for the focused item
@@ -566,8 +637,18 @@ export const ManualSelection = ({
 
     const audioTracks = healthState.debridDetails?.audioTracks || [];
     const subtitleTracks = healthState.debridDetails?.subtitleTracks || [];
-    const { index: selectedAudioIdx, reason: audioReason } = findSelectedAudioTrack(audioTracks);
-    const { index: selectedSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+
+    // Get default selection from preferences
+    const { index: defaultAudioIdx } = findSelectedAudioTrack(audioTracks);
+    const { index: defaultSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+
+    // Check for user overrides
+    const overrides = trackOverrides[tvFocusedKey];
+    const selectedAudioIdx = overrides?.audioTrack ?? defaultAudioIdx;
+    const selectedSubIdx = overrides?.subtitleTrack !== undefined
+      ? (overrides.subtitleTrack === -1 ? null : overrides.subtitleTrack)
+      : defaultSubIdx;
+    const isSubtitleOff = overrides?.subtitleTrack === -1 || (overrides?.subtitleTrack === undefined && defaultSubIdx === null);
 
     return (
       <View style={styles.tvTracksSidePanel}>
@@ -597,13 +678,15 @@ export const ManualSelection = ({
           )}
           <View style={styles.tvTrackSection}>
             <Text style={styles.tvTrackSectionTitle}>Subtitles ({subtitleTracks.length})</Text>
-            {/* Show "Off" option when subtitle mode is off */}
-            {subModePref === 'off' && (
-              <View style={styles.tvTrackItemRow}>
-                <Text style={styles.tvSelectedIndicator}>▶</Text>
-                <Text style={[styles.tvTrackItem, styles.tvTrackItemSelected]}>Off</Text>
-              </View>
-            )}
+            {/* Show "Off" option */}
+            <View style={styles.tvTrackItemRow}>
+              {isSubtitleOff && <Text style={styles.tvSelectedIndicator}>▶</Text>}
+              <Text style={[
+                styles.tvTrackItem,
+                isSubtitleOff && styles.tvTrackItemSelected,
+                !isSubtitleOff && styles.tvTrackItemDimmed,
+              ]}>Off</Text>
+            </View>
             {subtitleTracks.map((track) => {
               const isSelected = track.index === selectedSubIdx;
               const isUnusable = track.isBitmap;
@@ -638,7 +721,7 @@ export const ManualSelection = ({
         </ScrollView>
       </View>
     );
-  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref]);
+  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides]);
 
   const renderManualResultContent = useCallback(
     (result: NZBResult, isFocused: boolean) => {
@@ -764,6 +847,7 @@ export const ManualSelection = ({
                 healthState?.debridDetails?.audioTracks,
                 healthState?.debridDetails?.subtitleTracks,
                 isFocused,
+                key,
               )}
           </View>
         );
@@ -809,11 +893,12 @@ export const ManualSelection = ({
               healthState?.debridDetails?.audioTracks,
               healthState?.debridDetails?.subtitleTracks,
               isFocused,
+              key,
             )}
         </View>
       );
     },
-    [healthChecks, styles, demoMode, expandedTracks, toggleTracks, renderTrackPanel],
+    [healthChecks, styles, demoMode, expandedTracks, toggleTracks, renderTrackPanel, trackOverrides],
   );
 
   if (!visible) {
@@ -906,8 +991,8 @@ export const ManualSelection = ({
 
                             // Second tap: play if healthy
                             if (isHealthy) {
-                              console.log('[ManualSelection] Selecting healthy result:', result.title);
-                              onSelect(result);
+                              console.log('[ManualSelection] Selecting healthy result:', result.title, 'trackOverrides:', trackOverrides[key]);
+                              onSelect(result, trackOverrides[key]);
                             } else {
                               console.log(
                                 '[ManualSelection] Result not healthy, cannot select. State:',
@@ -984,7 +1069,7 @@ export const ManualSelection = ({
 
                         // Second tap: play if healthy
                         if (isHealthy) {
-                          onSelect(result);
+                          onSelect(result, trackOverrides[key]);
                         }
                       };
 

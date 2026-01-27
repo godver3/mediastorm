@@ -673,6 +673,7 @@ export const initiatePlayback = async (
     profileId?: string;
     profileName?: string;
     shuffleMode?: boolean;
+    trackOverrides?: { audioTrack?: number; subtitleTrack?: number }; // Manual track selection override
   } = {},
 ) => {
   setSelectionError(null);
@@ -884,14 +885,17 @@ export const initiatePlayback = async (
         }
       }
 
-      // Select audio/subtitle tracks based on user preferences (content-specific overrides global)
+      // Select audio/subtitle tracks
+      // Priority: manual override > content preference > user preference
       if (metadata) {
-        const audioLang = contentPreference?.audioLanguage || playbackSettings?.preferredAudioLanguage || 'eng';
-        const subLang = contentPreference?.subtitleLanguage || playbackSettings?.preferredSubtitleLanguage || 'eng';
-        const subMode = contentPreference?.subtitleMode || playbackSettings?.preferredSubtitleMode || 'off';
-        const preferenceSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
-
-        if (metadata.audioStreams && metadata.audioStreams.length > 0) {
+        // Check for manual track override first (from manual selection modal)
+        if (options.trackOverrides?.audioTrack !== undefined) {
+          selectedAudioTrack = options.trackOverrides.audioTrack;
+          console.log(`🎬 Using manual audio track override: ${selectedAudioTrack}`);
+        } else if (metadata.audioStreams && metadata.audioStreams.length > 0) {
+          // Fall back to preference-based selection
+          const audioLang = contentPreference?.audioLanguage || playbackSettings?.preferredAudioLanguage || 'eng';
+          const preferenceSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
           const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
           if (match !== null) {
             selectedAudioTrack = match;
@@ -902,7 +906,20 @@ export const initiatePlayback = async (
           }
         }
 
-        if (metadata.subtitleStreams && metadata.subtitleStreams.length > 0) {
+        // Check for manual subtitle track override first
+        // -1 means "Off" was explicitly selected
+        if (options.trackOverrides?.subtitleTrack !== undefined) {
+          if (options.trackOverrides.subtitleTrack === -1) {
+            selectedSubtitleTrack = undefined;
+            console.log(`🎬 Using manual subtitle track override: Off`);
+          } else {
+            selectedSubtitleTrack = options.trackOverrides.subtitleTrack;
+            console.log(`🎬 Using manual subtitle track override: ${selectedSubtitleTrack}`);
+          }
+        } else if (metadata.subtitleStreams && metadata.subtitleStreams.length > 0) {
+          // Fall back to preference-based selection
+          const subLang = contentPreference?.subtitleLanguage || playbackSettings?.preferredSubtitleLanguage || 'eng';
+          const subMode = contentPreference?.subtitleMode || playbackSettings?.preferredSubtitleMode || 'off';
           const match = findSubtitleTrackByPreference(metadata.subtitleStreams, subLang, subMode);
           if (match !== null) {
             selectedSubtitleTrack = match;

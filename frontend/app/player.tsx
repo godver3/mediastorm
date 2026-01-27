@@ -5081,22 +5081,35 @@ export default function PlayerScreen() {
         setAudioStreamMetadata(metadata.audioStreams ?? null);
         setSubtitleStreamMetadata(metadata.subtitleStreams ?? null);
 
-        // Check for per-content preference first, then user preference, then fall back to metadata selection
+        // Priority: preselected (one-time override from prequeue) > per-content preference > user settings > global settings > metadata
         let selectedAudioIndex = metadata.selectedAudioIndex;
-        // Priority: per-content preference > user settings > global settings
-        const preferredAudioLanguage =
-          contentPreference?.audioLanguage ||
-          userSettings?.playback?.preferredAudioLanguage ||
-          settings?.playback?.preferredAudioLanguage;
-        if (preferredAudioLanguage) {
-          const preferredAudioIndex = findAudioTrackByLanguage(metadata.audioStreams ?? [], preferredAudioLanguage);
-          if (preferredAudioIndex !== null) {
-            selectedAudioIndex = preferredAudioIndex;
-            console.log('[player] using preferred audio language', {
-              preferredLanguage: preferredAudioLanguage,
-              source: contentPreference?.audioLanguage ? 'content-preference' : 'user-settings',
-              selectedAudioIndex,
-            });
+        let audioSelectionSource = 'metadata';
+
+        // First check for preselected track (user explicitly selected in prequeue modal)
+        if (preselectedAudioTrack !== undefined) {
+          selectedAudioIndex = preselectedAudioTrack;
+          audioSelectionSource = 'preselected-override';
+          console.log('[player] using preselected audio track (user override from prequeue)', {
+            preselectedAudioTrack,
+            selectedAudioIndex,
+          });
+        } else {
+          // Fall back to preference chain
+          const preferredAudioLanguage =
+            contentPreference?.audioLanguage ||
+            userSettings?.playback?.preferredAudioLanguage ||
+            settings?.playback?.preferredAudioLanguage;
+          if (preferredAudioLanguage) {
+            const preferredAudioIndex = findAudioTrackByLanguage(metadata.audioStreams ?? [], preferredAudioLanguage);
+            if (preferredAudioIndex !== null) {
+              selectedAudioIndex = preferredAudioIndex;
+              audioSelectionSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
+              console.log('[player] using preferred audio language', {
+                preferredLanguage: preferredAudioLanguage,
+                source: audioSelectionSource,
+                selectedAudioIndex,
+              });
+            }
           }
         }
 
@@ -5108,6 +5121,7 @@ export default function PlayerScreen() {
           resolvedAudioSelection,
           metadataSelectedIndex: metadata.selectedAudioIndex,
           preferredAudioIndex: selectedAudioIndex !== metadata.selectedAudioIndex ? selectedAudioIndex : undefined,
+          source: audioSelectionSource,
         });
         setSelectedAudioTrackId(resolvedAudioSelection);
 
@@ -5129,36 +5143,61 @@ export default function PlayerScreen() {
           });
           setSubtitleTrackOptions(subtitleOptions);
 
-          // Check for content preference first, then user preference, then fall back to metadata selection
+          // Priority: preselected (one-time override from prequeue) > per-content preference > user settings > global settings > metadata
           let selectedSubtitleIndex = metadata.selectedSubtitleIndex;
-          const preferredSubtitleLanguage =
-            contentPreference?.subtitleLanguage ||
-            userSettings?.playback?.preferredSubtitleLanguage ||
-            settings?.playback?.preferredSubtitleLanguage;
-          const preferredSubtitleModeRaw =
-            contentPreference?.subtitleMode ||
-            userSettings?.playback?.preferredSubtitleMode ||
-            settings?.playback?.preferredSubtitleMode;
-          const preferredSubtitleMode =
-            preferredSubtitleModeRaw === 'on' ||
-            preferredSubtitleModeRaw === 'off' ||
-            preferredSubtitleModeRaw === 'forced-only'
-              ? preferredSubtitleModeRaw
-              : undefined;
+          let subtitleSelectionSource = 'metadata';
+          let shouldTriggerAutoSearch = false;
 
-          if (preferredSubtitleMode !== undefined) {
-            const preferredSubtitleIndex = findSubtitleTrackByPreference(
-              metadata.subtitleStreams ?? [],
-              preferredSubtitleLanguage,
-              preferredSubtitleMode,
-            );
-            if (preferredSubtitleIndex !== null) {
-              selectedSubtitleIndex = preferredSubtitleIndex;
-            } else if (preferredSubtitleMode === 'off') {
+          // First check for preselected track (user explicitly selected in prequeue modal)
+          // Note: preselectedSubtitleTrack of -1 means "Off" was explicitly selected
+          if (preselectedSubtitleTrack !== undefined) {
+            if (preselectedSubtitleTrack === -1) {
               selectedSubtitleIndex = undefined;
+              subtitleSelectionSource = 'preselected-override-off';
+              console.log('[player] using preselected subtitle track OFF (user override from prequeue)');
             } else {
-              // Preferred language not found - set to off and trigger auto-search
-              selectedSubtitleIndex = undefined;
+              selectedSubtitleIndex = preselectedSubtitleTrack;
+              subtitleSelectionSource = 'preselected-override';
+              console.log('[player] using preselected subtitle track (user override from prequeue)', {
+                preselectedSubtitleTrack,
+                selectedSubtitleIndex,
+              });
+            }
+          } else {
+            // Fall back to preference chain
+            const preferredSubtitleLanguage =
+              contentPreference?.subtitleLanguage ||
+              userSettings?.playback?.preferredSubtitleLanguage ||
+              settings?.playback?.preferredSubtitleLanguage;
+            const preferredSubtitleModeRaw =
+              contentPreference?.subtitleMode ||
+              userSettings?.playback?.preferredSubtitleMode ||
+              settings?.playback?.preferredSubtitleMode;
+            const preferredSubtitleMode =
+              preferredSubtitleModeRaw === 'on' ||
+              preferredSubtitleModeRaw === 'off' ||
+              preferredSubtitleModeRaw === 'forced-only'
+                ? preferredSubtitleModeRaw
+                : undefined;
+
+            if (preferredSubtitleMode !== undefined) {
+              const preferredSubtitleIndex = findSubtitleTrackByPreference(
+                metadata.subtitleStreams ?? [],
+                preferredSubtitleLanguage,
+                preferredSubtitleMode,
+              );
+              if (preferredSubtitleIndex !== null) {
+                selectedSubtitleIndex = preferredSubtitleIndex;
+                subtitleSelectionSource = contentPreference?.subtitleLanguage ? 'content-preference' : 'user-settings';
+              } else if (preferredSubtitleMode === 'off') {
+                selectedSubtitleIndex = undefined;
+                subtitleSelectionSource = 'user-settings-off';
+              } else {
+                // Preferred language not found - set to off and trigger auto-search
+                selectedSubtitleIndex = undefined;
+                subtitleSelectionSource = 'user-settings-fallback';
+                shouldTriggerAutoSearch = true;
+              }
             }
           }
 
@@ -5172,6 +5211,7 @@ export default function PlayerScreen() {
             metadataSelectedIndex: metadata.selectedSubtitleIndex,
             preferredSubtitleIndex:
               selectedSubtitleIndex !== metadata.selectedSubtitleIndex ? selectedSubtitleIndex : undefined,
+            source: subtitleSelectionSource,
           });
 
           // Don't overwrite external subtitle selection if auto-search already found subtitles
@@ -5180,8 +5220,8 @@ export default function PlayerScreen() {
           } else {
             setSelectedSubtitleTrackId(resolvedSubtitleSelection);
 
-            // Trigger auto-search if no suitable embedded track was found
-            if (resolvedSubtitleSelection === 'off' && preferredSubtitleMode !== 'off') {
+            // Trigger auto-search if no suitable embedded track was found (only for preference fallback, not preselected override)
+            if (resolvedSubtitleSelection === 'off' && shouldTriggerAutoSearch) {
               triggerAutoSubtitleSearchIfNeeded();
             }
           }
@@ -5207,6 +5247,8 @@ export default function PlayerScreen() {
     routeHasAnyHDR,
     triggerAutoSubtitleSearchIfNeeded,
     contentPreference,
+    preselectedAudioTrack,
+    preselectedSubtitleTrack,
   ]);
 
   // Fetch series details for episode navigation (only for series content)
