@@ -161,7 +161,7 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		log.Printf("[video] initialized subtitle extraction manager (base dir: %s)", subtitleBaseDir)
 	}
 
-	return &VideoHandler{
+	h := &VideoHandler{
 		transmux:               transmuxEnabled,
 		ffmpegPath:             resolvedFFmpeg,
 		ffprobePath:            resolvedFFprobe,
@@ -170,6 +170,11 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		subtitleExtractManager: subtitleMgr,
 		metadataCache:          make(map[string]*cachedMetadataEntry),
 	}
+
+	// Start background cleanup for metadata cache
+	go h.runMetadataCacheCleanup()
+
+	return h
 }
 
 // SetUserSettingsService sets the user settings service for policy checks
@@ -1993,6 +1998,36 @@ func (h *VideoHandler) setCachedMetadata(path string, response *videoMetadataRes
 		expiresAt: time.Now().Add(metadataCacheTTL),
 	}
 	log.Printf("[video] metadata cached for path: %s (expires in %v)", path, metadataCacheTTL)
+}
+
+// runMetadataCacheCleanup periodically removes expired entries from the metadata cache
+// to prevent unbounded memory growth
+func (h *VideoHandler) runMetadataCacheCleanup() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		h.cleanExpiredMetadataCache()
+	}
+}
+
+// cleanExpiredMetadataCache removes expired entries from the metadata cache
+func (h *VideoHandler) cleanExpiredMetadataCache() {
+	h.metadataCacheMu.Lock()
+	defer h.metadataCacheMu.Unlock()
+
+	now := time.Now()
+	expired := 0
+	for path, entry := range h.metadataCache {
+		if now.After(entry.expiresAt) {
+			delete(h.metadataCache, path)
+			expired++
+		}
+	}
+
+	if expired > 0 {
+		log.Printf("[video] metadata cache cleanup: removed %d expired entries, %d remaining", expired, len(h.metadataCache))
+	}
 }
 
 func (h *VideoHandler) writeCommonHeaders(w http.ResponseWriter) {

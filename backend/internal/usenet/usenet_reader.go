@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/javi11/nntppool"
 	"github.com/sourcegraph/conc/pool"
@@ -111,7 +112,25 @@ func (b *usenetReader) Close() error {
 		close(b.init)
 
 		go func() {
-			b.wg.Wait()
+			// Use a timeout to prevent cleanup from blocking indefinitely
+			// if download workers are stuck on network I/O
+			done := make(chan struct{})
+			go func() {
+				b.wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				// Normal cleanup path
+			case <-time.After(30 * time.Second):
+				b.log.Warn("usenet.reader.cleanup_timeout",
+					"total_bytes_read", b.totalBytesRead,
+					"segments_count", len(b.rg.segments),
+				)
+				// Continue with cleanup anyway to free memory
+			}
+
 			_ = b.rg.Clear()
 			b.rg = segmentRange{}
 

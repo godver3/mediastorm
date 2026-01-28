@@ -122,12 +122,22 @@ func (prd *ParallelRarDownloader) DownloadRarPartsToMemory(ctx context.Context, 
 	return nil, fmt.Errorf("no RAR parts could be downloaded")
 }
 
+// maxSegmentsPerRarPart is the maximum number of segments allowed per RAR part
+// to prevent memory explosion. With ~750KB per segment, 200 segments = ~150MB max per part.
+const maxSegmentsPerRarPart = 200
+
 // downloadSingleRarPart downloads a single RAR part to memory
 func (prd *ParallelRarDownloader) downloadSingleRarPart(ctx context.Context, rarFile ParsedFile) ([]byte, error) {
+	// Check segment count upfront to prevent memory explosion
+	if len(rarFile.Segments) > maxSegmentsPerRarPart {
+		return nil, fmt.Errorf("RAR part %s has too many segments (%d > %d max), file too large for memory import",
+			rarFile.Filename, len(rarFile.Segments), maxSegmentsPerRarPart)
+	}
+
 	// Create a segment loader for this RAR file
 	loader := parallelDbSegmentLoader{segs: rarFile.Segments}
 
-	// Get segments for the entire file
+	// Get segments for the entire file (limited by check above)
 	rg := usenet.GetSegmentsInRange(0, rarFile.Size-1, loader)
 
 	// Create a Usenet reader for the entire file
