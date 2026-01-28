@@ -1316,7 +1316,7 @@
             case 'tags':
                 const tags = Array.isArray(value) ? value : [];
                 const tagsHtml = tags.map(tag => '<span class="tag">'+tag+'<span class="tag-remove" onclick="removeTag(\''+basePath+'\', \''+fieldKey+'\', \''+tag+'\')">&times;</span></span>').join('');
-                return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
+                return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." enterkeyhint="done" onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
             case 'checkboxes':
                 const selectedValues = Array.isArray(value) ? value : [];
                 const checkboxesHtml = (fieldDef.options || []).map(opt => {
