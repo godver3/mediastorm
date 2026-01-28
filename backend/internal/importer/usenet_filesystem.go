@@ -322,7 +322,17 @@ func (uf *UsenetFile) createUsenetReaderWithWorkers(ctx context.Context, start, 
 	// Filter segments for this specific file
 	loader := dbSegmentLoader{segs: uf.file.Segments}
 
-	rg := usenet.GetSegmentsInRange(start, end, loader)
+	// Limit segments to prevent memory explosion during imports
+	// Use workers * 8 with a cap of 150 segments max
+	maxSegments := workers * 8
+	if maxSegments > 150 {
+		maxSegments = 150
+	}
+	if maxSegments < 20 {
+		maxSegments = 20
+	}
+
+	rg := usenet.GetSegmentsInRangeWithLimit(start, end, loader, maxSegments)
 
 	// Log when using optimized parameters for RAR analysis
 	if uf.analysisMode {
@@ -331,7 +341,8 @@ func (uf *UsenetFile) createUsenetReaderWithWorkers(ctx context.Context, start, 
 			"file", filepath.Base(uf.name),
 			"range_size_kb", rangeSize/1024,
 			"workers", workers,
-			"max_workers", uf.maxWorkers)
+			"max_workers", uf.maxWorkers,
+			"max_segments", maxSegments)
 	}
 
 	return usenet.NewUsenetReader(ctx, uf.cp, rg, workers, uf.maxCacheSizeMB)
