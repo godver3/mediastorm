@@ -27,7 +27,12 @@ func TestWatchlistAddAndList(t *testing.T) {
 		t.Fatalf("failed to create users service: %v", err)
 	}
 
-	userID := models.DefaultUserID
+	// Get the actual user ID created by ensureDefaultUser (it's a UUID, not "default")
+	allUsers := userSvc.ListAll()
+	if len(allUsers) == 0 {
+		t.Fatalf("expected at least one user to be created")
+	}
+	userID := allUsers[0].ID
 
 	h := handlers.NewWatchlistHandler(svc, userSvc, false)
 
@@ -79,7 +84,14 @@ func TestWatchlistUpdateAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create users service: %v", err)
 	}
-	userID := models.DefaultUserID
+
+	// Get the actual user ID created by ensureDefaultUser (it's a UUID, not "default")
+	allUsers := userSvc.ListAll()
+	if len(allUsers) == 0 {
+		t.Fatalf("expected at least one user to be created")
+	}
+	userID := allUsers[0].ID
+
 	h := handlers.NewWatchlistHandler(svc, userSvc, false)
 
 	_, err = svc.AddOrUpdate(userID, models.WatchlistUpsert{ID: "show1", MediaType: "series", Name: "Show"})
