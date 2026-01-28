@@ -353,6 +353,7 @@ type HLSSession struct {
 	LastSegmentServed        int // Last segment number successfully served to client (-1 = none yet)
 	EarliestBufferedSegment  int // Earliest segment still in player's buffer from keepalive (-1 = unknown)
 	Paused                   bool // True if FFmpeg is paused (SIGSTOP) waiting for player to catch up
+	FinalSegmentCount        int  // Highest segment number created when transcoding completed (-1 = still running or unknown)
 
 	// Input error recovery (for usenet disconnections)
 	InputErrorDetected bool // Set to true when FFmpeg input stream fails (usenet disconnect)
@@ -798,6 +799,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		LastPlaybackSegment:     -1,  // Initialize to -1 (no keepalive time reported yet)
 		LastSegmentServed:       -1,  // Initialize to -1 (no segments served yet)
 		EarliestBufferedSegment: -1,  // Initialize to -1 (no buffer info reported yet)
+		FinalSegmentCount:       -1,  // Initialize to -1 (transcoding still running)
 		ProbeData:               probeData, // Cache unified probe results for startTranscoding
 		PrequeueType:            prequeueType, // "", "details", or "next_episode"
 	}
@@ -860,6 +862,7 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL string) (*HL
 		LastPlaybackSegment:     -1,
 		LastSegmentServed:       -1,
 		EarliestBufferedSegment: -1,
+		FinalSegmentCount:       -1,  // Initialize to -1 (transcoding still running)
 		AudioTrackIndex:         -1, // Use default
 		SubtitleTrackIndex:      -1, // No subtitles for live TV
 	}
@@ -2316,6 +2319,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		session.FFmpegCmd = nil
 		session.FFmpegPID = 0
 		session.Completed = false
+		session.FinalSegmentCount = -1 // Reset since we're restarting transcoding
 		session.SegmentsCreated = 0
 		session.BytesStreamed = 0
 		session.SegmentRequestCount = 0
@@ -2347,6 +2351,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		session.FFmpegCmd = nil
 		session.FFmpegPID = 0
 		session.Completed = false
+		session.FinalSegmentCount = -1 // Reset since we're restarting transcoding
 		session.SegmentsCreated = 0
 		session.BytesStreamed = 0
 		session.SegmentRequestCount = 0
@@ -2443,6 +2448,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 
 	session.mu.Lock()
 	session.Completed = true
+	session.FinalSegmentCount = highestSegment // Track actual highest segment created
 	idleTriggered := session.IdleTimeoutTriggered
 	session.mu.Unlock()
 
@@ -2775,6 +2781,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	session.FFmpegCmd = nil
 	session.FFmpegPID = 0
 	session.Completed = false
+	session.FinalSegmentCount = -1 // Reset since we're restarting transcoding from new position
 	session.StartOffset = targetTime       // User's new position (for frontend display)
 	session.TranscodingOffset = targetTime // FFmpeg will seek to nearest keyframe
 	session.ActualStartOffset = targetTime // Will be updated from fMP4 tfdt after first segment
@@ -3068,6 +3075,21 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		effectiveDuration := session.Duration - session.TranscodingOffset
 		totalSegments := int(math.Ceil(effectiveDuration / hlsSegmentDuration))
 
+		// If transcoding completed early (e.g., actual content shorter than metadata duration),
+		// limit playlist to actual segments that were created to avoid 404 errors
+		session.mu.RLock()
+		completed := session.Completed
+		finalSegmentCount := session.FinalSegmentCount
+		session.mu.RUnlock()
+		if completed && finalSegmentCount >= 0 {
+			actualTotalSegments := finalSegmentCount + 1
+			if actualTotalSegments < totalSegments {
+				log.Printf("[hls] session %s: limiting playlist to %d actual segments (expected %d from metadata)",
+					sessionID, actualTotalSegments, totalSegments)
+				totalSegments = actualTotalSegments
+			}
+		}
+
 		// Find the highest segment number in the current playlist
 		highestExisting := -1
 		lines := strings.Split(playlistContent, "\n")
@@ -3214,6 +3236,21 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 			session.mu.Unlock()
 			break
 		}
+
+		// Check if transcoding has completed - if so, segment will never be created
+		// This prevents waiting 7.5s for segments that won't exist (e.g., when FFmpeg
+		// exits early due to shorter actual content than metadata duration)
+		if i%20 == 0 { // Check every ~500ms to avoid lock contention
+			session.mu.RLock()
+			completed := session.Completed
+			session.mu.RUnlock()
+			if completed {
+				log.Printf("[hls] session %s: transcoding completed, segment %s will not be created",
+					sessionID, segmentName)
+				break
+			}
+		}
+
 		time.Sleep(25 * time.Millisecond) // Reduced from 100ms for faster segment delivery
 	}
 

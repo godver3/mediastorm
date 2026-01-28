@@ -1582,6 +1582,7 @@ export default function PlayerScreen() {
     const STALL_DETECTION_INTERVAL = 1000; // Check every 1 second
     const STALL_THRESHOLD = 3000; // Trigger recovery after 3 seconds of stall
     const BUFFER_EXHAUSTED_THRESHOLD = 1.0; // Consider buffer exhausted if < 1 second ahead
+    const END_OF_VIDEO_THRESHOLD = 10; // Don't trigger stall recovery if within 10 seconds of end
 
     const intervalId = setInterval(async () => {
       // Skip if paused, recovering, or no session
@@ -1595,6 +1596,19 @@ export default function PlayerScreen() {
       const currentTime = lastCurrentTimeRef.current;
       const playableDuration = lastPlayableDurationRef.current;
       const bufferRemaining = playableDuration - currentTime;
+      const totalDuration = durationRef.current;
+
+      // Skip stall detection if we're near the end of the video
+      // At the end, buffer naturally stops growing because there's no more content - this isn't a stall
+      const isNearEndOfVideo =
+        totalDuration > 0 && currentTime >= totalDuration - END_OF_VIDEO_THRESHOLD;
+      if (isNearEndOfVideo) {
+        // Clear any stall detection state when approaching end of video
+        if (stallDetectedAtRef.current !== null) {
+          stallDetectedAtRef.current = null;
+        }
+        return;
+      }
 
       // Detect stall: buffer is exhausted AND playback hasn't progressed AND buffer isn't growing
       // If buffer is still growing, we're just buffering normally (segments downloading) - don't trigger recovery
