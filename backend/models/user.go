@@ -23,8 +23,14 @@ type User struct {
 	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
 	PlexAccountID  string    `json:"plexAccountId,omitempty"`  // ID of the linked Plex account (from config.PlexAccount)
 	IsKidsProfile  bool      `json:"isKidsProfile"`            // Whether this is a kids profile with content restrictions
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	// Kids profile content restriction settings
+	KidsMode           string   `json:"kidsMode,omitempty"`           // "rating", "content_list", "both", or "" (disabled)
+	KidsMaxRating      string   `json:"kidsMaxRating,omitempty"`      // Deprecated: use KidsMaxMovieRating/KidsMaxTVRating instead
+	KidsMaxMovieRating string   `json:"kidsMaxMovieRating,omitempty"` // Max allowed movie rating: "G", "PG", "PG-13", "R", "NC-17"
+	KidsMaxTVRating    string   `json:"kidsMaxTVRating,omitempty"`    // Max allowed TV rating: "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"
+	KidsAllowedLists   []string `json:"kidsAllowedLists,omitempty"`   // MDBList URLs allowed for content_list mode
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // HasPin returns true if the user has a PIN set.

@@ -36,40 +36,62 @@ export function useTrendingMovies(
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
 
-  const fetchData = useCallback(async () => {
-    if (!isReady || !enabled) {
-      return;
-    }
-    try {
-      setLoading(true);
-      setError(null);
-      // Without limit, getTrendingMovies returns TrendingItem[]
-      const result = await apiService.getTrendingMovies(
-        userId ?? undefined,
-        undefined,
-        undefined,
-        hideUnreleased,
-        hideWatched,
-      );
-      setData(result as TrendingItem[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch trending movies');
-    } finally {
-      setLoading(false);
-    }
-  }, [isReady, userId, enabled, hideUnreleased, hideWatched]);
+  const refetch = useCallback(() => {
+    setRefreshToken((t) => t + 1);
+  }, []);
 
   useEffect(() => {
     if (!isReady || !enabled) {
       setLoading(false);
       return;
     }
+
+    let cancelled = false;
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        console.log('[useTrendingMovies] Fetching with userId:', userId, 'hideUnreleased:', hideUnreleased, 'hideWatched:', hideWatched);
+        // Without limit, getTrendingMovies returns TrendingItem[]
+        const result = await apiService.getTrendingMovies(
+          userId ?? undefined,
+          undefined,
+          undefined,
+          hideUnreleased,
+          hideWatched,
+        );
+        if (cancelled) {
+          console.log('[useTrendingMovies] Request cancelled, ignoring response');
+          return;
+        }
+        console.log('[useTrendingMovies] Received', (result as TrendingItem[]).length, 'items');
+        if ((result as TrendingItem[]).length > 0) {
+          const first = (result as TrendingItem[])[0];
+          console.log('[useTrendingMovies] First item:', first.name, 'certification:', first.certification);
+        }
+        setData(result as TrendingItem[]);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[useTrendingMovies] Error:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch trending movies');
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchData();
-  }, [isReady, backendUrl, fetchData, enabled]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
-  return useMemo(() => ({ data, loading, error, refetch: fetchData }), [data, loading, error, fetchData]);
+  return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);
 }
 
 // Hook for trending TV shows
@@ -83,40 +105,57 @@ export function useTrendingTVShows(
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
 
-  const fetchData = useCallback(async () => {
-    if (!isReady || !enabled) {
-      return;
-    }
-    try {
-      setLoading(true);
-      setError(null);
-      // Without limit, getTrendingTVShows returns TrendingItem[]
-      const result = await apiService.getTrendingTVShows(
-        userId ?? undefined,
-        undefined,
-        undefined,
-        hideUnreleased,
-        hideWatched,
-      );
-      setData(result as TrendingItem[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
-    } finally {
-      setLoading(false);
-    }
-  }, [isReady, userId, enabled, hideUnreleased, hideWatched]);
+  const refetch = useCallback(() => {
+    setRefreshToken((t) => t + 1);
+  }, []);
 
   useEffect(() => {
     if (!isReady || !enabled) {
       setLoading(false);
       return;
     }
+
+    let cancelled = false;
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        console.log('[useTrendingTVShows] Fetching with userId:', userId, 'hideUnreleased:', hideUnreleased, 'hideWatched:', hideWatched);
+        // Without limit, getTrendingTVShows returns TrendingItem[]
+        const result = await apiService.getTrendingTVShows(
+          userId ?? undefined,
+          undefined,
+          undefined,
+          hideUnreleased,
+          hideWatched,
+        );
+        if (cancelled) {
+          console.log('[useTrendingTVShows] Request cancelled, ignoring response');
+          return;
+        }
+        console.log('[useTrendingTVShows] Received', (result as TrendingItem[]).length, 'items');
+        setData(result as TrendingItem[]);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchData();
-  }, [isReady, backendUrl, fetchData, enabled]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
-  return useMemo(() => ({ data, loading, error, refetch: fetchData }), [data, loading, error, fetchData]);
+  return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);
 }
 
 // Helper to deduplicate and sort search results

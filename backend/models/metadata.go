@@ -53,6 +53,7 @@ type Title struct {
 	Network         string    `json:"network,omitempty"`
 	Status          string    `json:"status,omitempty"` // For series: Continuing, Ended, Upcoming, etc.
 	IsDaily         bool      `json:"isDaily,omitempty"` // True for daily shows (talk shows, news, etc.) that use date-based episode naming
+	Certification   string    `json:"certification,omitempty"` // MPAA/TV content rating (G, PG, PG-13, R, TV-Y, TV-G, TV-PG, TV-14, TV-MA)
 	PrimaryTrailer  *Trailer  `json:"primaryTrailer,omitempty"`
 	Trailers        []Trailer `json:"trailers,omitempty"`
 	Releases        []Release `json:"releases,omitempty"`

@@ -632,6 +632,7 @@ func (s *Service) HasPin(id string) bool {
 }
 
 // SetKidsProfile sets whether this is a kids profile.
+// When enabling kids profile mode, applies default settings if none are set.
 func (s *Service) SetKidsProfile(id string, isKids bool) (models.User, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -647,6 +648,236 @@ func (s *Service) SetKidsProfile(id string, isKids bool) (models.User, error) {
 	}
 
 	user.IsKidsProfile = isKids
+
+	// Apply default kids settings when enabling kids profile
+	if isKids && user.KidsMode == "" {
+		user.KidsMode = "rating"
+		user.KidsMaxRating = "G"
+	}
+
+	// Clear kids settings when disabling kids profile
+	if !isKids {
+		user.KidsMode = ""
+		user.KidsMaxRating = ""
+		user.KidsAllowedLists = nil
+	}
+
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetKidsMode sets the kids mode for a profile ("rating", "content_list", "both", or "").
+func (s *Service) SetKidsMode(id, mode string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.KidsMode = strings.TrimSpace(mode)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetKidsMaxRating sets the maximum content rating for a kids profile.
+// Deprecated: Use SetKidsMaxMovieRating and SetKidsMaxTVRating instead.
+func (s *Service) SetKidsMaxRating(id, rating string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.KidsMaxRating = strings.TrimSpace(rating)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetKidsMaxMovieRating sets the maximum movie rating for a kids profile.
+func (s *Service) SetKidsMaxMovieRating(id, rating string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.KidsMaxMovieRating = strings.TrimSpace(rating)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetKidsMaxTVRating sets the maximum TV rating for a kids profile.
+func (s *Service) SetKidsMaxTVRating(id, rating string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.KidsMaxTVRating = strings.TrimSpace(rating)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetKidsAllowedLists replaces the allowed lists for a kids profile.
+func (s *Service) SetKidsAllowedLists(id string, lists []string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Clean up the list URLs
+	cleaned := make([]string, 0, len(lists))
+	for _, list := range lists {
+		if trimmed := strings.TrimSpace(list); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+
+	user.KidsAllowedLists = cleaned
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// AddKidsAllowedList adds a list URL to the allowed lists for a kids profile.
+func (s *Service) AddKidsAllowedList(id, listURL string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	listURL = strings.TrimSpace(listURL)
+	if listURL == "" {
+		return models.User{}, errors.New("list URL is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Check if already in the list
+	for _, existing := range user.KidsAllowedLists {
+		if existing == listURL {
+			return user, nil // Already exists
+		}
+	}
+
+	user.KidsAllowedLists = append(user.KidsAllowedLists, listURL)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+// RemoveKidsAllowedList removes a list URL from the allowed lists for a kids profile.
+func (s *Service) RemoveKidsAllowedList(id, listURL string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	listURL = strings.TrimSpace(listURL)
+	if listURL == "" {
+		return models.User{}, errors.New("list URL is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	// Find and remove the list
+	newLists := make([]string, 0, len(user.KidsAllowedLists))
+	for _, existing := range user.KidsAllowedLists {
+		if existing != listURL {
+			newLists = append(newLists, existing)
+		}
+	}
+
+	user.KidsAllowedLists = newLists
 	user.UpdatedAt = time.Now().UTC()
 	s.users[id] = user
 
@@ -842,6 +1073,12 @@ func (s *Service) load() error {
 		// Migration: assign default account ID to profiles without one
 		if user.AccountID == "" {
 			user.AccountID = models.DefaultAccountID
+			needsSave = true
+		}
+		// Migration: assign default kids mode settings for existing kids profiles
+		if user.IsKidsProfile && user.KidsMode == "" {
+			user.KidsMode = "rating"
+			user.KidsMaxRating = "G"
 			needsSave = true
 		}
 		s.users[user.ID] = user

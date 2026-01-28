@@ -12,6 +12,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/kids"
 	metadatapkg "novastream/services/metadata"
 )
 
@@ -48,11 +49,17 @@ type historyServiceInterface interface {
 	GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error)
 }
 
+// usersServiceInterface provides access to user profiles for kids filtering.
+type usersServiceInterface interface {
+	Get(id string) (models.User, bool)
+}
+
 type MetadataHandler struct {
 	Service        metadataService
 	CfgManager     *config.Manager
 	UserSettings   userSettingsProvider
 	HistoryService historyServiceInterface
+	UsersService   usersServiceInterface
 }
 
 func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *MetadataHandler {
@@ -69,6 +76,11 @@ func (h *MetadataHandler) SetHistoryService(service historyServiceInterface) {
 	h.HistoryService = service
 }
 
+// SetUsersService sets the users service for kids profile filtering.
+func (h *MetadataHandler) SetUsersService(service usersServiceInterface) {
+	h.UsersService = service
+}
+
 // DiscoverNewResponse wraps trending items with total count for pagination
 type DiscoverNewResponse struct {
 	Items           []models.TrendingItem `json:"items"`
@@ -81,6 +93,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	log.Printf("[metadata] DiscoverNew: type=%s userId=%s hideUnreleased=%v hideWatched=%v UsersService=%v", mediaType, userID, hideUnreleased, hideWatched, h.UsersService != nil)
 
 	// Parse optional pagination parameters
 	limit := 0
@@ -139,6 +152,34 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	// Apply watched filter if requested (requires userID and history service)
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
+	}
+
+	// Apply kids rating filter if user is a kids profile
+	if userID != "" && h.UsersService != nil {
+		if user, ok := h.UsersService.Get(userID); ok {
+			log.Printf("[metadata] user found: id=%s isKidsProfile=%v kidsMode=%s movieRating=%s tvRating=%s", userID, user.IsKidsProfile, user.KidsMode, user.KidsMaxMovieRating, user.KidsMaxTVRating)
+			if user.IsKidsProfile {
+				if user.KidsMode == "rating" || user.KidsMode == "both" {
+					beforeCount := len(items)
+					// Use new separate ratings, fall back to old field for backwards compatibility
+					movieRating := user.KidsMaxMovieRating
+					tvRating := user.KidsMaxTVRating
+					if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+						// Backwards compatibility: old single rating field
+						movieRating = user.KidsMaxRating
+						tvRating = user.KidsMaxRating
+					}
+					items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
+					log.Printf("[metadata] kids filter applied: userId=%s movieRating=%s tvRating=%s before=%d after=%d", userID, movieRating, tvRating, beforeCount, len(items))
+				} else {
+					log.Printf("[metadata] kids profile but mode is %q - not applying rating filter", user.KidsMode)
+				}
+			}
+		} else {
+			log.Printf("[metadata] user not found: %s", userID)
+		}
+	} else if userID == "" {
+		log.Printf("[metadata] no userId provided - skipping kids filter")
 	}
 
 	// Apply pagination

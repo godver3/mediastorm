@@ -414,6 +414,15 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
+	// Kids profile content restriction configuration
+	profileProtected.HandleFunc("/{userID}/kids/mode", usersHandler.SetKidsMode).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/kids/mode", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/kids/rating", usersHandler.SetKidsMaxRating).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/kids/rating", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/kids/lists", usersHandler.SetKidsAllowedLists).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/kids/lists", usersHandler.AddKidsAllowedList).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/kids/lists", usersHandler.RemoveKidsAllowedList).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/kids/lists", usersHandler.Options).Methods(http.MethodOptions)
 
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)

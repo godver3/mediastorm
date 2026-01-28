@@ -153,6 +153,34 @@ const getRatingConfig = (
   }
 };
 
+// Helper to get certification (content rating) icon URL and aspect ratio
+const getCertificationConfig = (certification: string, baseUrl: string): { iconUrl: string; aspectRatio: number } | null => {
+  const iconBase = `${baseUrl}/static/rating_icons`;
+  // Normalize the certification string for matching
+  const normalized = certification.toLowerCase().replace(/\s+/g, '-');
+
+  // Map certification strings to icon file names and aspect ratios (width/height)
+  const certificationIcons: Record<string, { file: string; aspectRatio: number }> = {
+    // MPAA movie ratings (varying aspect ratios)
+    'g': { file: 'g.png', aspectRatio: 1.15 },
+    'pg': { file: 'pg.png', aspectRatio: 1.45 },
+    'pg-13': { file: 'pg-13.png', aspectRatio: 2.53 },
+    'r': { file: 'r.png', aspectRatio: 1.15 },
+    'nc-17': { file: 'nc-17.png', aspectRatio: 2.94 },
+    // TV ratings (square icons)
+    'tv-y': { file: 'tv-y.png', aspectRatio: 1.0 },
+    'tv-y7': { file: 'tv-y7.png', aspectRatio: 1.0 },
+    'tv-y7-fv': { file: 'tv-y7.png', aspectRatio: 1.0 },
+    'tv-g': { file: 'tv-g.png', aspectRatio: 1.0 },
+    'tv-pg': { file: 'tv-pg.png', aspectRatio: 1.0 },
+    'tv-14': { file: 'tv-14.png', aspectRatio: 1.0 },
+    'tv-ma': { file: 'tv-ma.png', aspectRatio: 1.0 },
+  };
+
+  const config = certificationIcons[normalized];
+  return config ? { iconUrl: `${iconBase}/${config.file}`, aspectRatio: config.aspectRatio } : null;
+};
+
 // Define the order for rating sources (lower = displayed first)
 const RATING_ORDER: Record<string, number> = {
   imdb: 1,
@@ -256,6 +284,45 @@ const RatingBadge = ({
         <Ionicons name="star" size={iconSize} color={config.color} />
       )}
       <Text style={[styles.ratingValue, { color: config.color }]}>{formatRating(rating)}</Text>
+    </View>
+  );
+};
+
+// Certification badge component with image and text fallback
+const CertificationBadge = ({
+  certification,
+  iconUrl,
+  iconSize,
+  aspectRatio,
+  styles,
+}: {
+  certification: string;
+  iconUrl: string | null;
+  iconSize: number;
+  aspectRatio: number;
+  styles: ReturnType<typeof createDetailsStyles>;
+}) => {
+  const [imageError, setImageError] = useState(false);
+
+  // If we have an icon URL and no error, show the image
+  if (iconUrl && !imageError) {
+    return (
+      <ProxiedImage
+        source={{ uri: iconUrl }}
+        style={{ width: iconSize * aspectRatio, height: iconSize }}
+        contentFit="contain"
+        onError={() => {
+          console.warn(`Certification icon failed to load: ${iconUrl}`);
+          setImageError(true);
+        }}
+      />
+    );
+  }
+
+  // Fallback to text badge
+  return (
+    <View style={styles.genreBadge}>
+      <Text style={styles.genreText}>{certification}</Text>
     </View>
   );
 };
@@ -4489,11 +4556,18 @@ export default function DetailsScreen() {
         )}
         {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
-            {certification && (
-              <View style={styles.genreBadge}>
-                <Text style={styles.genreText}>{certification}</Text>
-              </View>
-            )}
+            {certification && (() => {
+              const certConfig = getCertificationConfig(certification, apiService.getBaseUrl().replace(/\/$/, ''));
+              return (
+                <CertificationBadge
+                  certification={certification}
+                  iconUrl={certConfig?.iconUrl ?? null}
+                  iconSize={Math.round((isTV ? 30 : 24) * tvScale)}
+                  aspectRatio={certConfig?.aspectRatio ?? 1}
+                  styles={styles}
+                />
+              );
+            })()}
             {certification && genres.length > 0 && (
               <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 * tvScale }]}>|</Text>
             )}
@@ -5208,11 +5282,18 @@ export default function DetailsScreen() {
         )}
         {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
-            {certification && (
-              <View style={styles.genreBadge}>
-                <Text style={styles.genreText}>{certification}</Text>
-              </View>
-            )}
+            {certification && (() => {
+              const certConfig = getCertificationConfig(certification, apiService.getBaseUrl().replace(/\/$/, ''));
+              return (
+                <CertificationBadge
+                  certification={certification}
+                  iconUrl={certConfig?.iconUrl ?? null}
+                  iconSize={24}
+                  aspectRatio={certConfig?.aspectRatio ?? 1}
+                  styles={styles}
+                />
+              );
+            })()}
             {certification && genres.length > 0 && (
               <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 }]}>|</Text>
             )}

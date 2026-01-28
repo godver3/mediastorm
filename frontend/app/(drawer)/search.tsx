@@ -123,7 +123,11 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const router = useRouter();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
-  const { pendingPinUserId } = useUserProfiles();
+  const { pendingPinUserId, activeUser } = useUserProfiles();
+
+  // Check if user is in kids curated list mode (content restricted to allowed lists)
+  const isKidsCuratedMode =
+    activeUser?.isKidsProfile && (activeUser.kidsMode === 'content_list' || activeUser.kidsMode === 'both');
   const isFocused = useIsFocused();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
@@ -745,6 +749,20 @@ export default function SearchScreen() {
               </SpatialNavigationNode>
             </View>
 
+            {/* Kids mode notice - search may show unrestricted results */}
+            {isKidsCuratedMode && (
+              <View style={styles.kidsNotice}>
+                <MaterialCommunityIcons
+                  name="information-outline"
+                  size={isCompact ? 16 : 20}
+                  color={theme.colors.warning.text}
+                />
+                <Text style={styles.kidsNoticeText}>
+                  Only content from allowed lists can be viewed on this kids profile.
+                </Text>
+              </View>
+            )}
+
             {renderContent()}
           </SpatialNavigationNode>
 
@@ -1050,6 +1068,21 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       right: 0,
       bottom: 0,
       height: '25%',
+    },
+    kidsNotice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      backgroundColor: theme.colors.warning.muted,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+      borderRadius: theme.radius.md,
+      marginBottom: theme.spacing.md,
+    },
+    kidsNoticeText: {
+      ...theme.typography.body.sm,
+      color: theme.colors.warning.text,
+      flex: 1,
     },
   });
 };

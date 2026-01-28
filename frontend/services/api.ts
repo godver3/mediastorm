@@ -141,6 +141,7 @@ export interface Title {
   popularity?: number;
   network?: string;
   status?: string; // For series: "Continuing", "Ended", "Upcoming", etc.
+  certification?: string; // MPAA/TV content rating (G, PG, PG-13, R, TV-Y, TV-G, TV-PG, TV-14, TV-MA)
   primaryTrailer?: Trailer;
   trailers?: Trailer[];
   releases?: ReleaseWindow[];
@@ -642,6 +643,12 @@ export interface UserProfile {
   hasPin?: boolean; // Whether this profile has a PIN set (pinHash not exposed to frontend)
   hasIcon?: boolean; // Whether this profile has a custom icon set
   isKidsProfile?: boolean; // Whether this is a kids profile with content restrictions
+  // Kids profile content restriction settings
+  kidsMode?: 'rating' | 'content_list' | 'both' | ''; // Restriction mode
+  kidsMaxRating?: string; // Deprecated: use kidsMaxMovieRating/kidsMaxTVRating instead
+  kidsMaxMovieRating?: string; // Max allowed movie rating: G, PG, PG-13, R, NC-17
+  kidsMaxTVRating?: string; // Max allowed TV rating: TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA
+  kidsAllowedLists?: string[]; // MDBList URLs allowed for content_list mode
   traktAccountId?: string; // ID of linked Trakt account
   createdAt: string;
   updatedAt: string;
@@ -1161,10 +1168,13 @@ class ApiService {
     if (hideWatched) {
       params.set('hideWatched', 'true');
     }
+    const url = `/discover/new?${params.toString()}`;
+    console.log('[API] getTrendingMovies URL:', url);
     // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
     const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
-      `/discover/new?${params.toString()}`,
+      url,
     );
+    console.log('[API] getTrendingMovies response: total=', response.total, 'items.length=', response.items?.length);
     // If limit was specified, return full response for pagination
     if (limit && limit > 0) {
       return response;
@@ -2083,6 +2093,46 @@ class ApiService {
   async clearUserTraktAccount(userId: string): Promise<UserProfile> {
     const safeId = this.normaliseUserId(userId);
     return this.request<UserProfile>(`/users/${safeId}/trakt`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Kids profile content restriction configuration
+  async setKidsMode(userId: string, mode: 'rating' | 'content_list' | 'both' | ''): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/kids/mode`, {
+      method: 'PUT',
+      body: JSON.stringify({ mode }),
+    });
+  }
+
+  async setKidsMaxRating(userId: string, rating: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/kids/rating`, {
+      method: 'PUT',
+      body: JSON.stringify({ rating }),
+    });
+  }
+
+  async setKidsAllowedLists(userId: string, lists: string[]): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/kids/lists`, {
+      method: 'PUT',
+      body: JSON.stringify({ lists }),
+    });
+  }
+
+  async addKidsAllowedList(userId: string, url: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/kids/lists`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  async removeKidsAllowedList(userId: string, url: string): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(userId);
+    return this.request<UserProfile>(`/users/${safeId}/kids/lists?url=${encodeURIComponent(url)}`, {
       method: 'DELETE',
     });
   }

@@ -306,6 +306,7 @@ function showCreateProfileModal(defaultAccountId) {
                     <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                         <input type="checkbox" name="isKids"> Kids Profile
                     </label>
+                    <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem; margin-left: 1.5rem;">Customize content restrictions via Edit Profile after creation</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
                     <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -455,6 +456,20 @@ function showEditProfileModal(profileId) {
                     <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                         <input type="checkbox" name="isKids" ${p.isKidsProfile ? 'checked' : ''}> Kids Profile
                     </label>
+                    ${p.isKidsProfile ? `
+                    <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: var(--radius);">
+                        <p style="color: var(--text-secondary); font-size: 0.875rem; margin: 0 0 0.5rem 0;">
+                            Mode: <strong>${p.kidsMode === 'rating' ? 'Rating Restricted' : p.kidsMode === 'content_list' ? 'Curated Lists' : p.kidsMode === 'both' ? 'Both' : 'Not Set'}</strong>
+                            ${p.kidsMaxRating ? ' (Max: ' + p.kidsMaxRating + ')' : ''}
+                        </p>
+                        <a href="${basePath}/kids-settings?profileId=${p.id}" class="btn btn-sm btn-secondary">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                                <circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                            </svg>
+                            Configure Kids Settings
+                        </a>
+                    </div>
+                    ` : ''}
                 </div>
                 <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
                     <label class="form-label">Profile PIN</label>

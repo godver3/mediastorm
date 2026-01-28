@@ -310,6 +310,8 @@ func main() {
 
 	// Wire up history service to metadata handler for hideWatched filtering
 	metadataHandler.SetHistoryService(historyService)
+	// Wire up users service to metadata handler for kids profile filtering
+	metadataHandler.SetUsersService(userService)
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
 
@@ -448,6 +450,7 @@ func main() {
 	r.HandleFunc("/admin/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/search", adminUIHandler.RequireAuth(adminUIHandler.SearchPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
@@ -483,6 +486,14 @@ func main() {
 	r.HandleFunc("/admin/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/color", adminUIHandler.RequireAuth(adminUIHandler.SetProfileColor)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+	// Kids profile settings endpoints (for admin kids-settings page)
+	r.HandleFunc("/admin/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/kids/rating/movie", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxMovieRating)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/kids/rating/tv", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxTVRating)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.SetKidsAllowedLists)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.AddKidsAllowedList)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.RemoveKidsAllowedList)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.SetProfileIcon)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ClearProfileIcon)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/icon", adminUIHandler.RequireAuth(adminUIHandler.ServeProfileIcon)).Methods(http.MethodGet)
@@ -608,6 +619,7 @@ func main() {
 	r.HandleFunc("/account/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet) // Shows as "Profiles" for non-admin
+	r.HandleFunc("/account/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
 
 	// Protected account routes - Status APIs
 	r.HandleFunc("/account/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
@@ -626,6 +638,14 @@ func main() {
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.SetProfilePin)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+	// Kids profile settings endpoints (for account kids-settings page)
+	r.HandleFunc("/account/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/users/{userID}/kids/rating/movie", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxMovieRating)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/users/{userID}/kids/rating/tv", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxTVRating)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.SetKidsAllowedLists)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.AddKidsAllowedList)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.RemoveKidsAllowedList)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/password", accountUIHandler.RequireAuth(accountUIHandler.ChangePassword)).Methods(http.MethodPut)
 
 	// Protected account routes - User Settings API

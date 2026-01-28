@@ -243,8 +243,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 
 	// Use TMDB for "all" trending (includes unreleased) or for TV shows
 	if s.tmdb != nil && s.tmdb.isConfigured() {
-		// v2: includes release data enrichment for movies
-		key := cacheKey("tmdb", "trending", normalized, "v2")
+		// v3: includes release data enrichment for movies and content ratings for TV
+		key := cacheKey("tmdb", "trending", normalized, "v3")
 		var cached []models.TrendingItem
 		if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
 			return cached, nil
@@ -257,6 +257,9 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 			// Enrich movies with release data (theatrical/home release)
 			if normalized == "movie" {
 				s.enrichTrendingMovieReleases(ctx, items)
+			} else {
+				// Enrich TV shows with content ratings
+				s.enrichTrendingTVContentRatings(ctx, items)
 			}
 			_ = s.cache.set(key, items)
 			return items, nil
@@ -274,8 +277,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
 	}
 
-	// v2: includes release data enrichment for movies
-	fallbackKey := cacheKey("mdblist", "trending", fallbackLabel, "v2")
+	// v3: includes release data enrichment for movies and content ratings for TV
+	fallbackKey := cacheKey("mdblist", "trending", fallbackLabel, "v3")
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(fallbackKey, &cached); ok && len(cached) > 0 {
 		return cached, nil
@@ -288,6 +291,9 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 	// Enrich movies with release data (theatrical/home release)
 	if normalized == "movie" {
 		s.enrichTrendingMovieReleases(ctx, items)
+	} else {
+		// Enrich TV shows with content ratings
+		s.enrichTrendingTVContentRatings(ctx, items)
 	}
 	if len(items) > 0 {
 		_ = s.cache.set(fallbackKey, items)
@@ -409,6 +415,46 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 
 	if enrichedCount > 0 {
 		log.Printf("[metadata] enriched %d trending movies with release data", enrichedCount)
+	}
+}
+
+// enrichTrendingTVContentRatings fetches TV content ratings for trending TV shows
+func (s *Service) enrichTrendingTVContentRatings(ctx context.Context, items []models.TrendingItem) {
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var enrichedCount int32
+
+	for idx := range items {
+		// Skip non-series
+		if items[idx].Title.MediaType != "series" {
+			continue
+		}
+		// Skip if already has content rating
+		if items[idx].Title.Certification != "" {
+			continue
+		}
+		// Need TMDB ID to fetch content rating
+		tmdbID := items[idx].Title.TMDBID
+		if tmdbID <= 0 {
+			continue
+		}
+
+		wg.Add(1)
+		go func(i int, tmdbID int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if s.enrichTVContentRating(ctx, &items[i].Title, tmdbID) {
+				atomic.AddInt32(&enrichedCount, 1)
+			}
+		}(idx, tmdbID)
+	}
+	wg.Wait()
+
+	if enrichedCount > 0 {
+		log.Printf("[metadata] enriched %d trending TV shows with content rating", enrichedCount)
 	}
 }
 
@@ -1671,6 +1717,14 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		}
 
+		// If cached data doesn't have content rating, fetch from TMDB
+		if cached.Title.Certification == "" && cached.Title.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if s.enrichTVContentRating(ctx, &cached.Title, cached.Title.TMDBID) {
+				log.Printf("[metadata] content rating added to cached series tmdbId=%d rating=%s", cached.Title.TMDBID, cached.Title.Certification)
+				_ = s.cache.set(cacheID, cached)
+			}
+		}
+
 		// In demo mode, clamp to season 1 only (skip season 0/specials if present)
 		if s.demo && len(cached.Seasons) > 0 {
 			var season1 *models.SeriesSeason
@@ -2101,6 +2155,14 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			details.Title = seriesTitle
 		} else if err != nil {
 			log.Printf("[metadata] failed to fetch genres for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
+		}
+	}
+
+	// Fetch TV content rating from TMDB if configured
+	if seriesTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if s.enrichTVContentRating(ctx, &seriesTitle, seriesTitle.TMDBID) {
+			log.Printf("[metadata] fetched content rating for series tmdbId=%d rating=%s", seriesTitle.TMDBID, seriesTitle.Certification)
+			details.Title = seriesTitle
 		}
 	}
 
@@ -2954,32 +3016,72 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	return updated
 }
 
+// cachedReleasesWithCert is the cached structure for movie releases including certification
+type cachedReleasesWithCert struct {
+	Releases      []models.Release `json:"releases"`
+	Certification string           `json:"certification"`
+}
+
 func (s *Service) enrichMovieReleases(ctx context.Context, title *models.Title, tmdbID int64) bool {
 	if title == nil || tmdbID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
 		return false
 	}
 
-	cacheID := cacheKey("tmdb", "movie", "releases", "v1", strconv.FormatInt(tmdbID, 10))
-	var cached []models.Release
-	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
-		title.Releases = append([]models.Release(nil), cached...)
+	// Use v2 cache key to include certification
+	cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
+	var cached cachedReleasesWithCert
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Releases) > 0 {
+		title.Releases = append([]models.Release(nil), cached.Releases...)
+		title.Certification = cached.Certification
 		s.ensureMovieReleasePointers(title)
 		return true
 	}
 
-	releases, err := s.tmdb.movieReleaseDates(ctx, tmdbID)
-	if err != nil || len(releases) == 0 {
+	result, err := s.tmdb.movieReleaseDatesWithCert(ctx, tmdbID)
+	if err != nil || len(result.Releases) == 0 {
 		if err != nil {
 			log.Printf("[metadata] WARN: tmdb release dates fetch failed tmdbId=%d err=%v", tmdbID, err)
 		}
 		return false
 	}
 
-	title.Releases = append([]models.Release(nil), releases...)
+	title.Releases = append([]models.Release(nil), result.Releases...)
+	title.Certification = result.Certification
 	s.ensureMovieReleasePointers(title)
-	_ = s.cache.set(cacheID, title.Releases)
+	_ = s.cache.set(cacheID, cachedReleasesWithCert{
+		Releases:      title.Releases,
+		Certification: title.Certification,
+	})
 
 	return true
+}
+
+// enrichTVContentRating fetches and sets the TV content rating for a series
+func (s *Service) enrichTVContentRating(ctx context.Context, title *models.Title, tmdbID int64) bool {
+	if title == nil || tmdbID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return false
+	}
+	if title.Certification != "" {
+		return false // Already has a rating
+	}
+
+	cacheID := cacheKey("tmdb", "tv", "content_rating", "v1", strconv.FormatInt(tmdbID, 10))
+	var cached string
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		title.Certification = cached
+		return cached != ""
+	}
+
+	rating, err := s.tmdb.fetchTVContentRating(ctx, tmdbID)
+	if err != nil {
+		log.Printf("[metadata] WARN: tmdb tv content rating fetch failed tmdbId=%d err=%v", tmdbID, err)
+		return false
+	}
+
+	title.Certification = rating
+	_ = s.cache.set(cacheID, rating)
+
+	return rating != ""
 }
 
 func (s *Service) ensureMovieReleasePointers(title *models.Title) {

@@ -434,7 +434,7 @@ function IndexScreen() {
     refresh: refreshContinueWatching,
     hideFromContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId, pendingPinUserId } = useUserProfiles();
+  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId } = useUserProfiles();
   const {
     data: trendingMovies,
     error: trendingMoviesError,
@@ -523,11 +523,46 @@ function IndexScreen() {
     console.log(`[IndexPage] Focus changed - focused: ${focused}, menuOpen: ${isMenuOpen}`);
   }, [focused, isMenuOpen]);
 
-  // Get custom shelves from settings
+  // Check if user is in kids curated list mode (only allowed lists, no trending)
+  const isKidsCuratedMode = useMemo(() => {
+    if (!activeUser?.isKidsProfile) return false;
+    return activeUser.kidsMode === 'content_list' || activeUser.kidsMode === 'both';
+  }, [activeUser?.isKidsProfile, activeUser?.kidsMode]);
+
+  // Virtual shelves for kids allowed lists (when in curated mode)
+  const kidsAllowedShelves = useMemo(() => {
+    if (!isKidsCuratedMode || !activeUser?.kidsAllowedLists) return [];
+    // Create virtual shelf configs from kidsAllowedLists URLs
+    return activeUser.kidsAllowedLists.map((listUrl, index) => {
+      // Extract list name from URL for display (e.g., "mdblist.com/lists/user/listname" -> "listname")
+      const urlParts = listUrl.split('/');
+      const listName = urlParts[urlParts.length - 1] || `Kids List ${index + 1}`;
+      // Capitalize and replace hyphens/underscores with spaces
+      const displayName = listName
+        .split(/[-_]/)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+      return {
+        id: `kids-list-${index}`,
+        name: displayName,
+        enabled: true,
+        order: 10 + index, // After built-in shelves
+        type: 'mdblist' as const,
+        listUrl,
+      };
+    });
+  }, [isKidsCuratedMode, activeUser?.kidsAllowedLists]);
+
+  // Get custom shelves from settings (includes kids allowed lists when in curated mode)
   const customShelves = useMemo(() => {
     const allShelves = userSettings?.homeShelves?.shelves ?? settings?.homeShelves?.shelves ?? [];
-    return allShelves.filter((shelf) => shelf.type === 'mdblist' && shelf.listUrl && shelf.enabled);
-  }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
+    const configuredShelves = allShelves.filter((shelf) => shelf.type === 'mdblist' && shelf.listUrl && shelf.enabled);
+    // In kids curated mode, also include the kids allowed lists as virtual shelves
+    if (isKidsCuratedMode && kidsAllowedShelves.length > 0) {
+      return [...configuredShelves, ...kidsAllowedShelves];
+    }
+    return configuredShelves;
+  }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves, isKidsCuratedMode, kidsAllowedShelves]);
 
   // Get explore card position setting (front or end)
   const exploreCardPosition = useMemo(() => {
@@ -2127,13 +2162,19 @@ function IndexScreen() {
     }
 
     // Get shelf configuration from user settings, fall back to global settings, then default order
-    const shelfConfig = userSettings?.homeShelves?.shelves ??
+    let shelfConfig = userSettings?.homeShelves?.shelves ??
       settings?.homeShelves?.shelves ?? [
         { id: 'continue-watching', name: 'Continue Watching', enabled: true, order: 0 },
         { id: 'watchlist', name: 'Your Watchlist', enabled: true, order: 1 },
         { id: 'trending-movies', name: 'Trending Movies', enabled: true, order: 2 },
         { id: 'trending-tv', name: 'Trending TV Shows', enabled: true, order: 3 },
       ];
+
+    // In kids curated mode, add kids allowed lists and exclude trending shelves
+    if (isKidsCuratedMode) {
+      // Add kids allowed lists as virtual shelves
+      shelfConfig = [...shelfConfig, ...kidsAllowedShelves];
+    }
 
     // Map shelf IDs to their data
     const shelfDataMap: Record<
@@ -2173,7 +2214,7 @@ function IndexScreen() {
       },
     };
 
-    // Add custom list shelves to the map (include all custom shelves, even if data not loaded yet)
+    // Add custom list shelves to the map (include all custom shelves and kids shelves)
     for (const config of shelfConfig) {
       if (config.type === 'mdblist' && config.listUrl) {
         shelfDataMap[config.id] = {
@@ -2187,7 +2228,14 @@ function IndexScreen() {
 
     // Build shelves based on configuration
     const shelves = shelfConfig
-      .filter((config) => config.enabled)
+      .filter((config) => {
+        if (!config.enabled) return false;
+        // In kids curated mode, exclude trending shelves (unrestricted content)
+        if (isKidsCuratedMode && (config.id === 'trending-movies' || config.id === 'trending-tv')) {
+          return false;
+        }
+        return true;
+      })
       .sort((a, b) => a.order - b.order)
       .map((config, index) => {
         const data = shelfDataMap[config.id];
@@ -2219,6 +2267,8 @@ function IndexScreen() {
     watchlistLoading,
     customListCards,
     customListLoading,
+    isKidsCuratedMode,
+    kidsAllowedShelves,
   ]);
 
   // Track navigation structure changes - only based on which shelves exist, NOT card counts
@@ -2264,13 +2314,18 @@ function IndexScreen() {
     }
 
     // Get shelf configuration from user settings, fall back to global settings, then default order
-    const mobileShelfConfig = userSettings?.homeShelves?.shelves ??
+    let mobileShelfConfig = userSettings?.homeShelves?.shelves ??
       settings?.homeShelves?.shelves ?? [
         { id: 'continue-watching', name: 'Continue Watching', enabled: true, order: 0 },
         { id: 'watchlist', name: 'Your Watchlist', enabled: true, order: 1 },
         { id: 'trending-movies', name: 'Trending Movies', enabled: true, order: 2 },
         { id: 'trending-tv', name: 'Trending TV Shows', enabled: true, order: 3 },
       ];
+
+    // In kids curated mode, add kids allowed lists
+    if (isKidsCuratedMode && kidsAllowedShelves.length > 0) {
+      mobileShelfConfig = [...mobileShelfConfig, ...kidsAllowedShelves];
+    }
 
     // Map shelf IDs to their data for mobile
     const mobileShelfDataMap: Record<
@@ -2305,7 +2360,7 @@ function IndexScreen() {
       },
     };
 
-    // Add custom list shelves to the mobile map (include all custom shelves, even if data not loaded yet)
+    // Add custom list shelves to the mobile map (include all custom shelves and kids shelves)
     for (const config of mobileShelfConfig) {
       if (config.type === 'mdblist' && config.listUrl) {
         mobileShelfDataMap[config.id] = {
@@ -2414,7 +2469,14 @@ function IndexScreen() {
             </View>
 
             {mobileShelfConfig
-              .filter((config) => config.enabled)
+              .filter((config) => {
+                if (!config.enabled) return false;
+                // In kids curated mode, exclude trending shelves (unrestricted content)
+                if (isKidsCuratedMode && (config.id === 'trending-movies' || config.id === 'trending-tv')) {
+                  return false;
+                }
+                return true;
+              })
               .sort((a, b) => a.order - b.order)
               .map((config) => {
                 const data = mobileShelfDataMap[config.id];

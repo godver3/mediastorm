@@ -1,0 +1,670 @@
+{{define "kids_settings"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Kids Profile Settings - {{if .IsAdmin}}strmr Admin{{else}}strmr account{{end}}{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+        <a href="{{.BasePath}}/accounts" class="btn btn-secondary btn-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to Profiles
+        </a>
+    </div>
+    <h1>Kids Profile Settings</h1>
+    <p id="profile-name-display">Loading...</p>
+</div>
+
+<div class="grid" style="gap: 1.5rem;">
+    <!-- Mode Selection -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                Restriction Mode
+            </h2>
+        </div>
+        <div class="card-body">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">
+                Choose how content is restricted for this kids profile.
+            </p>
+            <div class="form-group">
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <label class="mode-option" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 1rem; background: var(--bg-tertiary); border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;">
+                        <input type="radio" name="kidsMode" value="rating" style="margin-top: 0.25rem;">
+                        <div>
+                            <strong style="display: block; margin-bottom: 0.25rem;">Rating Restricted</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.875rem;">Filter content by MPAA/TV ratings (G, PG, TV-Y, etc.)</span>
+                        </div>
+                    </label>
+                    <label class="mode-option" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 1rem; background: var(--bg-tertiary); border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;">
+                        <input type="radio" name="kidsMode" value="content_list" style="margin-top: 0.25rem;">
+                        <div>
+                            <strong style="display: block; margin-bottom: 0.25rem;">Curated Lists Only</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.875rem;">Only allow content from specific MDBList URLs</span>
+                        </div>
+                    </label>
+                    <label class="mode-option" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 1rem; background: var(--bg-tertiary); border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;">
+                        <input type="radio" name="kidsMode" value="both" style="margin-top: 0.25rem;">
+                        <div>
+                            <strong style="display: block; margin-bottom: 0.25rem;">Both</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.875rem;">Combine rating filter with curated lists</span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveMode()" style="margin-top: 1rem;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                </svg>
+                Save Mode
+            </button>
+        </div>
+    </div>
+
+    <!-- Rating Settings -->
+    <div class="card" id="rating-section">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                Maximum Rating
+            </h2>
+        </div>
+        <div class="card-body">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">
+                Set the maximum content rating allowed. Content with higher ratings will be blocked.
+            </p>
+
+            <div class="form-group">
+                <label class="form-label">Movie Rating (MPAA)</label>
+                <select id="movieRating" class="form-select" onchange="updateRatingPreview()">
+                    <option value="G">G - General Audiences</option>
+                    <option value="PG">PG - Parental Guidance Suggested</option>
+                    <option value="PG-13">PG-13 - Parents Strongly Cautioned</option>
+                    <option value="R">R - Restricted</option>
+                    <option value="NC-17">NC-17 - Adults Only</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">TV Rating</label>
+                <select id="tvRating" class="form-select" onchange="updateRatingPreview()">
+                    <option value="TV-Y">TV-Y - All Children</option>
+                    <option value="TV-Y7">TV-Y7 - Directed to Older Children</option>
+                    <option value="TV-G">TV-G - General Audience</option>
+                    <option value="TV-PG">TV-PG - Parental Guidance Suggested</option>
+                    <option value="TV-14">TV-14 - Parents Strongly Cautioned</option>
+                    <option value="TV-MA">TV-MA - Mature Audience Only</option>
+                </select>
+            </div>
+
+            <div id="rating-preview" style="padding: 0.75rem; background: var(--bg-tertiary); border-radius: var(--radius); margin-top: 1rem;">
+                <p style="font-size: 0.875rem; color: var(--text-secondary); margin: 0;">
+                    <strong style="color: var(--text-primary);">Preview:</strong>
+                    Movies rated <span id="preview-movie" style="color: var(--accent);">G</span> or lower,
+                    TV shows rated <span id="preview-tv" style="color: var(--accent);">TV-Y</span> or lower will be allowed.
+                </p>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveRating()" style="margin-top: 1rem;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                </svg>
+                Save Rating
+            </button>
+        </div>
+    </div>
+
+    <!-- Allowed Lists -->
+    <div class="card" id="lists-section">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                    <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+                Allowed Content Lists
+            </h2>
+        </div>
+        <div class="card-body">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">
+                Add MDBList URLs to restrict content to specific curated lists. Only content from these lists will be visible.
+            </p>
+
+            <div id="lists-container" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                <!-- Lists will be rendered here -->
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <input type="url" id="new-list-url" class="form-input" placeholder="https://mdblist.com/lists/..." style="flex: 1; min-width: 250px;">
+                <button class="btn btn-secondary" onclick="addList()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Add List
+                </button>
+            </div>
+
+            <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem;">
+                Enter the full MDBList URL (e.g., https://mdblist.com/lists/username/listname)
+            </p>
+        </div>
+    </div>
+
+    <!-- Content Preview -->
+    <div class="card" id="preview-section">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                Content Preview
+            </h2>
+        </div>
+        <div class="card-body">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.875rem;">
+                Preview what content will be visible with current settings. Save your settings first for an accurate preview.
+            </p>
+
+            <button class="btn btn-secondary" onclick="loadContentPreview()" id="preview-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+                </svg>
+                Load Preview
+            </button>
+
+            <div id="preview-loading" style="display: none; padding: 2rem; text-align: center; color: var(--text-muted);">
+                <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; margin: 0 auto 0.5rem;">
+                    <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/>
+                    <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
+                    <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
+                    <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
+                </svg>
+                Loading preview...
+            </div>
+
+            <div id="preview-content" style="margin-top: 1rem;">
+                <!-- Content will be rendered here -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.mode-option:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.1);
+}
+.mode-option:hover {
+    border-color: var(--accent);
+}
+.list-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.list-item-url {
+    flex: 1;
+    font-size: 0.875rem;
+    word-break: break-all;
+    color: var(--text-primary);
+}
+.list-item-url a {
+    color: var(--accent);
+    text-decoration: none;
+}
+.list-item-url a:hover {
+    text-decoration: underline;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.spin {
+    animation: spin 1s linear infinite;
+}
+.preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.preview-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.preview-poster {
+    aspect-ratio: 2/3;
+    width: 100%;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    overflow: hidden;
+    position: relative;
+}
+.preview-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.preview-poster .placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+.preview-title {
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.preview-badge {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    background: rgba(0,0,0,0.8);
+    border-radius: 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+.preview-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 1.5rem 0 0.75rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+.preview-empty {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    padding: 1rem;
+    text-align: center;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+}
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const basePath = {{json .BasePath}};
+const profileId = new URLSearchParams(window.location.search).get('profileId');
+let profile = null;
+
+// Rating mappings for sync
+const movieToTvRating = {
+    'G': 'TV-Y',
+    'PG': 'TV-PG',
+    'PG-13': 'TV-14',
+    'R': 'TV-MA',
+    'NC-17': 'TV-MA'
+};
+
+const tvToMovieRating = {
+    'TV-Y': 'G',
+    'TV-Y7': 'G',
+    'TV-G': 'G',
+    'TV-PG': 'PG',
+    'TV-14': 'PG-13',
+    'TV-MA': 'R'
+};
+
+async function loadProfile() {
+    if (!profileId) {
+        showToast('No profile ID provided', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch(basePath + '/api/profiles');
+        if (!res.ok) throw new Error('Failed to load profiles');
+        const profiles = await res.json();
+
+        profile = profiles.find(p => p.id === profileId);
+        if (!profile) {
+            showToast('Profile not found', 'error');
+            return;
+        }
+
+        if (!profile.isKidsProfile) {
+            showToast('This is not a kids profile', 'error');
+            setTimeout(() => window.location.href = basePath + '/accounts', 1500);
+            return;
+        }
+
+        // Update UI
+        document.getElementById('profile-name-display').textContent = 'Configuring: ' + profile.name;
+
+        // Set mode
+        const mode = profile.kidsMode || 'rating';
+        document.querySelector(`input[name="kidsMode"][value="${mode}"]`).checked = true;
+
+        // Set ratings - use separate movie/TV ratings, or fall back to old combined rating, or default to G/TV-Y
+        const movieRating = profile.kidsMaxMovieRating || profile.kidsMaxRating || 'G';
+        const tvRating = profile.kidsMaxTVRating || movieToTvRating[profile.kidsMaxRating] || 'TV-Y';
+        document.getElementById('movieRating').value = movieRating;
+        document.getElementById('tvRating').value = tvRating;
+
+        // Render lists
+        renderLists();
+
+        // Update visibility
+        updateSectionVisibility();
+        updateRatingPreview();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function updateSectionVisibility() {
+    const mode = document.querySelector('input[name="kidsMode"]:checked')?.value || 'rating';
+    const ratingSection = document.getElementById('rating-section');
+    const listsSection = document.getElementById('lists-section');
+
+    if (mode === 'rating') {
+        ratingSection.style.display = 'block';
+        listsSection.style.display = 'none';
+    } else if (mode === 'content_list') {
+        ratingSection.style.display = 'none';
+        listsSection.style.display = 'block';
+    } else { // both
+        ratingSection.style.display = 'block';
+        listsSection.style.display = 'block';
+    }
+}
+
+function updateRatingPreview() {
+    const movieRating = document.getElementById('movieRating').value;
+    const tvRating = document.getElementById('tvRating').value;
+    document.getElementById('preview-movie').textContent = movieRating;
+    document.getElementById('preview-tv').textContent = tvRating;
+}
+
+function renderLists() {
+    const container = document.getElementById('lists-container');
+    const lists = profile?.kidsAllowedLists || [];
+
+    if (lists.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.875rem; padding: 0.5rem;">No lists added yet.</p>';
+        return;
+    }
+
+    container.innerHTML = lists.map((url, index) => `
+        <div class="list-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width: 20px; height: 20px; flex-shrink: 0;">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <div class="list-item-url">
+                <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+            </div>
+            <button class="btn btn-danger btn-sm" onclick="removeList('${escapeHtml(url)}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Remove
+            </button>
+        </div>
+    `).join('');
+}
+
+async function saveMode() {
+    const mode = document.querySelector('input[name="kidsMode"]:checked')?.value;
+    if (!mode) {
+        showToast('Please select a mode', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch(basePath + '/api/users/' + profileId + '/kids/mode', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ mode })
+        });
+        if (!res.ok) throw new Error(await res.text());
+
+        profile.kidsMode = mode;
+        updateSectionVisibility();
+        showToast('Mode saved');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function saveRating() {
+    const movieRating = document.getElementById('movieRating').value;
+    const tvRating = document.getElementById('tvRating').value;
+
+    try {
+        // Save movie rating
+        const movieRes = await fetch(basePath + '/api/users/' + profileId + '/kids/rating/movie', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ rating: movieRating })
+        });
+        if (!movieRes.ok) throw new Error(await movieRes.text());
+
+        // Save TV rating
+        const tvRes = await fetch(basePath + '/api/users/' + profileId + '/kids/rating/tv', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ rating: tvRating })
+        });
+        if (!tvRes.ok) throw new Error(await tvRes.text());
+
+        profile.kidsMaxMovieRating = movieRating;
+        profile.kidsMaxTVRating = tvRating;
+        showToast('Ratings saved');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function addList() {
+    const input = document.getElementById('new-list-url');
+    const url = input.value.trim();
+
+    if (!url) {
+        showToast('Please enter a URL', 'error');
+        return;
+    }
+
+    if (!url.includes('mdblist.com')) {
+        showToast('URL must be from mdblist.com', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch(basePath + '/api/users/' + profileId + '/kids/lists', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url: url })
+        });
+        if (!res.ok) throw new Error(await res.text());
+
+        const updatedProfile = await res.json();
+        profile.kidsAllowedLists = updatedProfile.kidsAllowedLists;
+        input.value = '';
+        renderLists();
+        showToast('List added');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function removeList(url) {
+    if (!confirm('Remove this list?')) return;
+
+    try {
+        const res = await fetch(basePath + '/api/users/' + profileId + '/kids/lists?url=' + encodeURIComponent(url), {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error(await res.text());
+
+        const updatedProfile = await res.json();
+        profile.kidsAllowedLists = updatedProfile.kidsAllowedLists;
+        renderLists();
+        showToast('List removed');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+// Listen for mode changes
+document.querySelectorAll('input[name="kidsMode"]').forEach(radio => {
+    radio.addEventListener('change', updateSectionVisibility);
+});
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadContentPreview() {
+    const container = document.getElementById('preview-content');
+    const loading = document.getElementById('preview-loading');
+    const btn = document.getElementById('preview-btn');
+
+    btn.disabled = true;
+    loading.style.display = 'block';
+    container.innerHTML = '';
+
+    try {
+        const mode = profile?.kidsMode || 'rating';
+        let html = '';
+
+        // For rating mode or both mode, show trending content
+        if (mode === 'rating' || mode === 'both') {
+            // Fetch trending movies with userId for kids filtering
+            const moviesRes = await fetch(basePath + '/api/discover/trending?type=movie&limit=12&userId=' + encodeURIComponent(profileId));
+            const moviesData = moviesRes.ok ? await moviesRes.json() : { items: [] };
+            const movies = moviesData.items || [];
+
+            // Fetch trending TV shows with userId for kids filtering
+            const tvRes = await fetch(basePath + '/api/discover/trending?type=tv&limit=12&userId=' + encodeURIComponent(profileId));
+            const tvData = tvRes.ok ? await tvRes.json() : { items: [] };
+            const tvShows = tvData.items || [];
+
+            html += `<h3 class="preview-section-title">Trending Movies (${movies.length} filtered)</h3>`;
+            if (movies.length > 0) {
+                html += '<div class="preview-grid">';
+                for (const item of movies.slice(0, 12)) {
+                    const posterUrl = item.title?.poster?.url || '';
+                    const name = escapeHtml(item.title?.name || 'Unknown');
+                    const cert = escapeHtml(item.title?.certification || '');
+                    html += `
+                        <div class="preview-item">
+                            <div class="preview-poster">
+                                ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
+                                ${cert ? `<span class="preview-badge">${cert}</span>` : ''}
+                            </div>
+                            <div class="preview-title" title="${name}">${name}</div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+            } else {
+                html += '<div class="preview-empty">No movies match current rating settings</div>';
+            }
+
+            html += `<h3 class="preview-section-title">Trending TV Shows (${tvShows.length} filtered)</h3>`;
+            if (tvShows.length > 0) {
+                html += '<div class="preview-grid">';
+                for (const item of tvShows.slice(0, 12)) {
+                    const posterUrl = item.title?.poster?.url || '';
+                    const name = escapeHtml(item.title?.name || 'Unknown');
+                    const cert = escapeHtml(item.title?.certification || '');
+                    html += `
+                        <div class="preview-item">
+                            <div class="preview-poster">
+                                ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
+                                ${cert ? `<span class="preview-badge">${cert}</span>` : ''}
+                            </div>
+                            <div class="preview-title" title="${name}">${name}</div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+            } else {
+                html += '<div class="preview-empty">No TV shows match current rating settings</div>';
+            }
+        }
+
+        // For content_list mode or both mode, show items from allowed lists
+        if (mode === 'content_list' || mode === 'both') {
+            const lists = profile?.kidsAllowedLists || [];
+
+            if (lists.length > 0) {
+                html += `<h3 class="preview-section-title">Allowed Lists Content</h3>`;
+
+                for (const listUrl of lists) {
+                    // Fetch content from each list
+                    const listRes = await fetch(basePath + '/api/discover/list?url=' + encodeURIComponent(listUrl) + '&limit=8&userId=' + encodeURIComponent(profileId));
+                    const listData = listRes.ok ? await listRes.json() : { items: [] };
+                    const items = listData.items || [];
+
+                    // Extract list name from URL
+                    const listName = listUrl.split('/').pop() || 'Unknown List';
+                    const displayName = listName.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+                    html += `<p style="color: var(--text-secondary); margin: 1rem 0 0.5rem; font-size: 0.875rem; font-weight: 500;">${escapeHtml(displayName)} (${items.length} items)</p>`;
+
+                    if (items.length > 0) {
+                        html += '<div class="preview-grid">';
+                        for (const item of items.slice(0, 8)) {
+                            const posterUrl = item.title?.poster?.url || '';
+                            const name = escapeHtml(item.title?.name || 'Unknown');
+                            const mediaType = item.title?.mediaType === 'movie' ? 'Movie' : 'TV';
+                            html += `
+                                <div class="preview-item">
+                                    <div class="preview-poster">
+                                        ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
+                                        <span class="preview-badge">${mediaType}</span>
+                                    </div>
+                                    <div class="preview-title" title="${name}">${name}</div>
+                                </div>
+                            `;
+                        }
+                        html += '</div>';
+                    } else {
+                        html += '<div class="preview-empty">No items in this list</div>';
+                    }
+                }
+            } else if (mode === 'content_list') {
+                html += '<div class="preview-empty">No allowed lists configured. Add MDBList URLs above to see content.</div>';
+            }
+        }
+
+        container.innerHTML = html || '<div class="preview-empty">No preview available</div>';
+    } catch (err) {
+        container.innerHTML = `<div class="preview-empty" style="color: var(--danger);">Error loading preview: ${escapeHtml(err.message)}</div>`;
+    } finally {
+        loading.style.display = 'none';
+        btn.disabled = false;
+    }
+}
+
+loadProfile();
+</script>
+{{end}}

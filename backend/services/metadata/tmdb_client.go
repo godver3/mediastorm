@@ -1084,7 +1084,21 @@ func (c *tmdbClient) fetchTVShowTotalEpisodes(ctx context.Context, tmdbID int64)
 	return payload.NumberOfEpisodes, nil
 }
 
+// movieReleaseDatesResult contains releases and the US certification
+type movieReleaseDatesResult struct {
+	Releases      []models.Release
+	Certification string // US MPAA rating (G, PG, PG-13, R, NC-17)
+}
+
 func (c *tmdbClient) movieReleaseDates(ctx context.Context, tmdbID int64) ([]models.Release, error) {
+	result, err := c.movieReleaseDatesWithCert(ctx, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Releases, nil
+}
+
+func (c *tmdbClient) movieReleaseDatesWithCert(ctx context.Context, tmdbID int64) (*movieReleaseDatesResult, error) {
 	if !c.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
@@ -1120,8 +1134,22 @@ func (c *tmdbClient) movieReleaseDates(ctx context.Context, tmdbID int64) ([]mod
 
 	now := time.Now()
 	releases := make([]models.Release, 0, 8)
+	var usCertification string
+
 	for _, country := range payload.Results {
 		countryCode := strings.TrimSpace(country.ISO31661)
+
+		// Extract US certification (prefer theatrical releases for rating)
+		if countryCode == "US" && usCertification == "" {
+			for _, entry := range country.ReleaseDates {
+				cert := strings.TrimSpace(entry.Certification)
+				if cert != "" {
+					usCertification = cert
+					break
+				}
+			}
+		}
+
 		for _, entry := range country.ReleaseDates {
 			releaseType := mapTMDBReleaseType(entry.Type)
 			if releaseType == "" {
@@ -1151,7 +1179,43 @@ func (c *tmdbClient) movieReleaseDates(ctx context.Context, tmdbID int64) ([]mod
 		}
 	}
 
-	return releases, nil
+	return &movieReleaseDatesResult{
+		Releases:      releases,
+		Certification: usCertification,
+	}, nil
+}
+
+// fetchTVContentRating fetches the US TV content rating for a TV show
+func (c *tmdbClient) fetchTVContentRating(ctx context.Context, tmdbID int64) (string, error) {
+	if !c.isConfigured() {
+		return "", errors.New("tmdb api key not configured")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID), "content_ratings")
+	if err != nil {
+		return "", err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+
+	var payload struct {
+		Results []struct {
+			ISO31661 string `json:"iso_3166_1"`
+			Rating   string `json:"rating"`
+		} `json:"results"`
+	}
+
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return "", fmt.Errorf("tmdb tv/%d content_ratings failed: %w", tmdbID, err)
+	}
+
+	// Find US rating
+	for _, r := range payload.Results {
+		if r.ISO31661 == "US" {
+			return strings.TrimSpace(r.Rating), nil
+		}
+	}
+
+	return "", nil
 }
 
 func (c *tmdbClient) fetchExternalID(ctx context.Context, mediaType string, tmdbID int64) (string, error) {

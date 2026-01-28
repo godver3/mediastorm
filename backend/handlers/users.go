@@ -21,6 +21,7 @@ type usersService interface {
 	Create(name string) (models.User, error)
 	CreateForAccount(accountID, name string) (models.User, error)
 	BelongsToAccount(profileID, accountID string) bool
+	Get(id string) (models.User, bool)
 	Rename(id, name string) (models.User, error)
 	SetColor(id, color string) (models.User, error)
 	SetIconURL(id, iconURL string) (models.User, error)
@@ -38,6 +39,13 @@ type usersService interface {
 	SetPlexAccountID(id, plexAccountID string) (models.User, error)
 	ClearPlexAccountID(id string) (models.User, error)
 	SetKidsProfile(id string, isKids bool) (models.User, error)
+	SetKidsMode(id, mode string) (models.User, error)
+	SetKidsMaxRating(id, rating string) (models.User, error)
+	SetKidsMaxMovieRating(id, rating string) (models.User, error)
+	SetKidsMaxTVRating(id, rating string) (models.User, error)
+	SetKidsAllowedLists(id string, lists []string) (models.User, error)
+	AddKidsAllowedList(id, listURL string) (models.User, error)
+	RemoveKidsAllowedList(id, listURL string) (models.User, error)
 }
 
 var _ usersService = (*users.Service)(nil)
@@ -669,6 +677,304 @@ func (h *UsersHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.Service.SetKidsProfile(id, body.IsKidsProfile)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// canConfigureKidsProfile checks if the caller can configure a kids profile's settings.
+// The caller must belong to the same account as the target profile.
+// Note: The frontend handles the UI restrictions to prevent kids profiles from accessing
+// the configuration interface. The backend just verifies account ownership.
+func (h *UsersHandler) canConfigureKidsProfile(r *http.Request, profileID string) bool {
+	// Get the target profile
+	_, ok := h.Service.Get(profileID)
+	if !ok {
+		return false
+	}
+
+	// Check if caller is in the same account
+	accountID := auth.GetAccountID(r)
+	return h.Service.BelongsToAccount(profileID, accountID)
+}
+
+// SetKidsMode sets the kids restriction mode for a profile.
+func (h *UsersHandler) SetKidsMode(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Mode string `json:"mode"` // "rating", "content_list", "both", or ""
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate mode
+	validModes := map[string]bool{"": true, "rating": true, "content_list": true, "both": true}
+	if !validModes[body.Mode] {
+		http.Error(w, "invalid mode, must be 'rating', 'content_list', 'both', or empty", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetKidsMode(id, body.Mode)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// SetKidsMaxRating sets the maximum content rating for a kids profile.
+func (h *UsersHandler) SetKidsMaxRating(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Rating string `json:"rating"` // G, PG, PG-13, R, NC-17, TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetKidsMaxRating(id, body.Rating)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// SetKidsMaxMovieRating sets the maximum movie rating for a kids profile.
+func (h *UsersHandler) SetKidsMaxMovieRating(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Rating string `json:"rating"` // G, PG, PG-13, R, NC-17
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetKidsMaxMovieRating(id, body.Rating)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// SetKidsMaxTVRating sets the maximum TV rating for a kids profile.
+func (h *UsersHandler) SetKidsMaxTVRating(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Rating string `json:"rating"` // TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetKidsMaxTVRating(id, body.Rating)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// SetKidsAllowedLists replaces the allowed lists for a kids profile.
+func (h *UsersHandler) SetKidsAllowedLists(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Lists []string `json:"lists"` // MDBList URLs
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetKidsAllowedLists(id, body.Lists)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// AddKidsAllowedList adds a list to the allowed lists for a kids profile.
+func (h *UsersHandler) AddKidsAllowedList(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		URL string `json:"url"` // MDBList URL to add
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(body.URL) == "" {
+		http.Error(w, "url is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.AddKidsAllowedList(id, body.URL)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// RemoveKidsAllowedList removes a list from the allowed lists for a kids profile.
+func (h *UsersHandler) RemoveKidsAllowedList(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify caller can configure this profile
+	if !h.canConfigureKidsProfile(r, id) {
+		http.Error(w, "cannot configure kids settings for this profile", http.StatusForbidden)
+		return
+	}
+
+	// Get URL from query parameter
+	listURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if listURL == "" {
+		http.Error(w, "url query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.RemoveKidsAllowedList(id, listURL)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, users.ErrUserNotFound) {
