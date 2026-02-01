@@ -86,7 +86,7 @@ import { SeriesEpisodes } from './details/series-episodes';
 import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
-import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, padNumber, toStringParam } from './details/utils';
+import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, isMovieUnreleased, padNumber, toStringParam } from './details/utils';
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
@@ -4751,6 +4751,12 @@ export default function DetailsScreen() {
                   disabled={isResolving || (isSeries && episodesLoading)}
                   loading={isResolving || (isSeries && episodesLoading)}
                   showReadyPip={prequeueReady}
+                  badge={(() => {
+                    if (isSeries) {
+                      return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                    }
+                    return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+                  })()}
                   autoFocus
                 />
               ) : (
@@ -4765,6 +4771,12 @@ export default function DetailsScreen() {
                   loading={isResolving || (isSeries && episodesLoading)}
                   style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
                   showReadyPip={prequeueReady}
+                  badge={(() => {
+                    if (isSeries) {
+                      return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                    }
+                    return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+                  })()}
                   autoFocus={Platform.isTV}
                 />
               )}
@@ -4981,7 +4993,18 @@ export default function DetailsScreen() {
                 {/* Failed status */}
                 {prequeueDisplayInfo.status === 'failed' && (
                   <Text style={styles.prequeueFilename}>
-                    Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+                    {(() => {
+                      const error = prequeueDisplayInfo.error || 'Unknown error';
+                      const targetEp = activeEpisode || nextUpEpisode;
+                      // Check if this is specifically a "no usable results" error (not scraper failures) for an unreleased episode
+                      const errorLower = error.toLowerCase();
+                      const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
+                      if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
+                        const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
+                        return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
+                      }
+                      return `Failed: ${error}`;
+                    })()}
                   </Text>
                 )}
                 {/* Show filename once available (resolving, probing, or ready) */}
@@ -5372,6 +5395,12 @@ export default function DetailsScreen() {
           loading={isResolving || (isSeries && episodesLoading)}
           disabled={isResolving || (isSeries && episodesLoading)}
           showReadyPip={prequeueReady}
+          badge={(() => {
+            if (isSeries) {
+              return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+            }
+            return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+          })()}
         />
         <FocusablePressable
           focusKey="manual-selection-mobile"
@@ -5453,7 +5482,18 @@ export default function DetailsScreen() {
             {/* Failed status */}
             {prequeueDisplayInfo.status === 'failed' && (
               <Text style={styles.prequeueFilename}>
-                Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+                {(() => {
+                  const error = prequeueDisplayInfo.error || 'Unknown error';
+                  const targetEp = activeEpisode || nextUpEpisode;
+                  // Check if this is specifically a "no usable results" error (not scraper failures) for an unreleased episode
+                  const errorLower = error.toLowerCase();
+                  const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
+                  if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
+                    const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
+                    return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
+                  }
+                  return `Failed: ${error}`;
+                })()}
               </Text>
             )}
             {/* Show filename once available (resolving, probing, or ready) */}

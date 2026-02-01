@@ -26,6 +26,8 @@ interface TVActionButtonProps {
   autoFocus?: boolean;
   /** Style variant */
   variant?: 'primary' | 'secondary';
+  /** Badge text to show in the bottom-right corner (e.g., "Unreleased") */
+  badge?: string;
 }
 
 const TVActionButton = memo(function TVActionButton({
@@ -40,6 +42,7 @@ const TVActionButton = memo(function TVActionButton({
   showReadyPip = false,
   autoFocus = false,
   variant = 'secondary',
+  badge,
 }: TVActionButtonProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme, !!icon, variant), [theme, icon, variant]);
@@ -97,6 +100,11 @@ const TVActionButton = memo(function TVActionButton({
             </View>
           </View>
           {showReadyPip && !loading && <View style={[styles.pip, { backgroundColor: theme.colors.status.success }]} />}
+          {badge && !loading && (
+            <View style={[styles.badge, { backgroundColor: theme.colors.status.warning }]}>
+              <Ionicons name="time" size={12 * tvScale(1.375, 1)} color="#000000" />
+            </View>
+          )}
         </View>
       )}
     </SpatialNavigationFocusableView>
@@ -169,6 +177,14 @@ const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | '
       width: 10,
       height: 10,
       borderRadius: 5,
+      zIndex: 10,
+    },
+    badge: {
+      position: 'absolute',
+      top: -4 * scale,
+      right: -4 * scale,
+      padding: 2 * scale,
+      borderRadius: 10 * scale,
       zIndex: 10,
     },
   });

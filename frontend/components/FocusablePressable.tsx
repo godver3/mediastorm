@@ -42,6 +42,8 @@ interface CustomPressableProps extends PressableProps {
   loading?: boolean;
   /** Show a small indicator pip in the top-right corner (e.g., for prequeue ready) */
   showReadyPip?: boolean;
+  /** Badge text to show in the bottom-right corner (e.g., "Unreleased") */
+  badge?: string;
   /** Style applied to the outer wrapper View (use to override alignSelf for centering) */
   wrapperStyle?: StyleProp<ViewStyle>;
   /** Native tag to focus when pressing Right (Android TV focus trapping) */
@@ -72,6 +74,7 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
       autoFocus = false,
       loading = false,
       showReadyPip = false,
+      badge,
       wrapperStyle,
       nextFocusRight,
       nextFocusLeft,
@@ -181,6 +184,21 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
             }}
             pointerEvents="none"
           />
+        )}
+        {badge && !loading && (
+          <View
+            style={{
+              position: 'absolute',
+              top: -4,
+              right: -4,
+              padding: 2,
+              borderRadius: 8,
+              backgroundColor: theme.colors.status.warning,
+              zIndex: 10,
+            }}
+            pointerEvents="none">
+            <Ionicons name="time" size={10} color="#000000" />
+          </View>
         )}
       </View>
     );

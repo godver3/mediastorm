@@ -90,6 +90,57 @@ export const isEpisodeUnreleased = (airedDate?: string): boolean => {
 };
 
 /**
+ * Check if a movie hasn't been released for home viewing yet.
+ * Returns true if neither digital nor physical release has happened.
+ * Also considers theatrical release > 12 months ago as released.
+ */
+export const isMovieUnreleased = (
+  homeRelease?: { date?: string; released?: boolean },
+  theatricalRelease?: { date?: string; released?: boolean },
+): boolean => {
+  // If home release flag is explicitly set, use it
+  if (homeRelease?.released === true) {
+    return false;
+  }
+
+  // Check home release date
+  if (homeRelease?.date) {
+    try {
+      const releaseDate = new Date(homeRelease.date);
+      if (!isNaN(releaseDate.getTime())) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (releaseDate <= today) {
+          return false; // Home release date has passed
+        }
+      }
+    } catch {
+      // Continue to other checks
+    }
+  }
+
+  // Check if theatrical release was more than 12 months ago
+  if (theatricalRelease?.date) {
+    try {
+      const theatricalDate = new Date(theatricalRelease.date);
+      if (!isNaN(theatricalDate.getTime())) {
+        const twelveMonthsAgo = new Date();
+        twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+        twelveMonthsAgo.setHours(0, 0, 0, 0);
+        if (theatricalDate <= twelveMonthsAgo) {
+          return false; // Theatrical release was > 12 months ago, assume home release available
+        }
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  // No home release info and theatrical < 12 months ago (or no theatrical), assume unreleased
+  return true;
+};
+
+/**
  * Format a user-friendly message for unreleased episodes when no search results are found.
  */
 export const formatUnreleasedMessage = (episodeLabel: string, airedDate?: string): string => {
