@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Modal, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { useLockSpatialNavigation } from '@/services/tv-navigation';
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -41,46 +46,132 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
   const hasOptions = options.length > 0;
 
-  // Lock spatial navigation when modal is visible to prevent dual focus system conflicts
-  const { lock, unlock } = useLockSpatialNavigation();
-  useEffect(() => {
-    if (!Platform.isTV) return;
-    if (visible) {
-      lock();
-    } else {
-      unlock();
-    }
-    return () => {
-      unlock();
-    };
-  }, [visible, lock, unlock]);
-
   const selectedLabel = useMemo(() => options.find((option) => option.id === selectedId)?.label, [options, selectedId]);
 
-  // Manual scroll handling for TV platforms
-  const scrollViewRef = useRef<ScrollView>(null);
+  // Manual scroll handling for TV platforms using animated transform
+  const scrollOffsetRef = useRef(new Animated.Value(0)).current;
   const itemLayoutsRef = useRef<{ y: number; height: number }[]>([]);
+  const containerHeightRef = useRef(0);
+  const currentScrollRef = useRef(0);
+  const pendingFocusIndexRef = useRef<number | null>(null);
+
+  const contentHeightRef = useRef(0);
+
+  // Try to scroll to pending focus if all measurements are ready
+  const tryScrollToPendingFocus = useCallback((animated: boolean) => {
+    const index = pendingFocusIndexRef.current;
+    if (index === null) return;
+
+    const layout = itemLayoutsRef.current[index];
+    const containerHeight = containerHeightRef.current;
+    const contentHeight = contentHeightRef.current;
+
+    // Need all measurements before we can scroll
+    if (!layout || containerHeight === 0 || contentHeight === 0) return;
+
+    // All measurements ready - perform the scroll
+    pendingFocusIndexRef.current = null;
+
+    const itemY = layout.y;
+    const itemHeight = layout.height;
+    const itemBottom = itemY + itemHeight;
+
+    const currentScroll = currentScrollRef.current;
+    const visibleTop = currentScroll;
+    const visibleBottom = currentScroll + containerHeight;
+
+    let newScroll = currentScroll;
+
+    if (itemY < visibleTop) {
+      newScroll = itemY;
+    } else if (itemBottom > visibleBottom) {
+      newScroll = itemBottom - containerHeight;
+    }
+
+    const maxScroll = Math.max(0, contentHeight - containerHeight);
+    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
+
+    if (newScroll !== currentScroll) {
+      currentScrollRef.current = newScroll;
+      if (animated) {
+        Animated.timing(scrollOffsetRef, {
+          toValue: -newScroll,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        scrollOffsetRef.setValue(-newScroll);
+      }
+    }
+  }, [scrollOffsetRef]);
 
   const handleItemLayout = useCallback((index: number, y: number, height: number) => {
     itemLayoutsRef.current[index] = { y, height };
-  }, []);
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const handleContentLayout = useCallback((height: number) => {
+    contentHeightRef.current = height;
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const handleContainerLayout = useCallback((height: number) => {
+    containerHeightRef.current = height;
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const scrollToIndex = useCallback((index: number, animated: boolean) => {
+    const layout = itemLayoutsRef.current[index];
+    if (!layout) return;
+
+    const containerHeight = containerHeightRef.current;
+    const contentHeight = contentHeightRef.current;
+    if (containerHeight === 0 || contentHeight === 0) return;
+
+    const itemY = layout.y;
+    const itemHeight = layout.height;
+    const itemBottom = itemY + itemHeight;
+
+    const currentScroll = currentScrollRef.current;
+    const visibleTop = currentScroll;
+    const visibleBottom = currentScroll + containerHeight;
+
+    let newScroll = currentScroll;
+
+    if (itemY < visibleTop) {
+      newScroll = itemY;
+    } else if (itemBottom > visibleBottom) {
+      newScroll = itemBottom - containerHeight;
+    }
+
+    const maxScroll = Math.max(0, contentHeight - containerHeight);
+    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
+
+    if (newScroll !== currentScroll) {
+      currentScrollRef.current = newScroll;
+      if (animated) {
+        Animated.timing(scrollOffsetRef, {
+          toValue: -newScroll,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        scrollOffsetRef.setValue(-newScroll);
+      }
+    }
+  }, [scrollOffsetRef]);
 
   const handleItemFocus = useCallback((index: number) => {
     if (!Platform.isTV) return;
 
-    // Calculate cumulative Y position from measured layouts
-    let cumulativeY = 0;
-    for (let i = 0; i < index; i++) {
-      const layout = itemLayoutsRef.current[i];
-      if (layout) {
-        cumulativeY += layout.height;
-      }
-    }
-
-    // Scroll to position the focused item with some offset from top
-    const scrollOffset = Math.max(0, cumulativeY - 50);
-    scrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
-  }, []);
+    // Store pending focus - will scroll when all measurements are ready
+    // or immediately if already ready
+    pendingFocusIndexRef.current = index;
+    tryScrollToPendingFocus(true);
+  }, [tryScrollToPendingFocus]);
 
   const resolvedSubtitle = useMemo(() => {
     if (subtitle) {
@@ -94,6 +185,16 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     }
     return 'Select a track';
   }, [hasOptions, selectedLabel, subtitle]);
+
+  // Reset scroll position when modal opens/closes
+  useEffect(() => {
+    if (!visible) {
+      scrollOffsetRef.setValue(0);
+      currentScrollRef.current = 0;
+      itemLayoutsRef.current = [];
+      contentHeightRef.current = 0;
+    }
+  }, [visible, scrollOffsetRef]);
 
   const selectGuardRef = useRef(false);
   const withSelectGuard = useCallback((fn: () => void) => {
@@ -254,8 +355,69 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   const renderOption = (option: TrackSelectionOption, index: number) => {
     const isSelected = option.id === selectedId;
-    const shouldHaveInitialFocus = Platform.isTV && option.id === defaultFocusOptionId;
+    const shouldHaveInitialFocus = option.id === defaultFocusOptionId;
 
+    if (Platform.isTV) {
+      // TV: Use SpatialNavigationFocusableView
+      // Wrap in outer View to measure position relative to scroll container
+      const focusableOption = (
+        <View
+          onLayout={(event) => {
+            const { y, height } = event.nativeEvent.layout;
+            handleItemLayout(index, y, height);
+          }}>
+          <SpatialNavigationFocusableView
+            onSelect={() => handleOptionSelect(option.id)}
+            onFocus={() => handleItemFocus(index)}>
+            {({ isFocused }: { isFocused: boolean }) => (
+              <View
+                style={[
+                  styles.optionItem,
+                  isFocused && !isSelected && styles.optionItemFocused,
+                  isSelected && !isFocused && styles.optionItemSelected,
+                  isSelected && isFocused && styles.optionItemSelectedFocused,
+                ]}>
+                <View style={styles.optionTextContainer}>
+                  <Text
+                    style={[
+                      styles.optionLabel,
+                      isFocused && !isSelected && styles.optionLabelFocused,
+                      isSelected && !isFocused && styles.optionLabelSelected,
+                      isSelected && isFocused && styles.optionLabelSelectedFocused,
+                    ]}>
+                    {option.label}
+                  </Text>
+                  {option.description ? (
+                    <Text
+                      style={[
+                        styles.optionDescription,
+                        isFocused && !isSelected && styles.optionDescriptionFocused,
+                        isSelected && !isFocused && styles.optionDescriptionSelected,
+                        isSelected && isFocused && styles.optionDescriptionSelectedFocused,
+                      ]}>
+                      {option.description}
+                    </Text>
+                  ) : null}
+                </View>
+                {isSelected ? (
+                  <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
+                    <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
+                  </View>
+                ) : null}
+              </View>
+            )}
+          </SpatialNavigationFocusableView>
+        </View>
+      );
+
+      return shouldHaveInitialFocus ? (
+        <DefaultFocus key={option.id}>{focusableOption}</DefaultFocus>
+      ) : (
+        <React.Fragment key={option.id}>{focusableOption}</React.Fragment>
+      );
+    }
+
+    // Non-TV: Use Pressable
     return (
       <View
         key={option.id}
@@ -263,26 +425,22 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
           const { height } = event.nativeEvent.layout;
           handleItemLayout(index, 0, height);
         }}>
-        <Pressable
-          onPress={() => handleOptionSelect(option.id)}
-          onFocus={() => handleItemFocus(index)}
-          hasTVPreferredFocus={shouldHaveInitialFocus}
-          tvParallaxProperties={{ enabled: false }}>
-          {({ focused: isFocused }) => (
+        <Pressable onPress={() => handleOptionSelect(option.id)}>
+          {({ pressed }) => (
             <View
               style={[
                 styles.optionItem,
-                isFocused && !isSelected && styles.optionItemFocused,
-                isSelected && !isFocused && styles.optionItemSelected,
-                isSelected && isFocused && styles.optionItemSelectedFocused,
+                pressed && styles.optionItemFocused,
+                isSelected && !pressed && styles.optionItemSelected,
+                isSelected && pressed && styles.optionItemSelectedFocused,
               ]}>
               <View style={styles.optionTextContainer}>
                 <Text
                   style={[
                     styles.optionLabel,
-                    isFocused && !isSelected && styles.optionLabelFocused,
-                    isSelected && !isFocused && styles.optionLabelSelected,
-                    isSelected && isFocused && styles.optionLabelSelectedFocused,
+                    pressed && !isSelected && styles.optionLabelFocused,
+                    isSelected && !pressed && styles.optionLabelSelected,
+                    isSelected && pressed && styles.optionLabelSelectedFocused,
                   ]}>
                   {option.label}
                 </Text>
@@ -290,17 +448,17 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                   <Text
                     style={[
                       styles.optionDescription,
-                      isFocused && !isSelected && styles.optionDescriptionFocused,
-                      isSelected && !isFocused && styles.optionDescriptionSelected,
-                      isSelected && isFocused && styles.optionDescriptionSelectedFocused,
+                      pressed && !isSelected && styles.optionDescriptionFocused,
+                      isSelected && !pressed && styles.optionDescriptionSelected,
+                      isSelected && pressed && styles.optionDescriptionSelectedFocused,
                     ]}>
                     {option.description}
                   </Text>
                 ) : null}
               </View>
               {isSelected ? (
-                <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
-                  <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
+                <View style={[styles.optionStatusBadge, pressed && styles.optionStatusBadgeFocused]}>
+                  <Text style={[styles.optionStatusText, pressed && styles.optionStatusTextFocused]}>Selected</Text>
                 </View>
               ) : null}
             </View>
@@ -310,6 +468,99 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     );
   };
 
+  const modalContent = (
+    <View style={styles.overlay}>
+      <Pressable
+        style={styles.backdrop}
+        onPress={Platform.isTV ? undefined : handleClose}
+        focusable={false}
+      />
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>{title}</Text>
+          {resolvedSubtitle ? <Text style={styles.modalSubtitle}>{resolvedSubtitle}</Text> : null}
+        </View>
+
+        {Platform.isTV ? (
+          // TV: Use animated transform for scrolling
+          <View
+            style={[styles.optionsScrollView, { overflow: 'hidden' }]}
+            onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
+            <SpatialNavigationNode orientation="vertical">
+              <Animated.View
+                onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
+                style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }] }]}>
+                {hasOptions ? (
+                  options.map((option, index) => renderOption(option, index))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                  </View>
+                )}
+              </Animated.View>
+            </SpatialNavigationNode>
+          </View>
+        ) : (
+          // Non-TV: Use regular ScrollView
+          <View style={styles.optionsScrollView}>
+            <View style={styles.optionsList}>
+              {hasOptions ? (
+                options.map((option, index) => renderOption(option, index))
+              ) : (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        <View style={styles.modalFooter}>
+          {onSearchSubtitles && (
+            Platform.isTV ? (
+              <SpatialNavigationFocusableView onSelect={handleSearchSubtitles}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
+                    <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
+                      Search Online
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            ) : (
+              <Pressable onPress={handleSearchSubtitles}>
+                {({ pressed }) => (
+                  <View style={[styles.closeButton, styles.searchButton, pressed && styles.closeButtonFocused]}>
+                    <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>
+                      Search Online
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            )
+          )}
+          {Platform.isTV ? (
+            <SpatialNavigationFocusableView onSelect={handleClose}>
+              {({ isFocused }: { isFocused: boolean }) => (
+                <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
+            </SpatialNavigationFocusableView>
+          ) : (
+            <Pressable onPress={handleClose}>
+              {({ pressed }) => (
+                <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
+            </Pressable>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+
   return (
     <Modal
       visible={visible}
@@ -318,59 +569,13 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
       hardwareAccelerated>
-      <View style={styles.overlay}>
-        <Pressable
-          style={styles.backdrop}
-          onPress={handleClose}
-          tvParallaxProperties={{ enabled: false }}
-          focusable={false}
-        />
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            {resolvedSubtitle ? <Text style={styles.modalSubtitle}>{resolvedSubtitle}</Text> : null}
-          </View>
-
-          <ScrollView
-            ref={scrollViewRef}
-            style={styles.optionsScrollView}
-            contentContainerStyle={styles.optionsList}
-            scrollEnabled={!Platform.isTV}>
-            {hasOptions ? (
-              options.map((option, index) => renderOption(option, index))
-            ) : (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-              </View>
-            )}
-          </ScrollView>
-
-          <View style={styles.modalFooter}>
-            {onSearchSubtitles && (
-              <Pressable
-                onPress={handleSearchSubtitles}
-                tvParallaxProperties={{ enabled: false }}>
-                {({ focused: isSearchFocused }) => (
-                  <View style={[styles.closeButton, styles.searchButton, isSearchFocused && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, isSearchFocused && styles.closeButtonTextFocused]}>
-                      Search Online
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            )}
-            <Pressable
-              onPress={handleClose}
-              tvParallaxProperties={{ enabled: false }}>
-              {({ focused: isCloseFocused }) => (
-                <View style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>
-                  <Text style={[styles.closeButtonText, isCloseFocused && styles.closeButtonTextFocused]}>Close</Text>
-                </View>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </View>
+      {Platform.isTV ? (
+        <SpatialNavigationRoot isActive={visible}>
+          {modalContent}
+        </SpatialNavigationRoot>
+      ) : (
+        modalContent
+      )}
     </Modal>
   );
 };

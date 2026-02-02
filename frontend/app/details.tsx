@@ -43,7 +43,7 @@ import {
   type Trailer,
   type TrailerPrequeueStatus,
 } from '@/services/api';
-import { SpatialNavigationNode, SpatialNavigationRoot, useSpatialNavigator } from '@/services/tv-navigation';
+import { SpatialNavigationNode, SpatialNavigationRoot, SpatialNavigationFocusableView, useSpatialNavigator } from '@/services/tv-navigation';
 import { useTheme } from '@/theme';
 import { getTVScaleMultiplier, isTablet } from '@/theme/tokens/tvScale';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
@@ -5014,8 +5014,8 @@ export default function DetailsScreen() {
                      !prequeueDisplayInfo.audioTracks?.length && (
                       <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
                     )}
-                    {/* Audio & Subtitle tracks on one line */}
-                    {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
+                    {/* Audio & Subtitle tracks - non-TV uses Pressable, TV renders in separate SpatialNavigationNode below */}
+                    {!Platform.isTV && (prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
                       <View style={styles.prequeueTrackRow}>
                         {/* Audio track - tappable when multiple tracks available */}
                         {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
@@ -5105,6 +5105,104 @@ export default function DetailsScreen() {
             </>
           )}
           </Animated.View>
+          {/* TV Track Selection - always render wrapper node to maintain navigation order
+              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
+          {Platform.isTV && (
+            <SpatialNavigationNode orientation="horizontal" focusKey="details-track-selection">
+              {prequeueDisplayInfo && (prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
+                <View style={[styles.prequeueTrackRow, styles.tvTrackSelectionContainer]}>
+                  {/* Audio track */}
+                  {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
+                    <SpatialNavigationFocusableView
+                      onSelect={() => prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 1 && setShowAudioTrackModal(true)}
+                    >
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                          <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                            {(() => {
+                              const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
+                              const track = selectedIdx !== undefined && selectedIdx >= 0
+                                ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                                : prequeueDisplayInfo.audioTracks?.[0];
+                              if (!track) return 'Default';
+                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                            })()}
+                          </Text>
+                          {(() => {
+                            const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
+                            const track = selectedIdx !== undefined && selectedIdx >= 0
+                              ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                              : prequeueDisplayInfo.audioTracks?.[0];
+                            if (track?.codec) {
+                              return (
+                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                  {track.codec.toUpperCase()}
+                                </Text>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 1 && (
+                            <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                          )}
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  )}
+                  {/* Separator */}
+                  {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
+                    <Text style={styles.prequeueTrackSeparator}>•</Text>
+                  )}
+                  {/* Subtitle track */}
+                  {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                    <SpatialNavigationFocusableView
+                      onSelect={() => setShowSubtitleTrackModal(true)}
+                    >
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                          <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                            {(() => {
+                              const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
+                              if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                              const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                              if (!track) return 'Off';
+                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                            })()}
+                          </Text>
+                          {(() => {
+                            const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
+                            if (selectedIdx === undefined || selectedIdx < 0) return null;
+                            const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                            if (!track) return null;
+                            if (track.forced) {
+                              return (
+                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
+                                  FORCED
+                                </Text>
+                              );
+                            }
+                            if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
+                              return (
+                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
+                                  SDH
+                                </Text>
+                              );
+                            }
+                            return null;
+                          })()}
+                          <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  )}
+                </View>
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
+          )}
           {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
           {Platform.isTV && isSeries && (
@@ -5767,7 +5865,9 @@ export default function DetailsScreen() {
           !bulkWatchModalVisible &&
           !resumeModalVisible &&
           !seasonSelectorVisible &&
-          !episodeSelectorVisible
+          !episodeSelectorVisible &&
+          !showAudioTrackModal &&
+          !showSubtitleTrackModal
         }
         onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
         <Stack.Screen options={{ headerShown: false }} />

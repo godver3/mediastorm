@@ -359,7 +359,8 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     prequeueInfoContainer: {
       marginTop: theme.spacing.md,
       marginLeft: isTV ? tvScale * 48 : 0,
-      marginBottom: isTV ? tvScale * 24 : 0,
+      // TV: no marginBottom here - TV track selection handles spacing, or next sections handle their own top margin
+      marginBottom: isTV ? 0 : 0,
     },
     prequeueInfoMinHeight: {
       minHeight: isTV ? tvScale * 55 : 45,
@@ -418,7 +419,23 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       gap: isTV ? theme.spacing.sm : theme.spacing.xs,
       // On mobile, limit width so both audio and subtitle fit on one line
-      ...(isTV ? {} : { flex: 1, maxWidth: '48%' }),
+      ...(isTV ? {
+        paddingVertical: theme.spacing.xs,
+        paddingHorizontal: theme.spacing.sm,
+        borderRadius: theme.radius.sm,
+      } : { flex: 1, maxWidth: '48%' }),
+    },
+    prequeueTrackFocused: {
+      backgroundColor: theme.colors.accent.primary,
+    },
+    prequeueTrackValueFocused: {
+      color: theme.colors.text.inverse,
+    },
+    tvTrackSelectionContainer: {
+      // Match prequeueInfoContainer positioning for TV
+      marginLeft: tvScale * 48,
+      marginTop: -(tvScale * 30), // Pull up into the prequeueInfoMinHeight reserved space
+      marginBottom: tvScale * 16, // Space before next section
     },
     episodeNavigationRow: {
       flexDirection: 'row',
