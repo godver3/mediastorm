@@ -2319,7 +2319,10 @@ class ApiService {
     });
   }
 
-  async getVideoMetadata(path: string, options?: { profileId?: string; clientId?: string }): Promise<VideoMetadata> {
+  async getVideoMetadata(
+    path: string,
+    options?: { profileId?: string; clientId?: string; audioLang?: string },
+  ): Promise<VideoMetadata> {
     // Build URL manually to ensure proper encoding of special chars like semicolons
     // URLSearchParams doesn't encode semicolons which breaks some parsers
     const queryParts: string[] = [`path=${encodeURIComponent(path)}`];
@@ -2331,6 +2334,9 @@ class ApiService {
     }
     if (options?.clientId) {
       queryParts.push(`clientId=${encodeURIComponent(options.clientId)}`);
+    }
+    if (options?.audioLang) {
+      queryParts.push(`audioLang=${encodeURIComponent(options.audioLang)}`);
     }
     return this.request<VideoMetadata>(`/video/metadata?${queryParts.join('&')}`);
   }

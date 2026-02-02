@@ -5057,7 +5057,14 @@ export default function PlayerScreen() {
 
         console.log('[player] fetching metadata for', pathParam);
         setSourcePath(pathParam);
-        const metadata = await apiService.getVideoMetadata(pathParam);
+        // Pass preferred audio language so the backend selects the correct track
+        const preferredAudioLang =
+          contentPreference?.audioLanguage ||
+          userSettings?.playback?.preferredAudioLanguage ||
+          settings?.playback?.preferredAudioLanguage;
+        const metadata = await apiService.getVideoMetadata(pathParam, {
+          audioLang: preferredAudioLang,
+        });
         if (!isMounted) {
           return;
         }

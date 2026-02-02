@@ -2709,10 +2709,11 @@ export default function DetailsScreen() {
             (settings?.playback || userSettings?.playback)
           ) {
             try {
-              const metadata = await apiService.getVideoMetadata(prequeueStatus.streamPath);
+              // Compute audio language preference for metadata fetch
+              const audioLang =
+                userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage ?? 'eng';
+              const metadata = await apiService.getVideoMetadata(prequeueStatus.streamPath, { audioLang });
               if (metadata) {
-                const audioLang =
-                  userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage ?? 'eng';
                 const subLang =
                   userSettings?.playback?.preferredSubtitleLanguage ??
                   settings?.playback?.preferredSubtitleLanguage ??

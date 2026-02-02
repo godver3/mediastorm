@@ -1067,6 +1067,9 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		clientID = r.Header.Get("X-Client-ID")
 	}
 
+	// Get preferred audio language for track selection
+	preferredAudioLang := r.URL.Query().Get("audioLang")
+
 	var (
 		fileSize int64
 		notes    []string
@@ -1107,7 +1110,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 
 		var response videoMetadataResponse
 		if meta != nil {
-			plan := determineAudioPlan(meta, false)
+			plan := determineAudioPlanWithLanguage(meta, false, preferredAudioLang)
 			response = composeMetadataResponse(meta, sanitizedPath, plan)
 			if response.FileSizeBytes == 0 && fileSize > 0 {
 				response.FileSizeBytes = fileSize
@@ -1196,7 +1199,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 
 	var response videoMetadataResponse
 	if meta != nil {
-		plan := determineAudioPlan(meta, false)
+		plan := determineAudioPlanWithLanguage(meta, false, preferredAudioLang)
 		response = composeMetadataResponse(meta, sanitizedPath, plan)
 		// Prefer probed file size, but backfill from HEAD if missing
 		if response.FileSizeBytes == 0 && fileSize > 0 {
@@ -1302,6 +1305,13 @@ func selectPrimaryVideoStream(meta *ffprobeOutput) *ffprobeStream {
 }
 
 func determineAudioPlan(meta *ffprobeOutput, forceAAC bool) audioPlan {
+	return determineAudioPlanWithLanguage(meta, forceAAC, "")
+}
+
+// determineAudioPlanWithLanguage selects an audio track, preferring tracks matching the
+// specified language. When preferredLanguage is set, it uses the same priority logic as
+// track_helper.go: compatible codec + language match > incompatible codec + language match > first compatible.
+func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferredLanguage string) audioPlan {
 	if meta == nil {
 		if forceAAC {
 			return audioPlan{mode: audioPlanTranscode, reason: "no metadata; forcing AAC"}
@@ -1309,40 +1319,121 @@ func determineAudioPlan(meta *ffprobeOutput, forceAAC bool) audioPlan {
 		return audioPlan{mode: audioPlanNone, reason: "no metadata"}
 	}
 
-	var firstAudio *ffprobeStream
+	// Collect audio streams for language-aware selection
+	var audioStreams []*ffprobeStream
 	for i := range meta.Streams {
 		stream := &meta.Streams[i]
-		if !strings.EqualFold(stream.CodecType, "audio") {
-			continue
+		if strings.EqualFold(stream.CodecType, "audio") {
+			audioStreams = append(audioStreams, stream)
 		}
-		if firstAudio == nil {
-			firstAudio = stream
+	}
+
+	if len(audioStreams) == 0 {
+		if forceAAC {
+			return audioPlan{mode: audioPlanTranscode, reason: "target requires AAC audio but no audio streams detected"}
 		}
+		return audioPlan{mode: audioPlanNone, reason: "no audio streams detected"}
+	}
+
+	normalizedPref := strings.ToLower(strings.TrimSpace(preferredLanguage))
+
+	// Helper to check language match
+	matchesLang := func(stream *ffprobeStream) bool {
+		if normalizedPref == "" {
+			return false
+		}
+		lang := strings.ToLower(strings.TrimSpace(normalizeTag(stream.Tags, "language")))
+		title := strings.ToLower(strings.TrimSpace(normalizeTag(stream.Tags, "title")))
+		// Exact match
+		if lang == normalizedPref || title == normalizedPref {
+			return true
+		}
+		// Partial match
+		if lang != "" && (strings.Contains(lang, normalizedPref) || strings.Contains(normalizedPref, lang)) {
+			return true
+		}
+		return false
+	}
+
+	// Helper to check if codec is copyable
+	isCopyable := func(stream *ffprobeStream) bool {
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		_, ok := copyableAudioCodecs[codec]
+		return ok
+	}
+
+	// Helper to check if this is a commentary track
+	isCommentary := func(stream *ffprobeStream) bool {
+		title := strings.ToLower(strings.TrimSpace(normalizeTag(stream.Tags, "title")))
+		return strings.Contains(title, "commentary") ||
+			strings.Contains(title, "isolated score") ||
+			strings.Contains(title, "music only") ||
+			strings.Contains(title, "score only")
+	}
+
+	// If we have a language preference, use language-aware selection
+	if normalizedPref != "" {
+		// Pass 1: Compatible codec matching language, skipping commentary
+		for _, stream := range audioStreams {
+			if matchesLang(stream) && isCopyable(stream) && !isCommentary(stream) {
+				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+				log.Printf("[metadata] selected compatible audio track %d (%s) for language %q", stream.Index, codec, preferredLanguage)
+				return audioPlan{mode: audioPlanCopy, stream: stream, reason: fmt.Sprintf("compatible codec %s matching language %s", codec, preferredLanguage)}
+			}
+		}
+
+		// Pass 2: Non-compatible codec matching language, skipping commentary (will need transcode)
+		for _, stream := range audioStreams {
+			if matchesLang(stream) && !isCommentary(stream) {
+				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+				log.Printf("[metadata] selected incompatible audio track %d (%s) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
+				return audioPlan{mode: audioPlanTranscode, stream: stream, reason: fmt.Sprintf("codec %s matching language %s requires transcoding", codec, preferredLanguage)}
+			}
+		}
+
+		// Pass 3: Compatible codec matching language, including commentary
+		for _, stream := range audioStreams {
+			if matchesLang(stream) && isCopyable(stream) {
+				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+				log.Printf("[metadata] selected compatible audio track %d (%s, commentary) for language %q", stream.Index, codec, preferredLanguage)
+				return audioPlan{mode: audioPlanCopy, stream: stream, reason: fmt.Sprintf("compatible codec %s matching language %s (commentary)", codec, preferredLanguage)}
+			}
+		}
+
+		// Pass 4: Any codec matching language, including commentary
+		for _, stream := range audioStreams {
+			if matchesLang(stream) {
+				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+				log.Printf("[metadata] selected audio track %d (%s, commentary) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
+				return audioPlan{mode: audioPlanTranscode, stream: stream, reason: fmt.Sprintf("codec %s matching language %s requires transcoding", codec, preferredLanguage)}
+			}
+		}
+
+		// No language match found, fall through to default selection
+		log.Printf("[metadata] no audio track found for language %q, falling back to default selection", preferredLanguage)
+	}
+
+	// Default selection: first compatible codec (original behavior)
+	for _, stream := range audioStreams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
 		if forceAAC {
 			if codec == "aac" {
 				return audioPlan{mode: audioPlanCopy, stream: stream, reason: "AAC audio already compatible"}
 			}
-			// Keep scanning in case another track is AAC
 			continue
 		}
-		if _, ok := copyableAudioCodecs[codec]; ok {
+		if isCopyable(stream) {
 			return audioPlan{mode: audioPlanCopy, stream: stream, reason: "copy-compatible audio codec"}
 		}
 	}
 
-	if firstAudio != nil {
-		codec := strings.ToLower(strings.TrimSpace(firstAudio.CodecName))
-		if forceAAC {
-			return audioPlan{mode: audioPlanTranscode, stream: firstAudio, reason: "target requires AAC audio"}
-		}
-		return audioPlan{mode: audioPlanTranscode, stream: firstAudio, reason: fmt.Sprintf("audio codec %s requires transcoding", codec)}
-	}
-
+	// No copyable codec found, use first audio stream
+	firstAudio := audioStreams[0]
+	codec := strings.ToLower(strings.TrimSpace(firstAudio.CodecName))
 	if forceAAC {
-		return audioPlan{mode: audioPlanTranscode, reason: "target requires AAC audio but no audio streams detected"}
+		return audioPlan{mode: audioPlanTranscode, stream: firstAudio, reason: "target requires AAC audio"}
 	}
-	return audioPlan{mode: audioPlanNone, reason: "no audio streams detected"}
+	return audioPlan{mode: audioPlanTranscode, stream: firstAudio, reason: fmt.Sprintf("audio codec %s requires transcoding", codec)}
 }
 
 func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags string, videoCodec string, hasDV bool, dvProfile string) []string {

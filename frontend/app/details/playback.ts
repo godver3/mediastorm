@@ -849,6 +849,7 @@ export const initiatePlayback = async (
       const metadata = await apiService.getVideoMetadata(playback.webdavPath, {
         profileId: options.profileId,
         clientId: apiService.getClientId() ?? undefined,
+        audioLang: playbackSettings?.preferredAudioLanguage,
       });
 
       // Detect HDR
