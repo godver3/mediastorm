@@ -371,7 +371,7 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 
 	userSettings, err := h.userSettingsService.GetWithDefaults(profileID, defaults)
 	if err != nil {
-		http.Error(w, "Failed to load user settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to load user settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -411,7 +411,7 @@ func (h *AccountUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.userSettingsService.Update(profileID, settings); err != nil {
-		http.Error(w, "Failed to save user settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"novastream/config"
 )
@@ -135,16 +136,20 @@ func (h *SubtitlesHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command(pythonPath, scriptPath, string(paramsJSON))
+	// Pass params via stdin to avoid exposing credentials in process listings
+	cmd := exec.Command(pythonPath, scriptPath)
+	cmd.Stdin = strings.NewReader(string(paramsJSON))
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			log.Printf("[subtitles] Search script error: %s", string(exitErr.Stderr))
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": string(exitErr.Stderr)})
+			json.NewEncoder(w).Encode(map[string]string{"error": "subtitle search failed"})
 			return
 		}
+		log.Printf("[subtitles] Search exec error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": "subtitle search failed"})
 		return
 	}
 
@@ -237,20 +242,22 @@ func (h *SubtitlesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[subtitles] Running Python script: %s with params: %s", scriptPath, string(paramsJSON))
-	cmd := exec.Command(pythonPath, scriptPath, string(paramsJSON))
+	log.Printf("[subtitles] Running Python script: %s", scriptPath)
+	// Pass params via stdin to avoid exposing credentials in process listings
+	cmd := exec.Command(pythonPath, scriptPath)
+	cmd.Stdin = strings.NewReader(string(paramsJSON))
 	output, err := cmd.Output()
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			log.Printf("[subtitles] Python script error: %s", string(exitErr.Stderr))
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": string(exitErr.Stderr)})
+			json.NewEncoder(w).Encode(map[string]string{"error": "subtitle download failed"})
 			return
 		}
 		log.Printf("[subtitles] Python script exec error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": "subtitle download failed"})
 		return
 	}
 

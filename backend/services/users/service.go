@@ -31,6 +31,25 @@ var (
 	ErrInvalidImageFormat = errors.New("invalid image format, must be PNG or JPG")
 )
 
+// isValidIconFilename validates that an icon filename is safe (no path traversal).
+// Only allows alphanumeric, hyphens, underscores, and dots. No path separators.
+func isValidIconFilename(filename string) bool {
+	if filename == "" {
+		return false
+	}
+	// Reject path separators and parent directory references
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || strings.Contains(filename, "..") {
+		return false
+	}
+	// Ensure filename matches expected pattern (UUID + extension)
+	for _, r := range filename {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
 // Service manages persistence of NovaStream user profiles.
 type Service struct {
 	mu         sync.RWMutex
@@ -483,8 +502,8 @@ func (s *Service) ClearIconURL(id string) (models.User, error) {
 		return models.User{}, ErrUserNotFound
 	}
 
-	// Delete the icon file if it exists
-	if user.IconURL != "" {
+	// Delete the icon file if it exists and filename is valid
+	if user.IconURL != "" && isValidIconFilename(user.IconURL) {
 		iconsDir := filepath.Join(s.storageDir, "profile-icons")
 		iconPath := filepath.Join(iconsDir, user.IconURL)
 		os.Remove(iconPath) // Ignore error - file might not exist
@@ -513,6 +532,11 @@ func (s *Service) GetIconPath(id string) (string, error) {
 
 	if user.IconURL == "" {
 		return "", nil
+	}
+
+	// Validate icon filename to prevent path traversal
+	if !isValidIconFilename(user.IconURL) {
+		return "", ErrInvalidIconURL
 	}
 
 	return filepath.Join(s.storageDir, "profile-icons", user.IconURL), nil

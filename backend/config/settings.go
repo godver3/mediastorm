@@ -45,8 +45,9 @@ type Settings struct {
 }
 
 type ServerSettings struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	HomepageAPIKey string `json:"homepageApiKey,omitempty"` // API key for Homepage dashboard integration
 }
 
 type UsenetSettings struct {
