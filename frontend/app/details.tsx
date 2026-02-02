@@ -1453,8 +1453,34 @@ export default function DetailsScreen() {
         const response = await apiService.getPrequeueStatus(prequeueId);
         if (cancelled) return;
 
+        // When ready, compute expected subtitle track based on user preferences for display
+        let displayResponse = response;
+        if (response.status === 'ready' && response.subtitleTracks && response.subtitleTracks.length > 0) {
+          // Only compute if backend didn't already select a track
+          if (response.selectedSubtitleTrack === undefined || response.selectedSubtitleTrack < 0) {
+            const playbackSettings = userSettings?.playback ?? settings?.playback;
+            const subLang = playbackSettings?.preferredSubtitleLanguage ?? 'eng';
+            const subModeRaw = playbackSettings?.preferredSubtitleMode ?? 'off';
+            const subMode = subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
+
+            // Convert track format for findSubtitleTrackByPreference
+            const subtitleStreams = response.subtitleTracks.map((t) => ({
+              index: t.index,
+              language: t.language || '',
+              title: t.title,
+              isForced: t.forced,
+              disposition: t.forced ? { forced: 1 } : undefined,
+            }));
+
+            const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode);
+            if (computedSubtitleTrack !== null) {
+              displayResponse = { ...response, selectedSubtitleTrack: computedSubtitleTrack };
+            }
+          }
+        }
+
         // Always update display info to show current status
-        setPrequeueDisplayInfo(response);
+        setPrequeueDisplayInfo(displayResponse);
 
         if (response.status === 'ready') {
           console.log('[prequeue] Prequeue is ready:', prequeueId);
@@ -2583,10 +2609,9 @@ export default function DetailsScreen() {
             );
           }
 
-          // Only fetch metadata if neither override nor prequeue provided track selection
+          // Fetch metadata if either track still needs selection based on user preferences
           if (
-            selectedAudioTrack === undefined &&
-            selectedSubtitleTrack === undefined &&
+            (selectedAudioTrack === undefined || selectedSubtitleTrack === undefined) &&
             (settings?.playback || userSettings?.playback)
           ) {
             try {
@@ -2603,7 +2628,8 @@ export default function DetailsScreen() {
                 const subMode =
                   subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
 
-                if (metadata.audioStreams) {
+                // Only select audio if not already set by prequeue
+                if (selectedAudioTrack === undefined && metadata.audioStreams) {
                   const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
                   if (match !== null) {
                     selectedAudioTrack = match;
@@ -2611,7 +2637,8 @@ export default function DetailsScreen() {
                   }
                 }
 
-                if (metadata.subtitleStreams) {
+                // Only select subtitle if not already set by prequeue
+                if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
                   const match = findSubtitleTrackByPreference(
                     metadata.subtitleStreams,
                     subLang,
