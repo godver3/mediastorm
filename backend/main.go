@@ -391,6 +391,7 @@ func main() {
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
 	epgHandler := handlers.NewEPGHandler(epgService)
+	settingsHandler.SetEPGService(epgService) // Enable auto-refresh when new EPG sources are added
 
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)
