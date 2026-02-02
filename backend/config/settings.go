@@ -38,9 +38,10 @@ type Settings struct {
 	Trakt           TraktSettings          `json:"trakt,omitempty"`
 	Plex            PlexSettings           `json:"plex,omitempty"`
 	Log             LogConfig              `json:"log"`
-	ScheduledTasks  ScheduledTasksSettings `json:"scheduledTasks,omitempty"`
-	Network         NetworkSettings        `json:"network,omitempty"`
-	Ranking         RankingSettings        `json:"ranking,omitempty"`
+	ScheduledTasks  ScheduledTasksSettings  `json:"scheduledTasks,omitempty"`
+	Network         NetworkSettings         `json:"network,omitempty"`
+	Ranking         RankingSettings         `json:"ranking,omitempty"`
+	BackupRetention BackupRetentionSettings `json:"backupRetention,omitempty"`
 }
 
 type ServerSettings struct {
@@ -474,7 +475,14 @@ const (
 	ScheduledTaskTypeTraktListSync     ScheduledTaskType = "trakt_list_sync"
 	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
 	ScheduledTaskTypePlaylistRefresh   ScheduledTaskType = "playlist_refresh"
+	ScheduledTaskTypeBackup            ScheduledTaskType = "backup"
 )
+
+// BackupRetentionSettings controls how backups are automatically cleaned up
+type BackupRetentionSettings struct {
+	RetentionDays  int `json:"retentionDays"`  // Delete backups older than X days (0 = never auto-delete)
+	RetentionCount int `json:"retentionCount"` // Keep at most X backups (0 = unlimited)
+}
 
 // ScheduledTaskFrequency defines how often a task runs
 type ScheduledTaskFrequency string
@@ -655,6 +663,10 @@ func DefaultSettings() Settings {
 		},
 		Ranking: RankingSettings{
 			Criteria: DefaultRankingCriteria(),
+		},
+		BackupRetention: BackupRetentionSettings{
+			RetentionDays:  30, // Delete backups older than 30 days
+			RetentionCount: 10, // Keep at most 10 backups
 		},
 	}
 }

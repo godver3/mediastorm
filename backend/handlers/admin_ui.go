@@ -628,6 +628,7 @@ type AdminUIHandler struct {
 	registerTemplate      *template.Template
 	accountsTemplate      *template.Template
 	kidsSettingsTemplate  *template.Template
+	backupTemplate        *template.Template
 	settingsPath          string
 	hlsManager            *HLSManager
 	usersService          *users.Service
@@ -825,6 +826,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		registerTemplate:     registerTmpl,
 		accountsTemplate:     createPageTemplate("accounts.html"),
 		kidsSettingsTemplate: createPageTemplate("kids_settings.html"),
+		backupTemplate:       createPageTemplate("backup.html"),
 		settingsPath:         settingsPath,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
@@ -4331,6 +4333,36 @@ func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request
 	}
 	if err := h.kidsSettingsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Kids settings template error: %v\n", err)
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// BackupPage serves the backup management page
+func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	// Backup page is only for admins
+	if !isAdmin {
+		http.Redirect(w, r, basePath, http.StatusFound)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/backup",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.backupTemplate == nil {
+		http.Error(w, "Backup template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.backupTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Backup template error: %v\n", err)
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }

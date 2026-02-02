@@ -231,6 +231,7 @@
                         <select id="newTaskType" class="form-select" onchange="onTaskTypeChange()">
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
+                            <option value="backup">System Backup</option>
                         </select>
                     </div>
 
@@ -330,6 +331,20 @@
                         </div>
                     </div>
 
+                    <!-- Backup specific config -->
+                    <div id="backupConfig" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <div class="form-group">
+                            <label class="form-label">Retention (Days)</label>
+                            <input type="number" id="newBackupRetentionDays" class="form-input" value="30" min="0">
+                            <small class="text-muted">Delete backups older than X days (0 = never auto-delete)</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Max Backups to Keep</label>
+                            <input type="number" id="newBackupRetentionCount" class="form-input" value="10" min="0">
+                            <small class="text-muted">Keep at most X backups (0 = unlimited)</small>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="newTaskFrequency" class="form-select">
@@ -377,6 +392,7 @@
                         <select id="editTaskType" class="form-select" disabled>
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
+                            <option value="backup">System Backup</option>
                         </select>
                         <small class="text-muted">Task type cannot be changed</small>
                     </div>
@@ -470,6 +486,20 @@
                                 <option value="target_wins">Target wins</option>
                             </select>
                             <small class="text-muted">How to resolve conflicts in bidirectional sync</small>
+                        </div>
+                    </div>
+
+                    <!-- Backup specific config (edit) -->
+                    <div id="editBackupConfig" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <div class="form-group">
+                            <label class="form-label">Retention (Days)</label>
+                            <input type="number" id="editBackupRetentionDays" class="form-input" value="30" min="0">
+                            <small class="text-muted">Delete backups older than X days (0 = never auto-delete)</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Max Backups to Keep</label>
+                            <input type="number" id="editBackupRetentionCount" class="form-input" value="10" min="0">
+                            <small class="text-muted">Keep at most X backups (0 = unlimited)</small>
                         </div>
                     </div>
 
@@ -3456,7 +3486,7 @@
                             <span class="status-badge ${statusClass}" style="font-size: 0.75rem;">${statusLabel}</span>
                             <span class="text-muted" style="font-size: 0.8125rem;">Last: ${lastRunLabel}</span>
                             ${task.enabled ? `<span class="text-muted" style="font-size: 0.8125rem;">Next: ${getNextRunLabel(task)}</span>` : ''}
-                            ${task.itemsImported > 0 ? `<span class="text-muted" style="font-size: 0.8125rem;">${task.itemsImported} items synced</span>` : ''}
+                            ${task.itemsImported > 0 && task.type !== 'backup' ? `<span class="text-muted" style="font-size: 0.8125rem;">${task.itemsImported} items synced</span>` : ''}
                             ${task.dryRunDetails ? `<button class="btn btn-sm" onclick="showDryRunResults('${task.id}')" style="padding: 0.15rem 0.5rem; font-size: 0.75rem; background: rgba(99, 102, 241, 0.2); color: var(--accent);">View Dry Run Results</button>` : ''}
                             ${task.lastError ? `<span style="color: var(--danger); font-size: 0.8125rem;">${escapeHtml(task.lastError)}</span>` : ''}
                         </div>
@@ -3525,6 +3555,7 @@
         switch (type) {
             case 'plex_watchlist_sync': return 'Plex Watchlist';
             case 'trakt_list_sync': return 'Trakt List';
+            case 'backup': return 'System Backup';
             default: return type;
         }
     }
@@ -3597,12 +3628,6 @@
         const traktSelect = document.getElementById('newTaskTraktAccount');
         const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
 
-        // Check if at least one service has connected accounts
-        if (connectedPlexAccounts.length === 0 && connectedTraktAccounts.length === 0) {
-            showToast('Please connect a Plex or Trakt account first', 'error');
-            return;
-        }
-
         // Populate Plex dropdown
         if (connectedPlexAccounts.length > 0) {
             plexSelect.innerHTML = connectedPlexAccounts.map(account =>
@@ -3646,12 +3671,14 @@
         const taskType = document.getElementById('newTaskType').value;
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
         const traktConfig = document.getElementById('traktListSyncConfig');
+        const backupConfig = document.getElementById('backupConfig');
         const syncOptions = document.getElementById('syncOptionsConfig');
         const syncDirection = document.getElementById('newTaskSyncDirection');
 
         // Show/hide config sections based on task type
         plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
         traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
+        backupConfig.style.display = taskType === 'backup' ? 'block' : 'none';
 
         // Update sync direction labels based on task type
         if (taskType === 'plex_watchlist_sync') {
@@ -3668,7 +3695,7 @@
             `;
         }
 
-        // Show sync options and dry run for any sync-type task
+        // Show sync options and dry run for any sync-type task (not for backup)
         const isSyncTask = taskType.includes('sync');
         syncOptions.style.display = isSyncTask ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
@@ -3788,6 +3815,9 @@
                     return;
                 }
             }
+        } else if (taskType === 'backup') {
+            config.retentionDays = String(parseInt(document.getElementById('newBackupRetentionDays').value) || 30);
+            config.retentionCount = String(parseInt(document.getElementById('newBackupRetentionCount').value) || 10);
         }
 
         // Add sync options for sync-type tasks
@@ -3935,6 +3965,7 @@
         // Hide all config sections first
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editTraktListSyncConfig').style.display = 'none';
+        document.getElementById('editBackupConfig').style.display = 'none';
 
         // Set config values for Plex watchlist sync
         if (task.type === 'plex_watchlist_sync' && task.config) {
@@ -3959,6 +3990,15 @@
                 }
             } else {
                 document.getElementById('editCustomListGroup').style.display = 'none';
+            }
+        }
+
+        // Set config values for backup task
+        if (task.type === 'backup') {
+            document.getElementById('editBackupConfig').style.display = 'block';
+            if (task.config) {
+                document.getElementById('editBackupRetentionDays').value = task.config.retentionDays ?? 30;
+                document.getElementById('editBackupRetentionCount').value = task.config.retentionCount ?? 10;
             }
         }
 
@@ -4093,6 +4133,9 @@
                     return;
                 }
             }
+        } else if (taskType === 'backup') {
+            config.retentionDays = String(parseInt(document.getElementById('editBackupRetentionDays').value) || 30);
+            config.retentionCount = String(parseInt(document.getElementById('editBackupRetentionCount').value) || 10);
         }
 
         // Add sync options for sync-type tasks

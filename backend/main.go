@@ -39,6 +39,7 @@ import (
 	"novastream/services/clients"
 	client_settings "novastream/services/client_settings"
 	content_preferences "novastream/services/content_preferences"
+	"novastream/services/backup"
 	"novastream/services/scheduler"
 	"novastream/services/watchlist"
 	"novastream/utils"
@@ -601,6 +602,22 @@ func main() {
 	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.DeleteTask)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}/run", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.RunTaskNow)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/scheduled-tasks/{taskID}/toggle", adminUIHandler.RequireMasterAuth(scheduledTasksHandler.ToggleTask)).Methods(http.MethodPost)
+
+	// Backup routes (master account only)
+	backupService, err := backup.NewService(settings.Cache.Directory, cfgManager)
+	if err != nil {
+		log.Printf("warning: failed to initialize backup service: %v", err)
+	} else {
+		backupHandler := handlers.NewBackupHandler(backupService)
+		schedulerService.SetBackupService(backupService)
+		r.HandleFunc("/admin/backup", adminUIHandler.RequireMasterAuth(adminUIHandler.BackupPage)).Methods(http.MethodGet)
+		r.HandleFunc("/admin/api/backups", adminUIHandler.RequireMasterAuth(backupHandler.ListBackups)).Methods(http.MethodGet)
+		r.HandleFunc("/admin/api/backups", adminUIHandler.RequireMasterAuth(backupHandler.CreateBackup)).Methods(http.MethodPost)
+		r.HandleFunc("/admin/api/backups/{filename}/download", adminUIHandler.RequireMasterAuth(backupHandler.DownloadBackup)).Methods(http.MethodGet)
+		r.HandleFunc("/admin/api/backups/{filename}/restore", adminUIHandler.RequireMasterAuth(backupHandler.RestoreBackup)).Methods(http.MethodPost)
+		r.HandleFunc("/admin/api/backups/{filename}", adminUIHandler.RequireMasterAuth(backupHandler.DeleteBackup)).Methods(http.MethodDelete)
+		fmt.Println("💾 Backup management available at /admin/backup")
+	}
 
 	fmt.Println("📊 Admin dashboard available at /admin")
 
