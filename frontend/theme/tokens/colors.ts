@@ -27,6 +27,10 @@ type ColorPalette = {
     warning: string;
     danger: string;
   };
+  warning: {
+    muted: string;
+    text: string;
+  };
   overlay: {
     scrim: string;
     button: string;
@@ -61,6 +65,10 @@ const darkPalette: ColorPalette = {
     warning: '#f1c40f',
     danger: '#e74c3c',
   },
+  warning: {
+    muted: 'rgba(241, 196, 15, 0.15)',
+    text: '#f1c40f',
+  },
   overlay: {
     scrim: 'rgba(11, 11, 15, 0.72)',
     button: 'rgba(255, 255, 255, 0.12)',
@@ -94,6 +102,10 @@ const lightPalette: ColorPalette = {
     success: '#1d9a5f',
     warning: '#d97706',
     danger: '#d83145',
+  },
+  warning: {
+    muted: 'rgba(217, 119, 6, 0.15)',
+    text: '#d97706',
   },
   overlay: {
     scrim: 'rgba(10, 12, 16, 0.68)',
