@@ -12,6 +12,7 @@ import {
 } from '@/services/tv-navigation';
 import FocusablePressable from '@/components/FocusablePressable';
 import MarqueeText from '@/components/tv/MarqueeText';
+import { getSeasonLabel } from './utils';
 
 interface SeasonSelectorProps {
   visible: boolean;
@@ -136,7 +137,7 @@ export function SeasonSelector({ visible, onClose, seasons, onSeasonSelect, them
                                     focused={isFocused}
                                     speed={30}
                                     delay={400}>
-                                    {season.name || `Season ${season.number}`}
+                                    {getSeasonLabel(season.number, season.name)}
                                   </MarqueeText>
                                   {season.episodes && season.episodes.length > 0 && (
                                     <Text style={styles.seasonMeta}>

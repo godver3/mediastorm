@@ -16,6 +16,7 @@ import {
   SpatialNavigationVirtualizedList,
 } from '@/services/tv-navigation';
 import TVEpisodeThumbnail, { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from './TVEpisodeThumbnail';
+import { getSeasonLabel } from '@/app/details/utils';
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
@@ -139,7 +140,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   const renderSeasonItem = useCallback(
     ({ item: season }: { item: SeriesSeason }) => {
       const isSelected = selectedSeason?.number === season.number;
-      const seasonLabel = season.name || `Season ${season.number}`;
+      const seasonLabel = getSeasonLabel(season.number, season.name);
 
       return (
         <SpatialNavigationFocusableView

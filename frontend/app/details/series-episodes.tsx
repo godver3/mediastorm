@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { View as RNView } from 'react-native';
 import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { episodesMatch, formatPublishDate, padNumber } from './utils';
+import { episodesMatch, formatPublishDate, getSeasonLabel, padNumber } from './utils';
 import MarqueeText from '@/components/tv/MarqueeText';
 
 // Helper function to determine if we're on TV platform
@@ -393,7 +393,7 @@ export const SeriesEpisodes = ({
     if (!selectedSeason) {
       return orderedSeasons.length ? 'Select a season' : 'No seasons available';
     }
-    return selectedSeason.name || `Season ${selectedSeason.number}`;
+    return getSeasonLabel(selectedSeason.number, selectedSeason.name);
   }, [orderedSeasons.length, selectedSeason]);
 
   const seasonPickerMeta = useMemo(() => {
@@ -537,7 +537,7 @@ export const SeriesEpisodes = ({
                       showsVerticalScrollIndicator={false}>
                       {orderedSeasons.map((season) => {
                         const isActive = selectedSeason?.number === season.number;
-                        const seasonLabel = season.name || `Season ${season.number}`;
+                        const seasonLabel = getSeasonLabel(season.number, season.name);
                         return (
                           <Pressable
                             key={season.id || `${season.number}`}
@@ -578,7 +578,7 @@ export const SeriesEpisodes = ({
               style={styles.seasonScroll}>
               {orderedSeasons.map((season) => {
                 const isActive = selectedSeason?.number === season.number;
-                const seasonLabel = season.name || `Season ${season.number}`;
+                const seasonLabel = getSeasonLabel(season.number, season.name);
                 return (
                   <Pressable
                     key={season.id || `${season.number}`}
@@ -610,7 +610,7 @@ export const SeriesEpisodes = ({
                 style={styles.seasonScroll}>
                 {orderedSeasons.map((season, index) => {
                   const isActive = selectedSeason?.number === season.number;
-                  const seasonLabel = season.name || `Season ${season.number}`;
+                  const seasonLabel = getSeasonLabel(season.number, season.name);
                   const seasonKey = season.id || `${season.number}`;
 
                   const handleSeasonFocus = () => {

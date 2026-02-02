@@ -11,6 +11,7 @@ import {
   SpatialNavigationFocusableView,
 } from '@/services/tv-navigation';
 import FocusablePressable from '@/components/FocusablePressable';
+import { getSeasonLabel } from './utils';
 
 interface EpisodeSelectorProps {
   visible: boolean;
@@ -106,7 +107,7 @@ export function EpisodeSelector({
                     <Ionicons name="chevron-back" size={28} color={theme.colors.text.primary} />
                   </Pressable>
                 )}
-                <Text style={styles.title}>Season {season.number}</Text>
+                <Text style={styles.title}>{getSeasonLabel(season.number, season.name)}</Text>
                 {Platform.isTV ? (
                   <FocusablePressable
                     text="Close"

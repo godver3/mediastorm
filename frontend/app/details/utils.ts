@@ -33,6 +33,16 @@ export const formatPublishDate = (iso?: string) => {
 
 export const padNumber = (value: number) => value.toString().padStart(2, '0');
 
+/**
+ * Get the display label for a season.
+ * Returns the season name if available, "Specials" for season 0, or "Season X" otherwise.
+ */
+export const getSeasonLabel = (seasonNumber: number, seasonName?: string | null): string => {
+  if (seasonName) return seasonName;
+  if (seasonNumber === 0) return 'Specials';
+  return `Season ${seasonNumber}`;
+};
+
 export const buildSeasonQuery = (title: string, seasonNumber: number) => {
   const trimmed = title.trim();
   if (!trimmed) {
