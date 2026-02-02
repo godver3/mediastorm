@@ -142,12 +142,13 @@ def convert_to_vtt(content: str) -> str:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "No input provided"}), file=sys.stderr)
-        sys.exit(1)
-
+    # Read params from stdin to avoid exposing credentials in process listings
     try:
-        params = json.loads(sys.argv[1])
+        input_data = sys.stdin.read()
+        if not input_data:
+            print(json.dumps({"error": "No input provided"}), file=sys.stderr)
+            sys.exit(1)
+        params = json.loads(input_data)
     except json.JSONDecodeError as e:
         print(json.dumps({"error": f"Invalid JSON: {e}"}), file=sys.stderr)
         sys.exit(1)

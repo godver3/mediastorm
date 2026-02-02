@@ -228,6 +228,19 @@ func main() {
 		fmt.Printf("📁 WebDAV endpoint enabled at %s\n", settings.WebDAV.Prefix)
 	}
 
+	// Generate Homepage API key if not set
+	if strings.TrimSpace(settings.Server.HomepageAPIKey) == "" {
+		homepageKey, err := utils.GenerateAPIKey()
+		if err != nil {
+			log.Fatalf("failed to generate Homepage API key: %v", err)
+		}
+		settings.Server.HomepageAPIKey = homepageKey
+		if err := cfgManager.Save(settings); err != nil {
+			log.Printf("warning: failed to save Homepage API key: %v", err)
+		}
+		fmt.Printf("🔐 Homepage API key: %s\n", settings.Server.HomepageAPIKey)
+	}
+
 	playbackService := playback.NewService(cfgManager, usenetService, nzbSystem, nzbSystem.MetadataReader())
 	playbackHandler := handlers.NewPlaybackHandler(playbackService)
 	// Prequeue handler will be created later after historyService is available
@@ -411,6 +424,7 @@ func main() {
 		accountsService,
 		sessionsService,
 		userService,
+		settings.Server.HomepageAPIKey,
 	)
 
 	// Register Trakt accounts API routes

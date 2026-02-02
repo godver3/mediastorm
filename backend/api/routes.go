@@ -108,6 +108,7 @@ func Register(
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
+	homepageAPIKey string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 
@@ -300,12 +301,13 @@ func Register(
 	versionHandler := handlers.NewVersionHandler()
 	api.HandleFunc("/version", versionHandler.GetVersion).Methods(http.MethodGet, http.MethodOptions)
 
-	// Homepage dashboard integration endpoint (public - for Homepage widgets)
+	// Homepage dashboard integration endpoint (requires API key)
 	homepageHandler := handlers.NewHomepageHandler(accountsSvc)
 	homepageHandler.SetUserService(usersSvc)
 	homepageHandler.SetHLSManager(videoHandler.GetHLSManager())
 	homepageHandler.SetProgressService(historyHandler.Service)
 	homepageHandler.SetMetadataService(metadataHandler.Service)
+	homepageHandler.SetAPIKey(homepageAPIKey)
 	api.HandleFunc("/homepage", homepageHandler.GetStats).Methods(http.MethodGet, http.MethodOptions)
 
 	// Static assets endpoint (public - rating icons, etc.)

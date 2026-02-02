@@ -811,7 +811,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.cfgManager.Load()
 	if err != nil {
 		log.Printf("[live] GetChannels error loading settings: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		http.Error(w, `{"error":"failed to load settings"}`, http.StatusInternalServerError)
 		return
 	}
 	filter = settings.Live.Filtering
@@ -825,7 +825,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
 		if err != nil {
 			log.Printf("[live] GetChannels Xtream error: %v", err)
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
 			return
 		}
 	} else {
@@ -833,7 +833,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		contents, err := h.fetchPlaylistContents(r.Context())
 		if err != nil {
 			log.Printf("[live] GetChannels error: %v", err)
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
 			return
 		}
 		allChannels = parseM3UPlaylist(contents)
@@ -871,7 +871,7 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.cfgManager.Load()
 	if err != nil {
 		log.Printf("[live] GetCategories error loading settings: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		http.Error(w, `{"error":"failed to load settings"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -884,7 +884,7 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
 		if err != nil {
 			log.Printf("[live] GetCategories Xtream error: %v", err)
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
 			return
 		}
 	} else {
@@ -892,7 +892,7 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		contents, err := h.fetchPlaylistContents(r.Context())
 		if err != nil {
 			log.Printf("[live] GetCategories error: %v", err)
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
 			return
 		}
 		allChannels = parseM3UPlaylist(contents)

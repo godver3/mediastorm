@@ -26,6 +26,7 @@ type HomepageHandler struct {
 	hlsManager      *HLSManager
 	progressService ProgressService
 	metadataService HomepageMetadataService
+	apiKey          string // Required API key for authentication
 }
 
 // HomepageProfile represents a user profile for Homepage
@@ -103,8 +104,23 @@ func (h *HomepageHandler) SetMetadataService(svc HomepageMetadataService) {
 	h.metadataService = svc
 }
 
+// SetAPIKey sets the required API key for authentication
+func (h *HomepageHandler) SetAPIKey(key string) {
+	h.apiKey = key
+}
+
 // GetStats returns stats for Homepage dashboard widget
 func (h *HomepageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+	// Validate API key - check query param or header
+	providedKey := r.URL.Query().Get("apikey")
+	if providedKey == "" {
+		providedKey = r.Header.Get("X-API-Key")
+	}
+	if h.apiKey == "" || providedKey != h.apiKey {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	// Build user ID -> user map and account -> profiles map
 	usersByID := make(map[string]models.User)
 	userNames := make(map[string]string)

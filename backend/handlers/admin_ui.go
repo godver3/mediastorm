@@ -869,7 +869,7 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	mgr := config.NewManager(h.settingsPath)
 	settings, err := mgr.Load()
 	if err != nil {
-		http.Error(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -902,7 +902,7 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.settingsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Settings template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -934,7 +934,7 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.statusTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Status template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -960,7 +960,7 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.historyTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("History template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -1437,7 +1437,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 
 	userSettings, err := h.userSettingsService.GetWithDefaults(userID, defaults)
 	if err != nil {
-		http.Error(w, "Failed to load user settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to load user settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -1465,7 +1465,7 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.userSettingsService.Update(userID, settings); err != nil {
-		http.Error(w, "Failed to save user settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -1487,7 +1487,7 @@ func (h *AdminUIHandler) ResetUserSettings(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.userSettingsService.Delete(userID); err != nil {
-		http.Error(w, "Failed to reset user settings: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to reset user settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -3537,7 +3537,7 @@ func (h *AdminUIHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 	expiresIn := time.Duration(req.ExpiresInHours) * time.Hour
 	inv, err := h.invitationsService.Create(session.AccountID, expiresIn)
 	if err != nil {
-		http.Error(w, "Failed to create invitation: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to create invitation", http.StatusInternalServerError)
 		return
 	}
 
@@ -3912,13 +3912,14 @@ func testOpenSubtitlesSubliminal(username, password string) (bool, string) {
 	}
 
 	// Python script to test OpenSubtitles login using subliminal
+	// Reads credentials from stdin to avoid exposing them in process listings
 	script := `
 import sys
 import json
 from subliminal.providers.opensubtitles import OpenSubtitlesProvider
 
 try:
-    params = json.loads(sys.argv[1])
+    params = json.loads(sys.stdin.read())
     provider = OpenSubtitlesProvider(username=params['username'], password=params['password'])
     provider.initialize()  # This performs the login
     provider.terminate()   # Logout
@@ -3937,7 +3938,8 @@ except Exception as e:
 		"password": password,
 	})
 
-	cmd := exec.Command(pythonPath, "-c", script, string(paramsJSON))
+	cmd := exec.Command(pythonPath, "-c", script)
+	cmd.Stdin = strings.NewReader(string(paramsJSON))
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -4221,7 +4223,7 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.toolsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Tools template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -4256,7 +4258,7 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.searchTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Search template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -4288,7 +4290,7 @@ func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.accountsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Accounts template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -4333,7 +4335,7 @@ func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request
 	}
 	if err := h.kidsSettingsTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Kids settings template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -4363,7 +4365,7 @@ func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.backupTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Backup template error: %v\n", err)
-		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
