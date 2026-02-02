@@ -5114,7 +5114,7 @@ export default function DetailsScreen() {
                   {/* Audio track */}
                   {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
                     <SpatialNavigationFocusableView
-                      onSelect={() => prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 1 && setShowAudioTrackModal(true)}
+                      onSelect={() => prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && setShowAudioTrackModal(true)}
                     >
                       {({ isFocused }: { isFocused: boolean }) => (
                         <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>

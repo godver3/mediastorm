@@ -482,11 +482,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         </View>
 
         {Platform.isTV ? (
-          // TV: Use animated transform for scrolling
-          <View
-            style={[styles.optionsScrollView, { overflow: 'hidden' }]}
-            onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
-            <SpatialNavigationNode orientation="vertical">
+          // TV: Single vertical node for all focusable elements
+          <SpatialNavigationNode orientation="vertical">
+            {/* Options list with animated scrolling */}
+            <View
+              style={[styles.optionsScrollView, { overflow: 'hidden' }]}
+              onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
               <Animated.View
                 onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
                 style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }] }]}>
@@ -498,65 +499,60 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                   </View>
                 )}
               </Animated.View>
-            </SpatialNavigationNode>
-          </View>
-        ) : (
-          // Non-TV: Use regular ScrollView
-          <View style={styles.optionsScrollView}>
-            <View style={styles.optionsList}>
-              {hasOptions ? (
-                options.map((option, index) => renderOption(option, index))
-              ) : (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-                </View>
-              )}
             </View>
-          </View>
-        )}
-
-        <View style={styles.modalFooter}>
-          {onSearchSubtitles && (
-            Platform.isTV ? (
-              <SpatialNavigationFocusableView onSelect={handleSearchSubtitles}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
-                      Search Online
-                    </Text>
+            {/* Footer - only show Search Online if available, no Close button on TV (use back/menu) */}
+            {onSearchSubtitles && (
+              <View style={styles.modalFooter}>
+                <SpatialNavigationFocusableView onSelect={() => {
+                  console.log('[TrackSelectionModal] Search Online pressed');
+                  handleSearchSubtitles();
+                }}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
+                        Search Online
+                      </Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              </View>
+            )}
+          </SpatialNavigationNode>
+        ) : (
+          <>
+            <View style={styles.optionsScrollView}>
+              <View style={styles.optionsList}>
+                {hasOptions ? (
+                  options.map((option, index) => renderOption(option, index))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
                   </View>
                 )}
-              </SpatialNavigationFocusableView>
-            ) : (
-              <Pressable onPress={handleSearchSubtitles}>
+              </View>
+            </View>
+            <View style={styles.modalFooter}>
+              {onSearchSubtitles && (
+                <Pressable onPress={handleSearchSubtitles}>
+                  {({ pressed }) => (
+                    <View style={[styles.closeButton, styles.searchButton, pressed && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>
+                        Search Online
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              )}
+              <Pressable onPress={handleClose}>
                 {({ pressed }) => (
-                  <View style={[styles.closeButton, styles.searchButton, pressed && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>
-                      Search Online
-                    </Text>
+                  <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
+                    <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
                   </View>
                 )}
               </Pressable>
-            )
-          )}
-          {Platform.isTV ? (
-            <SpatialNavigationFocusableView onSelect={handleClose}>
-              {({ isFocused }: { isFocused: boolean }) => (
-                <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                  <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                </View>
-              )}
-            </SpatialNavigationFocusableView>
-          ) : (
-            <Pressable onPress={handleClose}>
-              {({ pressed }) => (
-                <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
-                  <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
-                </View>
-              )}
-            </Pressable>
-          )}
-        </View>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
