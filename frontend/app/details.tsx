@@ -4556,20 +4556,13 @@ export default function DetailsScreen() {
         )}
         {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
-            {certification && (() => {
-              const certConfig = getCertificationConfig(certification, apiService.getBaseUrl().replace(/\/$/, ''));
-              return (
-                <CertificationBadge
-                  certification={certification}
-                  iconUrl={certConfig?.iconUrl ?? null}
-                  iconSize={Math.round((isTV ? 30 : 24) * tvScale)}
-                  aspectRatio={certConfig?.aspectRatio ?? 1}
-                  styles={styles}
-                />
-              );
-            })()}
+            {certification && (
+              <View style={[styles.genreBadge, { backgroundColor: 'rgba(70, 130, 180, 0.35)', borderColor: 'rgba(100, 160, 210, 0.5)' }]}>
+                <Text style={styles.genreText}>{certification}</Text>
+              </View>
+            )}
             {certification && genres.length > 0 && (
-              <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 * tvScale }]}>|</Text>
+              <Text style={{ color: theme.colors.text.secondary, fontSize: 14 * tvScale, marginHorizontal: 0, fontWeight: '900' }}>|</Text>
             )}
             {genres.map((genre) => (
               <View key={genre} style={styles.genreBadge}>
@@ -5305,20 +5298,13 @@ export default function DetailsScreen() {
         )}
         {(certification || genres.length > 0) && (
           <View style={styles.genresRow}>
-            {certification && (() => {
-              const certConfig = getCertificationConfig(certification, apiService.getBaseUrl().replace(/\/$/, ''));
-              return (
-                <CertificationBadge
-                  certification={certification}
-                  iconUrl={certConfig?.iconUrl ?? null}
-                  iconSize={24}
-                  aspectRatio={certConfig?.aspectRatio ?? 1}
-                  styles={styles}
-                />
-              );
-            })()}
+            {certification && (
+              <View style={[styles.genreBadge, { backgroundColor: 'rgba(70, 130, 180, 0.35)', borderColor: 'rgba(100, 160, 210, 0.5)' }]}>
+                <Text style={styles.genreText}>{certification}</Text>
+              </View>
+            )}
             {certification && genres.length > 0 && (
-              <Text style={[styles.genreText, { alignSelf: 'center', fontWeight: '700', fontSize: 16 }]}>|</Text>
+              <Text style={{ color: theme.colors.text.secondary, fontSize: 14, marginHorizontal: 0, fontWeight: '900' }}>|</Text>
             )}
             {genres.map((genre) => (
               <View key={genre} style={styles.genreBadge}>

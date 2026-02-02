@@ -172,6 +172,27 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       fontSize: Math.round(12 * tvTextScale),
       color: theme.colors.text.secondary,
     },
+    // Container for certification + genres side by side
+    certificationGenresContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
+      ...(isTV ? { marginLeft: tvScale * 48 } : null),
+    },
+    // Large certification badge on the left
+    certificationBadgeLarge: {
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    // Genres column on the right
+    genresColumn: {
+      flex: 1,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: Math.round(8 * tvTextScale),
+    },
     genresRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
