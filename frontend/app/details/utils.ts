@@ -35,12 +35,20 @@ export const padNumber = (value: number) => value.toString().padStart(2, '0');
 
 /**
  * Get the display label for a season.
- * Returns the season name if available, "Specials" for season 0, or "Season X" otherwise.
+ * Returns "Specials" for season 0 (unless it has a custom name), the season name if available
+ * and not a generic "Season X" pattern, or "Season X" otherwise.
  */
 export const getSeasonLabel = (seasonNumber: number, seasonName?: string | null): string => {
-  if (seasonName) return seasonName;
-  if (seasonNumber === 0) return 'Specials';
-  return `Season ${seasonNumber}`;
+  // Check if the name is a generic "Season X" pattern (which we want to override)
+  const isGenericName = seasonName && /^Season \d+$/i.test(seasonName);
+
+  // For season 0, show "Specials" unless there's a custom (non-generic) name
+  if (seasonNumber === 0) {
+    return seasonName && !isGenericName ? seasonName : 'Specials';
+  }
+
+  // Use custom name if available and not generic, otherwise "Season X"
+  return seasonName && !isGenericName ? seasonName : `Season ${seasonNumber}`;
 };
 
 export const buildSeasonQuery = (title: string, seasonNumber: number) => {

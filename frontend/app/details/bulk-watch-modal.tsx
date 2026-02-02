@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
+import { getSeasonLabel } from './utils';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -357,7 +358,7 @@ export const BulkWatchModal = ({
 
                           return (
                             <View key={season.id} style={styles.seasonGroup}>
-                              <Text style={styles.seasonGroupTitle}>Season {season.number}</Text>
+                              <Text style={styles.seasonGroupTitle}>{getSeasonLabel(season.number, season.name)}</Text>
 
                               <SpatialNavigationFocusableView
                                 focusKey={`mark-season-${season.id}-watched`}

@@ -86,7 +86,7 @@ import { SeriesEpisodes } from './details/series-episodes';
 import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
-import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, isMovieUnreleased, padNumber, toStringParam } from './details/utils';
+import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, getSeasonLabel, isEpisodeUnreleased, isMovieUnreleased, padNumber, toStringParam } from './details/utils';
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
@@ -3528,8 +3528,8 @@ export default function DetailsScreen() {
         return;
       }
 
-      const friendlyLabel = `${baseTitle} Season ${season.number}`;
-      const selectionMessage = `${baseTitle} • Season ${padNumber(season.number)}`;
+      const friendlyLabel = `${baseTitle} ${getSeasonLabel(season.number, season.name)}`;
+      const selectionMessage = `${baseTitle} • ${getSeasonLabel(season.number, season.name)}`;
       await resolveAndPlay({ query, friendlyLabel, limit: 50, selectionMessage });
     },
     [resolveAndPlay, title],

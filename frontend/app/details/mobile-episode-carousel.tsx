@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
 import MarqueeText from '@/components/tv/MarqueeText';
+import { getSeasonLabel } from './utils';
 
 interface MobileEpisodeCarouselProps {
   seasons: SeriesSeason[];
@@ -191,7 +192,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
           onLayout={handleSeasonScrollLayout}>
           {seasons.map((season) => {
             const isSelected = selectedSeason?.number === season.number;
-            const seasonLabel = season.name || `Season ${season.number}`;
+            const seasonLabel = getSeasonLabel(season.number, season.name);
             return (
               <Pressable
                 key={season.number}
