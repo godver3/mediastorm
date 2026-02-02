@@ -15,9 +15,10 @@ import { useTheme } from '@/theme';
 import { Direction } from '@bam.tech/lrud';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -33,6 +34,9 @@ import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
+
+const RECENT_SEARCHES_KEY = 'strmr.recentSearches';
+const MAX_RECENT_SEARCHES = 5;
 
 // Calculate similarity score between search query and a single title string
 function calculateSingleSimilarity(query: string, title: string): number {
@@ -166,12 +170,50 @@ export default function SearchScreen() {
   }, [isMenuOpen]);
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const tempQueryRef = useRef('');
   const rowRefs = useRef<{ [key: string]: View | null }>({});
   const rowPositionsRef = useRef<{ [key: string]: number }>({});
   const mainScrollViewRef = useRef<any>(null);
   const isNavigatingRef = useRef(false);
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
+
+  // Load recent searches from storage on mount
+  useEffect(() => {
+    const loadRecentSearches = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            setRecentSearches(parsed.slice(0, MAX_RECENT_SEARCHES));
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load recent searches:', error);
+      }
+    };
+    loadRecentSearches();
+  }, []);
+
+  // Save a new search to recent searches
+  const saveRecentSearch = useCallback(async (searchQuery: string) => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+
+    setRecentSearches((prev) => {
+      // Remove if already exists, then add to front
+      const filtered = prev.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
+
+      // Persist to storage
+      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch((error) => {
+        console.warn('Failed to save recent searches:', error);
+      });
+
+      return updated;
+    });
+  }, []);
 
   const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
     [
@@ -311,17 +353,28 @@ export default function SearchScreen() {
       if (finalQuery) {
         setQuery(finalQuery);
         setSubmittedQuery(finalQuery);
+        saveRecentSearch(finalQuery);
       }
     }
-  }, []);
+  }, [saveRecentSearch]);
 
   const handleSubmit = useCallback(() => {
     // Trigger search on submit
     const finalQuery = Platform.isTV ? tempQueryRef.current : query;
     setQuery(finalQuery);
     setSubmittedQuery(finalQuery);
+    if (finalQuery.trim()) {
+      saveRecentSearch(finalQuery);
+    }
     inputRef.current?.blur();
-  }, [query]);
+  }, [query, saveRecentSearch]);
+
+  const handleSelectRecentSearch = useCallback((searchTerm: string) => {
+    setQuery(searchTerm);
+    setSubmittedQuery(searchTerm);
+    tempQueryRef.current = searchTerm;
+    // Don't save again since it's already in recent searches
+  }, []);
 
   const handleChangeText = useCallback((text: string) => {
     if (Platform.isTV) {
@@ -390,8 +443,98 @@ export default function SearchScreen() {
     );
   }, []);
 
+  const handleClearRecentSearch = useCallback(async (searchTerm: string) => {
+    setRecentSearches((prev) => {
+      const updated = prev.filter((s) => s !== searchTerm);
+      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch((error) => {
+        console.warn('Failed to save recent searches:', error);
+      });
+      return updated;
+    });
+  }, []);
+
   const renderContent = () => {
     if (!hasQuery) {
+      // Show recent searches if available
+      if (recentSearches.length > 0) {
+        return (
+          <View style={styles.recentSearchesContainer}>
+            <Text style={styles.recentSearchesTitle}>Recent Searches</Text>
+            {isCompact ? (
+              // Mobile layout - simple list
+              <View style={styles.recentSearchesList}>
+                {recentSearches.map((term, index) => (
+                  <Pressable
+                    key={`recent-${index}`}
+                    style={({ pressed }) => [
+                      styles.recentSearchItem,
+                      pressed && styles.recentSearchItemPressed,
+                    ]}
+                    onPress={() => handleSelectRecentSearch(term)}>
+                    <MaterialCommunityIcons
+                      name="history"
+                      size={20}
+                      color={theme.colors.text.secondary}
+                      style={styles.recentSearchIcon}
+                    />
+                    <Text style={styles.recentSearchText} numberOfLines={1}>
+                      {term}
+                    </Text>
+                    <Pressable
+                      hitSlop={8}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleClearRecentSearch(term);
+                      }}
+                      style={styles.recentSearchClearButton}>
+                      <MaterialCommunityIcons
+                        name="close"
+                        size={18}
+                        color={theme.colors.text.muted}
+                      />
+                    </Pressable>
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              // TV layout - focusable items
+              <SpatialNavigationNode orientation="vertical">
+                <View style={styles.recentSearchesList}>
+                  {recentSearches.map((term, index) => (
+                    <SpatialNavigationFocusableView
+                      key={`recent-${index}`}
+                      onSelect={() => handleSelectRecentSearch(term)}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View
+                          style={[
+                            styles.recentSearchItemTV,
+                            isFocused && styles.recentSearchItemTVFocused,
+                          ]}>
+                          <MaterialCommunityIcons
+                            name="history"
+                            size={24}
+                            color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary}
+                            style={styles.recentSearchIcon}
+                          />
+                          <Text
+                            style={[
+                              styles.recentSearchTextTV,
+                              isFocused && styles.recentSearchTextTVFocused,
+                            ]}
+                            numberOfLines={1}>
+                            {term}
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  ))}
+                </View>
+              </SpatialNavigationNode>
+            )}
+          </View>
+        );
+      }
+
       return (
         <View style={styles.placeholderContainer}>
           <Text style={styles.placeholderText}>Enter a title to see search results.</Text>
@@ -1061,6 +1204,62 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       ...theme.typography.body.md,
       color: theme.colors.text.muted,
       textAlign: 'center',
+    },
+    recentSearchesContainer: {
+      paddingTop: theme.spacing.lg,
+    },
+    recentSearchesTitle: {
+      ...(Platform.isTV ? theme.typography.title.lg : theme.typography.title.md),
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing.md,
+    },
+    recentSearchesList: {
+      gap: isCompact ? theme.spacing.xs : theme.spacing.sm,
+    },
+    recentSearchItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.md,
+      backgroundColor: theme.colors.background.surface,
+      borderRadius: theme.radius.md,
+    },
+    recentSearchItemPressed: {
+      opacity: 0.7,
+    },
+    recentSearchItemTV: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.spacing.lg,
+      paddingHorizontal: theme.spacing.xl,
+      backgroundColor: theme.colors.background.surface,
+      borderRadius: theme.radius.md,
+      borderWidth: 3,
+      borderColor: 'transparent',
+    },
+    recentSearchItemTVFocused: {
+      backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
+    },
+    recentSearchIcon: {
+      marginRight: theme.spacing.md,
+    },
+    recentSearchText: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      flex: 1,
+    },
+    recentSearchTextTV: {
+      ...theme.typography.body.lg,
+      fontSize: responsiveSize(theme.typography.body.lg.fontSize * 1.25, screenWidth),
+      color: theme.colors.text.primary,
+      flex: 1,
+    },
+    recentSearchTextTVFocused: {
+      color: theme.colors.text.inverse,
+    },
+    recentSearchClearButton: {
+      padding: theme.spacing.xs,
     },
     bottomGradient: {
       position: 'absolute',
