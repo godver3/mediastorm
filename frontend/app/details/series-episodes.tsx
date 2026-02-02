@@ -209,6 +209,21 @@ export const SeriesEpisodes = ({
     }
   }, []);
 
+  // Scroll to active episode on TV when activeEpisode changes
+  useEffect(() => {
+    if (!Platform.isTV || !activeEpisode || !episodeScrollViewRef.current) {
+      return;
+    }
+
+    const episodeKey = `episode-${activeEpisode.id}`;
+    // Small delay to ensure the episode is rendered and refs are populated
+    const timer = setTimeout(() => {
+      scrollToEpisode(episodeKey);
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [activeEpisode?.id, scrollToEpisode]);
+
   // Manual focus scrolling for seasons (TV only, horizontal)
   const scrollToSeason = useCallback((seasonKey: string) => {
     if (!Platform.isTV || !seasonScrollViewRef.current) {

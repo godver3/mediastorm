@@ -651,77 +651,116 @@ export const ManualSelection = ({
     const isSubtitleOff = overrides?.subtitleTrack === -1 || (overrides?.subtitleTrack === undefined && defaultSubIdx === null);
 
     return (
-      <View style={styles.tvTracksSidePanel}>
-        <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
-        <ScrollView style={styles.tvTracksSidePanelScroll} showsVerticalScrollIndicator={false}>
-          {audioTracks.length > 0 && (
-            <View style={styles.tvTrackSection}>
-              <Text style={styles.tvTrackSectionTitle}>Audio ({audioTracks.length})</Text>
-              {audioTracks.map((track) => {
-                const isSelected = track.index === selectedAudioIdx;
-                return (
-                  <View key={track.index} style={styles.tvTrackItemRow}>
-                    {isSelected && <Text style={styles.tvSelectedIndicator}>▶</Text>}
-                    <Text style={[
-                      styles.tvTrackItem,
-                      isSelected && styles.tvTrackItemSelected,
-                      !isSelected && styles.tvTrackItemDimmed,
-                    ]}>
-                      {formatLanguage(track.language)}
-                      {track.title ? ` - ${track.title}` : ''}
-                      {track.codec ? ` (${track.codec.toUpperCase()})` : ''}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-          <View style={styles.tvTrackSection}>
-            <Text style={styles.tvTrackSectionTitle}>Subtitles ({subtitleTracks.length})</Text>
-            {/* Show "Off" option */}
-            <View style={styles.tvTrackItemRow}>
-              {isSubtitleOff && <Text style={styles.tvSelectedIndicator}>▶</Text>}
-              <Text style={[
-                styles.tvTrackItem,
-                isSubtitleOff && styles.tvTrackItemSelected,
-                !isSubtitleOff && styles.tvTrackItemDimmed,
-              ]}>Off</Text>
-            </View>
-            {subtitleTracks.map((track) => {
-              const isSelected = track.index === selectedSubIdx;
-              const isUnusable = track.isBitmap;
-              return (
-                <View key={track.index} style={styles.tvTrackItemRow}>
-                  {isSelected && <Text style={styles.tvSelectedIndicator}>▶</Text>}
-                  <Text style={[
-                    styles.tvTrackItem,
-                    isSelected && styles.tvTrackItemSelected,
-                    !isSelected && !isUnusable && styles.tvTrackItemDimmed,
-                    isUnusable && styles.tvTrackItemUnusable,
-                  ]}>
-                    {formatLanguage(track.language)}
-                    {track.title ? ` - ${track.title}` : ''}
-                    {track.forced && ' (Forced)'}
-                  </Text>
-                  {track.isBitmap && <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>}
-                </View>
-              );
-            })}
-            {/* Show external search indicator */}
-            {willSearchExternal && (
-              <View style={styles.tvTrackItemRow}>
-                <Text style={styles.tvSelectedIndicator}>▶</Text>
-                <Text style={[styles.tvTrackItem, styles.tvTrackItemSelected]}>
-                  External search ({formatLanguage(subLangPref)})
-                </Text>
-                <Text style={styles.externalSearchBadge}>SEARCH</Text>
+      <SpatialNavigationNode orientation="vertical">
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Selection</Text>
+          <ScrollView style={styles.tvTracksSidePanelScroll} showsVerticalScrollIndicator={false}>
+            {audioTracks.length > 0 && (
+              <View style={styles.tvTrackSection}>
+                <Text style={styles.tvTrackSectionTitle}>Audio ({audioTracks.length})</Text>
+                {audioTracks.map((track) => {
+                  const isSelected = track.index === selectedAudioIdx;
+                  return (
+                    <SpatialNavigationFocusableView
+                      key={track.index}
+                      onSelect={() => setAudioTrackOverride(tvFocusedKey, track.index)}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[
+                          styles.tvTrackItemRow,
+                          styles.tvTrackItemSelectable,
+                          isFocused && styles.tvTrackItemFocused,
+                        ]}>
+                          {isSelected && <Text style={[styles.tvSelectedIndicator, isFocused && styles.tvSelectedIndicatorFocused]}>▶</Text>}
+                          <Text style={[
+                            styles.tvTrackItem,
+                            isSelected && styles.tvTrackItemSelected,
+                            !isSelected && styles.tvTrackItemDimmed,
+                            isFocused && styles.tvTrackItemTextFocused,
+                          ]}>
+                            {formatLanguage(track.language)}
+                            {track.title ? ` - ${track.title}` : ''}
+                            {track.codec ? ` (${track.codec.toUpperCase()})` : ''}
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  );
+                })}
               </View>
             )}
-          </View>
-        </ScrollView>
-      </View>
+            <View style={styles.tvTrackSection}>
+              <Text style={styles.tvTrackSectionTitle}>Subtitles ({subtitleTracks.length})</Text>
+              {/* Show "Off" option */}
+              <SpatialNavigationFocusableView
+                onSelect={() => setSubtitleTrackOverride(tvFocusedKey, -1)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[
+                    styles.tvTrackItemRow,
+                    styles.tvTrackItemSelectable,
+                    isFocused && styles.tvTrackItemFocused,
+                  ]}>
+                    {isSubtitleOff && <Text style={[styles.tvSelectedIndicator, isFocused && styles.tvSelectedIndicatorFocused]}>▶</Text>}
+                    <Text style={[
+                      styles.tvTrackItem,
+                      isSubtitleOff && styles.tvTrackItemSelected,
+                      !isSubtitleOff && styles.tvTrackItemDimmed,
+                      isFocused && styles.tvTrackItemTextFocused,
+                    ]}>Off</Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+              {subtitleTracks.map((track) => {
+                const isSelected = track.index === selectedSubIdx;
+                const isUnusable = track.isBitmap;
+                return (
+                  <SpatialNavigationFocusableView
+                    key={track.index}
+                    onSelect={() => {
+                      if (!isUnusable) {
+                        setSubtitleTrackOverride(tvFocusedKey, track.index);
+                      }
+                    }}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[
+                        styles.tvTrackItemRow,
+                        styles.tvTrackItemSelectable,
+                        isFocused && styles.tvTrackItemFocused,
+                        isUnusable && styles.tvTrackItemDisabled,
+                      ]}>
+                        {isSelected && <Text style={[styles.tvSelectedIndicator, isFocused && styles.tvSelectedIndicatorFocused]}>▶</Text>}
+                        <Text style={[
+                          styles.tvTrackItem,
+                          isSelected && styles.tvTrackItemSelected,
+                          !isSelected && !isUnusable && styles.tvTrackItemDimmed,
+                          isUnusable && styles.tvTrackItemUnusable,
+                          isFocused && !isUnusable && styles.tvTrackItemTextFocused,
+                        ]}>
+                          {formatLanguage(track.language)}
+                          {track.title ? ` - ${track.title}` : ''}
+                          {track.forced && ' (Forced)'}
+                        </Text>
+                        {track.isBitmap && <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>}
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                );
+              })}
+              {/* Show external search indicator */}
+              {willSearchExternal && !isSubtitleOff && selectedSubIdx === null && (
+                <View style={styles.tvTrackItemRow}>
+                  <Text style={styles.tvSelectedIndicator}>▶</Text>
+                  <Text style={[styles.tvTrackItem, styles.tvTrackItemSelected]}>
+                    External search ({formatLanguage(subLangPref)})
+                  </Text>
+                  <Text style={styles.externalSearchBadge}>SEARCH</Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      </SpatialNavigationNode>
     );
-  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides]);
+  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides, setAudioTrackOverride, setSubtitleTrackOverride]);
 
   const renderManualResultContent = useCallback(
     (result: NZBResult, isFocused: boolean) => {
@@ -1561,6 +1600,24 @@ const createManualSelectionStyles = (theme: NovaTheme) => {
     tvTrackItemUnusable: {
       opacity: 0.4,
       textDecorationLine: 'line-through',
+    },
+    tvTrackItemSelectable: {
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+      borderRadius: theme.radius.sm,
+    },
+    tvTrackItemFocused: {
+      backgroundColor: theme.colors.accent.primary,
+    },
+    tvTrackItemTextFocused: {
+      color: theme.colors.text.inverse,
+      opacity: 1,
+    },
+    tvSelectedIndicatorFocused: {
+      color: theme.colors.text.inverse,
+    },
+    tvTrackItemDisabled: {
+      opacity: 0.4,
     },
   });
 };
