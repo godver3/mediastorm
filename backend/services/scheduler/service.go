@@ -13,6 +13,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/backup"
 	"novastream/services/epg"
 	"novastream/services/plex"
 	"novastream/services/trakt"
@@ -26,6 +27,7 @@ type Service struct {
 	traktClient      *trakt.Client
 	watchlistService *watchlist.Service
 	epgService       *epg.Service
+	backupService    *backup.Service
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -41,10 +43,11 @@ type Service struct {
 
 // SyncResult contains the result of a sync operation including dry run details
 type SyncResult struct {
-	Count      int
-	DryRun     bool
-	ToAdd      []config.DryRunItem
-	ToRemove   []config.DryRunItem
+	Count    int
+	DryRun   bool
+	ToAdd    []config.DryRunItem
+	ToRemove []config.DryRunItem
+	Message  string // Optional message for display
 }
 
 // NewService creates a new scheduler service
@@ -238,6 +241,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeEPGRefresh(task)
 	case config.ScheduledTaskTypePlaylistRefresh:
 		result, err = s.executePlaylistRefresh(task)
+	case config.ScheduledTaskTypeBackup:
+		result, err = s.executeBackup(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -357,6 +362,13 @@ func (s *Service) SetEPGService(epgService *epg.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.epgService = epgService
+}
+
+// SetBackupService sets the backup service for scheduled backup tasks.
+func (s *Service) SetBackupService(backupService *backup.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.backupService = backupService
 }
 
 // executePlexWatchlistSync syncs a Plex watchlist to/from a profile
@@ -1574,4 +1586,53 @@ func (s *Service) executePlaylistRefresh(task config.ScheduledTask) (SyncResult,
 
 	log.Printf("[scheduler] cleared %d cached playlist files", cleared)
 	return SyncResult{Count: cleared}, nil
+}
+
+// executeBackup creates a system backup and runs cleanup based on retention settings.
+func (s *Service) executeBackup(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	backupSvc := s.backupService
+	s.mu.RUnlock()
+
+	if backupSvc == nil {
+		return SyncResult{}, errors.New("backup service not configured")
+	}
+
+	// Update global retention settings from task config if present
+	if task.Config != nil {
+		retDaysStr := task.Config["retentionDays"]
+		retCountStr := task.Config["retentionCount"]
+		if retDaysStr != "" || retCountStr != "" {
+			settings, err := s.configManager.Load()
+			if err == nil {
+				days, _ := strconv.Atoi(retDaysStr)
+				count, _ := strconv.Atoi(retCountStr)
+				if days > 0 || count > 0 {
+					settings.BackupRetention.RetentionDays = days
+					settings.BackupRetention.RetentionCount = count
+					s.configManager.Save(settings)
+				}
+			}
+		}
+	}
+
+	// Create backup
+	info, err := backupSvc.CreateBackup(backup.BackupTypeScheduled)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("create backup: %w", err)
+	}
+
+	// Run cleanup based on retention settings
+	cleaned, cleanErr := backupSvc.CleanupOldBackups()
+	if cleanErr != nil {
+		log.Printf("[scheduler] Warning: backup cleanup failed: %v", cleanErr)
+	}
+
+	msg := fmt.Sprintf("Backup created: %s", info.Filename)
+	if cleaned > 0 {
+		msg += fmt.Sprintf(", cleaned %d old backups", cleaned)
+	}
+
+	log.Printf("[scheduler] %s", msg)
+	return SyncResult{Count: 1, Message: msg}, nil
 }
