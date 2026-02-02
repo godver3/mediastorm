@@ -1626,6 +1626,8 @@ function IndexScreen() {
   const [isVersionMismatchVisible, setIsVersionMismatchVisible] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const versionCheckDoneRef = React.useRef(false);
+  const versionMismatchButtonRef = useRef<View>(null);
+  const [versionMismatchButtonHandle, setVersionMismatchButtonHandle] = useState<number | null>(null);
 
   // Check for version mismatch on app launch
   useEffect(() => {
@@ -1669,6 +1671,19 @@ function IndexScreen() {
       setRemoveConfirmHandle(null);
     }
   }, [isRemoveConfirmVisible]);
+
+  // Set up focus handle for Version Mismatch modal when visible (TV platforms)
+  useEffect(() => {
+    if (isVersionMismatchVisible && Platform.isTV) {
+      const timer = setTimeout(() => {
+        const handle = versionMismatchButtonRef.current ? findNodeHandle(versionMismatchButtonRef.current) : null;
+        setVersionMismatchButtonHandle(handle);
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setVersionMismatchButtonHandle(null);
+    }
+  }, [isVersionMismatchVisible]);
 
   const handleDismissVersionMismatch = useCallback(() => {
     setIsVersionMismatchVisible(false);
@@ -2820,14 +2835,15 @@ function IndexScreen() {
 
       {/* Version Mismatch Warning Modal (TV) */}
       <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
-        <View style={desktopStyles.styles.tvModalContainer}>
+        <View style={desktopStyles.styles.tvModalContainer} focusable={false}>
           <Text style={desktopStyles.styles.tvModalTitle}>Version Mismatch</Text>
           <Text style={desktopStyles.styles.tvModalSubtitle}>
             Frontend version ({APP_VERSION}) does not match backend version ({backendVersion ?? 'unknown'}). You may
             experience unexpected behavior. Consider updating.
           </Text>
-          <View style={desktopStyles.styles.tvModalActions}>
+          <View style={desktopStyles.styles.tvModalActions} focusable={false}>
             <FocusablePressable
+              ref={versionMismatchButtonRef}
               autoFocus
               text="OK"
               onSelect={handleDismissVersionMismatch}
@@ -2835,6 +2851,10 @@ function IndexScreen() {
               focusedStyle={desktopStyles.styles.tvModalButtonFocused}
               textStyle={desktopStyles.styles.tvModalButtonText}
               focusedTextStyle={desktopStyles.styles.tvModalButtonTextFocused}
+              nextFocusUp={versionMismatchButtonHandle ?? undefined}
+              nextFocusDown={versionMismatchButtonHandle ?? undefined}
+              nextFocusLeft={versionMismatchButtonHandle ?? undefined}
+              nextFocusRight={versionMismatchButtonHandle ?? undefined}
             />
           </View>
         </View>
