@@ -2663,16 +2663,11 @@ function IndexScreen() {
             })()}
         </View>
       )}
-      {/* Bottom gradient fade for visual polish on TV - disabled on Android TV for performance */}
-      {Platform.isTV && !isAndroidTV && (
+      {/* Bottom gradient fade for visual polish on TV */}
+      {Platform.isTV && (
         <LinearGradient
-          colors={[
-            'transparent',
-            `${theme.colors.background.base}40`,
-            `${theme.colors.background.base}B3`,
-            theme.colors.background.base,
-          ]}
-          locations={[0, 0.3, 0.7, 1]}
+          colors={['transparent', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.6)']}
+          locations={[0, 0.4, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={desktopStyles?.styles.bottomFadeGradient}
@@ -3555,20 +3550,12 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base,
       zIndex: 1,
     },
-    topFadeGradient: {
-      position: 'absolute',
-      top: '40%', // Start at the bottom of the top section
-      left: 0,
-      right: 0,
-      height: '9%', // 15% of the lower 60% = 0.15 * 0.6 = 0.09 = 9% of total screen
-      zIndex: 5,
-    },
     bottomFadeGradient: {
       position: 'absolute',
       bottom: 0,
       left: 0,
       right: 0,
-      height: '10%', // Bottom 10% of screen
+      height: '6%',
       zIndex: 5,
     },
     topContent: {

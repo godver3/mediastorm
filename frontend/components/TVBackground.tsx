@@ -32,6 +32,16 @@ export function TVBackground({ children, style, ...props }: ViewProps) {
             style={StyleSheet.absoluteFill}
           />
         </View>
+        {/* Darkening gradient for bottom third */}
+        <View style={styles.bottomDarkenLayer}>
+          <LinearGradient
+            colors={['transparent', 'rgba(0, 0, 0, 0.4)', 'rgba(0, 0, 0, 0.7)']}
+            locations={[0, 0.5, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </View>
       </View>
       <View style={{ flex: 1, zIndex: 1 }}>{children}</View>
     </View>
@@ -50,5 +60,12 @@ const styles = StyleSheet.create({
     bottom: -80,
     left: -80,
     right: -80,
+  },
+  bottomDarkenLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '33.33%',
   },
 });
