@@ -5560,7 +5560,7 @@ export default function PlayerScreen() {
     }
   }, [hasPreviousEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode]);
 
-  const handleNextEpisode = useCallback(() => {
+  const handleNextEpisode = useCallback(async () => {
     // Check if we have a prequeued episode to use
     const prequeueData = nextEpisodePrequeueRef.current;
     if (prequeueData?.prequeueId && prequeueData.targetEpisode) {
@@ -5576,32 +5576,116 @@ export default function PlayerScreen() {
       return;
     }
 
-    // No prequeue - fall back to existing logic
-    // Shuffle mode: pick a random episode (different from current, excludes season 0/specials)
+    // No prequeue exists - trigger one immediately and pass to details page
+    // Details page will poll/wait for it to be ready
+    const seriesId = titleId || imdbId || tvdbId;
+    if (!seriesId || !activeUserId) {
+      console.warn('[player] Cannot trigger on-demand prequeue - missing seriesId or userId');
+      // Fall back to normal navigation without prequeue
+      if (shuffleMode && allEpisodes.length > 1) {
+        const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
+        if (shuffleableEpisodes.length > 0) {
+          let randomIndex: number;
+          let nextEp: SeriesEpisode;
+          do {
+            randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
+            nextEp = shuffleableEpisodes[randomIndex];
+          } while (
+            shuffleableEpisodes.length > 1 &&
+            nextEp.seasonNumber === seasonNumber &&
+            nextEp.episodeNumber === episodeNumber
+          );
+          navigateToEpisode(nextEp);
+          return;
+        }
+      }
+      if (hasNextEpisode) {
+        const nextEp = allEpisodes[currentEpisodeIndex + 1];
+        if (nextEp) navigateToEpisode(nextEp);
+      }
+      return;
+    }
+
+    // Determine the next episode
+    let nextEpisode: SeriesEpisode | undefined;
+    let isShuffleEpisode = false;
+
     if (shuffleMode && allEpisodes.length > 1) {
+      // Shuffle mode: pick a random episode (different from current, excludes season 0/specials)
       const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
       if (shuffleableEpisodes.length > 0) {
         let randomIndex: number;
-        let nextEpisode: SeriesEpisode;
         do {
           randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
-          nextEpisode = shuffleableEpisodes[randomIndex];
         } while (
           shuffleableEpisodes.length > 1 &&
-          nextEpisode.seasonNumber === seasonNumber &&
-          nextEpisode.episodeNumber === episodeNumber
+          shuffleableEpisodes[randomIndex].seasonNumber === seasonNumber &&
+          shuffleableEpisodes[randomIndex].episodeNumber === episodeNumber
         );
-        navigateToEpisode(nextEpisode);
-        return;
+        nextEpisode = shuffleableEpisodes[randomIndex];
+        isShuffleEpisode = true;
       }
+    } else if (hasNextEpisode) {
+      // Sequential mode: get next episode
+      nextEpisode = allEpisodes[currentEpisodeIndex + 1];
     }
-    // Sequential mode
-    if (!hasNextEpisode) return;
-    const nextEpisode = allEpisodes[currentEpisodeIndex + 1];
-    if (nextEpisode) {
+
+    if (!nextEpisode) return;
+
+    console.log('[player] Triggering on-demand prequeue for next episode:', {
+      season: nextEpisode.seasonNumber,
+      episode: nextEpisode.episodeNumber,
+      shuffleMode: isShuffleEpisode,
+    });
+
+    try {
+      // Trigger prequeue and get ID
+      const response = await apiService.prequeuePlayback({
+        titleId: seriesId,
+        titleName: cleanSeriesTitle || title || '',
+        mediaType: 'series',
+        userId: activeUserId,
+        seasonNumber: nextEpisode.seasonNumber,
+        episodeNumber: nextEpisode.episodeNumber,
+        absoluteEpisodeNumber: nextEpisode.absoluteEpisodeNumber,
+      });
+
+      // Store prequeue data in ref so navigateToEpisode can use it
+      nextEpisodePrequeueRef.current = {
+        prequeueId: response.prequeueId,
+        targetEpisode: {
+          seasonNumber: nextEpisode.seasonNumber,
+          episodeNumber: nextEpisode.episodeNumber,
+          absoluteEpisodeNumber: nextEpisode.absoluteEpisodeNumber,
+        },
+        statusResponse: null, // Not ready yet, details page will poll
+        isShuffleEpisode,
+      };
+
+      console.log('[player] On-demand prequeue initiated:', response.prequeueId);
+
+      // Navigate with prequeue flag - details page will poll for ready status
+      navigateToEpisode(nextEpisode, true);
+    } catch (error) {
+      console.warn('[player] On-demand prequeue failed, falling back to normal navigation:', error);
+      // Fall back to normal navigation without prequeue
       navigateToEpisode(nextEpisode);
     }
-  }, [hasNextEpisode, allEpisodes, currentEpisodeIndex, navigateToEpisode, shuffleMode, seasonNumber, episodeNumber]);
+  }, [
+    hasNextEpisode,
+    allEpisodes,
+    currentEpisodeIndex,
+    navigateToEpisode,
+    shuffleMode,
+    seasonNumber,
+    episodeNumber,
+    titleId,
+    imdbId,
+    tvdbId,
+    activeUserId,
+    cleanSeriesTitle,
+    title,
+  ]);
 
   // Hide loading screen on unmount (e.g., if user navigates back before video loads)
   useEffect(() => {

@@ -878,6 +878,16 @@ export default function DetailsScreen() {
               seasonNumber: nextEp.seasonNumber,
               episodeNumber: nextEp.episodeNumber,
             });
+            // ALWAYS cache the prequeue ID in ref (even if not ready yet) to avoid React state timing issues
+            // This ensures resolveAndPlay can access it immediately without waiting for state update
+            navigationPrequeueIdRef.current = {
+              prequeueId: nextEp.prequeueId,
+              targetEpisode: {
+                seasonNumber: nextEp.seasonNumber,
+                episodeNumber: nextEp.episodeNumber,
+              },
+            };
+            console.log('[Details] Cached navigation prequeue ID:', nextEp.prequeueId);
             // Cache the ready status so resolveAndPlay can use it directly
             if (nextEp.prequeueStatus && apiService.isPrequeueReady(nextEp.prequeueStatus.status)) {
               navigationPrequeueStatusRef.current = nextEp.prequeueStatus;
@@ -1101,6 +1111,11 @@ export default function DetailsScreen() {
   } | null> | null>(null);
   // Cache prequeue status from navigation (player already resolved it)
   const navigationPrequeueStatusRef = useRef<PrequeueStatusResponse | null>(null);
+  // Cache navigation prequeue ID even when not ready yet (to avoid React state timing issues)
+  const navigationPrequeueIdRef = useRef<{
+    prequeueId: string;
+    targetEpisode: { seasonNumber: number; episodeNumber: number };
+  } | null>(null);
 
   // Track override state - user's manual selection that differs from prequeue
   const [trackOverrideAudio, setTrackOverrideAudio] = useState<number | null>(null);
@@ -1383,6 +1398,28 @@ export default function DetailsScreen() {
     // For series, determine which episode to prequeue
     // Priority: activeEpisode (user-selected) > nextUpEpisode (from watch history)
     const targetEpisode = isSeries ? activeEpisode || nextUpEpisode : null;
+
+    // Check if we already have a navigation prequeue for this episode (from player's on-demand prequeue)
+    // If so, skip creating a new prequeue - it would cancel the one we're about to use
+    const navPrequeue = navigationPrequeueIdRef.current;
+    if (navPrequeue && targetEpisode) {
+      const navTarget = navPrequeue.targetEpisode;
+      if (
+        navTarget.seasonNumber === targetEpisode.seasonNumber &&
+        navTarget.episodeNumber === targetEpisode.episodeNumber
+      ) {
+        console.log('[prequeue] Skipping new prequeue - using navigation prequeue:', navPrequeue.prequeueId);
+        // Set the prequeue state to match the navigation prequeue so polling can start
+        setPrequeueId(navPrequeue.prequeueId);
+        setPrequeueTargetEpisode({
+          seasonNumber: navTarget.seasonNumber,
+          episodeNumber: navTarget.episodeNumber,
+        });
+        setPrequeueReady(false); // Will be set to true by the polling effect
+        prequeuePromiseRef.current = null;
+        return;
+      }
+    }
 
     // Clear existing prequeue state immediately when episode changes
     // This ensures we wait for the new prequeue instead of using stale data
@@ -2958,9 +2995,58 @@ export default function DetailsScreen() {
         ) {
           console.log('[prequeue] Using navigation prequeue from player:', navPrequeue.prequeueId);
           navigationPrequeueStatusRef.current = null; // Clear after use
+          navigationPrequeueIdRef.current = null; // Clear ID ref too
           setSelectionInfo(null);
           await launchFromPrequeue(navPrequeue);
           return;
+        }
+      }
+
+      // Check for navigation prequeue ID (may not be ready yet, but we should wait for it)
+      // This handles the case where the player passed a prequeue ID but it wasn't ready yet
+      // We use a ref here to avoid React state timing issues (state may not be updated yet)
+      const navPrequeueId = navigationPrequeueIdRef.current;
+      if (navPrequeueId && targetEpisode) {
+        const navTarget = navPrequeueId.targetEpisode;
+        if (
+          navTarget.seasonNumber === targetEpisode.seasonNumber &&
+          navTarget.episodeNumber === targetEpisode.episodeNumber
+        ) {
+          console.log('[prequeue] Found navigation prequeue ID (may not be ready yet):', navPrequeueId.prequeueId);
+          // Use this prequeue ID and wait for it (don't fall back to normal flow)
+          const abortController = new AbortController();
+          abortControllerRef.current = abortController;
+          setSelectionError(null);
+          setSelectionInfo('Waiting for pre-loaded stream...');
+          setIsResolving(true);
+
+          try {
+            const readyStatus = await pollPrequeueUntilReady(navPrequeueId.prequeueId, abortController.signal);
+            if (abortController.signal.aborted) {
+              return;
+            }
+            if (readyStatus) {
+              console.log('[prequeue] Navigation prequeue became ready:', navPrequeueId.prequeueId);
+              navigationPrequeueIdRef.current = null; // Clear after use
+              navigationPrequeueStatusRef.current = null;
+              setSelectionInfo(null);
+              await launchFromPrequeue(readyStatus);
+              return;
+            }
+            // Prequeue failed - show error but don't fall back to normal flow
+            console.error('[prequeue] Navigation prequeue failed to become ready:', navPrequeueId.prequeueId);
+            setSelectionError('Failed to prepare next episode. Please try again.');
+            navigationPrequeueIdRef.current = null;
+            return;
+          } catch (error) {
+            console.error('[prequeue] Navigation prequeue polling failed:', error);
+            setSelectionError('Failed to prepare next episode. Please try again.');
+            navigationPrequeueIdRef.current = null;
+            return;
+          } finally {
+            setIsResolving(false);
+            abortControllerRef.current = null;
+          }
         }
       }
 
@@ -3063,21 +3149,31 @@ export default function DetailsScreen() {
               await launchFromPrequeue(readyStatus);
               return;
             }
-            // Fall through to normal flow
-            console.log('[prequeue] Prequeue did not become ready, falling back to normal flow');
+            // Prequeue failed - show error instead of falling back to normal flow
+            console.error('[prequeue] Prequeue did not become ready:', currentPrequeueId);
+            setSelectionError('Failed to prepare stream. Please try again.');
+            setPrequeueId(null);
+            setPrequeueTargetEpisode(null);
+            return;
           } else {
-            console.log('[prequeue] Prequeue not usable (status:', status.status, '), falling back to normal flow');
+            // Prequeue failed/expired - show error instead of falling back
+            console.error('[prequeue] Prequeue not usable (status:', status.status, '):', currentPrequeueId);
+            setSelectionError('Stream preparation failed. Please try again.');
+            setPrequeueId(null);
+            setPrequeueTargetEpisode(null);
+            return;
           }
         } catch (error) {
-          console.log('[prequeue] Prequeue check failed, falling back to normal flow:', error);
+          // Prequeue check failed - show error instead of falling back
+          console.error('[prequeue] Prequeue check failed:', error);
+          setSelectionError('Failed to check stream status. Please try again.');
+          setPrequeueId(null);
+          setPrequeueTargetEpisode(null);
+          return;
         } finally {
           setIsResolving(false);
           abortControllerRef.current = null;
         }
-
-        // Clear prequeue state since we're falling through
-        setPrequeueId(null);
-        setPrequeueTargetEpisode(null);
       } else {
         // Log why we're not using prequeue
         console.log('[prequeue] ⚠️ Skipping prequeue path:', {
