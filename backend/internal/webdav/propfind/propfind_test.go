@@ -291,7 +291,7 @@ func TestFindContentType(t *testing.T) {
 		{"html file", "/test.html", "text/html; charset=utf-8"},
 		{"json file", "/test.json", "application/json"},
 		{"mkv file", "/test.mkv", "video/x-matroska"},
-		{"unknown extension", "/test.xyz", "application/octet-stream"},
+		{"unknown extension", "/test.qqq", "application/octet-stream"},
 		{"no extension", "/testfile", "application/octet-stream"},
 	}
 

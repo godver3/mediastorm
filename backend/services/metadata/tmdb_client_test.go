@@ -26,7 +26,7 @@ func TestBuildTMDBImage(t *testing.T) {
 	if img == nil {
 		t.Fatal("expected image for valid path")
 	}
-	if img.URL != "https://image.tmdb.org/t/p/w500/poster.png" {
+	if img.URL != "https://image.tmdb.org/t/p/w780/poster.png" {
 		t.Fatalf("unexpected image url: %s", img.URL)
 	}
 	if img.Type != "poster" {

@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo/Expo.podspec b/node_modules/expo/Expo.podspec
-index b9736cd..a5e283b 100644
+index 5be4f75..3a24859 100644
 --- a/node_modules/expo/Expo.podspec
 +++ b/node_modules/expo/Expo.podspec
 @@ -65,6 +65,7 @@ Pod::Spec.new do |s|
@@ -22,7 +22,7 @@ index b9736cd..a5e283b 100644
    install_modules_dependencies(s)
  
 diff --git a/node_modules/expo/ios/AppDelegates/ExpoAppDelegate.swift b/node_modules/expo/ios/AppDelegates/ExpoAppDelegate.swift
-index e299cd5..ac15c25 100644
+index ab95b08..5fddd59 100644
 --- a/node_modules/expo/ios/AppDelegates/ExpoAppDelegate.swift
 +++ b/node_modules/expo/ios/AppDelegates/ExpoAppDelegate.swift
 @@ -1,7 +1,13 @@

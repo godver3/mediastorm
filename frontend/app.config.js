@@ -23,8 +23,11 @@ module.exports = ({ config }) => {
 
   const plugins = [
     'expo-router',
+    'expo-web-browser',
     './plugins/with-now-playing-manager',
     './plugins/with-android-pip',
+    './plugins/with-mpv-player', // MPV native player for Android
+    './plugins/with-ksplayer', // KSPlayer native player for iOS/tvOS
     './plugins/with-large-heap', // Increase Android heap limit for video playback
     './plugins/with-exoplayer-keep-resources', // Preserve ExoPlayer resources during shrinking
     [
@@ -142,6 +145,7 @@ module.exports = ({ config }) => {
       ios: {
         bundleIdentifier: isTV ? 'com.strmr.app.tv' : 'com.strmr.app',
         buildNumber: '3',
+        appleTeamId: 'C98FZL89C9',
         deploymentTarget: '15.1',
         supportsTablet: true,
         icon: './assets/ios_icons/icon-1024.png',
@@ -171,6 +175,7 @@ module.exports = ({ config }) => {
       },
       tvos: {
         bundleIdentifier: 'com.strmr.app.tv',
+        appleTeamId: 'C98FZL89C9',
         deploymentTarget: '17.0',
         infoPlist: {
           LSApplicationQueriesSchemes: ['outplayer', 'infuse'],
