@@ -84,6 +84,44 @@ type XtreamStream struct {
 // Regex for parsing M3U attributes
 var attributeRegex = regexp.MustCompile(`([a-zA-Z0-9\-]+)="([^"]*)"`)
 
+// splitM3ULine splits an EXTINF line to separate metadata (duration + attributes)
+// from the channel display name.
+// M3U format: #EXTINF:duration [key="value" ...],Channel Name
+// The channel name starts after the comma that follows the last quoted attribute.
+func splitM3ULine(line string) (metadata, name string) {
+	// Find the position after the last closing quote of an attribute.
+	// Attributes are always key="value", so we look for the last '"' and
+	// then find the first comma after it.
+	lastQuoteIdx := -1
+	for i := len(line) - 1; i >= 0; i-- {
+		if line[i] == '"' {
+			lastQuoteIdx = i
+			break
+		}
+	}
+
+	// Find the first comma after the last quote (or from start if no quotes)
+	searchStart := 0
+	if lastQuoteIdx != -1 {
+		searchStart = lastQuoteIdx + 1
+	}
+
+	commaIdx := -1
+	for i := searchStart; i < len(line); i++ {
+		if line[i] == ',' {
+			commaIdx = i
+			break
+		}
+	}
+
+	if commaIdx == -1 {
+		// No comma found after attributes, entire line is metadata
+		return line, ""
+	}
+
+	return line[:commaIdx], line[commaIdx+1:]
+}
+
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
@@ -512,12 +550,7 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 			}
 
 			metaAndName := parts[1]
-			metaParts := strings.SplitN(metaAndName, ",", 2)
-			metadataPart := metaParts[0]
-			namePart := ""
-			if len(metaParts) > 1 {
-				namePart = metaParts[1]
-			}
+			metadataPart, namePart := splitM3ULine(metaAndName)
 
 			attributes := make(map[string]string)
 			matches := attributeRegex.FindAllStringSubmatch(metadataPart, -1)
