@@ -57,7 +57,10 @@ const TVActionButton = memo(function TVActionButton({
 
   const buttonContent = (
     <SpatialNavigationFocusableView
-      onSelect={disabled || loading ? undefined : onSelect}
+      onSelect={disabled || loading ? undefined : () => {
+        console.log(`[TVActionButton DEBUG] onSelect fired for button: ${text || icon}`);
+        onSelect();
+      }}
       onLongSelect={disabled || loading ? undefined : onLongSelect}
       onFocus={onFocus}>
       {({ isFocused }: { isFocused: boolean }) => (

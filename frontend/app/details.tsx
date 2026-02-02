@@ -115,6 +115,8 @@ interface LocalParams extends Record<string, any> {
   year?: string;
   initialSeason?: string;
   initialEpisode?: string;
+  /** When navigating from "More Like This", delay auto-focus to prevent enter key propagation */
+  fromSimilar?: string;
 }
 
 // Helper to get rating display configuration with service-specific icons
@@ -327,10 +329,38 @@ const CertificationBadge = ({
   );
 };
 
+// Debug: Generate unique instance ID for tracking component instances
+let detailsInstanceCounter = 0;
+
 export default function DetailsScreen() {
   const params = useLocalSearchParams<LocalParams>();
   const router = useRouter();
   const pathname = usePathname();
+
+  // Debug: Create a stable instance ID to track this component instance
+  const instanceIdRef = useRef<string | null>(null);
+  if (instanceIdRef.current === null) {
+    instanceIdRef.current = `details-${++detailsInstanceCounter}-${Date.now()}`;
+  }
+  const instanceId = instanceIdRef.current;
+
+  // Debug: Track the titleId this instance was created with
+  const initialTitleIdRef = useRef<string | null>(null);
+  if (initialTitleIdRef.current === null) {
+    initialTitleIdRef.current = params.titleId ?? null;
+  }
+
+  // Debug: Log component render
+  console.log(`[Details DEBUG ${instanceId}] Render - titleId: ${params.titleId}, initial: ${initialTitleIdRef.current}, pathname: ${pathname}`);
+
+  // Debug: Track titleId changes within the same instance
+  const prevTitleIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevTitleIdRef.current !== undefined && prevTitleIdRef.current !== params.titleId) {
+      console.log(`[Details DEBUG ${instanceId}] *** titleId CHANGED within same instance: ${prevTitleIdRef.current} -> ${params.titleId}`);
+    }
+    prevTitleIdRef.current = params.titleId;
+  }, [params.titleId, instanceId]);
   const theme = useTheme();
   const styles = useMemo(() => createDetailsStyles(theme), [theme]);
   const spatialNavigator = useSpatialNavigator();
@@ -429,6 +459,22 @@ export default function DetailsScreen() {
   const yearParam = toStringParam(params.year);
   const initialSeasonParam = toStringParam(params.initialSeason);
   const initialEpisodeParam = toStringParam(params.initialEpisode);
+  const fromSimilarParam = toStringParam(params.fromSimilar);
+
+  // When navigating from "More Like This", temporarily block select actions to prevent
+  // the enter key that triggered navigation from also triggering play on the new page.
+  // We keep auto-focus enabled so spatial navigation works correctly.
+  const [isSelectBlocked, setIsSelectBlocked] = useState(!!fromSimilarParam);
+  useEffect(() => {
+    if (fromSimilarParam) {
+      console.log(`[Details DEBUG ${instanceId}] Blocking select actions (fromSimilar navigation)`);
+      const timer = setTimeout(() => {
+        console.log(`[Details DEBUG ${instanceId}] Unblocking select actions after delay`);
+        setIsSelectBlocked(false);
+      }, 300); // 300ms delay to let the enter key event fully propagate
+      return () => clearTimeout(timer);
+    }
+  }, [fromSimilarParam, instanceId]);
 
   // Compute final poster URL - prefer fetched metadata for textless posters
   const posterUrl = useMemo(() => {
@@ -1190,18 +1236,27 @@ export default function DetailsScreen() {
   // Only activate spatial navigation when we're on the details page (not on player or other pages)
   const isDetailsPageActive = pathname === '/details';
 
+  // Debug: Log component unmount
+  useEffect(() => {
+    console.log(`[Details DEBUG ${instanceId}] Mounted - titleId: ${titleId}`);
+    return () => {
+      console.log(`[Details DEBUG ${instanceId}] Unmounting - titleId: ${titleId}`);
+    };
+  }, [instanceId, titleId]);
+
   useEffect(() => {
     if (Platform.isTV) {
-      console.log(
-        '[Details] Spatial navigation active:',
-        isDetailsPageActive &&
+      const isActive = isDetailsPageActive &&
           !manualVisible &&
           !trailerModalVisible &&
           !bulkWatchModalVisible &&
           !resumeModalVisible &&
           !seasonSelectorVisible &&
-          !episodeSelectorVisible,
+          !episodeSelectorVisible;
+      console.log(
+        `[Details DEBUG ${instanceId}] Spatial navigation active: ${isActive}`,
         {
+          titleId,
           pathname,
           isDetailsPageActive,
           manualVisible,
@@ -1222,6 +1277,8 @@ export default function DetailsScreen() {
     seasonSelectorVisible,
     episodeSelectorVisible,
     pathname,
+    instanceId,
+    titleId,
   ]);
 
   // Cleanup: cancel pending playback on unmount or navigation away
@@ -3769,7 +3826,15 @@ export default function DetailsScreen() {
   }, [pendingPlaybackAction, showLoadingScreenIfEnabled]);
 
   const handleWatchNow = useCallback(async () => {
+    // Block select actions briefly after navigating from "More Like This" to prevent
+    // the enter key that triggered navigation from also triggering play
+    if (isSelectBlocked) {
+      console.log(`[Details DEBUG ${instanceId}] handleWatchNow BLOCKED (fromSimilar navigation debounce)`);
+      return;
+    }
+    console.log(`[Details DEBUG ${instanceId}] handleWatchNow called - titleId: ${titleId}, title: ${title}`);
     const playAction = async () => {
+      console.log(`[Details DEBUG ${instanceId}] playAction executing - titleId: ${titleId}`);
       // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
       // This matches the prequeue priority order
       const episodeToPlay = activeEpisode || nextUpEpisode;
@@ -3813,6 +3878,9 @@ export default function DetailsScreen() {
     resolveAndPlay,
     title,
     checkAndShowResumeModal,
+    instanceId,
+    titleId,
+    isSelectBlocked,
   ]);
 
   const handleLaunchDebugPlayer = useCallback(async () => {
@@ -4041,7 +4109,10 @@ export default function DetailsScreen() {
 
   const handleSimilarTitlePress = useCallback(
     (item: Title) => {
-      router.push({
+      console.log(`[Details DEBUG ${instanceId}] handleSimilarTitlePress called - current titleId: ${titleId}, navigating to: ${item.id} (${item.name})`);
+      // Use replace instead of push to avoid stacking multiple details pages
+      // This prevents the old page's event handlers from remaining active
+      router.replace({
         pathname: '/details',
         params: {
           title: item.name,
@@ -4053,10 +4124,13 @@ export default function DetailsScreen() {
           backdropUrl: item.backdrop?.url ?? '',
           tmdbId: item.tmdbId ? String(item.tmdbId) : '',
           year: item.year ? String(item.year) : '',
+          // Signal that we came from "More Like This" - delays auto-focus to prevent
+          // the enter key that triggered navigation from also triggering play
+          fromSimilar: '1',
         },
       });
     },
-    [router],
+    [router, instanceId, titleId],
   );
 
   const handleCastMemberPress = useCallback(
@@ -4767,7 +4841,10 @@ export default function DetailsScreen() {
                   text={watchNowLabel}
                   icon="play"
                   onSelect={handleWatchNow}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onFocus={() => {
+                    console.log(`[Details DEBUG ${instanceId}] Play button focused - titleId: ${titleId}`);
+                    handleTVFocusAreaChange('actions');
+                  }}
                   disabled={isResolving || (isSeries && episodesLoading)}
                   loading={isResolving || (isSeries && episodesLoading)}
                   showReadyPip={prequeueReady}

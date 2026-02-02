@@ -56,7 +56,10 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
       return (
         <SpatialNavigationFocusableView
           onFocus={() => onFocus?.()}
-          onSelect={() => onTitlePress?.(title)}>
+          onSelect={() => {
+            console.log(`[TVMoreLikeThis DEBUG] onSelect fired for title: ${title.name} (id: ${title.id})`);
+            onTitlePress?.(title);
+          }}>
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={[styles.card, isFocused && styles.cardFocused]}>
               {title.poster?.url ? (
