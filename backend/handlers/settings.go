@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"novastream/config"
 	"novastream/internal/pool"
 	"novastream/services/debrid"
+	"novastream/services/epg"
 	"novastream/services/metadata"
 )
 
@@ -20,6 +22,7 @@ type SettingsHandler struct {
 	MetadataService     *metadata.Service
 	DebridSearchService *debrid.SearchService
 	ImageHandler        *ImageHandler
+	EPGService          *epg.Service
 }
 
 func NewSettingsHandler(m *config.Manager) *SettingsHandler {
@@ -48,6 +51,11 @@ func (h *SettingsHandler) SetDebridSearchService(ds *debrid.SearchService) {
 // SetImageHandler sets the image handler for clearing image cache
 func (h *SettingsHandler) SetImageHandler(ih *ImageHandler) {
 	h.ImageHandler = ih
+}
+
+// SetEPGService sets the EPG service for auto-refresh when new sources are added
+func (h *SettingsHandler) SetEPGService(es *epg.Service) {
+	h.EPGService = es
 }
 
 // SettingsResponse wraps config.Settings with additional runtime information.
@@ -92,6 +100,9 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
+	// Load old settings to detect new EPG sources
+	oldSettings, _ := h.Manager.Load()
+
 	var s config.Settings
 	dec := json.NewDecoder(r.Body)
 	// Allow unknown fields for backward compatibility with old configs
@@ -115,6 +126,9 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Hot reload services that need it
 	h.reloadServices(s)
+
+	// Auto-refresh EPG if new sources were added
+	h.triggerEPGRefreshIfNewSources(oldSettings, s)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -272,4 +286,47 @@ func (h *SettingsHandler) ensurePlaylistTaskIfConfigured(s *config.Settings) {
 	}
 	s.ScheduledTasks.Tasks = append(s.ScheduledTasks.Tasks, playlistTask)
 	log.Printf("[settings] auto-created playlist refresh task because Live TV is configured")
+}
+
+// triggerEPGRefreshIfNewSources triggers an immediate EPG refresh if new sources were added.
+// This provides a better UX so users don't have to wait for the scheduled task to run.
+func (h *SettingsHandler) triggerEPGRefreshIfNewSources(oldSettings config.Settings, newSettings config.Settings) {
+	// Skip if EPG service not available or EPG not enabled
+	if h.EPGService == nil || !newSettings.Live.EPG.Enabled {
+		return
+	}
+
+	// Build a set of old source IDs
+	oldSourceIDs := make(map[string]bool)
+	for _, src := range oldSettings.Live.EPG.Sources {
+		oldSourceIDs[src.ID] = true
+	}
+
+	// Check for new sources
+	hasNewSources := false
+	for _, src := range newSettings.Live.EPG.Sources {
+		if src.Enabled && !oldSourceIDs[src.ID] {
+			hasNewSources = true
+			log.Printf("[settings] detected new EPG source: %s (%s)", src.Name, src.ID)
+			break
+		}
+	}
+
+	// Also check if EPG was just enabled (and has sources or a simple URL configured)
+	epgJustEnabled := !oldSettings.Live.EPG.Enabled && newSettings.Live.EPG.Enabled
+	hasEPGConfig := len(newSettings.Live.EPG.Sources) > 0 || newSettings.Live.EPG.XmltvUrl != "" ||
+		(newSettings.Live.Mode == "xtream" && newSettings.Live.XtreamHost != "")
+
+	if (hasNewSources || (epgJustEnabled && hasEPGConfig)) {
+		log.Printf("[settings] triggering immediate EPG refresh due to new configuration")
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			if err := h.EPGService.Refresh(ctx); err != nil {
+				log.Printf("[settings] auto EPG refresh failed: %v", err)
+			} else {
+				log.Printf("[settings] auto EPG refresh completed successfully")
+			}
+		}()
+	}
 }
