@@ -17,12 +17,14 @@ let TVActionButton: typeof import('@/components/tv').TVActionButton | null = nul
 let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
 let TVCastSection: typeof import('@/components/tv').TVCastSection | null = null;
 let TVMoreLikeThisSection: typeof import('@/components/tv').TVMoreLikeThisSection | null = null;
+let TVTrailerBackdrop: typeof import('@/components/tv').TVTrailerBackdrop | null = null;
 try {
   const tvComponents = require('@/components/tv');
   TVActionButton = tvComponents.TVActionButton;
   TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
   TVCastSection = tvComponents.TVCastSection;
   TVMoreLikeThisSection = tvComponents.TVMoreLikeThisSection;
+  TVTrailerBackdrop = tvComponents.TVTrailerBackdrop;
 } catch {
   // TV components not available, will use fallbacks
 }
@@ -44,6 +46,8 @@ import {
   type TrailerPrequeueStatus,
 } from '@/services/api';
 import { SpatialNavigationNode, SpatialNavigationRoot, SpatialNavigationFocusableView, useSpatialNavigator } from '@/services/tv-navigation';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { useTheme } from '@/theme';
 import { getTVScaleMultiplier, isTablet } from '@/theme/tokens/tvScale';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
@@ -1022,6 +1026,11 @@ export default function DetailsScreen() {
   // Trailer prequeue state for 1080p YouTube trailers
   const [trailerPrequeueId, setTrailerPrequeueId] = useState<string | null>(null);
   const [trailerPrequeueStatus, setTrailerPrequeueStatus] = useState<TrailerPrequeueStatus | null>(null);
+
+  // TV auto-play trailer state
+  const [isBackdropTrailerPlaying, setIsBackdropTrailerPlaying] = useState(false);
+  const [isTrailerImmersiveMode, setIsTrailerImmersiveMode] = useState(false);
+  const autoPlayTrailersTV = Platform.isTV && settings?.playback?.autoPlayTrailersTV;
 
   // Similar content ("More Like This") state
   const [similarContent, setSimilarContent] = useState<Title[]>([]);
@@ -2020,6 +2029,80 @@ export default function DetailsScreen() {
       clearInterval(pollInterval);
     };
   }, [trailerPrequeueId, trailerPrequeueStatus]);
+
+  // Auto-start backdrop trailer when setting enabled and trailer is ready
+  useEffect(() => {
+    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl) {
+      setIsBackdropTrailerPlaying(true);
+    }
+  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl]);
+
+  // Immersive mode timer - fade out UI after 3 seconds when trailer is playing
+  // Re-enters immersive mode after 3 seconds of no input
+  const immersiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetImmersiveTimer = useCallback(() => {
+    // Exit immersive mode immediately (navigation re-enables via isActive prop)
+    setIsTrailerImmersiveMode(false);
+    // Clear existing timer
+    if (immersiveTimerRef.current) {
+      clearTimeout(immersiveTimerRef.current);
+      immersiveTimerRef.current = null;
+    }
+    // Start new timer to re-enter immersive mode
+    if (isBackdropTrailerPlaying) {
+      immersiveTimerRef.current = setTimeout(() => setIsTrailerImmersiveMode(true), 3000);
+    }
+  }, [isBackdropTrailerPlaying]);
+
+  useEffect(() => {
+    if (!isBackdropTrailerPlaying) {
+      setIsTrailerImmersiveMode(false);
+      if (immersiveTimerRef.current) {
+        clearTimeout(immersiveTimerRef.current);
+        immersiveTimerRef.current = null;
+      }
+      return;
+    }
+    // Start initial timer
+    immersiveTimerRef.current = setTimeout(() => setIsTrailerImmersiveMode(true), 3000);
+    return () => {
+      if (immersiveTimerRef.current) {
+        clearTimeout(immersiveTimerRef.current);
+        immersiveTimerRef.current = null;
+      }
+    };
+  }, [isBackdropTrailerPlaying]);
+
+  // Listen for remote input when trailer auto-play is active
+  // - In immersive mode: Enter/PlayPause toggles play/pause, any key exits immersive
+  // - PlayPause button always toggles play state (dedicated media key)
+  useEffect(() => {
+    if (!Platform.isTV || !autoPlayTrailersTV || !trailerStreamUrl) return;
+
+    const removeListener = RemoteControlManager.addKeydownListener((key) => {
+      // PlayPause media key always toggles play state
+      if (key === SupportedKeys.PlayPause) {
+        setIsBackdropTrailerPlaying((prev) => !prev);
+        if (isTrailerImmersiveMode) {
+          resetImmersiveTimer();
+        }
+        return;
+      }
+
+      // In immersive mode: Enter toggles play/pause, any key exits immersive
+      if (isTrailerImmersiveMode) {
+        if (key === SupportedKeys.Enter) {
+          setIsBackdropTrailerPlaying((prev) => !prev);
+        }
+        resetImmersiveTimer();
+      }
+    });
+
+    return () => {
+      removeListener();
+    };
+  }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, resetImmersiveTimer]);
 
   const findPreviousEpisode = useCallback(
     (episode: SeriesEpisode): SeriesEpisode | null => {
@@ -3659,6 +3742,7 @@ export default function DetailsScreen() {
         'isEpisodeStripFocused:',
         isEpisodeStripFocused,
       );
+
       if (isEpisodeStripFocused && activeEpisode) {
         if (direction === 'right') {
           const nextEp = findNextEpisode(activeEpisode);
@@ -4182,6 +4266,14 @@ export default function DetailsScreen() {
   ]);
 
   const handleWatchTrailer = useCallback(() => {
+    // When auto-play is active on TV, toggle play/pause instead of opening modal
+    if (autoPlayTrailersTV && trailerStreamUrl) {
+      setIsBackdropTrailerPlaying((prev) => !prev);
+      // Exit immersive mode on any interaction
+      setIsTrailerImmersiveMode(false);
+      return;
+    }
+
     const nextTrailer = primaryTrailer ?? trailers[0];
     if (!nextTrailer) {
       if (!trailersLoading) {
@@ -4191,7 +4283,7 @@ export default function DetailsScreen() {
     }
     setActiveTrailer(nextTrailer);
     setTrailerModalVisible(true);
-  }, [primaryTrailer, trailers, trailersLoading]);
+  }, [autoPlayTrailersTV, trailerStreamUrl, primaryTrailer, trailers, trailersLoading]);
 
   const handleViewCollection = useCallback(() => {
     if (!movieDetails?.collection) return;
@@ -5117,8 +5209,8 @@ export default function DetailsScreen() {
               {(trailersLoading || hasAvailableTrailer) &&
                 (Platform.isTV && TVActionButton ? (
                   <TVActionButton
-                    text={trailerButtonLabel}
-                    icon="videocam"
+                    text={autoPlayTrailersTV && trailerStreamUrl ? (isBackdropTrailerPlaying ? 'Pause' : 'Play') : trailerButtonLabel}
+                    icon={autoPlayTrailersTV && trailerStreamUrl ? (isBackdropTrailerPlaying ? 'pause' : 'play') : 'videocam'}
                     onSelect={handleWatchTrailer}
                     onFocus={() => handleTVFocusAreaChange('actions')}
                     loading={trailersLoading}
@@ -6001,6 +6093,15 @@ export default function DetailsScreen() {
     },
   });
 
+  // Immersive mode opacity animation for trailer auto-play
+  const immersiveContentOpacity = useSharedValue(1);
+  useEffect(() => {
+    immersiveContentOpacity.value = withTiming(isTrailerImmersiveMode ? 0 : 1, { duration: 400 });
+  }, [isTrailerImmersiveMode]);
+  const immersiveContentStyle = useAnimatedStyle(() => ({
+    opacity: immersiveContentOpacity.value,
+  }));
+
   // Ref for TV scroll view to programmatically scroll
   const tvScrollViewRef = useRef<Animated.ScrollView>(null);
 
@@ -6068,7 +6169,8 @@ export default function DetailsScreen() {
           !seasonSelectorVisible &&
           !episodeSelectorVisible &&
           !showAudioTrackModal &&
-          !showSubtitleTrackModal
+          !showSubtitleTrackModal &&
+          !isTrailerImmersiveMode
         }
         onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
         <Stack.Screen options={{ headerShown: false }} />
@@ -6083,6 +6185,23 @@ export default function DetailsScreen() {
                 ) : (
                   <>
                     {headerImage ? (
+                  autoPlayTrailersTV && TVTrailerBackdrop ? (
+                    // TV with auto-play trailers enabled - use video backdrop
+                    <TVTrailerBackdrop
+                      backdropUrl={headerImage}
+                      trailerStreamUrl={trailerStreamUrl}
+                      isPlaying={isBackdropTrailerPlaying}
+                      isImmersive={isTrailerImmersiveMode}
+                      onEnd={() => {
+                        setIsBackdropTrailerPlaying(false);
+                        setIsTrailerImmersiveMode(false);
+                      }}
+                      onError={() => {
+                        setIsBackdropTrailerPlaying(false);
+                        setIsTrailerImmersiveMode(false);
+                      }}
+                    />
+                  ) : (
                   <Animated.View
                     style={[
                       styles.backgroundImageContainer,
@@ -6120,15 +6239,19 @@ export default function DetailsScreen() {
                       style={styles.heroFadeOverlay}
                     />
                   </Animated.View>
+                  )
                 ) : null}
-                <LinearGradient
-                  pointerEvents="none"
-                  colors={overlayGradientColors}
-                  locations={overlayGradientLocations}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                  style={styles.gradientOverlay}
-                />
+                {/* Hide overlay gradient when TVTrailerBackdrop is active (it has its own gradient) */}
+                {!(autoPlayTrailersTV && TVTrailerBackdrop) && (
+                  <LinearGradient
+                    pointerEvents="none"
+                    colors={overlayGradientColors}
+                    locations={overlayGradientLocations}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={styles.gradientOverlay}
+                  />
+                )}
                 {Platform.isTV ? (
                   <Animated.ScrollView
                     ref={tvScrollViewRef}
@@ -6151,17 +6274,21 @@ export default function DetailsScreen() {
                       }}
                     />
                     {/* Content area with gradient background - starts higher with softer transition */}
-                    <LinearGradient
-                      colors={[
-                        'transparent',
-                        'rgba(0, 0, 0, 0.6)',
-                        'rgba(0, 0, 0, 0.85)',
-                        theme.colors.background.base,
-                      ]}
-                      locations={[0, 0.1, 0.25, 0.45]}
-                      style={styles.tvContentGradient}>
-                      <View style={styles.tvContentInner}>{renderDetailsContent()}</View>
-                    </LinearGradient>
+                    <Animated.View style={autoPlayTrailersTV && immersiveContentStyle}>
+                      <LinearGradient
+                        colors={[
+                          'transparent',
+                          'rgba(0, 0, 0, 0.6)',
+                          'rgba(0, 0, 0, 0.85)',
+                          theme.colors.background.base,
+                        ]}
+                        locations={[0, 0.1, 0.25, 0.45]}
+                        style={styles.tvContentGradient}>
+                        <View style={styles.tvContentInner}>
+                          {renderDetailsContent()}
+                        </View>
+                      </LinearGradient>
+                    </Animated.View>
                   </Animated.ScrollView>
                 ) : (
                   <View style={styles.contentOverlay}>

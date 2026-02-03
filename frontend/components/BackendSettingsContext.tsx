@@ -105,6 +105,7 @@ export interface BackendPlaybackSettings {
   seekForwardSeconds?: number; // Seconds to skip forward (default 30)
   seekBackwardSeconds?: number; // Seconds to skip backward (default 10)
   forceAacTranscoding?: boolean; // Force AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
+  autoPlayTrailersTV?: boolean; // Auto-play trailers in backdrop on TV details pages
 }
 
 export interface BackendLiveTVFilterSettings {

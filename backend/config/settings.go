@@ -214,6 +214,7 @@ type PlaybackSettings struct {
 	SeekForwardSeconds        int     `json:"seekForwardSeconds"`        // Seconds to skip forward (default 30)
 	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`       // Seconds to skip backward (default 10)
 	ForceAACTranscoding       bool    `json:"forceAacTranscoding"`       // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
+	AutoPlayTrailersTV        bool    `json:"autoPlayTrailersTV,omitempty"` // Auto-play trailers in backdrop on TV details pages
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
