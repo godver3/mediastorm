@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Animated, Modal, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
@@ -520,17 +520,15 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
           </>
         ) : (
           <>
-            <View style={styles.optionsScrollView}>
-              <View style={styles.optionsList}>
-                {hasOptions ? (
-                  options.map((option, index) => renderOption(option, index))
-                ) : (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-                  </View>
-                )}
-              </View>
-            </View>
+            <ScrollView style={styles.optionsScrollView} contentContainerStyle={styles.optionsList}>
+              {hasOptions ? (
+                options.map((option, index) => renderOption(option, index))
+              ) : (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                </View>
+              )}
+            </ScrollView>
             <View style={styles.modalFooter}>
               {onSearchSubtitles && (
                 <Pressable onPress={handleSearchSubtitles}>
