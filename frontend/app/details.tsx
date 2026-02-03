@@ -2074,11 +2074,11 @@ export default function DetailsScreen() {
     };
   }, [isBackdropTrailerPlaying]);
 
-  // Listen for remote input when trailer auto-play is active
+  // Listen for remote input when trailer auto-play is active AND details page is focused
   // - In immersive mode: Enter/PlayPause toggles play/pause, any key exits immersive
   // - PlayPause button always toggles play state (dedicated media key)
   useEffect(() => {
-    if (!Platform.isTV || !autoPlayTrailersTV || !trailerStreamUrl) return;
+    if (!Platform.isTV || !autoPlayTrailersTV || !trailerStreamUrl || !isDetailsPageActive) return;
 
     const removeListener = RemoteControlManager.addKeydownListener((key) => {
       // PlayPause media key always toggles play state
@@ -2102,7 +2102,7 @@ export default function DetailsScreen() {
     return () => {
       removeListener();
     };
-  }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, resetImmersiveTimer]);
+  }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, resetImmersiveTimer, isDetailsPageActive]);
 
   const findPreviousEpisode = useCallback(
     (episode: SeriesEpisode): SeriesEpisode | null => {
