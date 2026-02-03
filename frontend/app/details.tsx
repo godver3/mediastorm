@@ -1030,7 +1030,16 @@ export default function DetailsScreen() {
   // TV auto-play trailer state
   const [isBackdropTrailerPlaying, setIsBackdropTrailerPlaying] = useState(false);
   const [isTrailerImmersiveMode, setIsTrailerImmersiveMode] = useState(false);
+  const [trailerAutoPlayDismissed, setTrailerAutoPlayDismissed] = useState(false); // True after user takes any action
   const autoPlayTrailersTV = Platform.isTV && settings?.playback?.autoPlayTrailersTV;
+
+  // Dismiss trailer auto-play when user takes any action (play, watchlist, etc.)
+  const dismissTrailerAutoPlay = useCallback(() => {
+    if (autoPlayTrailersTV) {
+      setTrailerAutoPlayDismissed(true);
+      setIsBackdropTrailerPlaying(false);
+    }
+  }, [autoPlayTrailersTV]);
 
   // Similar content ("More Like This") state
   const [similarContent, setSimilarContent] = useState<Title[]>([]);
@@ -2031,11 +2040,12 @@ export default function DetailsScreen() {
   }, [trailerPrequeueId, trailerPrequeueStatus]);
 
   // Auto-start backdrop trailer when setting enabled and trailer is ready
+  // Don't auto-start if user has already taken an action (dismissed auto-play)
   useEffect(() => {
-    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl) {
+    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl && !trailerAutoPlayDismissed) {
       setIsBackdropTrailerPlaying(true);
     }
-  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl]);
+  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl, trailerAutoPlayDismissed]);
 
   // Immersive mode timer - fade out UI after 3 seconds when trailer is playing
   // Re-enters immersive mode after 3 seconds of no input
@@ -3861,6 +3871,7 @@ export default function DetailsScreen() {
 
   // Shuffle play - pick a random episode and play it (excludes season 0/specials)
   const handleShufflePlay = useCallback(() => {
+    dismissTrailerAutoPlay();
     // Filter out season 0 (specials) from shuffle
     const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
     if (shuffleableEpisodes.length === 0) return;
@@ -3876,10 +3887,11 @@ export default function DetailsScreen() {
     }
     setActiveEpisode(randomEpisode);
     handlePlayEpisode(randomEpisode);
-  }, [allEpisodes, seasons, handlePlayEpisode]);
+  }, [dismissTrailerAutoPlay, allEpisodes, seasons, handlePlayEpisode]);
 
   // Shuffle play current season only - pick a random episode from selected season
   const handleShuffleSeasonPlay = useCallback(() => {
+    dismissTrailerAutoPlay();
     const seasonEpisodes = selectedSeason?.episodes ?? [];
     if (seasonEpisodes.length === 0) return;
     const randomIndex = Math.floor(Math.random() * seasonEpisodes.length);
@@ -3889,7 +3901,7 @@ export default function DetailsScreen() {
     pendingShuffleModeRef.current = true;
     setActiveEpisode(randomEpisode);
     handlePlayEpisode(randomEpisode);
-  }, [selectedSeason?.episodes, handlePlayEpisode]);
+  }, [dismissTrailerAutoPlay, selectedSeason?.episodes, handlePlayEpisode]);
 
   const getItemIdForProgress = useCallback((): string | null => {
     // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
@@ -4013,6 +4025,7 @@ export default function DetailsScreen() {
       console.log(`[Details DEBUG ${instanceId}] handleWatchNow BLOCKED (fromSimilar navigation debounce)`);
       return;
     }
+    dismissTrailerAutoPlay();
     console.log(`[Details DEBUG ${instanceId}] handleWatchNow called - titleId: ${titleId}, title: ${title}`);
     const playAction = async () => {
       console.log(`[Details DEBUG ${instanceId}] playAction executing - titleId: ${titleId}`);
@@ -4062,9 +4075,11 @@ export default function DetailsScreen() {
     instanceId,
     titleId,
     isSelectBlocked,
+    dismissTrailerAutoPlay,
   ]);
 
   const handleLaunchDebugPlayer = useCallback(async () => {
+    dismissTrailerAutoPlay();
     const playAction = async () => {
       // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
       // This matches the prequeue priority order
@@ -4101,7 +4116,7 @@ export default function DetailsScreen() {
     };
 
     await checkAndShowResumeModal(playAction);
-  }, [activeEpisode, nextUpEpisode, getEpisodeSearchContext, resolveAndPlay, title, checkAndShowResumeModal]);
+  }, [dismissTrailerAutoPlay, activeEpisode, nextUpEpisode, getEpisodeSearchContext, resolveAndPlay, title, checkAndShowResumeModal]);
 
   const closeManualPicker = useCallback(() => {
     setManualVisible(false);
@@ -4186,6 +4201,7 @@ export default function DetailsScreen() {
     if (!canToggleWatchlist || watchlistBusy) {
       return;
     }
+    dismissTrailerAutoPlay();
     setWatchlistError(null);
     setWatchlistBusy(true);
     try {
@@ -4211,6 +4227,7 @@ export default function DetailsScreen() {
       setWatchlistBusy(false);
     }
   }, [
+    dismissTrailerAutoPlay,
     addToWatchlist,
     backdropUrl,
     canToggleWatchlist,
@@ -4230,6 +4247,7 @@ export default function DetailsScreen() {
     if (!canToggleWatchlist || watchlistBusy) {
       return;
     }
+    dismissTrailerAutoPlay();
 
     // For series, show bulk watch options modal
     if (isSeries) {
@@ -4254,6 +4272,7 @@ export default function DetailsScreen() {
       setWatchlistBusy(false);
     }
   }, [
+    dismissTrailerAutoPlay,
     canToggleWatchlist,
     externalIds,
     isSeries,
@@ -4274,6 +4293,7 @@ export default function DetailsScreen() {
       return;
     }
 
+    dismissTrailerAutoPlay();
     const nextTrailer = primaryTrailer ?? trailers[0];
     if (!nextTrailer) {
       if (!trailersLoading) {
@@ -4283,10 +4303,11 @@ export default function DetailsScreen() {
     }
     setActiveTrailer(nextTrailer);
     setTrailerModalVisible(true);
-  }, [autoPlayTrailersTV, trailerStreamUrl, primaryTrailer, trailers, trailersLoading]);
+  }, [autoPlayTrailersTV, trailerStreamUrl, dismissTrailerAutoPlay, primaryTrailer, trailers, trailersLoading]);
 
   const handleViewCollection = useCallback(() => {
     if (!movieDetails?.collection) return;
+    dismissTrailerAutoPlay();
     router.push({
       pathname: '/watchlist',
       params: {
@@ -4294,7 +4315,7 @@ export default function DetailsScreen() {
         collectionName: encodeURIComponent(movieDetails.collection.name),
       },
     });
-  }, [movieDetails?.collection, router]);
+  }, [movieDetails?.collection, dismissTrailerAutoPlay, router]);
 
   const handleSimilarTitlePress = useCallback(
     (item: Title) => {
@@ -4351,6 +4372,7 @@ export default function DetailsScreen() {
     if (manualLoading) {
       return;
     }
+    dismissTrailerAutoPlay();
 
     // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
     const episodeToSelect = activeEpisode || nextUpEpisode;
@@ -4390,7 +4412,7 @@ export default function DetailsScreen() {
     } finally {
       setManualLoading(false);
     }
-  }, [activeEpisode, nextUpEpisode, fetchIndexerResults, getEpisodeSearchContext, manualLoading, title]);
+  }, [dismissTrailerAutoPlay, activeEpisode, nextUpEpisode, fetchIndexerResults, getEpisodeSearchContext, manualLoading, title]);
 
   const handleEpisodeLongPress = useCallback(
     async (episode: SeriesEpisode) => {
@@ -5112,7 +5134,10 @@ export default function DetailsScreen() {
                   <TVActionButton
                     text="Select"
                     icon="list"
-                    onSelect={() => setSeasonSelectorVisible(true)}
+                    onSelect={() => {
+                      dismissTrailerAutoPlay();
+                      setSeasonSelectorVisible(true);
+                    }}
                     onFocus={() => handleTVFocusAreaChange('actions')}
                   />
                 ) : (
@@ -5121,7 +5146,10 @@ export default function DetailsScreen() {
                     text={!useCompactActionLayout ? 'Select' : undefined}
                     icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
                     accessibilityLabel="Select Episode"
-                    onSelect={() => setSeasonSelectorVisible(true)}
+                    onSelect={() => {
+                      dismissTrailerAutoPlay();
+                      setSeasonSelectorVisible(true);
+                    }}
                     onFocus={() => handleTVFocusAreaChange('actions')}
                     style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
                   />
