@@ -257,3 +257,208 @@ func TestQueueStatusCompleted_PrefersTitleSimilarity(t *testing.T) {
 		t.Fatalf("expected movie file to be selected, got %q", status.WebDAVPath)
 	}
 }
+
+func TestQueueStatusCompleted_SkipsSampleFile(t *testing.T) {
+	service, nzbSystem, metadataSvc := setupPlaybackService(t)
+	importerSvc := nzbSystem.ImporterService()
+
+	releaseDir := "/virtual/Show.S01E01.Release"
+	metadataSvc.files[releaseDir] = []string{
+		"Show.S01E01.sample.mkv",
+		"Show.S01E01.2160p.WEB-DL.mkv",
+	}
+
+	fileSize := int64(4096)
+	item := &database.ImportQueueItem{
+		NzbPath:    "Show.S01E01.nzb",
+		Priority:   database.QueuePriorityNormal,
+		Status:     database.QueueStatusPending,
+		MaxRetries: 3,
+		FileSize:   &fileSize,
+	}
+
+	if err := importerSvc.Database().Repository.AddToQueue(item); err != nil {
+		t.Fatalf("add to queue: %v", err)
+	}
+
+	meta := `{"sourceNzbPath":"Show.S01E01.2160p.WEB-DL.mkv","preflightHealth":"healthy"}`
+	if err := importerSvc.Database().Repository.UpdateMetadata(item.ID, &meta); err != nil {
+		t.Fatalf("set metadata: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.AddStoragePath(item.ID, releaseDir); err != nil {
+		t.Fatalf("add storage path: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.UpdateQueueItemStatus(item.ID, database.QueueStatusCompleted, nil); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+
+	status, err := service.QueueStatus(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("QueueStatus returned error: %v", err)
+	}
+
+	// Should select the main file, not the sample
+	if strings.Contains(strings.ToLower(status.WebDAVPath), "sample") {
+		t.Fatalf("expected sample file to be skipped, got %q", status.WebDAVPath)
+	}
+	if !strings.HasSuffix(status.WebDAVPath, "/Show.S01E01.2160p.WEB-DL.mkv") {
+		t.Fatalf("expected main file to be selected, got %q", status.WebDAVPath)
+	}
+}
+
+func TestQueueStatusCompleted_SkipsSampleFileOnly(t *testing.T) {
+	service, nzbSystem, metadataSvc := setupPlaybackService(t)
+	importerSvc := nzbSystem.ImporterService()
+
+	// Scenario: only a sample file exists - should return error
+	releaseDir := "/virtual/Show.S01E02.Release"
+	metadataSvc.files[releaseDir] = []string{
+		"Show.S01E02.sample.mkv",
+	}
+
+	fileSize := int64(4096)
+	item := &database.ImportQueueItem{
+		NzbPath:    "Show.S01E02.nzb",
+		Priority:   database.QueuePriorityNormal,
+		Status:     database.QueueStatusPending,
+		MaxRetries: 3,
+		FileSize:   &fileSize,
+	}
+
+	if err := importerSvc.Database().Repository.AddToQueue(item); err != nil {
+		t.Fatalf("add to queue: %v", err)
+	}
+
+	meta := `{"sourceNzbPath":"Show.S01E02.sample.mkv","preflightHealth":"healthy"}`
+	if err := importerSvc.Database().Repository.UpdateMetadata(item.ID, &meta); err != nil {
+		t.Fatalf("set metadata: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.AddStoragePath(item.ID, releaseDir); err != nil {
+		t.Fatalf("add storage path: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.UpdateQueueItemStatus(item.ID, database.QueueStatusCompleted, nil); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+
+	// When only sample files exist, QueueStatus should return an error
+	// because no valid playable media was found
+	_, err := service.QueueStatus(context.Background(), item.ID)
+	if err == nil {
+		t.Fatalf("expected error when only sample file exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "no playable media") {
+		t.Fatalf("expected 'no playable media' error, got: %v", err)
+	}
+}
+
+func TestQueueStatusCompleted_SkipsExtrasFile(t *testing.T) {
+	service, nzbSystem, metadataSvc := setupPlaybackService(t)
+	importerSvc := nzbSystem.ImporterService()
+
+	releaseDir := "/virtual/Movie.2023.Release"
+	metadataSvc.files[releaseDir] = []string{
+		"Movie.2023.Extras.Behind.The.Scenes.mkv",
+		"Movie.2023.2160p.BluRay.mkv",
+	}
+
+	fileSize := int64(8192)
+	item := &database.ImportQueueItem{
+		NzbPath:    "Movie.2023.nzb",
+		Priority:   database.QueuePriorityNormal,
+		Status:     database.QueueStatusPending,
+		MaxRetries: 3,
+		FileSize:   &fileSize,
+	}
+
+	if err := importerSvc.Database().Repository.AddToQueue(item); err != nil {
+		t.Fatalf("add to queue: %v", err)
+	}
+
+	meta := `{"sourceNzbPath":"Movie.2023.2160p.BluRay.mkv","preflightHealth":"healthy"}`
+	if err := importerSvc.Database().Repository.UpdateMetadata(item.ID, &meta); err != nil {
+		t.Fatalf("set metadata: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.AddStoragePath(item.ID, releaseDir); err != nil {
+		t.Fatalf("add storage path: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.UpdateQueueItemStatus(item.ID, database.QueueStatusCompleted, nil); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+
+	status, err := service.QueueStatus(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("QueueStatus returned error: %v", err)
+	}
+
+	// Should select the main file, not the extras
+	if strings.Contains(strings.ToLower(status.WebDAVPath), "extras") {
+		t.Fatalf("expected extras file to be skipped, got %q", status.WebDAVPath)
+	}
+	if !strings.HasSuffix(status.WebDAVPath, "/Movie.2023.2160p.BluRay.mkv") {
+		t.Fatalf("expected main file to be selected, got %q", status.WebDAVPath)
+	}
+}
+
+func TestQueueStatusCompleted_SkipsSampleDirectory(t *testing.T) {
+	service, nzbSystem, metadataSvc := setupPlaybackService(t)
+	importerSvc := nzbSystem.ImporterService()
+
+	releaseDir := "/virtual/Show.S01E03.Release"
+	sampleDir := "/virtual/Show.S01E03.Release/Sample"
+
+	// Root has no files, but has a Sample subdirectory
+	metadataSvc.files[releaseDir] = []string{
+		"Show.S01E03.2160p.WEB-DL.mkv",
+	}
+	metadataSvc.subdirs[releaseDir] = []string{"Sample"}
+
+	// Sample directory has a sample file
+	metadataSvc.files[sampleDir] = []string{
+		"Show.S01E03.sample.mkv",
+	}
+
+	fileSize := int64(4096)
+	item := &database.ImportQueueItem{
+		NzbPath:    "Show.S01E03.nzb",
+		Priority:   database.QueuePriorityNormal,
+		Status:     database.QueueStatusPending,
+		MaxRetries: 3,
+		FileSize:   &fileSize,
+	}
+
+	if err := importerSvc.Database().Repository.AddToQueue(item); err != nil {
+		t.Fatalf("add to queue: %v", err)
+	}
+
+	meta := `{"sourceNzbPath":"Show.S01E03.2160p.WEB-DL.mkv","preflightHealth":"healthy"}`
+	if err := importerSvc.Database().Repository.UpdateMetadata(item.ID, &meta); err != nil {
+		t.Fatalf("set metadata: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.AddStoragePath(item.ID, releaseDir); err != nil {
+		t.Fatalf("add storage path: %v", err)
+	}
+
+	if err := importerSvc.Database().Repository.UpdateQueueItemStatus(item.ID, database.QueueStatusCompleted, nil); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+
+	status, err := service.QueueStatus(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("QueueStatus returned error: %v", err)
+	}
+
+	// Should select file from root, not from Sample directory
+	if strings.Contains(status.WebDAVPath, "/Sample/") {
+		t.Fatalf("expected Sample directory to be skipped, got %q", status.WebDAVPath)
+	}
+	if !strings.HasSuffix(status.WebDAVPath, "/Show.S01E03.2160p.WEB-DL.mkv") {
+		t.Fatalf("expected main file to be selected, got %q", status.WebDAVPath)
+	}
+}

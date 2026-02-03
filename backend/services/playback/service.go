@@ -718,6 +718,13 @@ func (s *Service) findBestMediaFile(dirPath string, hints mediaresolve.Selection
 			priority, isPlayable := playableExtensionPriority[ext]
 
 			if isPlayable {
+				// Skip sample/extras files early - these should never be selected
+				lowerName := strings.ToLower(filename)
+				if strings.Contains(lowerName, "sample") || strings.Contains(lowerName, "extras") {
+					log.Printf("[playback] skipping sample/extras file: %q", filename)
+					continue
+				}
+
 				filePath := path.Join(currentPath, filename)
 				log.Printf("[playback] found playable file: %q (ext=%s priority=%d)", filePath, ext, priority)
 
@@ -746,6 +753,13 @@ func (s *Service) findBestMediaFile(dirPath string, hints mediaresolve.Selection
 		log.Printf("[playback] scanning directory %q: found %d subdirectories", currentPath, len(subdirs))
 
 		for _, subdir := range subdirs {
+			// Skip sample/extras directories - they never contain main content
+			lowerDir := strings.ToLower(subdir)
+			if lowerDir == "sample" || lowerDir == "samples" || lowerDir == "extras" || lowerDir == "extra" {
+				log.Printf("[playback] skipping sample/extras directory: %q", subdir)
+				continue
+			}
+
 			subdirPath := path.Join(currentPath, subdir)
 			if err := scan(subdirPath, depth+1); err != nil {
 				log.Printf("[playback] error scanning subdirectory %q: %v", subdirPath, err)
