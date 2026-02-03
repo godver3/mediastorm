@@ -120,31 +120,61 @@ func (c *CometScraper) Search(ctx context.Context, req SearchRequest) ([]ScrapeR
 			foundCorrectDate := false
 
 			for _, stream := range streams {
-				if stream.infoHash == "" {
-					continue
+				// Build unique identifier based on what we have
+				var guid string
+				if stream.infoHash != "" {
+					guid = fmt.Sprintf("%s:%s:%d", c.Name(), strings.ToLower(stream.infoHash), stream.fileIdx)
+				} else if stream.url != "" {
+					// For URL-based streams, use URL hash as identifier
+					guid = fmt.Sprintf("%s:url:%s", c.Name(), stream.url)
+				} else {
+					continue // No identifier available
 				}
-				guid := fmt.Sprintf("%s:%s:%d", c.Name(), strings.ToLower(stream.infoHash), stream.fileIdx)
+
 				if _, exists := seen[guid]; exists {
 					continue
 				}
 				seen[guid] = struct{}{}
 
-				result := ScrapeResult{
-					Title:       stream.titleText,
-					Indexer:     c.Name(),
-					Magnet:      buildMagnet(stream.infoHash, stream.trackers),
-					InfoHash:    stream.infoHash,
-					FileIndex:   stream.fileIdx,
-					SizeBytes:   stream.sizeBytes,
-					Seeders:     stream.seeders,
-					Provider:    stream.provider,
-					Languages:   stream.languages,
-					Resolution:  stream.resolution,
-					MetaName:    req.Parsed.Title,
-					MetaID:      imdbID,
-					Source:      c.Name(),
-					Attributes:  stream.attributes(),
-					ServiceType: models.ServiceTypeDebrid,
+				var result ScrapeResult
+				if stream.infoHash != "" {
+					// Torrent-based stream
+					result = ScrapeResult{
+						Title:       stream.titleText,
+						Indexer:     c.Name(),
+						Magnet:      buildMagnet(stream.infoHash, stream.trackers),
+						InfoHash:    stream.infoHash,
+						FileIndex:   stream.fileIdx,
+						SizeBytes:   stream.sizeBytes,
+						Seeders:     stream.seeders,
+						Provider:    stream.provider,
+						Languages:   stream.languages,
+						Resolution:  stream.resolution,
+						MetaName:    req.Parsed.Title,
+						MetaID:      imdbID,
+						Source:      c.Name(),
+						Attributes:  stream.attributes(),
+						ServiceType: models.ServiceTypeDebrid,
+					}
+				} else {
+					// URL-based pre-resolved debrid stream
+					result = ScrapeResult{
+						Title:       stream.titleText,
+						Indexer:     c.Name(),
+						TorrentURL:  stream.url, // Use TorrentURL field for direct stream URL
+						InfoHash:    "",         // No infohash for pre-resolved streams
+						FileIndex:   0,
+						SizeBytes:   stream.sizeBytes,
+						Seeders:     0, // Not applicable for pre-resolved streams
+						Provider:    stream.provider,
+						Languages:   stream.languages,
+						Resolution:  stream.resolution,
+						MetaName:    req.Parsed.Title,
+						MetaID:      imdbID,
+						Source:      c.Name(),
+						Attributes:  stream.attributes(),
+						ServiceType: models.ServiceTypeDebrid,
+					}
 				}
 
 				// For daily shows, check if this result matches the target date
@@ -213,6 +243,7 @@ type cometStream struct {
 	trackers   []string
 	rawTitle   string
 	name       string
+	url        string // Direct playback URL (for pre-resolved debrid streams)
 }
 
 func (s cometStream) attributes() map[string]string {
@@ -231,6 +262,11 @@ func (s cometStream) attributes() map[string]string {
 	}
 	if len(s.languages) > 0 {
 		attrs["languages"] = strings.Join(s.languages, ",")
+	}
+	if s.url != "" {
+		attrs["stream_url"] = s.url
+		// Mark as pre-resolved so health check and playback know not to resolve again
+		attrs["preresolved"] = "true"
 	}
 	return attrs
 }
@@ -275,15 +311,26 @@ func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id string) (
 	streams := make([]cometStream, 0, len(payload.Streams))
 	for _, stream := range payload.Streams {
 		infoHash := strings.ToLower(strings.TrimSpace(stream.InfoHash))
-		if infoHash == "" {
+		streamURL := strings.TrimSpace(stream.URL)
+
+		// Must have either infoHash (torrent) or URL (pre-resolved debrid stream)
+		if infoHash == "" && streamURL == "" {
 			continue
 		}
 
 		name := strings.TrimSpace(stream.Name)
 		rawTitle := strings.TrimSpace(stream.Title)
 
+		// Try to get filename from behaviorHints for URL-based streams
+		filename := ""
+		if stream.BehaviorHints != nil {
+			if fn, ok := stream.BehaviorHints["filename"].(string); ok {
+				filename = strings.TrimSpace(fn)
+			}
+		}
+
 		// Skip streams with incompatible audio codecs that VLC can't decode
-		if hasIncompatibleAudioCodec(name, rawTitle) {
+		if hasIncompatibleAudioCodec(name, rawTitle) || hasIncompatibleAudioCodec(filename, "") {
 			continue
 		}
 
@@ -291,8 +338,21 @@ func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id string) (
 		if stream.FileIdx != nil {
 			fileIdx = *stream.FileIdx
 		}
-		titleText := deriveTitle(rawTitle)
+
+		// For URL-based streams, prefer filename from behaviorHints
+		titleText := filename
+		if titleText == "" {
+			titleText = deriveTitle(rawTitle)
+		}
+
 		sizeBytes := parseSize(rawTitle)
+		// Check behaviorHints.videoSize for URL-based streams
+		if sizeBytes == 0 && stream.BehaviorHints != nil {
+			if vs, ok := stream.BehaviorHints["videoSize"].(float64); ok && vs > 0 {
+				sizeBytes = int64(vs)
+			}
+		}
+
 		seeders := parseInt(stream.Seeders, rawTitle)
 		provider := parseProvider(rawTitle)
 		languages := parseLanguages(rawTitle)
@@ -327,6 +387,7 @@ func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id string) (
 			trackers:   trackers,
 			rawTitle:   rawTitle,
 			name:       name,
+			url:        streamURL,
 		})
 	}
 
