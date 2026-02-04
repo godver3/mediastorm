@@ -381,6 +381,7 @@ export interface SubtitleStreamMetadata {
   disposition?: Record<string, number>;
   isForced?: boolean;
   isDefault?: boolean;
+  isBitmap?: boolean; // True for PGS, HDMV, DVD subtitles (native player only, can't extract to VTT)
 }
 
 export interface VideoStreamMetadata {
