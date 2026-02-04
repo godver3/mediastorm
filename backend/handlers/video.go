@@ -1797,9 +1797,8 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 			}
 			resp.VideoStreams = append(resp.VideoStreams, summary)
 		case "subtitle":
-			// Only include text-based subtitle codecs that can be converted to WebVTT
-			// Bitmap subtitles (PGS, DVD, etc.) cannot be played in the web player
 			codecName := strings.ToLower(strings.TrimSpace(stream.CodecName))
+			// Text-based subtitle codecs that can be converted to WebVTT
 			textSubtitleCodecs := map[string]bool{
 				"subrip": true, "srt": true, "ass": true, "ssa": true,
 				"webvtt": true, "vtt": true, "mov_text": true, "text": true,
@@ -1807,8 +1806,16 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 				"mpl2": true, "pjs": true, "realtext": true, "stl": true,
 				"subviewer": true, "subviewer1": true, "vplayer": true,
 			}
-			if !textSubtitleCodecs[codecName] {
-				// Skip bitmap/unsupported subtitle formats
+			// Bitmap subtitle codecs (cannot extract to VTT, but native player can render)
+			bitmapSubtitleCodecs := map[string]bool{
+				"hdmv_pgs_subtitle": true, "pgssub": true, "pgs": true,
+				"dvd_subtitle": true, "dvdsub": true,
+				"dvb_subtitle": true, "dvbsub": true,
+				"xsub": true,
+			}
+			isBitmap := bitmapSubtitleCodecs[codecName]
+			// Skip completely unknown subtitle formats
+			if !textSubtitleCodecs[codecName] && !isBitmap {
 				continue
 			}
 			summary := subtitleStreamSummary{
@@ -1818,6 +1825,7 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 				Language:      normalizeTag(stream.Tags, "language"),
 				Title:         normalizeTag(stream.Tags, "title"),
 				Disposition:   stream.Disposition,
+				IsBitmap:      isBitmap,
 			}
 			resp.SubtitleStreams = append(resp.SubtitleStreams, summary)
 		}
@@ -2033,6 +2041,7 @@ type subtitleStreamSummary struct {
 	Language      string         `json:"language,omitempty"`
 	Title         string         `json:"title,omitempty"`
 	Disposition   map[string]int `json:"disposition,omitempty"`
+	IsBitmap      bool           `json:"isBitmap,omitempty"` // True for PGS, HDMV, DVD subtitles (can't extract to VTT)
 }
 
 type videoMetadataResponse struct {

@@ -31,6 +31,7 @@ type subtitleStreamInfo struct {
 	Title     string
 	IsForced  bool
 	IsDefault bool
+	IsBitmap  bool // True for PGS, HDMV, DVD subtitles (can't extract to VTT, but native player can render)
 }
 
 // isHLSCommentaryTrack checks if an audio track is a commentary track based on its title
@@ -303,6 +304,13 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
 		"subviewer": true, "subviewer1": true, "vplayer": true,
 	}
+	// Bitmap subtitle codecs (cannot extract to VTT, but native player can render)
+	bitmapSubtitleCodecs := map[string]bool{
+		"hdmv_pgs_subtitle": true, "pgssub": true, "pgs": true,
+		"dvd_subtitle": true, "dvdsub": true,
+		"dvb_subtitle": true, "dvbsub": true,
+		"xsub": true,
+	}
 
 	for _, stream := range probeData.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
@@ -336,8 +344,9 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				result.HasCompatibleAudio = true
 			}
 		case "subtitle":
-			if !textSubtitleCodecs[codec] {
-				// Skip bitmap/unsupported subtitle formats
+			isBitmap := bitmapSubtitleCodecs[codec]
+			// Skip completely unknown subtitle formats
+			if !textSubtitleCodecs[codec] && !isBitmap {
 				continue
 			}
 			lang := ""
@@ -359,6 +368,7 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				Title:     title,
 				IsForced:  isForced,
 				IsDefault: isDefault,
+				IsBitmap:  isBitmap,
 			})
 		}
 	}
@@ -643,7 +653,7 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 		return nil, err
 	}
 
-	// Only include text-based subtitle codecs that can be converted to WebVTT
+	// Text-based subtitle codecs that can be converted to WebVTT
 	textSubtitleCodecs := map[string]bool{
 		"subrip": true, "srt": true, "ass": true, "ssa": true,
 		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
@@ -651,18 +661,26 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
 		"subviewer": true, "subviewer1": true, "vplayer": true,
 	}
+	// Bitmap subtitle codecs (cannot extract to VTT, but native player can render)
+	bitmapSubtitleCodecs := map[string]bool{
+		"hdmv_pgs_subtitle": true, "pgssub": true, "pgs": true,
+		"dvd_subtitle": true, "dvdsub": true,
+		"dvb_subtitle": true, "dvbsub": true,
+		"xsub": true,
+	}
 
 	streams = make([]subtitleStreamInfo, 0, len(result.Streams))
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-		if !textSubtitleCodecs[codec] {
-			// Skip bitmap/unsupported subtitle formats
+		isBitmap := bitmapSubtitleCodecs[codec]
+		// Skip completely unknown subtitle formats
+		if !textSubtitleCodecs[codec] && !isBitmap {
 			continue
 		}
-		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
+		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec, IsBitmap: isBitmap})
 	}
 
-	log.Printf("[hls] subtitle probe results: streams=%d (text-based only)", len(streams))
+	log.Printf("[hls] subtitle probe results: streams=%d", len(streams))
 	return streams, nil
 }
 
@@ -700,7 +718,7 @@ func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string
 		return nil, err
 	}
 
-	// Only include text-based subtitle codecs that can be converted to WebVTT
+	// Text-based subtitle codecs that can be converted to WebVTT
 	textSubtitleCodecs := map[string]bool{
 		"subrip": true, "srt": true, "ass": true, "ssa": true,
 		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
@@ -708,18 +726,26 @@ func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string
 		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
 		"subviewer": true, "subviewer1": true, "vplayer": true,
 	}
+	// Bitmap subtitle codecs (cannot extract to VTT, but native player can render)
+	bitmapSubtitleCodecs := map[string]bool{
+		"hdmv_pgs_subtitle": true, "pgssub": true, "pgs": true,
+		"dvd_subtitle": true, "dvdsub": true,
+		"dvb_subtitle": true, "dvbsub": true,
+		"xsub": true,
+	}
 
 	streams = make([]subtitleStreamInfo, 0, len(result.Streams))
 	for _, stream := range result.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-		if !textSubtitleCodecs[codec] {
-			// Skip bitmap/unsupported subtitle formats
+		isBitmap := bitmapSubtitleCodecs[codec]
+		// Skip completely unknown subtitle formats
+		if !textSubtitleCodecs[codec] && !isBitmap {
 			continue
 		}
-		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec})
+		streams = append(streams, subtitleStreamInfo{Index: stream.Index, Codec: codec, IsBitmap: isBitmap})
 	}
 
-	log.Printf("[hls] subtitle probe from URL results: streams=%d (text-based only)", len(streams))
+	log.Printf("[hls] subtitle probe from URL results: streams=%d", len(streams))
 	return streams, nil
 }
 
