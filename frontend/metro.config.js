@@ -1,6 +1,5 @@
 // Learn more https://docs.expo.io/guides/customizing-metro
 const { getDefaultConfig } = require('expo/metro-config');
-const path = require('path');
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname); // eslint-disable-line no-undef
@@ -19,18 +18,6 @@ if (process.env?.EXPO_TV === '1') {
   const originalSourceExts = config.resolver.sourceExts;
   const tvSourceExts = [...originalSourceExts.map((e) => `tv.${e}`), ...originalSourceExts];
   config.resolver.sourceExts = tvSourceExts;
-
-  // Stub out react-native-webview for tvOS since it doesn't support tvOS
-  config.resolver.resolveRequest = (context, moduleName, platform) => {
-    if (moduleName === 'react-native-webview') {
-      return {
-        type: 'sourceFile',
-        filePath: path.resolve(__dirname, 'stubs/react-native-webview.js'),
-      };
-    }
-    // Use the default resolver for all other modules
-    return context.resolveRequest(context, moduleName, platform);
-  };
 }
 
 module.exports = config;

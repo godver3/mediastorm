@@ -39,19 +39,8 @@ const withTvOSPodfile = (config) => {
         podfileContent = `platform :${desiredPlatform},${version}\n` + podfileContent;
       }
 
-      // For tvOS builds, exclude react-native-webview (not supported on tvOS)
+      // For tvOS builds, update the deployment target fix to use 17.0
       if (isTvOS) {
-        // Add to post_install hook to remove RNCWebView target
-        const postInstallRegex = /(post_install do \|installer\|)/;
-        if (postInstallRegex.test(podfileContent)) {
-          podfileContent = podfileContent.replace(
-            postInstallRegex,
-            `$1\n    # Remove react-native-webview for tvOS (not supported)\n    installer.pods_project.targets.each do |target|\n      if target.name == 'RNCWebView'\n        puts "⚠️  Removing RNCWebView pod (not supported on tvOS)"\n        target.remove_from_project\n      end\n    end\n`,
-          );
-          console.log('✅ Added post_install hook to remove react-native-webview for tvOS');
-        }
-
-        // Update the existing deployment target fix to use 17.0 instead of 15.1
         const deploymentTargetFixRegex =
           /TVOS_DEPLOYMENT_TARGET'\]\.to_f < [\d.]+\s*\n\s*config\.build_settings\['TVOS_DEPLOYMENT_TARGET'\] = '[\d.]+'/g;
         if (deploymentTargetFixRegex.test(podfileContent)) {
