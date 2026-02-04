@@ -190,6 +190,18 @@ func isSDHTrack(title string) bool {
 	return strings.Contains(lower, "sdh") || strings.Contains(lower, "deaf") || strings.Contains(lower, "hard of hearing")
 }
 
+// isForcedTrack checks if a subtitle track is a forced track.
+// Checks both the IsForced flag (from ffprobe disposition) and the title for "(forced)".
+// Many release groups put "forced" in the title without setting the disposition flag.
+func isForcedTrack(stream SubtitleStreamInfo) bool {
+	if stream.IsForced {
+		return true
+	}
+	// Also check title for "forced" keyword
+	lower := strings.ToLower(strings.TrimSpace(stream.Title))
+	return strings.Contains(lower, "forced")
+}
+
 // FindSubtitleTrackByPreference finds a subtitle track matching the preferences.
 // mode can be "off", "forced-only", or "on".
 // When mode is "on", prefers SDH > regular > forced tracks.
@@ -205,7 +217,7 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 	if mode == "forced-only" {
 		var forcedStreams []SubtitleStreamInfo
 		for _, s := range streams {
-			if s.IsForced {
+			if isForcedTrack(s) {
 				forcedStreams = append(forcedStreams, s)
 			}
 		}
@@ -226,7 +238,7 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 	if normalizedPref != "" {
 		// Pass 1: SDH tracks matching language (non-forced)
 		for _, stream := range streams {
-			if !stream.IsForced && isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
+			if !isForcedTrack(stream) && isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
 				log.Printf("[track] Selected SDH subtitle track %d for language %q", stream.Index, preferredLanguage)
 				return stream.Index
 			}
@@ -234,7 +246,7 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 
 		// Pass 2: Regular non-forced, non-SDH tracks matching language
 		for _, stream := range streams {
-			if !stream.IsForced && !isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
+			if !isForcedTrack(stream) && !isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
 				log.Printf("[track] Selected regular subtitle track %d for language %q", stream.Index, preferredLanguage)
 				return stream.Index
 			}
@@ -242,7 +254,7 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 
 		// Pass 3: Forced tracks matching language (last resort for "on" mode)
 		for _, stream := range streams {
-			if stream.IsForced && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
+			if isForcedTrack(stream) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
 				log.Printf("[track] Selected forced subtitle track %d for language %q (only option)", stream.Index, preferredLanguage)
 				return stream.Index
 			}
