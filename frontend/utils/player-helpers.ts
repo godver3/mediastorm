@@ -44,10 +44,12 @@ export interface PlayerParams extends Record<string, any> {
   preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
   subtitleDebug?: string; // Enable subtitle sync debug overlay
   shuffleMode?: string; // Random episode playback mode
-  preselectedAudioTrack?: string; // Track index already baked into HLS session by prequeue
-  preselectedSubtitleTrack?: string; // Track index already baked into HLS session by prequeue
+  preselectedAudioTrack?: string; // Track index already baked into HLS session by prequeue (relative index for native player)
+  preselectedSubtitleTrack?: string; // Track index already baked into HLS session by prequeue (relative index for native player)
   passthroughName?: string; // AIOStreams passthrough format: raw display name
   passthroughDescription?: string; // AIOStreams passthrough format: raw description
+  useNativePlayer?: string; // Use NativePlayer (KSPlayer/MPV) instead of HLS
+  hdrHint?: string; // HDR content type hint: 'HDR10' | 'DolbyVision' | 'HLG'
 }
 
 export const parseBooleanParam = (value?: string | string[]): boolean => {
@@ -167,6 +169,10 @@ export const buildSubtitleTrackOptions = (
     }
     if (isDefault) {
       descriptorParts.push('Default');
+    }
+    // Mark bitmap subtitles (PGS/HDMV) which can only be rendered by native player
+    if (stream.isBitmap) {
+      descriptorParts.push('Image');
     }
     const codec = stream.codecLongName ?? stream.codecName;
     if (codec) {

@@ -223,15 +223,16 @@ export const buildStreamUrl = (
   // Check if this is a debrid path - these always need to go through the API endpoint
   const isDebridPath = webdavPath.includes('/debrid/');
 
-  // Native platforms always use HLS with react-native-video for consistent experience
-  const useHlsOnNative = Platform.OS !== 'web';
+  // Native platforms use direct streaming via NativePlayer (KSPlayer on iOS/tvOS, MPV on Android)
+  // The native players handle seeking, track selection, and HDR natively
+  const useNativePlayer = Platform.OS !== 'web';
   console.log(
-    `🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useHlsOnNative=${useHlsOnNative}, webdavPath=${webdavPath.substring(0, 100)}...`,
+    `🎬 buildStreamUrl: Platform.OS=${Platform.OS}, useNativePlayer=${useNativePlayer}, webdavPath=${webdavPath.substring(0, 100)}...`,
   );
 
-  if (useHlsOnNative) {
+  if (useNativePlayer) {
     const hdrType = options.hasDolbyVision ? 'Dolby Vision' : options.hasHDR10 ? 'HDR10' : 'SDR';
-    console.log(`🎬 Native platform - using HLS streaming (${hdrType})`);
+    console.log(`🎬 Native platform - using direct streaming via NativePlayer (${hdrType})`);
     const base = apiService.getBaseUrl().replace(/\/$/, '');
     const queryParams: Record<string, string> = {};
 
@@ -249,31 +250,8 @@ export const buildStreamUrl = (
       queryParams.token = authToken;
     }
 
-    // Signal HDR type to backend
-    if (options.hasDolbyVision) {
-      queryParams.dv = 'true';
-      queryParams.dvProfile = options.dolbyVisionProfile || '';
-    } else if (options.hasHDR10) {
-      queryParams.hdr = 'true';
-    }
-
-    // Force AAC audio transcoding for TrueHD/DTS
-    if (options.needsAudioTranscode) {
-      queryParams.forceAAC = '1';
-    }
-
-    // Add startOffset if provided (for resume functionality)
-    if (typeof options.startOffset === 'number' && options.startOffset > 0) {
-      queryParams.startOffset = options.startOffset.toString();
-    }
-
-    // Add track selection parameters
-    if (typeof options.audioTrack === 'number') {
-      queryParams.audioTrack = options.audioTrack.toString();
-    }
-    if (typeof options.subtitleTrack === 'number') {
-      queryParams.subtitleTrack = options.subtitleTrack.toString();
-    }
+    // Disable server-side transmux - KSPlayer handles everything natively (DV, HDR, TrueHD, MKV, etc.)
+    queryParams.transmux = '0';
 
     // Add profile info for stream tracking
     if (options.profileId) {
@@ -287,8 +265,8 @@ export const buildStreamUrl = (
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
       .join('&');
 
-    // Return HLS start endpoint - this will create a session and return the playlist URL
-    return `${base}/video/hls/start?${search}`;
+    // Return direct stream endpoint - native players handle seeking/tracks internally
+    return `${base}/video/stream?${search}`;
   }
 
   // Check if the path is already an external URL (e.g., from AIOStreams pre-resolved streams)
@@ -570,6 +548,8 @@ export const launchNativePlayer = (
     passthroughDescription?: string; // AIOStreams passthrough format: raw description
     preselectedAudioTrack?: number; // Track index baked into HLS session
     preselectedSubtitleTrack?: number; // Track index baked into HLS session
+    useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
+    hdrHint?: 'HDR10' | 'DolbyVision' | 'HLG'; // HDR content type hint for native players
   } = {},
 ) => {
   const {
@@ -598,6 +578,8 @@ export const launchNativePlayer = (
     passthroughDescription,
     preselectedAudioTrack,
     preselectedSubtitleTrack,
+    useNativePlayer,
+    hdrHint,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -641,6 +623,8 @@ export const launchNativePlayer = (
       ...(typeof preselectedSubtitleTrack === 'number' && preselectedSubtitleTrack >= 0
         ? { preselectedSubtitleTrack: preselectedSubtitleTrack.toString() }
         : {}),
+      ...(useNativePlayer ? { useNativePlayer: '1' } : {}),
+      ...(hdrHint ? { hdrHint } : {}),
     },
   });
 };
@@ -1037,6 +1021,9 @@ export const initiatePlayback = async (
   const passthroughDescription =
     result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_description : undefined;
 
+  // Determine HDR hint for native player
+  const hdrHint = hasDolbyVision ? 'DolbyVision' : hasHDR10 ? 'HDR10' : undefined;
+
   launchNativePlayer(streamUrl, headerImage, title, router, {
     ...options,
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
@@ -1053,6 +1040,9 @@ export const initiatePlayback = async (
     // Pass selected tracks so player UI shows correct selection
     ...(typeof selectedAudioTrack === 'number' ? { preselectedAudioTrack: selectedAudioTrack } : {}),
     ...(typeof selectedSubtitleTrack === 'number' ? { preselectedSubtitleTrack: selectedSubtitleTrack } : {}),
+    // Native player flags for direct streaming (bypasses HLS)
+    ...(isNativePlatform ? { useNativePlayer: true } : {}),
+    ...(isNativePlatform && hdrHint ? { hdrHint } : {}),
   });
 };
 

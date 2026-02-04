@@ -140,6 +140,8 @@ export default function PlayerScreen() {
     passthroughName: passthroughNameParam,
     passthroughDescription: passthroughDescriptionParam,
     tvgId: tvgIdParam,
+    useNativePlayer: useNativePlayerParam,
+    hdrHint: hdrHintParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -275,7 +277,8 @@ export default function PlayerScreen() {
       return undefined;
     }
     const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+    // Allow -1 for explicit "Off" selection
+    return Number.isFinite(parsed) ? parsed : undefined;
   }, [preselectedSubtitleTrackParam]);
 
   const [sourcePath, setSourcePath] = useState<string | undefined>(initialSourcePath);
@@ -285,6 +288,28 @@ export default function PlayerScreen() {
 
   const shouldPreferSystemPlayer = useMemo(() => parseBooleanParam(preferSystemPlayerParam), [preferSystemPlayerParam]);
   const isLiveTV = useMemo(() => shouldPreferSystemPlayer, [shouldPreferSystemPlayer]);
+
+  // Parse useNativePlayer param - when true, skips HLS session and uses direct streaming via NativePlayer
+  const useNativePlayer = useMemo(() => parseBooleanParam(useNativePlayerParam), [useNativePlayerParam]);
+
+  // ===== DEBUG: Log route params on mount =====
+  useEffect(() => {
+    console.log('[player] ===== ROUTE PARAMS (player mount) =====', {
+      preselectedAudioTrackParam,
+      preselectedSubtitleTrackParam,
+      preselectedAudioTrack,
+      preselectedSubtitleTrack,
+      useNativePlayerParam,
+      useNativePlayer,
+    });
+  }, []);
+  // ===== END DEBUG =====
+
+  // Parse HDR hint for native player (DolbyVision, HDR10, or HLG)
+  const hdrHint = useMemo(() => {
+    const raw = Array.isArray(hdrHintParam) ? hdrHintParam[0] : hdrHintParam;
+    return raw?.trim() as 'HDR10' | 'DolbyVision' | 'HLG' | undefined;
+  }, [hdrHintParam]);
 
   // Parse tvgId for EPG lookup (live TV only)
   const tvgId = useMemo(() => {
@@ -425,6 +450,31 @@ export default function PlayerScreen() {
   const [subtitleTrackOptions, setSubtitleTrackOptions] = useState<TrackOption[]>([SUBTITLE_OFF_OPTION]);
   const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(SUBTITLE_OFF_OPTION.id);
+
+  // ===== DEBUG: Track state change logging =====
+  useEffect(() => {
+    console.log('[player] STATE CHANGE: audioTrackOptions changed', {
+      length: audioTrackOptions.length,
+      options: audioTrackOptions.map((o) => ({ id: o.id, label: o.label })),
+    });
+  }, [audioTrackOptions]);
+
+  useEffect(() => {
+    console.log('[player] STATE CHANGE: subtitleTrackOptions changed', {
+      length: subtitleTrackOptions.length,
+      options: subtitleTrackOptions.map((o) => ({ id: o.id, label: o.label })),
+    });
+  }, [subtitleTrackOptions]);
+
+  useEffect(() => {
+    console.log('[player] STATE CHANGE: selectedAudioTrackId changed to', selectedAudioTrackId);
+  }, [selectedAudioTrackId]);
+
+  useEffect(() => {
+    console.log('[player] STATE CHANGE: selectedSubtitleTrackId changed to', selectedSubtitleTrackId);
+  }, [selectedSubtitleTrackId]);
+  // ===== END DEBUG =====
+
   // External subtitle search state
   const [subtitleSearchModalVisible, setSubtitleSearchModalVisible] = useState<boolean>(false);
   const [externalSubtitleUrl, setExternalSubtitleUrl] = useState<string | null>(null);
@@ -496,6 +546,7 @@ export default function PlayerScreen() {
   // Backend-probed subtitle tracks (used for non-HLS streams to get accurate track indices)
   const [backendSubtitleTracks, setBackendSubtitleTracks] = useState<Array<{
     index: number;
+    absoluteIndex?: number; // Absolute stream index (used as track ID in options)
     language: string;
     title: string;
     codec: string;
@@ -719,6 +770,11 @@ export default function PlayerScreen() {
 
   // Check conditions and trigger auto-subtitle search if needed
   const triggerAutoSubtitleSearchIfNeeded = useCallback(() => {
+    // Skip for NativePlayer - external subtitle loading not yet supported for KSPlayer/MPV
+    if (useNativePlayer) {
+      return;
+    }
+
     if (autoSubtitleTriggeredRef.current) {
       console.log('[player] auto-subtitle search already triggered, skipping');
       return;
@@ -750,7 +806,7 @@ export default function PlayerScreen() {
     console.log('[player] triggering auto-subtitle search for language:', subtitleLang);
     autoSubtitleTriggeredRef.current = true;
     performAutoSubtitleSearch(subtitleLang);
-  }, [settings, userSettings, performAutoSubtitleSearch]);
+  }, [settings, userSettings, performAutoSubtitleSearch, useNativePlayer]);
 
   // Subtitle timing adjustment handlers (0.25s increments)
   // Uses refs to access extendControlsVisibility which is defined later in the component
@@ -847,6 +903,10 @@ export default function PlayerScreen() {
   const triggerNextEpisodePrequeueRef = useRef<(() => Promise<void>) | null>(null);
   const effectiveMovie = useMemo(() => currentMovieUrl ?? resolvedMovie ?? null, [currentMovieUrl, resolvedMovie]);
   const isHlsStream = useMemo(() => {
+    // Native player uses direct streaming, not HLS
+    if (useNativePlayer) {
+      return false;
+    }
     if (!effectiveMovie) {
       return false;
     }
@@ -856,7 +916,7 @@ export default function PlayerScreen() {
     } catch {
       return String(effectiveMovie).includes('/video/hls/');
     }
-  }, [effectiveMovie]);
+  }, [effectiveMovie, useNativePlayer]);
 
   // Combined HDR detection: route params OR detected from video metadata
   // Used for player routing - ensures RNV is used when HDR is detected even if route params are missing
@@ -1135,14 +1195,17 @@ export default function PlayerScreen() {
   const fatalErrorCallbackRef = useRef<((error: string) => void) | null>(null);
 
   // Initialize HLS session hook for managing session lifecycle
+  // When using NativePlayer, pass empty source path to disable HLS session management
+  // Native players (KSPlayer/MPV) handle seeking, tracks, and buffering internally
   const [hlsSessionState, hlsSessionActions, hlsSessionRefs] = useHlsSession({
-    sourcePath: initialSourcePath || '',
-    initialPlaylistUrl: resolvedMovie && String(resolvedMovie).includes('/video/hls/') ? resolvedMovie : undefined,
-    initialStartOffset,
-    hasDolbyVision: routeHasDolbyVision,
-    dolbyVisionProfile: routeDvProfile || undefined,
-    hasHDR10: routeHasHDR10,
-    forceAAC: forceAacFromRoute,
+    // Disable HLS session when using native player - pass empty string
+    sourcePath: useNativePlayer ? '' : (initialSourcePath || ''),
+    initialPlaylistUrl: useNativePlayer ? undefined : (resolvedMovie && String(resolvedMovie).includes('/video/hls/') ? resolvedMovie : undefined),
+    initialStartOffset: useNativePlayer ? 0 : initialStartOffset,
+    hasDolbyVision: useNativePlayer ? false : routeHasDolbyVision,
+    dolbyVisionProfile: useNativePlayer ? undefined : (routeDvProfile || undefined),
+    hasHDR10: useNativePlayer ? false : routeHasHDR10,
+    forceAAC: useNativePlayer ? false : forceAacFromRoute,
     profileId: activeUserId ?? undefined,
     profileName: activeUser?.name,
     onOffsetCorrection: useCallback((serverOffset: number) => {
@@ -1310,7 +1373,18 @@ export default function PlayerScreen() {
       // Get audio language from the track selection
       if (options.audioTrackId && audioStreamMetadata) {
         const trackIndex = parseInt(options.audioTrackId, 10);
-        const audioStream = audioStreamMetadata.find((s) => s.index === trackIndex);
+        // For native player, trackIndex is a 0-based position, not a stream index
+        // For HLS/non-native, trackIndex matches the stream index from ffprobe
+        const audioStream = useNativePlayer
+          ? audioStreamMetadata[trackIndex]  // Native player: use as array index
+          : audioStreamMetadata.find((s) => s.index === trackIndex);  // HLS: match by stream index
+        console.log('[player] saveContentLanguagePreference audio lookup', {
+          trackIndex,
+          useNativePlayer,
+          audioStreamMetadataCount: audioStreamMetadata.length,
+          audioStreamMetadataIndices: audioStreamMetadata.map((s) => s.index),
+          foundStream: audioStream ? { index: audioStream.index, language: audioStream.language } : null,
+        });
         if (audioStream?.language) {
           audioLanguage = audioStream.language;
         }
@@ -1326,7 +1400,18 @@ export default function PlayerScreen() {
           return;
         } else if (subtitleStreamMetadata) {
           const trackIndex = parseInt(options.subtitleTrackId, 10);
-          const subtitleStream = subtitleStreamMetadata.find((s) => s.index === trackIndex);
+          // For native player, trackIndex is a 0-based position, not a stream index
+          // For HLS/non-native, trackIndex matches the stream index from ffprobe
+          const subtitleStream = useNativePlayer
+            ? subtitleStreamMetadata[trackIndex]  // Native player: use as array index
+            : subtitleStreamMetadata.find((s) => s.index === trackIndex);  // HLS: match by stream index
+          console.log('[player] saveContentLanguagePreference subtitle lookup', {
+            trackIndex,
+            useNativePlayer,
+            subtitleStreamMetadataCount: subtitleStreamMetadata.length,
+            subtitleStreamMetadataIndices: subtitleStreamMetadata.map((s) => s.index),
+            foundStream: subtitleStream ? { index: subtitleStream.index, language: subtitleStream.language } : null,
+          });
           if (subtitleStream) {
             subtitleLanguage = subtitleStream.language || undefined;
             // Check if it's a forced subtitle
@@ -1359,6 +1444,18 @@ export default function PlayerScreen() {
         const subtitleModeOverride =
           finalSubtitleMode && finalSubtitleMode !== globalSubtitleMode ? finalSubtitleMode : undefined;
 
+        console.log('[player] saveContentLanguagePreference override comparison', {
+          finalAudioLanguage,
+          globalAudioLanguage,
+          audioOverride,
+          finalSubtitleLanguage,
+          globalSubtitleLanguage,
+          subtitleLangOverride,
+          finalSubtitleMode,
+          globalSubtitleMode,
+          subtitleModeOverride,
+        });
+
         // If no actual overrides remain, delete the preference entirely
         if (!audioOverride && !subtitleLangOverride && !subtitleModeOverride) {
           if (existingPref) {
@@ -1384,7 +1481,7 @@ export default function PlayerScreen() {
         console.error('[player] failed to save content language preference', error);
       }
     },
-    [titleId, activeUserId, mediaType, audioStreamMetadata, subtitleStreamMetadata, userSettings, settings],
+    [titleId, activeUserId, mediaType, audioStreamMetadata, subtitleStreamMetadata, userSettings, settings, useNativePlayer],
   );
 
   // Build media item ID based on type using stable identifiers
@@ -4167,7 +4264,23 @@ export default function PlayerScreen() {
 
   const handleTracksAvailable = useCallback(
     (audioTracks: TrackInfo[], subtitleTracks: TrackInfo[]) => {
-      console.log('[player] player tracks available', { audioTracks, subtitleTracks });
+      console.log('[player] ===== handleTracksAvailable START =====');
+      console.log('[player] handleTracksAvailable: current state BEFORE', {
+        useNativePlayer,
+        currentAudioTrackOptionsLength: audioTrackOptions.length,
+        currentAudioTrackOptions: audioTrackOptions.map((o) => ({ id: o.id, label: o.label })),
+        currentSubtitleTrackOptionsLength: subtitleTrackOptions.length,
+        selectedAudioTrackId,
+        selectedSubtitleTrackId,
+        preselectedAudioTrack,
+        preselectedSubtitleTrack,
+      });
+      console.log('[player] handleTracksAvailable: player reported tracks', {
+        audioTracksCount: audioTracks.length,
+        audioTracks: audioTracks.map((t) => ({ id: t.id, name: t.name })),
+        subtitleTracksCount: subtitleTracks.length,
+        subtitleTracks: subtitleTracks.slice(0, 10).map((t) => ({ id: t.id, name: t.name })),
+      });
 
       // Build track options from player-reported tracks, filtering out "Disable" options
       const playerAudioOptions: TrackOption[] = audioTracks
@@ -4184,26 +4297,97 @@ export default function PlayerScreen() {
           label: track.name || `Subtitle ${track.id}`,
         }));
 
-      // Only update if we don't already have metadata-based tracks
-      if (audioTrackOptions.length === 0 && playerAudioOptions.length > 0) {
+      console.log('[player] handleTracksAvailable: built player options', {
+        playerAudioOptionsCount: playerAudioOptions.length,
+        playerAudioOptions: playerAudioOptions.map((o) => ({ id: o.id, label: o.label })),
+        playerSubtitleOptionsCount: playerSubtitleOptions.length,
+      });
+
+      // For native player: ALWAYS use player-reported tracks for audio
+      // Native player uses relative indices (0, 1, 2...) which match player-reported track IDs
+      // Backend metadata uses stream indices (1, 2, 3...) which don't match
+      if (useNativePlayer && playerAudioOptions.length > 0) {
+        console.log('[player] handleTracksAvailable: SETTING audio options from native player tracks');
         setAudioTrackOptions(playerAudioOptions);
-        // TODO: Add settings for default language selection
-        // For now, default to first available audio track
-        setSelectedAudioTrackId(playerAudioOptions[0]?.id ?? null);
+        // Use preselected track if available (from details page selection), otherwise default to first
+        // For native player, preselectedAudioTrack is already a relative index (converted in details.tsx)
+        if (preselectedAudioTrack !== undefined) {
+          const matchingTrack = playerAudioOptions.find((t) => Number(t.id) === preselectedAudioTrack);
+          const audioId = matchingTrack?.id ?? playerAudioOptions[0]?.id ?? null;
+          console.log('[player] handleTracksAvailable: SETTING selectedAudioTrackId from preselected', {
+            preselectedAudioTrack,
+            matchingTrack: matchingTrack ? { id: matchingTrack.id, label: matchingTrack.label } : null,
+            audioId,
+          });
+          setSelectedAudioTrackId(audioId);
+        } else {
+          const firstId = playerAudioOptions[0]?.id ?? null;
+          console.log('[player] handleTracksAvailable: SETTING selectedAudioTrackId to first track', { firstId });
+          setSelectedAudioTrackId(firstId);
+        }
+      } else if (audioTrackOptions.length === 0 && playerAudioOptions.length > 0) {
+        // For non-native player: only update if we don't already have metadata-based tracks
+        setAudioTrackOptions(playerAudioOptions);
+        if (preselectedAudioTrack !== undefined) {
+          const matchingTrack = playerAudioOptions.find((t) => Number(t.id) === preselectedAudioTrack);
+          const audioId = matchingTrack?.id ?? playerAudioOptions[0]?.id ?? null;
+          setSelectedAudioTrackId(audioId);
+          console.log('[player] handleTracksAvailable: using preselected audio track', {
+            preselectedAudioTrack,
+            matchingTrack: !!matchingTrack,
+            audioId,
+          });
+        } else {
+          setSelectedAudioTrackId(playerAudioOptions[0]?.id ?? null);
+        }
       }
 
       // Only use player-reported subtitle tracks if we don't have backend-probed tracks
       // For non-HLS streams, backend tracks are more reliable (correct indices)
-      if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && !backendSubtitleTracks) {
+      // For native player: use player-reported tracks if backend found none (e.g., PGS subtitles)
+      const backendHasNoTracks = !backendSubtitleTracks || backendSubtitleTracks.length === 0;
+      console.log('[player] handleTracksAvailable subtitle check', {
+        subtitleTrackOptionsLength: subtitleTrackOptions.length,
+        playerSubtitleOptionsLength: playerSubtitleOptions.length,
+        backendHasNoTracks,
+        backendSubtitleTracks: backendSubtitleTracks ? backendSubtitleTracks.length : null,
+        useNativePlayer,
+        condition: subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && backendHasNoTracks,
+      });
+      if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && backendHasNoTracks) {
+        console.log('[player] using player-reported subtitle tracks (backend had none)', {
+          playerTracksCount: playerSubtitleOptions.length,
+          useNativePlayer,
+          preselectedSubtitleTrack,
+        });
         const mergedSubtitles = [SUBTITLE_OFF_OPTION, ...playerSubtitleOptions];
         setSubtitleTrackOptions(mergedSubtitles);
-        // TODO: Add settings for default language selection
-        // For now, default to first available subtitle track
-        const firstSubtitleId = playerSubtitleOptions[0]?.id ?? SUBTITLE_OFF_OPTION.id;
-        setSelectedSubtitleTrackId(firstSubtitleId);
+        // Use preselected track if available (from details page selection), otherwise auto-select
+        // For native player, preselectedSubtitleTrack is already a relative index (converted in details.tsx)
+        if (preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack >= 0) {
+          const matchingTrack = playerSubtitleOptions.find((t) => Number(t.id) === preselectedSubtitleTrack);
+          const subtitleId = matchingTrack?.id ?? SUBTITLE_OFF_OPTION.id;
+          setSelectedSubtitleTrackId(subtitleId);
+          console.log('[player] handleTracksAvailable: using preselected subtitle track', {
+            preselectedSubtitleTrack,
+            matchingTrack: !!matchingTrack,
+            subtitleId,
+          });
+        } else if (preselectedSubtitleTrack === -1) {
+          // Explicit "Off" selection from details page
+          setSelectedSubtitleTrackId(SUBTITLE_OFF_OPTION.id);
+          console.log('[player] handleTracksAvailable: using preselected subtitle OFF');
+        } else {
+          // Auto-select English track if available, otherwise first track
+          const englishTrack = playerSubtitleOptions.find(
+            (t) => t.label.toLowerCase().includes('english') || t.label.toLowerCase().includes('eng'),
+          );
+          const defaultTrackId = englishTrack?.id ?? playerSubtitleOptions[0]?.id ?? SUBTITLE_OFF_OPTION.id;
+          setSelectedSubtitleTrackId(defaultTrackId);
+        }
       }
     },
-    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks],
+    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack],
   );
 
   const selectedAudioTrackIndex = useMemo(() => {
@@ -4211,14 +4395,19 @@ export default function PlayerScreen() {
       return null;
     }
     const parsed = Number(selectedAudioTrackId);
-    const result = Number.isFinite(parsed) ? parsed : null;
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    // For native player, the index is already a relative index (converted in details.tsx)
+    // For HLS, the index is the stream index which matches what the HLS session expects
     console.log('[player] selectedAudioTrackIndex computed', {
       selectedAudioTrackId,
       parsed,
-      result,
+      useNativePlayer,
     });
-    return result;
-  }, [selectedAudioTrackId]);
+    return parsed;
+  }, [selectedAudioTrackId, useNativePlayer]);
 
   const selectedSubtitleTrackIndex = useMemo(() => {
     if (!selectedSubtitleTrackId || selectedSubtitleTrackId === 'off') {
@@ -4230,15 +4419,20 @@ export default function PlayerScreen() {
       return null;
     }
     const parsed = Number(selectedSubtitleTrackId);
-    const result = Number.isFinite(parsed) ? parsed : null;
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    // For native player, the index is already a relative index (converted in details.tsx)
+    // For HLS, the index is the stream index which matches what the HLS session expects
     console.log('[player] selectedSubtitleTrackIndex computed', {
       selectedSubtitleTrackId,
       parsed,
-      result,
+      result: parsed,
       currentTime: currentTimeRef.current,
       isHlsStream,
     });
-    return result;
+    return parsed;
   }, [selectedSubtitleTrackId, isHlsStream]);
 
   // Keep refs in sync with the computed track indices for use in callbacks
@@ -4318,8 +4512,10 @@ export default function PlayerScreen() {
   // This gives us accurate track indices and metadata for subtitle selection
   // If pre-extracted subtitles are available, use them instead of probing
   useEffect(() => {
-    // Skip for HLS/HDR streams - they handle subtitles through the HLS session
-    if (isHlsStream || routeHasAnyHDR) {
+    // Skip for HLS streams - they use sidecar subtitles from the HLS session
+    // Also skip for non-native player with HDR (those will become HLS streams)
+    // But DO probe for native player (even with HDR, since it uses direct streaming)
+    if (isHlsStream || (!useNativePlayer && routeHasAnyHDR)) {
       setBackendSubtitleTracks(null);
       return;
     }
@@ -4509,12 +4705,17 @@ export default function PlayerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isHlsStream, routeHasAnyHDR, sourcePath, userSettings, settings, preExtractedSubtitles]);
+  }, [isHlsStream, useNativePlayer, routeHasAnyHDR, sourcePath, userSettings, settings, preExtractedSubtitles]);
 
   // Start subtitle extraction for non-HLS streams when a subtitle track is selected
   // This uses the standalone subtitle extraction endpoint to generate VTT
   // If pre-extracted subtitles are available, use them instead of on-demand extraction
   useEffect(() => {
+    // Skip for NativePlayer - KSPlayer/MPV handle subtitles internally with custom styling
+    if (useNativePlayer) {
+      return;
+    }
+
     // Only for non-HLS streams with an embedded subtitle track selected
     // Skip for HLS streams (they use sidecar subtitles from the HLS session)
     // Also skip for DV/HDR content which will become HLS streams
@@ -4611,6 +4812,7 @@ export default function PlayerScreen() {
       cancelled = true;
     };
   }, [
+    useNativePlayer,
     isHlsStream,
     routeHasAnyHDR,
     selectedSubtitleTrackIndex,
@@ -5055,7 +5257,20 @@ export default function PlayerScreen() {
           return;
         }
 
+        console.log('[player] ===== METADATA FETCH START =====');
         console.log('[player] fetching metadata for', pathParam);
+        console.log('[player] metadata fetch: current track state BEFORE fetch', {
+          useNativePlayer,
+          audioTrackOptionsLength: audioTrackOptions.length,
+          audioTrackOptions: audioTrackOptions.map((o) => ({ id: o.id, label: o.label })),
+          subtitleTrackOptionsLength: subtitleTrackOptions.length,
+          selectedAudioTrackId,
+          selectedSubtitleTrackId,
+          preselectedAudioTrack,
+          preselectedSubtitleTrack,
+          shouldSkipPreferencesAtStart,
+          hasAppliedInitialTracks: hasAppliedInitialTracksRef.current,
+        });
         setSourcePath(pathParam);
         // Pass preferred audio language so the backend selects the correct track
         const preferredAudioLang =
@@ -5161,6 +5376,20 @@ export default function PlayerScreen() {
           console.log('[player] metadata duration unavailable', metadata);
         }
 
+        // Log metadata fetch completed state
+        console.log('[player] ===== METADATA FETCH COMPLETED =====');
+        console.log('[player] metadata fetch: track state AFTER fetch, BEFORE processing', {
+          useNativePlayer,
+          audioTrackOptionsLength: audioTrackOptions.length,
+          audioTrackOptions: audioTrackOptions.map((o) => ({ id: o.id, label: o.label })),
+          subtitleTrackOptionsLength: subtitleTrackOptions.length,
+          selectedAudioTrackId,
+          selectedSubtitleTrackId,
+          metadataAudioStreamsCount: metadata.audioStreams?.length ?? 0,
+          metadataAudioStreams: metadata.audioStreams?.map((s) => ({ index: s.index, language: s.language, title: s.title })),
+          metadataSubtitleStreamsCount: metadata.subtitleStreams?.length ?? 0,
+        });
+
         // When recreating HLS sessions (seek/track change), skip re-applying language preferences
         // The current track selections should be preserved from the previous session
         // Use the captured value from effect start to handle async timing - by the time this runs,
@@ -5168,53 +5397,87 @@ export default function PlayerScreen() {
         // Also skip if initial tracks have already been applied (prevents race condition when
         // contentPreference loads and triggers effect re-run after user has changed tracks).
         if (shouldSkipPreferencesAtStart || hasAppliedInitialTracksRef.current) {
-          console.log('[player] HLS session recreation - skipping track preference application', {
+          console.log('[player] entering SKIP PREFERENCES path', {
             shouldSkipPreferencesAtStart,
             hasAppliedInitialTracks: hasAppliedInitialTracksRef.current,
+            useNativePlayer,
           });
-          // Still build and set audio options so the track menu shows correctly
-          const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
-          setAudioTrackOptions(audioOptions);
-          // Store raw metadata for per-content preference saving
+
+          // Store raw metadata for per-content preference saving (needed for both native and non-native)
           setAudioStreamMetadata(metadata.audioStreams ?? null);
           setSubtitleStreamMetadata(metadata.subtitleStreams ?? null);
-          // Also set subtitle options for the menu
-          const subtitleOptions = buildSubtitleTrackOptions(
-            metadata.subtitleStreams ?? [],
-            metadata.selectedSubtitleIndex,
-          );
-          setSubtitleTrackOptions(subtitleOptions);
 
-          // Set the UI track state so the menu shows the correct selection
-          // Priority: lastHlsTrackSelectionRef (has user's current selection after track changes) > preselected (initial from prequeue)
-          // This prevents preselected from overwriting user's manual track selection
-          if (lastHlsTrackSelectionRef.current.audio !== null) {
-            const audioId = resolveSelectedTrackId(audioOptions, lastHlsTrackSelectionRef.current.audio);
-            setSelectedAudioTrackId(audioId);
-            console.log('[player] set audio track UI state from lastHlsTrackSelection', {
-              audio: lastHlsTrackSelectionRef.current.audio,
-              audioId,
+          // For native player: NEVER set track options from metadata
+          // Native player gets its track options from handleTracksAvailable (with correct 0-based indices)
+          // Set selection directly from preselected values (already converted to relative indices)
+          if (useNativePlayer) {
+            console.log('[player] native player: skipping metadata track options (will use handleTracksAvailable)', {
+              metadataAudioCount: metadata.audioStreams?.length ?? 0,
+              metadataSubtitleCount: metadata.subtitleStreams?.length ?? 0,
             });
-          } else if (preselectedAudioTrack !== undefined) {
-            const audioId = resolveSelectedTrackId(audioOptions, preselectedAudioTrack);
-            setSelectedAudioTrackId(audioId);
-            console.log('[player] set audio track UI state from preselected', { preselectedAudioTrack, audioId });
-          }
+            // Set audio selection directly from preselected (don't resolve against metadata)
+            if (audioTrackOptions.length > 0 && selectedAudioTrackId !== null) {
+              console.log('[player] native player: keeping existing audio selection (skip preferences path)', {
+                selectedAudioTrackId,
+              });
+            } else if (preselectedAudioTrack !== undefined) {
+              const audioId = String(preselectedAudioTrack);
+              setSelectedAudioTrackId(audioId);
+              console.log('[player] native player: set audio directly from preselected (skip preferences path)', {
+                preselectedAudioTrack,
+                audioId,
+              });
+            }
+            // Set subtitle selection directly from preselected (don't resolve against metadata)
+            if (subtitleTrackOptions.length > 1 && selectedSubtitleTrackId !== 'off') {
+              console.log('[player] native player: keeping existing subtitle selection (skip preferences path)', {
+                selectedSubtitleTrackId,
+              });
+            } else if (preselectedSubtitleTrack !== undefined) {
+              const subtitleId = preselectedSubtitleTrack >= 0 ? String(preselectedSubtitleTrack) : SUBTITLE_OFF_OPTION.id;
+              setSelectedSubtitleTrackId(subtitleId);
+              console.log('[player] native player: set subtitle directly from preselected (skip preferences path)', {
+                preselectedSubtitleTrack,
+                subtitleId,
+              });
+            }
+          } else {
+            // Non-native player: build and set track options from metadata
+            const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
+            setAudioTrackOptions(audioOptions);
+            const subtitleOptions = buildSubtitleTrackOptions(metadata.subtitleStreams ?? [], metadata.selectedSubtitleIndex);
+            setSubtitleTrackOptions(subtitleOptions);
 
-          if (lastHlsTrackSelectionRef.current.subtitle !== null) {
-            const subtitleId = resolveSelectedTrackId(subtitleOptions, lastHlsTrackSelectionRef.current.subtitle);
-            setSelectedSubtitleTrackId(subtitleId);
-            console.log('[player] set subtitle track UI state from lastHlsTrackSelection', {
-              subtitle: lastHlsTrackSelectionRef.current.subtitle,
-              subtitleId,
-            });
-          } else if (preselectedSubtitleTrack !== undefined) {
-            const subtitleId = resolveSelectedTrackId(subtitleOptions, preselectedSubtitleTrack);
-            setSelectedSubtitleTrackId(subtitleId);
-            console.log('[player] set subtitle track UI state from preselected', {
-              preselectedSubtitleTrack,
-              subtitleId,
-            });
+            // Set audio selection
+            if (lastHlsTrackSelectionRef.current.audio !== null) {
+              const audioId = resolveSelectedTrackId(audioOptions, lastHlsTrackSelectionRef.current.audio);
+              setSelectedAudioTrackId(audioId);
+              console.log('[player] set audio from lastHlsTrackSelection (skip preferences path)', {
+                audio: lastHlsTrackSelectionRef.current.audio,
+                audioId,
+              });
+            } else if (preselectedAudioTrack !== undefined) {
+              const audioId = resolveSelectedTrackId(audioOptions, preselectedAudioTrack);
+              setSelectedAudioTrackId(audioId);
+              console.log('[player] set audio from preselected (skip preferences path)', { preselectedAudioTrack, audioId });
+            }
+
+            // Set subtitle selection
+            if (lastHlsTrackSelectionRef.current.subtitle !== null) {
+              const subtitleId = resolveSelectedTrackId(subtitleOptions, lastHlsTrackSelectionRef.current.subtitle);
+              setSelectedSubtitleTrackId(subtitleId);
+              console.log('[player] set subtitle from lastHlsTrackSelection (skip preferences path)', {
+                subtitle: lastHlsTrackSelectionRef.current.subtitle,
+                subtitleId,
+              });
+            } else if (preselectedSubtitleTrack !== undefined) {
+              const subtitleId = resolveSelectedTrackId(subtitleOptions, preselectedSubtitleTrack);
+              setSelectedSubtitleTrackId(subtitleId);
+              console.log('[player] set subtitle from preselected (skip preferences path)', {
+                preselectedSubtitleTrack,
+                subtitleId,
+              });
+            }
           }
 
           // Even in the early return path, check if auto-search is needed for files with no embedded subtitles
@@ -5236,68 +5499,96 @@ export default function PlayerScreen() {
           return;
         }
 
-        const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
-        console.log('[player] built audio track options from metadata', {
-          audioStreamsCount: metadata.audioStreams?.length ?? 0,
-          audioOptionsCount: audioOptions.length,
-          audioOptions,
-        });
-        setAudioTrackOptions(audioOptions);
+        // For native player: NEVER set track options from metadata
+        // Native player gets its track options from handleTracksAvailable (with correct 0-based indices)
         // Store raw metadata for per-content preference saving
         setAudioStreamMetadata(metadata.audioStreams ?? null);
         setSubtitleStreamMetadata(metadata.subtitleStreams ?? null);
 
-        // Priority: preselected (one-time override from prequeue) > per-content preference > user settings > global settings > metadata
-        let selectedAudioIndex = metadata.selectedAudioIndex;
-        let audioSelectionSource = 'metadata';
-
-        // First check for preselected track (user explicitly selected in prequeue modal)
-        if (preselectedAudioTrack !== undefined) {
-          selectedAudioIndex = preselectedAudioTrack;
-          audioSelectionSource = 'preselected-override';
-          console.log('[player] using preselected audio track (user override from prequeue)', {
-            preselectedAudioTrack,
-            selectedAudioIndex,
+        // For native player: NEVER set track options from metadata
+        // Native player gets its track options from handleTracksAvailable (with correct 0-based indices)
+        // Backend metadata uses ffprobe stream indices (1,2,3...) which don't match native player
+        if (useNativePlayer) {
+          console.log('[player] native player: skipping metadata audio options (will use handleTracksAvailable)', {
+            metadataAudioCount: metadata.audioStreams?.length ?? 0,
           });
+          // Set audio selection directly from preselected (don't resolve against metadata)
+          if (audioTrackOptions.length > 0 && selectedAudioTrackId !== null) {
+            console.log('[player] native player: keeping existing audio selection', { selectedAudioTrackId });
+          } else if (preselectedAudioTrack !== undefined) {
+            const audioId = String(preselectedAudioTrack);
+            setSelectedAudioTrackId(audioId);
+            console.log('[player] native player: set audio directly from preselected', {
+              preselectedAudioTrack,
+              audioId,
+            });
+          }
         } else {
-          // Fall back to preference chain
-          const preferredAudioLanguage =
-            contentPreference?.audioLanguage ||
-            userSettings?.playback?.preferredAudioLanguage ||
-            settings?.playback?.preferredAudioLanguage;
-          if (preferredAudioLanguage) {
-            const preferredAudioIndex = findAudioTrackByLanguage(metadata.audioStreams ?? [], preferredAudioLanguage);
-            if (preferredAudioIndex !== null) {
-              selectedAudioIndex = preferredAudioIndex;
-              audioSelectionSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
-              console.log('[player] using preferred audio language', {
-                preferredLanguage: preferredAudioLanguage,
-                source: audioSelectionSource,
-                selectedAudioIndex,
-              });
+          // Non-native player: build track options from metadata and resolve selection
+          const audioOptions = buildAudioTrackOptions(metadata.audioStreams ?? []);
+          console.log('[player] built audio track options from metadata', {
+            audioStreamsCount: metadata.audioStreams?.length ?? 0,
+            audioOptionsCount: audioOptions.length,
+          });
+          setAudioTrackOptions(audioOptions);
+
+          // Priority: preselected (one-time override from prequeue) > per-content preference > user settings > global settings > metadata
+          let selectedAudioIndex = metadata.selectedAudioIndex;
+          let audioSelectionSource = 'metadata';
+
+          // First check for preselected track (user explicitly selected in prequeue modal)
+          if (preselectedAudioTrack !== undefined) {
+            selectedAudioIndex = preselectedAudioTrack;
+            audioSelectionSource = 'preselected-override';
+            console.log('[player] using preselected audio track (user override from prequeue)', {
+              preselectedAudioTrack,
+              selectedAudioIndex,
+            });
+          } else {
+            // Fall back to preference chain
+            const preferredAudioLanguage =
+              contentPreference?.audioLanguage ||
+              userSettings?.playback?.preferredAudioLanguage ||
+              settings?.playback?.preferredAudioLanguage;
+            if (preferredAudioLanguage) {
+              const preferredAudioIndex = findAudioTrackByLanguage(metadata.audioStreams ?? [], preferredAudioLanguage);
+              if (preferredAudioIndex !== null) {
+                selectedAudioIndex = preferredAudioIndex;
+                audioSelectionSource = contentPreference?.audioLanguage ? 'content-preference' : 'user-settings';
+                console.log('[player] using preferred audio language', {
+                  preferredLanguage: preferredAudioLanguage,
+                  source: audioSelectionSource,
+                  selectedAudioIndex,
+                });
+              }
             }
           }
-        }
 
-        const resolvedAudioSelection = resolveSelectedTrackId(
-          audioOptions,
-          Number.isFinite(selectedAudioIndex) ? selectedAudioIndex : null,
-        );
-        console.log('[player] setting initial audio track selection', {
-          resolvedAudioSelection,
-          metadataSelectedIndex: metadata.selectedAudioIndex,
-          preferredAudioIndex: selectedAudioIndex !== metadata.selectedAudioIndex ? selectedAudioIndex : undefined,
-          source: audioSelectionSource,
-        });
-        setSelectedAudioTrackId(resolvedAudioSelection);
+          const resolvedAudioSelection = resolveSelectedTrackId(
+            audioOptions,
+            Number.isFinite(selectedAudioIndex) ? selectedAudioIndex : null,
+          );
+          console.log('[player] setting initial audio track selection', {
+            resolvedAudioSelection,
+            metadataSelectedIndex: metadata.selectedAudioIndex,
+            preferredAudioIndex: selectedAudioIndex !== metadata.selectedAudioIndex ? selectedAudioIndex : undefined,
+            source: audioSelectionSource,
+          });
+          setSelectedAudioTrackId(resolvedAudioSelection);
+        }
 
         // For non-HLS/SDR streams, skip setting subtitle options here - the backend probe effect
         // will set them with correct relative indices (0, 1, 2, ...) instead of absolute ffprobe
         // stream indices (11, 12, 13, ...). This prevents a race condition where metadata preload
         // overwrites the backend probe's correct indices.
-        const shouldSetSubtitleOptions = isHlsStream || routeHasAnyHDR;
+        // Also skip for native player - it uses player-reported tracks with 0-based indices
+        const shouldSetSubtitleOptions = (isHlsStream || routeHasAnyHDR) && !useNativePlayer;
 
-        if (shouldSetSubtitleOptions) {
+        // For native player: preserve player-reported subtitle tracks
+        // Backend metadata uses ffprobe stream indices (7,8,9...) which don't match native player
+        const shouldUseMetadataSubtitleOptions = shouldSetSubtitleOptions && subtitleTrackOptions.length <= 1;
+
+        if (shouldUseMetadataSubtitleOptions) {
           const subtitleOptions = buildSubtitleTrackOptions(
             metadata.subtitleStreams ?? [],
             metadata.selectedSubtitleIndex,
@@ -5392,7 +5683,17 @@ export default function PlayerScreen() {
             }
           }
         } else {
-          console.log('[player] skipping subtitle options from metadata - backend probe will set correct indices');
+          // For native player: set subtitle selection directly from preselected (don't use metadata)
+          if (useNativePlayer && preselectedSubtitleTrack !== undefined) {
+            const subtitleId = preselectedSubtitleTrack >= 0 ? String(preselectedSubtitleTrack) : SUBTITLE_OFF_OPTION.id;
+            setSelectedSubtitleTrackId(subtitleId);
+            console.log('[player] native player: set subtitle track directly from preselected', {
+              preselectedSubtitleTrack,
+              subtitleId,
+            });
+          } else {
+            console.log('[player] skipping subtitle options from metadata - backend probe will set correct indices');
+          }
         }
       } catch (error) {
         console.warn('[player] failed to preload video metadata', error);
@@ -5411,6 +5712,7 @@ export default function PlayerScreen() {
     userSettings,
     isHlsStream,
     routeHasAnyHDR,
+    useNativePlayer,
     triggerAutoSubtitleSearchIfNeeded,
     contentPreference,
     preselectedAudioTrack,
@@ -5738,11 +6040,13 @@ export default function PlayerScreen() {
               onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
               onImplementationResolved={handleImplementationResolved}
               selectedAudioTrackIndex={isHlsStream ? undefined : selectedAudioTrackIndex}
-              // Always disable player's built-in subtitles - we use SubtitleOverlay for consistent sizing
-              selectedSubtitleTrackIndex={undefined}
+              // For NativePlayer: pass subtitle track to KSPlayer/MPV (they handle rendering internally)
+              // For HLS/RNV: disable player's built-in subtitles - we use SubtitleOverlay for consistent sizing
+              selectedSubtitleTrackIndex={useNativePlayer ? selectedSubtitleTrackIndex : undefined}
               onTracksAvailable={handleTracksAvailable}
-              // Force react-native-video for all content (exception: Live TV uses system player)
-              forceRnvPlayer={!isLiveTV}
+              // Force react-native-video for HLS streams (exception: Live TV uses system player)
+              // When useNativePlayer is true, don't force RNV - use NativePlayer instead
+              forceRnvPlayer={!isLiveTV && !useNativePlayer}
               forceNativeFullscreen={Platform.OS !== 'web' && hasAnyHDR}
               onVideoSize={(width, height) => setVideoSize({ width, height })}
               nowPlaying={{
@@ -5754,6 +6058,8 @@ export default function PlayerScreen() {
               mediaType={mediaType}
               onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
               onPlaybackStateChanged={handleNativePlaybackStateChanged}
+              hdrHint={useNativePlayer ? hdrHint : undefined}
+              controlsVisible={useNativePlayer ? controlsVisible : undefined}
             />
           </View>
 
@@ -5773,7 +6079,8 @@ export default function PlayerScreen() {
           )}
 
           {/* Loading indicator that stays visible even when controls are hidden */}
-          {isVideoBuffering && !usesSystemManagedControls && (
+          {/* Skip for NativePlayer - KSPlayer/MPV have their own buffering indicator */}
+          {isVideoBuffering && !usesSystemManagedControls && !useNativePlayer && (
             <View style={styles.loadingOverlay} pointerEvents="none" renderToHardwareTextureAndroid={true}>
               <LoadingIndicator />
             </View>
@@ -5804,7 +6111,9 @@ export default function PlayerScreen() {
           {/* Uses standalone subtitle extraction endpoint to convert embedded subs to VTT */}
           {/* Use sdrFirstCueTimeRef for sync (mirrors actualPlaybackOffsetRef for HLS) */}
           {/* timeOffset: -firstCueTime to align VTT cues with player position, -subtitleOffset for user adjustment */}
+          {/* Skip for NativePlayer - KSPlayer/MPV handle embedded subtitles internally with custom styling */}
           {!isHlsStream &&
+            !useNativePlayer &&
             extractedSubtitleUrl &&
             selectedSubtitleTrackId !== 'external' &&
             hasStartedPlaying &&
@@ -5827,7 +6136,8 @@ export default function PlayerScreen() {
 
           {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
           {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
-          {externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && !isPipActive && (
+          {/* Skip for NativePlayer - external subtitle loading not yet supported for KSPlayer/MPV */}
+          {!useNativePlayer && externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && !isPipActive && (
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}

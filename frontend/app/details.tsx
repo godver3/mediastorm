@@ -2041,11 +2041,12 @@ export default function DetailsScreen() {
 
   // Auto-start backdrop trailer when setting enabled and trailer is ready
   // Don't auto-start if user has already taken an action (dismissed auto-play)
+  // Don't auto-start if content prequeue is active (user initiated playback)
   useEffect(() => {
-    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl && !trailerAutoPlayDismissed) {
+    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl && !trailerAutoPlayDismissed && !prequeueId) {
       setIsBackdropTrailerPlaying(true);
     }
-  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl, trailerAutoPlayDismissed]);
+  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl, trailerAutoPlayDismissed, prequeueId]);
 
   // Immersive mode timer - fade out UI after 3 seconds when trailer is playing
   // Re-enters immersive mode after 3 seconds of no input
@@ -2113,6 +2114,15 @@ export default function DetailsScreen() {
       removeListener();
     };
   }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, resetImmersiveTimer, isDetailsPageActive]);
+
+  // Stop trailer when navigating away from details page or when content prequeue starts
+  // This prevents the trailer from playing in the background behind the main content
+  useEffect(() => {
+    if ((!isDetailsPageActive || prequeueId) && isBackdropTrailerPlaying) {
+      setIsBackdropTrailerPlaying(false);
+      setIsTrailerImmersiveMode(false);
+    }
+  }, [isDetailsPageActive, isBackdropTrailerPlaying, prequeueId]);
 
   const findPreviousEpisode = useCallback(
     (episode: SeriesEpisode): SeriesEpisode | null => {
@@ -2663,8 +2673,10 @@ export default function DetailsScreen() {
       }
 
       const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
-      // TESTING: Force HLS for all native content (normally only HDR/TrueHD uses HLS)
-      const needsHLS = Platform.OS !== 'web'; // hasAnyHDR || prequeueStatus.needsAudioTranscode;
+      // Native platforms use NativePlayer (KSPlayer/MPV) which handles HDR/tracks/seeking natively
+      // No HLS needed - NativePlayer uses direct streaming via /video/stream endpoint
+      const isNativePlatform = Platform.OS !== 'web';
+      const needsHLS = false; // Native platforms use direct streaming, web uses HLS for HDR/TrueHD
 
       // Build stream URL
       let streamUrl: string;
@@ -2874,7 +2886,84 @@ export default function DetailsScreen() {
           throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
         }
       } else {
-        // SDR content - build direct stream URL
+        // Native platforms use direct stream URL (NativePlayer handles HDR/tracks/seeking)
+        // Web fallback for SDR content also uses direct streaming
+        console.log('[prequeue] Building direct stream URL for native player');
+
+        // Set preselected tracks for native player (same logic as HLS path)
+        // Use user override if set, otherwise fall back to prequeue-selected tracks
+        selectedAudioTrack =
+          trackOverrideAudio !== null
+            ? trackOverrideAudio
+            : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
+              ? prequeueStatus.selectedAudioTrack
+              : undefined;
+        selectedSubtitleTrack =
+          trackOverrideSubtitle !== null
+            ? trackOverrideSubtitle
+            : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
+              ? prequeueStatus.selectedSubtitleTrack
+              : undefined;
+
+        // Fetch metadata if either track still needs selection based on user preferences
+        // This matches the HLS path behavior: override > prequeue > user preferences > off
+        if (
+          (selectedAudioTrack === undefined || selectedSubtitleTrack === undefined) &&
+          (settings?.playback || userSettings?.playback)
+        ) {
+          try {
+            // Compute audio language preference for metadata fetch
+            const audioLang =
+              userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage ?? 'eng';
+            const metadata = await apiService.getVideoMetadata(prequeueStatus.streamPath, { audioLang });
+            if (metadata) {
+              const subLang =
+                userSettings?.playback?.preferredSubtitleLanguage ??
+                settings?.playback?.preferredSubtitleLanguage ??
+                'eng';
+              const subModeRaw =
+                userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode ?? 'off';
+              const subMode =
+                subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
+
+              // Only select audio if not already set by override or prequeue
+              if (selectedAudioTrack === undefined && metadata.audioStreams) {
+                const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
+                if (match !== null) {
+                  selectedAudioTrack = match;
+                  console.log(`[prequeue] Native player: selected audio track ${match} for language ${audioLang}`);
+                }
+              }
+
+              // Only select subtitle if not already set by override or prequeue
+              if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
+                const match = findSubtitleTrackByPreference(
+                  metadata.subtitleStreams,
+                  subLang,
+                  subMode as 'off' | 'on' | 'forced-only',
+                );
+                if (match !== null) {
+                  selectedSubtitleTrack = match;
+                  console.log(
+                    `[prequeue] Native player: selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`,
+                  );
+                }
+              }
+            }
+          } catch (metadataError) {
+            console.warn('[prequeue] Native player: failed to fetch metadata for track selection:', metadataError);
+          }
+        }
+
+        console.log('[prequeue] Native player preselected tracks:', {
+          audio: selectedAudioTrack,
+          subtitle: selectedSubtitleTrack,
+          trackOverrideAudio,
+          trackOverrideSubtitle,
+          prequeueAudio: prequeueStatus.selectedAudioTrack,
+          prequeueSubtitle: prequeueStatus.selectedSubtitleTrack,
+        });
+
         const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
         const authToken = apiService.getAuthToken();
         // Build URL manually to ensure proper encoding of special chars like semicolons
@@ -2884,7 +2973,8 @@ export default function DetailsScreen() {
         if (authToken) {
           queryParts.push(`token=${encodeURIComponent(authToken)}`);
         }
-        queryParts.push('transmux=0'); // Let native player handle it
+        // Disable server-side transmux - KSPlayer handles everything natively (DV, HDR, TrueHD, MKV, etc.)
+        queryParts.push('transmux=0');
         // Add profile info for stream tracking
         if (activeUserId) {
           queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
@@ -2931,6 +3021,24 @@ export default function DetailsScreen() {
       }
 
       // Launch native player (external players would have returned early above)
+      console.log('[details] ===== LAUNCHING PLAYER =====', {
+        isNativePlatform,
+        selectedAudioTrack,
+        selectedSubtitleTrack,
+        audioTracksFromPrequeue: prequeueStatus.audioTracks?.map((t, i) => ({
+          arrayIndex: i,
+          streamIndex: t.index,
+          language: t.language,
+          title: t.title,
+        })),
+        subtitleTracksFromPrequeue: prequeueStatus.subtitleTracks?.map((t, i) => ({
+          arrayIndex: i,
+          streamIndex: t.index,
+          language: t.language,
+          title: t.title,
+        })),
+        streamUrl: streamUrl.substring(0, 100) + '...',
+      });
       router.push({
         pathname: '/player',
         params: {
@@ -2963,16 +3071,50 @@ export default function DetailsScreen() {
           // Shuffle mode for random episode playback (use ref for synchronous access)
           ...(pendingShuffleModeRef.current || isShuffleMode ? { shuffleMode: '1' } : {}),
           // Pass prequeue-selected tracks so player knows what's baked into the HLS session
-          ...(selectedAudioTrack !== undefined && selectedAudioTrack >= 0
-            ? { preselectedAudioTrack: String(selectedAudioTrack) }
-            : {}),
-          ...(selectedSubtitleTrack !== undefined && selectedSubtitleTrack >= 0
-            ? { preselectedSubtitleTrack: String(selectedSubtitleTrack) }
-            : {}),
+          // For native player (KSPlayer), convert stream index to relative index (position in track array)
+          // KSPlayer uses array indices (0, 1, 2) not ffprobe stream indices (1, 2, 4, etc.)
+          ...((() => {
+            if (selectedAudioTrack === undefined || selectedAudioTrack < 0) return {};
+            const hasTrackArray = isNativePlatform && prequeueStatus.audioTracks && prequeueStatus.audioTracks.length > 0;
+            const relativeIndex = hasTrackArray
+              ? prequeueStatus.audioTracks!.findIndex((t) => t.index === selectedAudioTrack)
+              : selectedAudioTrack;
+            console.log('[prequeue] Audio track conversion:', {
+              isNativePlatform,
+              selectedAudioTrack,
+              hasTrackArray,
+              audioTracksLength: prequeueStatus.audioTracks?.length,
+              relativeIndex,
+            });
+            return { preselectedAudioTrack: String(relativeIndex) };
+          })()),
+          ...((() => {
+            if (selectedSubtitleTrack === undefined || selectedSubtitleTrack < 0) return {};
+            // For native player (KSPlayer), convert stream index to relative index (position in track array)
+            // KSPlayer uses array indices (0, 1, 2) not ffprobe stream indices (7, 8, 9, etc.)
+            // Same logic as audio track conversion
+            const hasTrackArray = isNativePlatform && prequeueStatus.subtitleTracks && prequeueStatus.subtitleTracks.length > 0;
+            const relativeIndex = hasTrackArray
+              ? prequeueStatus.subtitleTracks!.findIndex((t) => t.index === selectedSubtitleTrack)
+              : selectedSubtitleTrack;
+            console.log('[prequeue] Subtitle track conversion:', {
+              isNativePlatform,
+              selectedSubtitleTrack,
+              hasTrackArray,
+              subtitleTracksLength: prequeueStatus.subtitleTracks?.length,
+              relativeIndex,
+            });
+            return { preselectedSubtitleTrack: String(relativeIndex) };
+          })()),
           // AIOStreams passthrough format data for info modal
           ...(prequeueStatus.passthroughName ? { passthroughName: prequeueStatus.passthroughName } : {}),
           ...(prequeueStatus.passthroughDescription
             ? { passthroughDescription: prequeueStatus.passthroughDescription }
+            : {}),
+          // Native player flags for direct streaming (bypasses HLS)
+          ...(isNativePlatform ? { useNativePlayer: '1' } : {}),
+          ...(isNativePlatform && hasAnyHDR
+            ? { hdrHint: prequeueStatus.hasDolbyVision ? 'DolbyVision' : 'HDR10' }
             : {}),
         },
       });
@@ -2996,6 +3138,8 @@ export default function DetailsScreen() {
       isShuffleMode,
       trackOverrideAudio,
       trackOverrideSubtitle,
+      activeUserId,
+      activeUser,
     ],
   );
 

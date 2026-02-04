@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react';
-import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { Platform, View, type ViewStyle } from 'react-native';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { Platform, View, type ViewStyle, StyleSheet } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { isMobileWeb } from './isMobileWeb';
 import type { VideoImplementation, VideoPlayerHandle, VideoPlayerProps, VideoProgressMeta } from './types';
+import { NativePlayer, type NativePlayerRef, type LoadEvent, type ProgressEvent, type ErrorEvent } from './NativePlayer';
 
 type PlayerComponent = React.ForwardRefExoticComponent<VideoPlayerProps & React.RefAttributes<VideoPlayerHandle>>;
 
@@ -24,6 +25,29 @@ const loadRnvPlayer = (): PlayerComponent | null => {
 
 const RnvVideoPlayer = loadRnvPlayer();
 
+// Check if native player modules are available
+const isNativePlayerAvailable = (): boolean => {
+  if (Platform.OS === 'android') {
+    try {
+      require('mpv-player');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (Platform.OS === 'ios' || (Platform.OS as string) === 'tvos') {
+    try {
+      require('ksplayer');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+};
+
+const nativePlayerAvailable = Platform.OS !== 'web' && isNativePlayerAvailable();
+
 export type {
   NowPlayingMetadata,
   TrackInfo,
@@ -33,8 +57,277 @@ export type {
   VideoProgressMeta,
 } from './types';
 
+/**
+ * NativePlayerAdapter - Adapts VideoPlayerProps to NativePlayerProps
+ * Used to integrate NativePlayer (KSPlayer/MPV) with the existing player interface
+ */
+const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props, ref) => {
+  const {
+    movie,
+    paused,
+    onBuffer,
+    onProgress,
+    onLoad,
+    onEnd,
+    onError,
+    durationHint,
+    volume = 1,
+    selectedAudioTrackIndex,
+    selectedSubtitleTrackIndex,
+    onVideoSize,
+    onTracksAvailable,
+    hdrHint,
+    subtitleSize = 1.0,
+    controlsVisible,
+  } = props;
+
+  const playerRef = useRef<NativePlayerRef>(null);
+  const durationRef = useRef<number>(0);
+
+  useImperativeHandle(ref, () => ({
+    seek: (time: number) => {
+      playerRef.current?.seek(time);
+    },
+    play: () => {
+      // NativePlayer doesn't have separate play/pause methods - controlled via paused prop
+    },
+    pause: () => {
+      // NativePlayer doesn't have separate play/pause methods - controlled via paused prop
+    },
+  }), []);
+
+  // Forward declaration for applyInitialTracks - will be assigned after its definition
+  const applyInitialTracksRef = useRef<(() => void) | null>(null);
+
+  const handleLoad = useCallback((data: LoadEvent) => {
+    console.log('[NativePlayerAdapter] onLoad:', data);
+    durationRef.current = data.duration;
+    onLoad?.(data.duration);
+    if (data.width && data.height) {
+      onVideoSize?.(data.width, data.height);
+    }
+    // Try to apply tracks after load as backup (in case onTracksChanged doesn't fire or fires too early)
+    // Use a longer delay to give KSPlayer time to initialize tracks
+    setTimeout(() => {
+      console.log('[NativePlayerAdapter] onLoad: attempting track application after delay');
+      applyInitialTracksRef.current?.();
+    }, 500);
+  }, [onLoad, onVideoSize]);
+
+  const handleProgress = useCallback((data: ProgressEvent) => {
+    const meta: VideoProgressMeta = {
+      playable: data.duration,
+      seekable: data.duration,
+    };
+    onProgress(data.currentTime, meta);
+  }, [onProgress]);
+
+  const handleEnd = useCallback(() => {
+    console.log('[NativePlayerAdapter] onEnd');
+    onEnd?.();
+  }, [onEnd]);
+
+  const handleError = useCallback((data: ErrorEvent) => {
+    console.error('[NativePlayerAdapter] onError:', data);
+    onError?.(new Error(data.error));
+  }, [onError]);
+
+  const handleBuffering = useCallback((buffering: boolean) => {
+    console.log('[NativePlayerAdapter] onBuffering:', buffering);
+    onBuffer?.(buffering);
+  }, [onBuffer]);
+
+  // Convert NativePlayer track format to VideoPlayer TrackInfo format
+  const handleTracksChanged = useCallback((data: { audioTracks: Array<{ id: number; title: string; language: string }>; subtitleTracks: Array<{ id: number; title: string; language: string }> }) => {
+    if (!onTracksAvailable) return;
+
+    // Convert to TrackInfo format (id + name)
+    const audioTracks = data.audioTracks.map((t) => ({
+      id: t.id,
+      name: t.title || t.language || `Audio ${t.id}`,
+    }));
+    const subtitleTracks = data.subtitleTracks.map((t) => ({
+      id: t.id,
+      name: t.title || t.language || `Subtitle ${t.id}`,
+    }));
+
+    console.log('[NativePlayerAdapter] forwarding tracks to onTracksAvailable', {
+      audioCount: audioTracks.length,
+      subtitleCount: subtitleTracks.length,
+    });
+    onTracksAvailable(audioTracks, subtitleTracks);
+  }, [onTracksAvailable]);
+
+  // Report duration hint early if available
+  useEffect(() => {
+    if (durationHint && durationHint > 0 && onLoad) {
+      onLoad(durationHint);
+    }
+  }, [durationHint, onLoad]);
+
+  // Track whether initial tracks have been applied (only apply once per source)
+  const initialTracksAppliedRef = useRef(false);
+  const lastAppliedAudioRef = useRef<number | undefined>(undefined);
+  const lastAppliedSubtitleRef = useRef<number | undefined>(undefined);
+  const tracksReadyRef = useRef(false);
+
+  // Reset refs when source changes
+  useEffect(() => {
+    initialTracksAppliedRef.current = false;
+    lastAppliedAudioRef.current = undefined;
+    lastAppliedSubtitleRef.current = undefined;
+    tracksReadyRef.current = false;
+  }, [movie]);
+
+  // Handle track changes - applies tracks imperatively when they change
+  useEffect(() => {
+    if (selectedAudioTrackIndex === undefined || selectedAudioTrackIndex === null) return;
+
+    // Skip if same as last applied
+    if (selectedAudioTrackIndex === lastAppliedAudioRef.current) return;
+
+    if (tracksReadyRef.current && playerRef.current) {
+      console.log('[NativePlayerAdapter] applying audio track:', selectedAudioTrackIndex);
+      playerRef.current.setAudioTrack(selectedAudioTrackIndex);
+      lastAppliedAudioRef.current = selectedAudioTrackIndex;
+    } else {
+      console.log('[NativePlayerAdapter] audio track pending (tracks not ready):', selectedAudioTrackIndex);
+    }
+  }, [selectedAudioTrackIndex]);
+
+  useEffect(() => {
+    if (selectedSubtitleTrackIndex === undefined || selectedSubtitleTrackIndex === null) return;
+
+    // Skip if same as last applied
+    if (selectedSubtitleTrackIndex === lastAppliedSubtitleRef.current) return;
+
+    if (tracksReadyRef.current && playerRef.current) {
+      console.log('[NativePlayerAdapter] applying subtitle track:', selectedSubtitleTrackIndex);
+      playerRef.current.setSubtitleTrack(selectedSubtitleTrackIndex);
+      lastAppliedSubtitleRef.current = selectedSubtitleTrackIndex;
+    } else {
+      console.log('[NativePlayerAdapter] subtitle track pending (tracks not ready):', selectedSubtitleTrackIndex);
+    }
+  }, [selectedSubtitleTrackIndex]);
+
+  // Store the latest track indices in refs to avoid stale closure issues
+  const pendingAudioRef = useRef<number | undefined>(selectedAudioTrackIndex);
+  const pendingSubtitleRef = useRef<number | undefined>(selectedSubtitleTrackIndex);
+
+  // Keep refs in sync with props
+  useEffect(() => {
+    pendingAudioRef.current = selectedAudioTrackIndex;
+    pendingSubtitleRef.current = selectedSubtitleTrackIndex;
+    console.log('[NativePlayerAdapter] track refs updated:', {
+      audio: selectedAudioTrackIndex,
+      subtitle: selectedSubtitleTrackIndex,
+    });
+  }, [selectedAudioTrackIndex, selectedSubtitleTrackIndex]);
+
+  // Apply tracks imperatively (used by both onTracksChanged and onLoad)
+  const applyInitialTracks = useCallback(() => {
+    if (initialTracksAppliedRef.current) {
+      console.log('[NativePlayerAdapter] applyInitialTracks: already applied, skipping');
+      return;
+    }
+
+    const audioToApply = pendingAudioRef.current;
+    const subtitleToApply = pendingSubtitleRef.current;
+
+    console.log('[NativePlayerAdapter] applyInitialTracks called:', {
+      audioToApply,
+      subtitleToApply,
+      hasPlayerRef: !!playerRef.current,
+    });
+
+    if (!playerRef.current) {
+      console.log('[NativePlayerAdapter] applyInitialTracks: no player ref yet');
+      return;
+    }
+
+    initialTracksAppliedRef.current = true;
+    tracksReadyRef.current = true;
+
+    // Apply after a short delay to let KSPlayer stabilize
+    setTimeout(() => {
+      const audio = pendingAudioRef.current;
+      const subtitle = pendingSubtitleRef.current;
+
+      console.log('[NativePlayerAdapter] setTimeout applying tracks:', { audio, subtitle });
+
+      if (audio !== undefined && audio !== null && playerRef.current) {
+        console.log('[NativePlayerAdapter] applying initial audio track:', audio);
+        playerRef.current.setAudioTrack(audio);
+        lastAppliedAudioRef.current = audio;
+      }
+      if (subtitle !== undefined && subtitle !== null && subtitle >= 0 && playerRef.current) {
+        console.log('[NativePlayerAdapter] applying initial subtitle track:', subtitle);
+        playerRef.current.setSubtitleTrack(subtitle);
+        lastAppliedSubtitleRef.current = subtitle;
+      }
+    }, 100);
+  }, []);
+
+  // Update ref so handleLoad can call applyInitialTracks
+  applyInitialTracksRef.current = applyInitialTracks;
+
+  // When tracks become available, apply any pending selections
+  const originalHandleTracksChanged = handleTracksChanged;
+  const handleTracksChangedWithPending = useCallback((data: { audioTracks: Array<{ id: number; title: string; language: string }>; subtitleTracks: Array<{ id: number; title: string; language: string }> }) => {
+    console.log('[NativePlayerAdapter] onTracksChanged fired, track count:', {
+      audio: data.audioTracks.length,
+      subtitle: data.subtitleTracks.length,
+    });
+    originalHandleTracksChanged(data);
+    applyInitialTracks();
+  }, [originalHandleTracksChanged, applyInitialTracks]);
+
+  // Build subtitle style to match our SubtitleOverlay appearance
+  const subtitleStyle = useMemo(() => ({
+    fontSize: subtitleSize,
+    textColor: '#FFFFFF',
+    backgroundColor: '#00000099', // 60% black background (matching SubtitleOverlay)
+    bottomMargin: 50, // Match SubtitleOverlay positioning
+  }), [subtitleSize]);
+
+  // Log the track indices being passed to native player
+  console.log('[NativePlayerAdapter] ===== RENDER =====', {
+    audioTrack: selectedAudioTrackIndex ?? 'undefined',
+    subtitleTrack: selectedSubtitleTrackIndex ?? -1,
+  });
+
+  return (
+    <NativePlayer
+      ref={playerRef}
+      source={{ uri: movie, hdrHint }}
+      paused={paused}
+      volume={volume}
+      audioTrack={selectedAudioTrackIndex ?? undefined}
+      subtitleTrack={selectedSubtitleTrackIndex ?? -1}
+      subtitleStyle={subtitleStyle}
+      controlsVisible={controlsVisible}
+      style={nativePlayerStyles.player}
+      onLoad={handleLoad}
+      onProgress={handleProgress}
+      onEnd={handleEnd}
+      onError={handleError}
+      onBuffering={handleBuffering}
+      onTracksChanged={handleTracksChangedWithPending}
+    />
+  );
+});
+
+NativePlayerAdapter.displayName = 'NativePlayerAdapter';
+
+const nativePlayerStyles = StyleSheet.create({
+  player: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+});
+
 const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props, ref) => {
-  const { onImplementationResolved, forceNativeFullscreen, ...rest } = props;
+  const { onImplementationResolved, forceNativeFullscreen, forceRnvPlayer, ...rest } = props;
 
   const implementation = useMemo((): { key: VideoImplementation; Component: PlayerComponent } => {
     // Mobile web uses inline system player
@@ -42,14 +335,21 @@ const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>((props
       return { key: 'mobile-system', Component: MobileSystemVideoPlayer };
     }
 
-    // Native platforms use react-native-video
+    // Native platforms (iOS/tvOS/Android) - use NativePlayer if available and not forcing RNV
+    // NativePlayer uses KSPlayer on iOS/tvOS and MPV on Android for direct stream playback
+    if (!forceRnvPlayer && nativePlayerAvailable) {
+      console.log('[VideoPlayer] Using NativePlayer for', Platform.OS);
+      return { key: 'native', Component: NativePlayerAdapter as PlayerComponent };
+    }
+
+    // Fallback to react-native-video (RNV) for HLS streams or when native player unavailable
     if (RnvVideoPlayer) {
       return { key: 'rnv', Component: RnvVideoPlayer };
     }
 
     // Fallback for mobile web on non-mobile detection
     return { key: 'mobile-system', Component: MobileSystemVideoPlayer };
-  }, []);
+  }, [forceRnvPlayer]);
 
   const lastImplementationRef = useRef<VideoImplementation | null>(null);
   useEffect(() => {
