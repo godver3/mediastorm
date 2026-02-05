@@ -50,12 +50,13 @@ export interface VideoInfoEvent {
   hdrActive: boolean;
 }
 
+export interface DebugLogEvent {
+  message: string;
+}
+
 export interface KSPlayerSource {
   uri: string;
   headers?: Record<string, string>;
-  // Hint for HDR content type - allows pre-configuring the renderer for HDR
-  // before playback starts (important for DV Profile 5 dual-layer content)
-  hdrHint?: 'HDR10' | 'DolbyVision' | 'HLG';
 }
 
 // Subtitle styling configuration
@@ -89,6 +90,7 @@ export interface KSPlayerProps {
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
   onVideoInfo?: (data: VideoInfoEvent) => void;
+  onDebugLog?: (data: DebugLogEvent) => void;
 }
 
 export interface KSPlayerRef {
@@ -116,6 +118,7 @@ interface NativeKSPlayerProps {
   onTracksChanged?: (event: NativeSyntheticEvent<TracksEvent>) => void;
   onBuffering?: (event: NativeSyntheticEvent<BufferingEvent>) => void;
   onVideoInfo?: (event: NativeSyntheticEvent<VideoInfoEvent>) => void;
+  onDebugLog?: (event: NativeSyntheticEvent<DebugLogEvent>) => void;
 }
 
 // Only load native component on iOS - cache to prevent double registration on hot reload
@@ -152,6 +155,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
     onTracksChanged,
     onBuffering,
     onVideoInfo,
+    onDebugLog,
   } = props;
 
   const nativeRef = useRef<any>(null);
@@ -269,6 +273,14 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
     [onVideoInfo]
   );
 
+  const handleDebugLog = useCallback(
+    (event: NativeSyntheticEvent<DebugLogEvent>) => {
+      console.log('[KSPlayer:Swift]', event.nativeEvent.message);
+      onDebugLog?.(event.nativeEvent);
+    },
+    [onDebugLog]
+  );
+
   if (!NativeKSPlayerView) {
     console.log('[KSPlayer] Native view not available on this platform');
     return null;
@@ -293,6 +305,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
       onVideoInfo={handleVideoInfo}
+      onDebugLog={handleDebugLog}
     />
   );
 });

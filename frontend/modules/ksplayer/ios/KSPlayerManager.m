@@ -29,6 +29,7 @@ RCT_EXPORT_VIEW_PROPERTY(onError, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onTracksChanged, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onBuffering, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onVideoInfo, RCTDirectEventBlock)
+RCT_EXPORT_VIEW_PROPERTY(onDebugLog, RCTDirectEventBlock)
 
 // Methods
 RCT_EXTERN_METHOD(seek:(nonnull NSNumber *)node toTime:(nonnull NSNumber *)time)
