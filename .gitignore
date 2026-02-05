@@ -51,6 +51,7 @@ client/NovaStream/android/app/src/release/
 # iOS
 client/NovaStream/ios/Pods/
 client/NovaStream/ios/build/
+*.mobileprovision
 
 # Temporary files
 *.tmp
