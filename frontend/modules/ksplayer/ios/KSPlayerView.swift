@@ -91,6 +91,13 @@ public class KSPlayerView: UIView {
     @objc var onTracksChanged: RCTDirectEventBlock?
     @objc var onBuffering: RCTDirectEventBlock?
     @objc var onVideoInfo: RCTDirectEventBlock?
+    @objc var onDebugLog: RCTDirectEventBlock?
+
+    // Helper to send debug logs to JS
+    private func debugLog(_ message: String) {
+        print("[KSPlayer] \(message)")
+        onDebugLog?(["message": message])
+    }
 
     // MARK: - React Native Properties
 
@@ -274,13 +281,12 @@ public class KSPlayerView: UIView {
         guard let source = source,
               let uri = source["uri"] as? String,
               let url = URL(string: uri) else {
-            print("[KSPlayer] setSource: invalid source - source=\(String(describing: source))")
+            debugLog("setSource: invalid source - source=\(String(describing: source))")
             return
         }
 
-        print("[KSPlayer] setSource: uri=\(uri.prefix(100))...")
-        print("[KSPlayer] setSource: hdrHint=\(source["hdrHint"] ?? "nil")")
-        print("[KSPlayer] setSource: headers=\(source["headers"] ?? "nil")")
+        debugLog("setSource: uri=\(uri.prefix(100))...")
+        debugLog("setSource: headers=\(source["headers"] ?? "nil")")
 
         // Reset state for new source
         currentSource = source
@@ -289,6 +295,11 @@ public class KSPlayerView: UIView {
         subtitleRetryTimer = nil
         subtitleRetryCount = 0
 
+        setupAndPlaySource(url: url, source: source)
+    }
+
+    /// Common setup and play logic extracted from setSource
+    private func setupAndPlaySource(url: URL, source: NSDictionary) {
         // Use custom options class for frame rate matching support
         let options = StrmrKSOptions()
         currentOptions = options
@@ -303,10 +314,7 @@ public class KSPlayerView: UIView {
         options.videoAdaptable = true
         #endif
 
-        // HDR handling: Let KSPlayer automatically detect content's native dynamic range
-        // Setting destinationDynamicRange to nil allows KSPlayer to use the content's actual HDR/SDR mode
-        // This prevents forcing HDR tone mapping on SDR content (which causes oversaturation)
-        // KSPlayer will automatically detect HDR10/Dolby Vision/HLG from the video format description
+        // HDR handling: let KSPlayer auto-detect dynamic range from stream metadata
         options.destinationDynamicRange = nil
 
         // Performance settings
@@ -320,7 +328,7 @@ public class KSPlayerView: UIView {
         // Subtitle settings - autoSelectEmbedSubtitle must be true for KSPlayer to initialize subtitle decoder
         options.autoSelectEmbedSubtitle = true
 
-        print("[KSPlayer] Options configured: hardwareDecode=\(options.hardwareDecode), asyncDecomp=\(options.asynchronousDecompression), destinationDynamicRange=\(options.destinationDynamicRange?.description ?? "auto"), autoSelectEmbedSubtitle=\(options.autoSelectEmbedSubtitle)")
+        debugLog("Options configured: hardwareDecode=\(options.hardwareDecode), asyncDecomp=\(options.asynchronousDecompression), destinationDynamicRange=\(options.destinationDynamicRange?.description ?? "auto"), autoSelectEmbedSubtitle=\(options.autoSelectEmbedSubtitle)")
 
         // Set up callback to detect Dolby Vision during playback
         options.onVideoPropertiesDetected = { [weak self] refreshRate, isDovi, _ in
@@ -345,15 +353,15 @@ public class KSPlayerView: UIView {
         }
 
         // Set the resource
-        print("[KSPlayer] Creating KSPlayerResource with URL: \(url)")
+        debugLog("Creating KSPlayerResource with URL: \(url)")
         let resource = KSPlayerResource(url: url, options: options)
-        print("[KSPlayer] Calling playerView.set(resource:)")
+        debugLog("Calling playerView.set(resource:)")
         playerView?.set(resource: resource)
-        print("[KSPlayer] Resource set complete, isPaused=\(isPaused)")
+        debugLog("Resource set complete, isPaused=\(isPaused)")
 
         // Auto-play if not paused
         if !isPaused {
-            print("[KSPlayer] Starting playback (isPaused was false)")
+            debugLog("Starting playback (isPaused was false)")
             playerView?.play()
         }
     }

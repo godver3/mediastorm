@@ -2672,7 +2672,6 @@ export default function DetailsScreen() {
         // Fall through to native player if external player targets not available
       }
 
-      const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
       // Native platforms use NativePlayer (KSPlayer/MPV) which handles HDR/tracks/seeking natively
       // No HLS needed - NativePlayer uses direct streaming via /video/stream endpoint
       const isNativePlatform = Platform.OS !== 'web';
@@ -2687,7 +2686,8 @@ export default function DetailsScreen() {
       const audioOverrideDiffersFromPrequeue =
         trackOverrideAudio !== null && trackOverrideAudio !== prequeueStatus.selectedAudioTrack;
       console.log('[prequeue] HLS decision factors:', {
-        hasAnyHDR,
+        hasDolbyVision: prequeueStatus.hasDolbyVision,
+        hasHdr10: prequeueStatus.hasHdr10,
         needsAudioTranscode: prequeueStatus.needsAudioTranscode ?? false,
         needsHLS,
         hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
@@ -3113,9 +3113,6 @@ export default function DetailsScreen() {
             : {}),
           // Native player flags for direct streaming (bypasses HLS)
           ...(isNativePlatform ? { useNativePlayer: '1' } : {}),
-          ...(isNativePlatform && hasAnyHDR
-            ? { hdrHint: prequeueStatus.hasDolbyVision ? 'DolbyVision' : 'HDR10' }
-            : {}),
         },
       });
     },

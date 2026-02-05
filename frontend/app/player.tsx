@@ -141,7 +141,6 @@ export default function PlayerScreen() {
     passthroughDescription: passthroughDescriptionParam,
     tvgId: tvgIdParam,
     useNativePlayer: useNativePlayerParam,
-    hdrHint: hdrHintParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -304,12 +303,6 @@ export default function PlayerScreen() {
     });
   }, []);
   // ===== END DEBUG =====
-
-  // Parse HDR hint for native player (DolbyVision, HDR10, or HLG)
-  const hdrHint = useMemo(() => {
-    const raw = Array.isArray(hdrHintParam) ? hdrHintParam[0] : hdrHintParam;
-    return raw?.trim() as 'HDR10' | 'DolbyVision' | 'HLG' | undefined;
-  }, [hdrHintParam]);
 
   // Parse tvgId for EPG lookup (live TV only)
   const tvgId = useMemo(() => {
@@ -6058,7 +6051,6 @@ export default function PlayerScreen() {
               mediaType={mediaType}
               onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
               onPlaybackStateChanged={handleNativePlaybackStateChanged}
-              hdrHint={useNativePlayer ? hdrHint : undefined}
               controlsVisible={useNativePlayer ? controlsVisible : undefined}
             />
           </View>

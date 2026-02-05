@@ -95,7 +95,6 @@ export default function NativePlayerDebugScreen() {
   const [logs, setLogs] = useState<string[]>([]);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [hdrHint, setHdrHint] = useState<'HDR10' | 'DolbyVision' | 'HLG' | undefined>(undefined);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-hide controls after 4 seconds
@@ -145,7 +144,7 @@ export default function NativePlayerDebugScreen() {
       return;
     }
 
-    addLog(`Launching player with URL: ${url}${hdrHint ? ` (HDR hint: ${hdrHint})` : ''}`);
+    addLog(`Launching player with URL: ${url}`);
     setIsPlaying(true);
     setPaused(false);
     setError(null);
@@ -153,7 +152,7 @@ export default function NativePlayerDebugScreen() {
     setDuration(0);
     setAudioTracks([]);
     setSubtitleTracks([]);
-  }, [url, hdrHint, addLog]);
+  }, [url, addLog]);
 
   const handleStop = useCallback(() => {
     addLog('Stopping playback');
@@ -265,29 +264,6 @@ export default function NativePlayerDebugScreen() {
                     autoCorrect={false}
                     keyboardType="url"
                   />
-                  <Text style={styles.sectionTitle}>HDR Hint (pre-configure renderer)</Text>
-                  <View style={styles.hdrHintRow}>
-                    <FocusablePressable
-                      text="Auto"
-                      onSelect={() => setHdrHint(undefined)}
-                      style={[styles.hdrHintButton, !hdrHint && styles.hdrHintButtonActive]}
-                    />
-                    <FocusablePressable
-                      text="HDR10"
-                      onSelect={() => setHdrHint('HDR10')}
-                      style={[styles.hdrHintButton, hdrHint === 'HDR10' && styles.hdrHintButtonActive]}
-                    />
-                    <FocusablePressable
-                      text="Dolby Vision"
-                      onSelect={() => setHdrHint('DolbyVision')}
-                      style={[styles.hdrHintButton, hdrHint === 'DolbyVision' && styles.hdrHintButtonActive]}
-                    />
-                    <FocusablePressable
-                      text="HLG"
-                      onSelect={() => setHdrHint('HLG')}
-                      style={[styles.hdrHintButton, hdrHint === 'HLG' && styles.hdrHintButtonActive]}
-                    />
-                  </View>
                   <DefaultFocus>
                     <FocusablePressable
                       text="Launch Player"
@@ -329,7 +305,7 @@ export default function NativePlayerDebugScreen() {
                 <View style={[styles.playerWrapper, isFullscreen && styles.fullscreenPlayer]}>
                   <NativePlayer
                     ref={playerRef}
-                    source={{ uri: url, hdrHint }}
+                    source={{ uri: url }}
                     paused={paused}
                     volume={1}
                     rate={1}
@@ -534,23 +510,6 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.inverse,
       fontWeight: '600',
       fontSize: 16,
-    },
-    hdrHintRow: {
-      flexDirection: 'row',
-      gap: theme.spacing.sm,
-      flexWrap: 'wrap',
-    },
-    hdrHintButton: {
-      backgroundColor: theme.colors.background.surface,
-      paddingVertical: theme.spacing.sm,
-      paddingHorizontal: theme.spacing.md,
-      borderRadius: theme.radius.sm,
-      borderWidth: 1,
-      borderColor: theme.colors.border.subtle,
-    },
-    hdrHintButtonActive: {
-      backgroundColor: theme.colors.brand.primary,
-      borderColor: theme.colors.brand.primary,
     },
     samplesSection: {
       gap: theme.spacing.sm,

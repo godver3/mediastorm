@@ -549,7 +549,6 @@ export const launchNativePlayer = (
     preselectedAudioTrack?: number; // Track index baked into HLS session
     preselectedSubtitleTrack?: number; // Track index baked into HLS session
     useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
-    hdrHint?: 'HDR10' | 'DolbyVision' | 'HLG'; // HDR content type hint for native players
   } = {},
 ) => {
   const {
@@ -579,7 +578,6 @@ export const launchNativePlayer = (
     preselectedAudioTrack,
     preselectedSubtitleTrack,
     useNativePlayer,
-    hdrHint,
   } = options;
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
@@ -624,7 +622,6 @@ export const launchNativePlayer = (
         ? { preselectedSubtitleTrack: preselectedSubtitleTrack.toString() }
         : {}),
       ...(useNativePlayer ? { useNativePlayer: '1' } : {}),
-      ...(hdrHint ? { hdrHint } : {}),
     },
   });
 };
@@ -1021,9 +1018,6 @@ export const initiatePlayback = async (
   const passthroughDescription =
     result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_description : undefined;
 
-  // Determine HDR hint for native player
-  const hdrHint = hasDolbyVision ? 'DolbyVision' : hasHDR10 ? 'HDR10' : undefined;
-
   launchNativePlayer(streamUrl, headerImage, title, router, {
     ...options,
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
@@ -1042,7 +1036,6 @@ export const initiatePlayback = async (
     ...(typeof selectedSubtitleTrack === 'number' ? { preselectedSubtitleTrack: selectedSubtitleTrack } : {}),
     // Native player flags for direct streaming (bypasses HLS)
     ...(isNativePlatform ? { useNativePlayer: true } : {}),
-    ...(isNativePlatform && hdrHint ? { hdrHint } : {}),
   });
 };
 

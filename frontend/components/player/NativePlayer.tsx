@@ -38,9 +38,6 @@ export interface BufferingEvent {
 export interface NativePlayerSource {
   uri: string;
   headers?: Record<string, string>;
-  // Hint for HDR content type - allows pre-configuring the renderer for HDR
-  // before playback starts (important for DV Profile 5 dual-layer content)
-  hdrHint?: 'HDR10' | 'DolbyVision' | 'HLG';
 }
 
 // Subtitle styling configuration for native players (KSPlayer/MPV)

@@ -76,7 +76,6 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     selectedSubtitleTrackIndex,
     onVideoSize,
     onTracksAvailable,
-    hdrHint,
     subtitleSize = 1.0,
     controlsVisible,
   } = props;
@@ -299,7 +298,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
   return (
     <NativePlayer
       ref={playerRef}
-      source={{ uri: movie, hdrHint }}
+      source={{ uri: movie }}
       paused={paused}
       volume={volume}
       audioTrack={selectedAudioTrackIndex ?? undefined}

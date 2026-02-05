@@ -64,8 +64,6 @@ export interface VideoPlayerProps {
   onPictureInPictureStatusChanged?: (isActive: boolean) => void;
   /** Called when native playback state changes (for syncing paused state on TV platforms) */
   onPlaybackStateChanged?: (isPlaying: boolean) => void;
-  /** HDR content type hint for native players (allows pre-configuring renderer) */
-  hdrHint?: 'HDR10' | 'DolbyVision' | 'HLG';
   /** Whether player controls overlay is visible (for subtitle positioning) */
   controlsVisible?: boolean;
 }

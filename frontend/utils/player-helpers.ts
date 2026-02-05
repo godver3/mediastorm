@@ -49,7 +49,6 @@ export interface PlayerParams extends Record<string, any> {
   passthroughName?: string; // AIOStreams passthrough format: raw display name
   passthroughDescription?: string; // AIOStreams passthrough format: raw description
   useNativePlayer?: string; // Use NativePlayer (KSPlayer/MPV) instead of HLS
-  hdrHint?: string; // HDR content type hint: 'HDR10' | 'DolbyVision' | 'HLG'
 }
 
 export const parseBooleanParam = (value?: string | string[]): boolean => {
