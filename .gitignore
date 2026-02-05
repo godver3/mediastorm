@@ -113,6 +113,9 @@ GEMINI.md
 CLAUDE.md
 NEXT_BUILD_TODO.md
 
+# KSPlayer fork symlink (actual repo at ~/ksplayer)
+ksplayer
+
 # Planning/tracking docs
 docs/
 .monitoring/
