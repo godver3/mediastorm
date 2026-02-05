@@ -7,7 +7,14 @@
   "author": "NovaStream",
   "license": "MIT",
   "peerDependencies": {
-    "expo": "*",
-    "expo-modules-core": "*"
+    "react": "*",
+    "react-native": "*"
+  },
+  "react-native": {
+    "android": {
+      "sourceDir": "android",
+      "packageImportPath": "import com.strmr.mpvplayer.MpvPackage;",
+      "packageInstance": "new MpvPackage()"
+    }
   }
 }
