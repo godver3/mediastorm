@@ -549,18 +549,19 @@ public class KSPlayerView: UIView {
             return
         }
 
-        let controlsOffset: CGFloat = controlsVisible ? -100 : 0
+        let controlsOffset: CGFloat = controlsVisible ? -125 : 0
 
         DispatchQueue.main.async {
             // Ensure parent views don't clip the subtitles when they move up
             // KSPlayer's internal views may have clipsToBounds enabled by default
             pv.clipsToBounds = false
             pv.subtitleBackView.superview?.clipsToBounds = false
-            pv.subtitleLabel.superview?.clipsToBounds = false
 
             UIView.animate(withDuration: 0.2) {
+                // Only transform subtitleBackView — subtitleLabel is a child of backView,
+                // so it moves with it automatically. Transforming both causes the label
+                // to shift twice (parent transform + its own).
                 pv.subtitleBackView.transform = CGAffineTransform(translationX: 0, y: controlsOffset)
-                pv.subtitleLabel.transform = CGAffineTransform(translationX: 0, y: controlsOffset)
             }
         }
         print("[KSPlayer] Subtitle position updated: controlsVisible=\(controlsVisible), offset=\(controlsOffset)")
