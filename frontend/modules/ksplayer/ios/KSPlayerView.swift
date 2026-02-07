@@ -549,7 +549,12 @@ public class KSPlayerView: UIView {
             return
         }
 
+        #if os(tvOS)
         let controlsOffset: CGFloat = controlsVisible ? -125 : 0
+        #else
+        let isPortrait = bounds.height > bounds.width
+        let controlsOffset: CGFloat = controlsVisible ? (isPortrait ? -175 : -125) : 0
+        #endif
 
         DispatchQueue.main.async {
             // Ensure parent views don't clip the subtitles when they move up

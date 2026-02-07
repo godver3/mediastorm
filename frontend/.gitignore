@@ -7,6 +7,8 @@ android/
 # But keep native module code in modules/
 !modules/*/android/
 modules/*/android/build/
+!modules/*/ios/
+modules/*/ios/build/
 npm-debug.*
 *.jks
 *.p8
