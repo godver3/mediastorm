@@ -193,6 +193,11 @@ public class KSPlayerView: UIView {
         KSOptions.asynchronousDecompression = true
         #endif
 
+        // Forward KSPlayer internal debug logs to our debugLog() → onDebugLog → Metro console
+        KSOptions.debugLogHandler = { [weak self] message in
+            self?.debugLog(message)
+        }
+
         print("[KSPlayer] Global settings: firstPlayer=KSMEPlayer, hwDecode=\(KSOptions.hardwareDecode), asyncDecomp=\(KSOptions.asynchronousDecompression)")
 
         // Create the player view
@@ -266,12 +271,13 @@ public class KSPlayerView: UIView {
         let currentTime = playerLayer.player.currentPlaybackTime
         let duration = playerLayer.player.duration
 
-        // Only send valid numbers
-        guard currentTime.isFinite && duration.isFinite else { return }
+        // Only require currentTime to be finite. Duration may be NaN/infinity
+        // for DV P5 HLS EVENT playlists (before remux completes with EXT-X-ENDLIST).
+        guard currentTime.isFinite else { return }
 
         onProgress?([
             "currentTime": currentTime,
-            "duration": duration
+            "duration": duration.isFinite ? duration : 0
         ])
     }
 
@@ -723,9 +729,12 @@ extension KSPlayerView: PlayerControllerDelegate {
 
             if let player = playerView,
                let playerLayer = player.playerLayer {
-                let duration = playerLayer.player.duration
+                let rawDuration = playerLayer.player.duration
+                // For DV P5 HLS remux, AVPlayer reports NaN duration for EVENT playlists.
+                // Use 0 as fallback — JS side has the correct duration from backend metadata.
+                let duration = rawDuration.isFinite && rawDuration > 0 ? rawDuration : 0.0
                 let size = playerLayer.player.naturalSize
-                print("[KSPlayer] readyToPlay - duration=\(duration), size=\(size)")
+                print("[KSPlayer] readyToPlay - duration=\(duration) (raw=\(rawDuration)), size=\(size)")
 
                 onLoad?([
                     "duration": duration,

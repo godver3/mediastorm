@@ -143,7 +143,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     // Convert to TrackInfo format (id + name)
     const audioTracks = data.audioTracks.map((t) => ({
       id: t.id,
-      name: t.title || t.language || `Audio ${t.id}`,
+      name: t.title || t.language || '',
     }));
     const subtitleTracks = data.subtitleTracks.map((t) => ({
       id: t.id,

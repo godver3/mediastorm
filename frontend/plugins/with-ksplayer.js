@@ -40,8 +40,8 @@ const withKSPlayer = (config) => {
         // DisplayCriteria also from fork to stay in sync
         const podLines = `
   # KSPlayer - Native video player with FFmpeg support (forked with DV P5 + italic fixes)
-  pod 'KSPlayer', :git => 'https://github.com/godver3/KSPlayer.git', :branch => 'strmr-fixes'
-  pod 'DisplayCriteria', :git => 'https://github.com/godver3/KSPlayer.git', :branch => 'strmr-fixes', :modular_headers => true
+  pod 'KSPlayer', :path => '../../ksplayer'
+  pod 'DisplayCriteria', :path => '../../ksplayer', :modular_headers => true
   pod 'FFmpegKit', :git => 'https://github.com/kingslay/FFmpegKit.git', :branch => 'main', :modular_headers => true
   pod 'Libass', :git => 'https://github.com/kingslay/FFmpegKit.git', :branch => 'main', :modular_headers => true
 

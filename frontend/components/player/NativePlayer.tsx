@@ -122,6 +122,16 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
   } = props;
 
   const playerRef = useRef<any>(null);
+  const dvLogShown = useRef(false);
+
+  // Forward native debug logs to Metro console (for DV color debugging)
+  const handleDebugLog = useCallback((data: { message: string }) => {
+    // Only log DV-related messages and deduplicate (fires per frame)
+    if (data.message?.includes('[KSPlayer-DV]') && !dvLogShown.current) {
+      console.log('[NativePlayer]', data.message);
+      dvLogShown.current = true;
+    }
+  }, []);
 
   useImperativeHandle(ref, () => ({
     seek: (time: number) => {
@@ -205,6 +215,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       onError={handleError}
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
+      onDebugLog={handleDebugLog}
     />
   );
 });

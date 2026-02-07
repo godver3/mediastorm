@@ -4276,12 +4276,33 @@ export default function PlayerScreen() {
       });
 
       // Build track options from player-reported tracks, filtering out "Disable" options
+      // When the player doesn't provide a name (e.g. AVPlayer with fMP4), enrich from backend metadata
       const playerAudioOptions: TrackOption[] = audioTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
-        .map((track) => ({
-          id: String(track.id),
-          label: track.name || `Audio ${track.id}`,
-        }));
+        .map((track, idx) => {
+          let label = track.name;
+          let description: string | undefined;
+          if (!label && audioStreamMetadata?.[idx]) {
+            const meta = audioStreamMetadata[idx];
+            const title = toTitleCase(meta.title);
+            const language = formatLanguage(meta.language);
+            const labelParts: string[] = [];
+            if (title) labelParts.push(title);
+            if (language) labelParts.push(language);
+            label = labelParts.length ? labelParts.join(' \u00b7 ') : undefined;
+            const channel = meta.channelLayout?.trim() || (meta.channels ? `${meta.channels}ch` : undefined);
+            const codec = meta.codecName;
+            const descParts: string[] = [];
+            if (channel) descParts.push(channel);
+            if (codec) descParts.push(codec.toUpperCase());
+            description = descParts.length ? descParts.join(' \u00b7 ') : undefined;
+          }
+          return {
+            id: String(track.id),
+            label: label || `Audio ${track.id}`,
+            description,
+          };
+        });
 
       const playerSubtitleOptions: TrackOption[] = subtitleTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
@@ -4380,7 +4401,7 @@ export default function PlayerScreen() {
         }
       }
     },
-    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack],
+    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack, audioStreamMetadata],
   );
 
   const selectedAudioTrackIndex = useMemo(() => {
@@ -6180,7 +6201,10 @@ export default function PlayerScreen() {
                   isChildModalOpen={isModalOpen}
                   isSeeking={isTVSeeking}>
                   <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
-                    <>
+                    <Animated.View
+                      style={tvOverlayAnimatedStyle}
+                      pointerEvents="box-none"
+                      renderToHardwareTextureAndroid={true}>
                       {/* Top gradient overlay */}
                       <LinearGradient
                         colors={['rgba(0, 0, 0, 0.7)', 'rgba(0, 0, 0, 0)']}
@@ -6193,11 +6217,6 @@ export default function PlayerScreen() {
                         style={styles.bottomGradient}
                         pointerEvents="none"
                       />
-                    </>
-                    <Animated.View
-                      style={tvOverlayAnimatedStyle}
-                      pointerEvents="box-none"
-                      renderToHardwareTextureAndroid={true}>
                       <View
                         style={styles.overlayContent}
                         pointerEvents="box-none"
