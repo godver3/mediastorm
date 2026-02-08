@@ -209,6 +209,8 @@ public class KSPlayerView: UIView {
         player.toolBar.isHidden = true
         player.toolBar.timeSlider.isHidden = true
         player.navigationBar.isHidden = true
+        player.topMaskView.isHidden = true
+        player.bottomMaskView.isHidden = true
         player.isMaskShow = false
 
         // Ensure subtitle views are visible (they might be hidden by default)
