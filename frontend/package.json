@@ -1,7 +1,7 @@
 {
   "name": "strmr",
   "main": "expo-router/entry",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "scripts": {
     "start": "expo start",
     "start:tv": "EXPO_TV=1 expo start",
