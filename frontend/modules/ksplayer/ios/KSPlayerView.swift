@@ -603,7 +603,36 @@ public class KSPlayerView: UIView {
             ]
         }
 
-        let subtitleTracks = player.tracks(mediaType: .subtitle).enumerated().map { (index, track) -> [String: Any] in
+        // First try player.tracks() which reads from FFmpeg's asset tracks
+        var subtitleTracksList = player.tracks(mediaType: .subtitle)
+        debugLog("getAvailableTracks: player.tracks(subtitle) count=\(subtitleTracksList.count)")
+
+        // If player.tracks() is empty, fall back to srtControl.subtitleInfos
+        // VideoPlayerView delays loading embedded subtitles by ~1 second after readyToPlay,
+        // so srtControl may have tracks that player.tracks() missed or hasn't reported yet
+        if subtitleTracksList.isEmpty, let pv = playerView {
+            let srtInfos = pv.srtControl.subtitleInfos
+            debugLog("getAvailableTracks: srtControl.subtitleInfos count=\(srtInfos.count)")
+            if !srtInfos.isEmpty {
+                // Use srtControl infos — these include PGS/bitmap subtitle tracks
+                let subtitleTracks = srtInfos.enumerated().map { (index, info) -> [String: Any] in
+                    return [
+                        "id": index,
+                        "type": "subtitle",
+                        "title": info.name,
+                        "language": (info as? MediaPlayerTrack)?.language ?? "",
+                        "codec": "",
+                        "selected": info.isEnabled
+                    ]
+                }
+                return [
+                    "audioTracks": audioTracks,
+                    "subtitleTracks": subtitleTracks
+                ]
+            }
+        }
+
+        let subtitleTracks = subtitleTracksList.enumerated().map { (index, track) -> [String: Any] in
             return [
                 "id": index,
                 "type": "subtitle",
@@ -752,6 +781,19 @@ extension KSPlayerView: PlayerControllerDelegate {
 
                 // Report available tracks
                 reportTracks()
+
+                // Re-report tracks after a delay to pick up embedded subtitles (especially PGS/bitmap).
+                // VideoPlayerView delays loading embedded subtitles by ~1 second after readyToPlay
+                // because some are stored in the video stream and arrive late.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self = self else { return }
+                    let delayedTracks = self.getAvailableTracks()
+                    let delayedSubCount = (delayedTracks["subtitleTracks"] as? [[String: Any]])?.count ?? 0
+                    self.debugLog("delayed track re-report: subtitle count=\(delayedSubCount)")
+                    if delayedSubCount > 0 {
+                        self.onTracksChanged?(delayedTracks)
+                    }
+                }
 
                 // Report video info including HDR and frame rate
                 reportVideoInfo(player: playerLayer.player)
