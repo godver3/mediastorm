@@ -6,6 +6,8 @@ vendor/
 backend/bin/
 backend/novastream
 backend/novastream.exe
+*.ipa
+frontend/scripts/build-appstore.sh
 client/NovaStream/android/app/build/
 client/NovaStream/ios/build/
 
