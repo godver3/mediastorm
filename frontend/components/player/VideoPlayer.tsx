@@ -279,6 +279,23 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     });
     originalHandleTracksChanged(data);
     applyInitialTracks();
+
+    // Force-apply current pending tracks now that KSPlayer reports tracks are available.
+    // applyInitialTracks may have already been marked as applied (from an earlier call when
+    // KSPlayer tracks weren't ready yet), so we need to directly apply here as a fallback.
+    const audio = pendingAudioRef.current;
+    const subtitle = pendingSubtitleRef.current;
+    if (audio !== undefined && audio !== null && playerRef.current) {
+      console.log('[NativePlayerAdapter] onTracksChanged: force-applying audio track:', audio);
+      playerRef.current.setAudioTrack(audio);
+      lastAppliedAudioRef.current = audio;
+    }
+    if (subtitle !== undefined && subtitle !== null && subtitle >= 0 && playerRef.current) {
+      console.log('[NativePlayerAdapter] onTracksChanged: force-applying subtitle track:', subtitle);
+      playerRef.current.setSubtitleTrack(subtitle);
+      lastAppliedSubtitleRef.current = subtitle;
+    }
+    tracksReadyRef.current = true;
   }, [originalHandleTracksChanged, applyInitialTracks]);
 
   // Build subtitle style to match our SubtitleOverlay appearance

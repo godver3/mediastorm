@@ -4356,20 +4356,22 @@ export default function PlayerScreen() {
         }
       }
 
-      // Only use player-reported subtitle tracks if we don't have backend-probed tracks
-      // For non-HLS streams, backend tracks are more reliable (correct indices)
-      // For native player: use player-reported tracks if backend found none (e.g., PGS subtitles)
+      // For native player: always use player-reported tracks (KSPlayer handles subtitles internally)
+      // For non-native player: only use player tracks if backend found none (backend indices are more reliable)
       const backendHasNoTracks = !backendSubtitleTracks || backendSubtitleTracks.length === 0;
+      const shouldUsePlayerTracks = useNativePlayer
+        ? playerSubtitleOptions.length > 0
+        : subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && backendHasNoTracks;
       console.log('[player] handleTracksAvailable subtitle check', {
         subtitleTrackOptionsLength: subtitleTrackOptions.length,
         playerSubtitleOptionsLength: playerSubtitleOptions.length,
         backendHasNoTracks,
         backendSubtitleTracks: backendSubtitleTracks ? backendSubtitleTracks.length : null,
         useNativePlayer,
-        condition: subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && backendHasNoTracks,
+        shouldUsePlayerTracks,
       });
-      if (subtitleTrackOptions.length <= 1 && playerSubtitleOptions.length > 0 && backendHasNoTracks) {
-        console.log('[player] using player-reported subtitle tracks (backend had none)', {
+      if (shouldUsePlayerTracks) {
+        console.log('[player] using player-reported subtitle tracks', {
           playerTracksCount: playerSubtitleOptions.length,
           useNativePlayer,
           preselectedSubtitleTrack,
@@ -4702,11 +4704,18 @@ export default function PlayerScreen() {
             console.log('[player] preserving external subtitle selection');
             return;
           }
-          // Clear any player-reported tracks and show only "Off" option
+          if (useNativePlayer) {
+            // Native player (KSPlayer) can handle PGS/bitmap subtitles natively.
+            // Don't clear player-reported tracks — handleTracksAvailable will populate
+            // from KSPlayer's own track detection.
+            console.log('[player] no text-based tracks from backend, deferring to native player for bitmap subtitle support');
+            triggerAutoSubtitleSearchIfNeeded();
+            return;
+          }
+          // Non-native player: clear tracks (can't render PGS)
           console.log('[player] no text-based subtitle tracks found, clearing player-reported tracks');
           setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
           setSelectedSubtitleTrackId('off');
-          // No embedded tracks available - trigger auto-search
           triggerAutoSubtitleSearchIfNeeded();
         }
       })
