@@ -37,11 +37,12 @@ const withKSPlayer = (config) => {
         const insertPoint = podfileContent.indexOf(targetMatch[0]) + targetMatch[0].length;
 
         // KSPlayer from our fork (DV P5 color fix + italic obliqueness fix)
-        // DisplayCriteria also from fork to stay in sync
+        // Use absolute path so it resolves even when EAS copies project to a temp dir
+        const ksplayerAbsPath = path.resolve(require('os').homedir(), 'ksplayer');
         const podLines = `
   # KSPlayer - Native video player with FFmpeg support (forked with DV P5 + italic fixes)
-  pod 'KSPlayer', :path => '../../ksplayer'
-  pod 'DisplayCriteria', :path => '../../ksplayer', :modular_headers => true
+  pod 'KSPlayer', :path => '${ksplayerAbsPath}'
+  pod 'DisplayCriteria', :path => '${ksplayerAbsPath}', :modular_headers => true
   pod 'FFmpegKit', :git => 'https://github.com/kingslay/FFmpegKit.git', :branch => 'main', :modular_headers => true
   pod 'Libass', :git => 'https://github.com/kingslay/FFmpegKit.git', :branch => 'main', :modular_headers => true
 
