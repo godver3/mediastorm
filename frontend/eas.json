@@ -8,9 +8,6 @@
       "extends": "production",
       "distribution": "internal",
       "channel": "development",
-      "env": {
-        "ANDROID_HOME": "/root/android-sdk"
-      },
       "android": {
         "buildType": "apk",
         "withoutCredentials": true,
@@ -24,8 +21,7 @@
     "development_tv": {
       "extends": "development",
       "env": {
-        "EXPO_TV": "1",
-        "ANDROID_HOME": "/root/android-sdk"
+        "EXPO_TV": "1"
       },
       "android": {
         "buildType": "apk",
@@ -41,9 +37,6 @@
       "extends": "production",
       "distribution": "internal",
       "channel": "preview",
-      "env": {
-        "ANDROID_HOME": "/root/android-sdk"
-      },
       "ios": {
         "simulator": true
       },
@@ -55,8 +48,7 @@
     "preview_tv": {
       "extends": "preview",
       "env": {
-        "EXPO_TV": "1",
-        "ANDROID_HOME": "/root/android-sdk"
+        "EXPO_TV": "1"
       }
     },
     "production": {
@@ -74,8 +66,7 @@
     "production_tv": {
       "extends": "production",
       "env": {
-        "EXPO_TV": "1",
-        "ANDROID_HOME": "/root/android-sdk"
+        "EXPO_TV": "1"
       },
       "android": {
         "buildType": "apk",
