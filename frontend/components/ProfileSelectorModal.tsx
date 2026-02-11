@@ -199,14 +199,25 @@ export const ProfileSelectorModal: React.FC = () => {
     }
   }, [loading, hasMultipleUsers, isEnabled]);
 
-  // Show when app returns from background
+  // Show when app returns from background.
+  // Track when the app left 'active' so we can ignore brief inactive blips
+  // (e.g. iOS fullScreenModal dismiss triggers active→inactive→active).
+  const leftActiveAtRef = useRef<number>(0);
   useEffect(() => {
     if (!isEnabled || !hasMultipleUsers) {
       return;
     }
     const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (appStateRef.current === 'active' && nextAppState !== 'active') {
+        leftActiveAtRef.current = Date.now();
+      }
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        setVisible(true);
+        // Only show if the app was away for >2s — brief inactive blips from
+        // screen transitions (e.g. player dismiss) are ignored.
+        const awayMs = Date.now() - leftActiveAtRef.current;
+        if (awayMs > 2000) {
+          setVisible(true);
+        }
       }
       appStateRef.current = nextAppState;
     });
