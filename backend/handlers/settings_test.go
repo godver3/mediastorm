@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -96,6 +97,58 @@ func TestSettingsHandler_PutSettings(t *testing.T) {
 	}
 	if len(saved.Usenet) != 1 || saved.Usenet[0].Username != payload.Usenet[0].Username || saved.Server.Port != payload.Server.Port {
 		t.Fatalf("settings not persisted: %+v", saved)
+	}
+}
+
+func TestSettingsHandler_AlwaysShowProfileSelector(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	// Write raw JSON without alwaysShowProfileSelector to simulate an old config
+	oldConfig := `{"server":{"host":"127.0.0.1","port":7777},"display":{"badgeVisibility":["watchProgress"],"watchStateIconStyle":"colored"}}`
+	if err := os.WriteFile(cfgPath, []byte(oldConfig), 0644); err != nil {
+		t.Fatalf("write old config: %v", err)
+	}
+
+	// Load should backfill AlwaysShowProfileSelector to true
+	loaded, err := mgr.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !loaded.Display.AlwaysShowProfileSelector {
+		t.Fatal("expected AlwaysShowProfileSelector to default to true after backfill")
+	}
+
+	// Round-trip through PUT/GET: explicitly set to false
+	handler := NewSettingsHandler(mgr)
+	updated := loaded
+	updated.Display.AlwaysShowProfileSelector = false
+
+	buf, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(buf))
+	rec := httptest.NewRecorder()
+	handler.PutSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// GET should return false (user's explicit choice preserved)
+	req = httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rec = httptest.NewRecorder()
+	handler.GetSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status %d", rec.Code)
+	}
+	var got config.Settings
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Display.AlwaysShowProfileSelector {
+		t.Fatal("expected AlwaysShowProfileSelector to be false after explicit PUT")
 	}
 }
 

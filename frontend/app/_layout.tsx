@@ -27,6 +27,7 @@ import { LoadingScreenProvider } from '../components/LoadingScreenContext';
 import { MenuProvider } from '../components/MenuContext';
 import { ContinueWatchingProvider } from '../components/ContinueWatchingContext';
 import { PinEntryModal } from '../components/PinEntryModal';
+import { ProfileSelectorModal } from '../components/ProfileSelectorModal';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
@@ -79,6 +80,7 @@ function AuthGate() {
   return (
     <UserProfilesProvider>
       <PinEntryModal />
+      <ProfileSelectorModal />
       <LiveProvider>
         <MultiscreenProvider>
           <MovieReleasesProvider>

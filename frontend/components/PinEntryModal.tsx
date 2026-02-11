@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import FocusablePressable from '@/components/FocusablePressable';
@@ -11,11 +12,14 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
   // Use larger sizes for TV and wide screens (tablets, foldables)
   const useLargeSizing = Platform.isTV || isLargeScreen;
   return StyleSheet.create({
-    modalOverlay: {
+    blurOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    darkOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
     },
     modalContainer: {
       backgroundColor: theme.colors.background.surface,
@@ -139,17 +143,24 @@ export const PinEntryModal: React.FC = () => {
   const inputRef = useRef<TextInput>(null);
   const tempPinRef = useRef('');
   const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const verifyingRef = useRef(false);
 
   const pendingUser = pendingPinUserId ? users.find((u) => u.id === pendingPinUserId) : null;
   const isVisible = !!pendingPinUserId && !!pendingUser;
 
-  // Reset state when modal opens/closes
+  // Reset state when modal opens/closes, and auto-focus the input
   useEffect(() => {
     if (isVisible) {
       setPin('');
       tempPinRef.current = '';
       setError(null);
       setLoading(false);
+      verifyingRef.current = false;
+      // Auto-focus the PIN input after a short delay to let the modal animate in
+      if (!Platform.isTV) {
+        const timer = setTimeout(() => inputRef.current?.focus(), 100);
+        return () => clearTimeout(timer);
+      }
     }
     return () => {
       if (autoSubmitTimerRef.current) {
@@ -171,16 +182,20 @@ export const PinEntryModal: React.FC = () => {
         tempPinRef.current = text;
       } else {
         setPin(text);
-        // Auto-submit after 800ms pause if PIN is at least 4 chars (non-TV only)
-        if (text.trim().length >= 4 && !loading) {
-          autoSubmitTimerRef.current = setTimeout(() => {
-            if (pendingPinUserId) {
-              void selectUserWithPin(pendingPinUserId, text.trim()).catch((err) => {
-                setError(err instanceof Error ? err.message : 'Invalid PIN');
-                setPin('');
-              });
+        // Immediately try to verify on each keystroke once >= 4 chars.
+        // If correct, auto-accepts instantly. If wrong, silently continues.
+        const pinValue = text.trim();
+        if (pinValue.length >= 4 && !loading && pendingPinUserId && !verifyingRef.current) {
+          verifyingRef.current = true;
+          void (async () => {
+            try {
+              await selectUserWithPin(pendingPinUserId, pinValue);
+              // Success — modal will close via pendingPinUserId clearing
+            } catch {
+              // Wrong PIN — silently allow user to keep typing
+              verifyingRef.current = false;
             }
-          }, 800);
+          })();
         }
       }
       setError(null);
@@ -244,7 +259,8 @@ export const PinEntryModal: React.FC = () => {
 
   return (
     <Modal visible={isVisible} transparent={true} animationType="fade" onRequestClose={handleCancel}>
-      <View style={styles.modalOverlay}>
+      <BlurView intensity={40} tint="dark" style={styles.blurOverlay}>
+        <View style={styles.darkOverlay} pointerEvents="none" />
         <View style={styles.modalContainer}>
           <View style={styles.header}>
             {pendingUser && (
@@ -326,7 +342,7 @@ export const PinEntryModal: React.FC = () => {
             />
           </View>
         </View>
-      </View>
+      </BlurView>
     </Modal>
   );
 };

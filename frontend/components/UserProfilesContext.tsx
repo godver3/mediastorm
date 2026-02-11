@@ -39,6 +39,10 @@ interface UserProfilesContextValue {
   cancelPinEntry: () => void;
   // Whether this is an initial app load PIN check (can't cancel if all users have PINs)
   isInitialPinCheck: boolean;
+  // Profile selector suppresses automatic PIN prompt on initial load
+  setProfileSelectorActive: (active: boolean) => void;
+  // Increments on every successful PIN verification (used by profile selector to dismiss)
+  pinVerifiedGeneration: number;
 }
 
 const UserProfilesContext = createContext<UserProfilesContextValue | undefined>(undefined);
@@ -84,8 +88,10 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [activeUserId, setActiveUserId] = useState<Nullable<string>>(null);
   const [pendingPinUserId, setPendingPinUserId] = useState<Nullable<string>>(null);
   const [isInitialPinCheck, setIsInitialPinCheck] = useState(false);
+  const [pinVerifiedGeneration, setPinVerifiedGeneration] = useState(0);
   const activeUserIdRef = useRef<Nullable<string>>(null);
   const usersRef = useRef<UserProfile[]>([]);
+  const profileSelectorActiveRef = useRef(false);
   const { backendUrl, isReady, loadUserSettings, isBackendReachable } = useBackendSettings();
 
   const findUser = useCallback(
@@ -134,7 +140,9 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
         // Check if the user has a PIN and we haven't already verified
         // Skip PIN check if explicitly requested (e.g., after successful PIN entry)
-        if (!skipPinCheck && nextUser?.hasPin && !activeUserIdRef.current) {
+        // Also skip when the profile selector is active — it handles user selection,
+        // and selectUser() will trigger PIN entry for PIN-protected profiles.
+        if (!skipPinCheck && !profileSelectorActiveRef.current && nextUser?.hasPin && !activeUserIdRef.current) {
           // This is initial app load with a PIN-protected user
           console.log('[UserProfiles] Active user has PIN, prompting for verification');
           setIsInitialPinCheck(true);
@@ -243,6 +251,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setIsInitialPinCheck(false);
       setActiveUserId(trimmed);
       activeUserIdRef.current = trimmed;
+      setPinVerifiedGeneration((g) => g + 1);
       await persistActiveUserId(trimmed);
       // Update client registration with the selected profile
       try {
@@ -258,6 +267,10 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const verifyPin = useCallback(async (id: string, pin: string): Promise<boolean> => {
     return apiService.verifyUserPin(id, pin);
+  }, []);
+
+  const setProfileSelectorActive = useCallback((active: boolean) => {
+    profileSelectorActiveRef.current = active;
   }, []);
 
   const cancelPinEntry = useCallback(async () => {
@@ -397,6 +410,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setPendingPinUserId,
       cancelPinEntry,
       isInitialPinCheck,
+      setProfileSelectorActive,
+      pinVerifiedGeneration,
     };
   }, [
     users,
@@ -422,6 +437,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     pendingPinUserId,
     cancelPinEntry,
     isInitialPinCheck,
+    setProfileSelectorActive,
+    pinVerifiedGeneration,
     findUser,
   ]);
 

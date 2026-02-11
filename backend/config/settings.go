@@ -342,6 +342,8 @@ type DisplaySettings struct {
 	WatchStateIconStyle string `json:"watchStateIconStyle"`
 	// HideWatched filters out fully watched content from trending shelves and custom lists.
 	HideWatched bool `json:"hideWatched,omitempty"`
+	// AlwaysShowProfileSelector forces the profile picker on every app open / un-background.
+	AlwaysShowProfileSelector bool `json:"alwaysShowProfileSelector"`
 }
 
 // SubtitleSettings defines subtitle provider configuration.
@@ -632,8 +634,9 @@ func DefaultSettings() Settings {
 			LoadingAnimationEnabled: true,
 		},
 		Display: DisplaySettings{
-			BadgeVisibility:     []string{"watchProgress"},
-			WatchStateIconStyle: "colored",
+			BadgeVisibility:           []string{"watchProgress"},
+			WatchStateIconStyle:       "colored",
+			AlwaysShowProfileSelector: true,
 		},
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
@@ -824,6 +827,13 @@ func (m *Manager) Load() (Settings, error) {
 				}
 				delete(filteringRaw, "excludeHdr")
 			}
+		}
+	}
+
+	// Backfill AlwaysShowProfileSelector default (true) for existing configs
+	if displayMap, ok := raw["display"].(map[string]interface{}); ok {
+		if _, exists := displayMap["alwaysShowProfileSelector"]; !exists {
+			displayMap["alwaysShowProfileSelector"] = true
 		}
 	}
 
