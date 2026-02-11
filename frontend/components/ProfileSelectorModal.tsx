@@ -3,6 +3,8 @@ import { AppState, type AppStateStatus, findNodeHandle, Image, Platform, Pressab
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 
+import { usePathname } from 'expo-router';
+
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
@@ -120,6 +122,10 @@ export const ProfileSelectorModal: React.FC = () => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
   const { settings } = useBackendSettings();
   const {
     users,
@@ -214,8 +220,10 @@ export const ProfileSelectorModal: React.FC = () => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // Only show if the app was away for >2s — brief inactive blips from
         // screen transitions (e.g. player dismiss) are ignored.
+        // Also skip if the player is active (PiP return to foreground).
         const awayMs = Date.now() - leftActiveAtRef.current;
-        if (awayMs > 2000) {
+        const onPlayer = pathnameRef.current === '/player';
+        if (awayMs > 2000 && !onPlayer) {
           setVisible(true);
         }
       }
