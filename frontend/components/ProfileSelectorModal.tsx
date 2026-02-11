@@ -27,6 +27,7 @@ const createStyles = (theme: NovaTheme) => {
       flex: 1,
       justifyContent: 'center',
       alignItems: 'center',
+      paddingHorizontal: responsiveSize(0, 24),
     },
     darkOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -36,8 +37,9 @@ const createStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.background.surface,
       borderRadius: responsiveSize(28, 20),
       padding: responsiveSize(64, 28),
-      minWidth: responsiveSize(700, 320),
+      minWidth: responsiveSize(700, 0),
       maxWidth: responsiveSize(960, 400),
+      width: Platform.isTV ? undefined : '100%',
       alignItems: 'center',
     },
     title: {
