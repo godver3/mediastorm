@@ -434,7 +434,8 @@ function IndexScreen() {
     refresh: refreshContinueWatching,
     hideFromContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId } = useUserProfiles();
+  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisible } =
+    useUserProfiles();
   const {
     data: trendingMovies,
     error: trendingMoviesError,
@@ -2313,7 +2314,7 @@ function IndexScreen() {
 
   // Spatial navigation: active when screen focused, menu closed, and no modals open
   const isSpatialNavActive =
-    focused && !isMenuOpen && !pendingPinUserId && !isRemoveConfirmVisible && !isVersionMismatchVisible;
+    focused && !isMenuOpen && !pendingPinUserId && !profileSelectorVisible && !isRemoveConfirmVisible && !isVersionMismatchVisible;
   const onDirectionHandledWithoutMovement = useCallback(
     (direction: Direction) => {
       if (direction === 'left') {

@@ -41,6 +41,9 @@ interface UserProfilesContextValue {
   isInitialPinCheck: boolean;
   // Profile selector suppresses automatic PIN prompt on initial load
   setProfileSelectorActive: (active: boolean) => void;
+  // Whether the profile selector overlay is currently visible (used by pages to deactivate spatial nav)
+  profileSelectorVisible: boolean;
+  setProfileSelectorVisible: (visible: boolean) => void;
   // Increments on every successful PIN verification (used by profile selector to dismiss)
   pinVerifiedGeneration: number;
 }
@@ -92,6 +95,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const activeUserIdRef = useRef<Nullable<string>>(null);
   const usersRef = useRef<UserProfile[]>([]);
   const profileSelectorActiveRef = useRef(false);
+  const [profileSelectorVisible, setProfileSelectorVisible] = useState(false);
   const { backendUrl, isReady, loadUserSettings, isBackendReachable } = useBackendSettings();
 
   const findUser = useCallback(
@@ -411,6 +415,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       cancelPinEntry,
       isInitialPinCheck,
       setProfileSelectorActive,
+      profileSelectorVisible,
+      setProfileSelectorVisible,
       pinVerifiedGeneration,
     };
   }, [
@@ -438,6 +444,8 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     cancelPinEntry,
     isInitialPinCheck,
     setProfileSelectorActive,
+    profileSelectorVisible,
+    setProfileSelectorVisible,
     pinVerifiedGeneration,
     findUser,
   ]);

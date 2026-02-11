@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { responsiveSize } from '@/theme/tokens/tvScale';
 
-const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
-  // Use larger sizes for TV and wide screens (tablets, foldables)
-  const useLargeSizing = Platform.isTV || isLargeScreen;
+const createStyles = (theme: NovaTheme) => {
+  const avatarSize = responsiveSize(100, 64);
+
   return StyleSheet.create({
     blurOverlay: {
       flex: 1,
@@ -23,66 +23,66 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
     },
     modalContainer: {
       backgroundColor: theme.colors.background.surface,
-      borderRadius: 16,
-      padding: 32,
-      minWidth: useLargeSizing ? 480 : 320,
-      maxWidth: useLargeSizing ? 600 : 400,
+      borderRadius: responsiveSize(24, 16),
+      padding: responsiveSize(56, 32),
+      minWidth: responsiveSize(640, 320),
+      maxWidth: responsiveSize(800, 400),
       alignItems: 'center',
     },
     header: {
       alignItems: 'center',
-      marginBottom: 24,
+      marginBottom: responsiveSize(36, 24),
     },
     avatar: {
-      width: 64,
-      height: 64,
-      borderRadius: 32,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarSize / 2,
       backgroundColor: theme.colors.accent.primary,
       justifyContent: 'center',
       alignItems: 'center',
-      marginBottom: 16,
+      marginBottom: responsiveSize(24, 16),
     },
     avatarText: {
-      fontSize: 28,
+      fontSize: responsiveSize(44, 28),
       fontWeight: '600',
       color: 'white',
     },
     modalTitle: {
-      fontSize: useLargeSizing ? 28 : 22,
+      fontSize: responsiveSize(40, 22),
       fontWeight: '700',
       color: theme.colors.text.primary,
-      marginBottom: 8,
+      marginBottom: responsiveSize(12, 8),
     },
     modalSubtitle: {
-      fontSize: useLargeSizing ? 18 : 14,
+      fontSize: responsiveSize(24, 14),
       color: theme.colors.text.secondary,
       textAlign: 'center',
     },
     errorContainer: {
       backgroundColor: 'rgba(239, 68, 68, 0.15)',
-      borderRadius: 8,
-      padding: 12,
-      marginBottom: 16,
+      borderRadius: responsiveSize(12, 8),
+      padding: responsiveSize(18, 12),
+      marginBottom: responsiveSize(24, 16),
       width: '100%',
     },
     errorText: {
       color: '#EF4444',
-      fontSize: useLargeSizing ? 16 : 14,
+      fontSize: responsiveSize(22, 14),
       textAlign: 'center',
     },
     pinInputWrapper: {
-      marginBottom: 24,
+      marginBottom: responsiveSize(36, 24),
     },
     pinInput: {
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: 12,
-      paddingHorizontal: 20,
-      paddingVertical: useLargeSizing ? 16 : 14,
-      fontSize: useLargeSizing ? 24 : 18,
+      borderRadius: responsiveSize(12, 12),
+      paddingHorizontal: responsiveSize(24, 20),
+      paddingVertical: responsiveSize(14, 14),
+      fontSize: responsiveSize(24, 18),
       color: theme.colors.text.primary,
       textAlign: 'center',
-      minWidth: useLargeSizing ? 280 : 200,
-      borderWidth: 2,
+      minWidth: responsiveSize(280, 200),
+      borderWidth: responsiveSize(2, 2),
       borderColor: 'transparent',
       fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif',
     },
@@ -95,42 +95,39 @@ const createStyles = (theme: NovaTheme, isLargeScreen: boolean) => {
     actions: {
       flexDirection: 'row',
       justifyContent: 'center',
-      gap: 16,
+      gap: responsiveSize(24, 16),
     },
     button: {
-      paddingHorizontal: 24,
-      paddingVertical: useLargeSizing ? 14 : 12,
-      borderRadius: 8,
-      backgroundColor: theme.colors.background.elevated,
-      minWidth: useLargeSizing ? 140 : 100,
-      alignItems: 'center',
+      backgroundColor: theme.colors.overlay.button,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
     },
     buttonPrimary: {
       backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
     },
     buttonFocused: {
+      borderColor: theme.colors.accent.primary,
       backgroundColor: theme.colors.accent.primary,
-      transform: [{ scale: 1.05 }],
     },
     buttonPrimaryFocused: {
-      backgroundColor: '#2563eb',
+      borderColor: theme.colors.text.inverse,
     },
     buttonText: {
-      fontSize: useLargeSizing ? 18 : 16,
-      fontWeight: '600',
       color: theme.colors.text.primary,
     },
+    buttonPrimaryText: {
+      color: theme.colors.text.inverse,
+    },
     buttonTextFocused: {
-      color: 'white',
+      color: theme.colors.text.inverse,
     },
   });
 };
 
 export const PinEntryModal: React.FC = () => {
   const theme = useTheme();
-  const { width: screenWidth } = useTVDimensions();
-  const isLargeScreen = screenWidth >= 600;
-  const styles = useMemo(() => createStyles(theme, isLargeScreen), [theme, isLargeScreen]);
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { users, pendingPinUserId, selectUserWithPin, cancelPinEntry, isInitialPinCheck } = useUserProfiles();
 
   // Check if cancel should be allowed - not allowed if all users have PINs on initial load
@@ -311,7 +308,7 @@ export const PinEntryModal: React.FC = () => {
                     void handleSubmit();
                   }
                 }}
-                editable={Platform.isTV ? focused : true}
+                editable
                 {...(Platform.OS === 'ios' &&
                   Platform.isTV && {
                     keyboardAppearance: 'dark',
@@ -337,7 +334,7 @@ export const PinEntryModal: React.FC = () => {
               disabled={loading}
               style={[styles.button, styles.buttonPrimary]}
               focusedStyle={[styles.buttonFocused, styles.buttonPrimaryFocused]}
-              textStyle={styles.buttonText}
+              textStyle={styles.buttonPrimaryText}
               focusedTextStyle={styles.buttonTextFocused}
             />
           </View>

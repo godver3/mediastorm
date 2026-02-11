@@ -25,7 +25,7 @@ export default function DrawerLayout() {
   const { isOpen: isMenuOpen, closeMenu } = useMenuContext();
   const insets = useSafeAreaInsets();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
-  const { activeUser, getIconUrl } = useUserProfiles();
+  const { activeUser, getIconUrl, profileSelectorVisible } = useUserProfiles();
 
   const shouldUseTabs = useShouldUseTabs();
 
@@ -67,17 +67,23 @@ export default function DrawerLayout() {
     }, []),
   );
 
-  // On tvOS, disable menu key handling when drawer is open so the Menu button
-  // will minimize the app instead of being captured by our event handler
+  // Close the drawer when profile selector is visible so it's not
+  // lingering behind the overlay.
+  useEffect(() => {
+    if (profileSelectorVisible && isMenuOpen) {
+      closeMenu();
+    }
+  }, [profileSelectorVisible, isMenuOpen, closeMenu]);
+
+  // On tvOS, disable menu key handling when drawer is open or profile selector
+  // is visible so the Menu button minimizes the app instead of being captured.
   useEffect(() => {
     if (Platform.OS !== 'ios' || !Platform.isTV) {
       return;
     }
 
-    // When drawer is open, disable menu key so system handles it (minimizes app)
-    // When drawer is closed, enable menu key so we can use it for navigation
-    RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen);
-  }, [isMenuOpen]);
+    RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen && !profileSelectorVisible);
+  }, [isMenuOpen, profileSelectorVisible]);
 
   if (shouldUseTabs) {
     return (
