@@ -503,6 +503,12 @@ var SettingsSchema = map[string]interface{}{
 				"description": "Filter out fully watched movies and TV shows from trending shelves and custom lists on the home page",
 				"order":       2,
 			},
+			"alwaysShowProfileSelector": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Always Show Profile Selector",
+				"description": "Show the profile selector when the app is opened or returns from background",
+				"order":       3,
+			},
 		},
 	},
 	"metadata": map[string]interface{}{
