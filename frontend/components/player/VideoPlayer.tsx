@@ -78,6 +78,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     onTracksAvailable,
     subtitleSize = 1.0,
     controlsVisible,
+    onPictureInPictureStatusChanged,
   } = props;
 
   const playerRef = useRef<NativePlayerRef>(null);
@@ -92,6 +93,9 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     },
     pause: () => {
       // NativePlayer doesn't have separate play/pause methods - controlled via paused prop
+    },
+    enterPip: (forBackground?: boolean) => {
+      playerRef.current?.enterPip(forBackground);
     },
   }), []);
 
@@ -329,6 +333,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       onError={handleError}
       onBuffering={handleBuffering}
       onTracksChanged={handleTracksChangedWithPending}
+      onPipStatusChanged={onPictureInPictureStatusChanged}
     />
   );
 });
@@ -338,7 +343,6 @@ NativePlayerAdapter.displayName = 'NativePlayerAdapter';
 const nativePlayerStyles = StyleSheet.create({
   player: {
     flex: 1,
-    backgroundColor: '#000',
   },
 });
 

@@ -30,9 +30,11 @@ RCT_EXPORT_VIEW_PROPERTY(onTracksChanged, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onBuffering, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onVideoInfo, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onDebugLog, RCTDirectEventBlock)
+RCT_EXPORT_VIEW_PROPERTY(onPipStatusChanged, RCTDirectEventBlock)
 
 // Methods
 RCT_EXTERN_METHOD(seek:(nonnull NSNumber *)node toTime:(nonnull NSNumber *)time)
+RCT_EXTERN_METHOD(enterPip:(nonnull NSNumber *)node forBackground:(BOOL)forBackground)
 RCT_EXTERN_METHOD(setAudioTrack:(nonnull NSNumber *)node trackId:(nonnull NSNumber *)trackId)
 RCT_EXTERN_METHOD(setSubtitleTrack:(nonnull NSNumber *)node trackId:(nonnull NSNumber *)trackId)
 RCT_EXTERN_METHOD(getTracks:(nonnull NSNumber *)node

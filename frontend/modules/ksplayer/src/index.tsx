@@ -91,6 +91,11 @@ export interface KSPlayerProps {
   onBuffering?: (buffering: boolean) => void;
   onVideoInfo?: (data: VideoInfoEvent) => void;
   onDebugLog?: (data: DebugLogEvent) => void;
+  onPipStatusChanged?: (isActive: boolean) => void;
+}
+
+export interface PipStatusEvent {
+  isActive: boolean;
 }
 
 export interface KSPlayerRef {
@@ -98,6 +103,7 @@ export interface KSPlayerRef {
   setAudioTrack: (trackId: number) => void;
   setSubtitleTrack: (trackId: number) => void;
   getTracks: () => Promise<TracksEvent>;
+  enterPip: () => void;
 }
 
 // Native component interface
@@ -119,6 +125,7 @@ interface NativeKSPlayerProps {
   onBuffering?: (event: NativeSyntheticEvent<BufferingEvent>) => void;
   onVideoInfo?: (event: NativeSyntheticEvent<VideoInfoEvent>) => void;
   onDebugLog?: (event: NativeSyntheticEvent<DebugLogEvent>) => void;
+  onPipStatusChanged?: (event: NativeSyntheticEvent<PipStatusEvent>) => void;
 }
 
 // Only load native component on iOS - cache to prevent double registration on hot reload
@@ -156,6 +163,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
     onBuffering,
     onVideoInfo,
     onDebugLog,
+    onPipStatusChanged,
   } = props;
 
   const nativeRef = useRef<any>(null);
@@ -188,6 +196,16 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
           handle,
           UIManager.getViewManagerConfig('KSPlayerView').Commands.setSubtitleTrack,
           [trackId]
+        );
+      }
+    },
+    enterPip: (forBackground?: boolean) => {
+      const handle = findNodeHandle(nativeRef.current);
+      if (handle && KSPlayerViewManager) {
+        UIManager.dispatchViewManagerCommand(
+          handle,
+          UIManager.getViewManagerConfig('KSPlayerView').Commands.enterPip,
+          [forBackground ?? false]
         );
       }
     },
@@ -281,6 +299,14 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
     [onDebugLog]
   );
 
+  const handlePipStatusChanged = useCallback(
+    (event: NativeSyntheticEvent<PipStatusEvent>) => {
+      console.log('[KSPlayer] PiP status changed:', event.nativeEvent.isActive);
+      onPipStatusChanged?.(event.nativeEvent.isActive);
+    },
+    [onPipStatusChanged]
+  );
+
   if (!NativeKSPlayerView) {
     console.log('[KSPlayer] Native view not available on this platform');
     return null;
@@ -306,6 +332,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
       onBuffering={handleBuffering}
       onVideoInfo={handleVideoInfo}
       onDebugLog={handleDebugLog}
+      onPipStatusChanged={handlePipStatusChanged}
     />
   );
 });

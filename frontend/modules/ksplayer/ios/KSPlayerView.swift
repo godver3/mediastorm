@@ -12,6 +12,7 @@ import KSPlayer
 import React
 import CoreMedia
 import AVFoundation
+import Combine
 #if os(tvOS)
 import AVKit
 #endif
@@ -77,6 +78,7 @@ public class KSPlayerView: UIView {
     private var currentSource: NSDictionary?
     private var currentOptions: StrmrKSOptions?
     private var isPaused: Bool = true
+    private var pipCancellable: AnyCancellable?
     private var pendingSeek: Double?
     private var pendingAudioTrack: Int?
     private var pendingSubtitleTrack: Int?
@@ -92,6 +94,7 @@ public class KSPlayerView: UIView {
     @objc var onBuffering: RCTDirectEventBlock?
     @objc var onVideoInfo: RCTDirectEventBlock?
     @objc var onDebugLog: RCTDirectEventBlock?
+    @objc var onPipStatusChanged: RCTDirectEventBlock?
 
     // Helper to send debug logs to JS
     private func debugLog(_ message: String) {
@@ -245,6 +248,8 @@ public class KSPlayerView: UIView {
         progressTimer = nil
         subtitleRetryTimer?.invalidate()
         subtitleRetryTimer = nil
+        pipCancellable?.cancel()
+        pipCancellable = nil
 
         playerView?.resetPlayer()
         playerView?.removeFromSuperview()
@@ -574,6 +579,60 @@ public class KSPlayerView: UIView {
         print("[KSPlayer] Subtitle position updated: controlsVisible=\(controlsVisible), offset=\(controlsOffset)")
     }
 
+    func enterPip(forBackground: Bool = false) {
+        guard let playerLayer = playerView?.playerLayer else {
+            debugLog("[PiP] enterPip: playerLayer not available")
+            return
+        }
+
+        let isP5 = currentOptions?.doviProfile5Detected ?? false
+        let isP78 = currentOptions?.doviProfile78Detected ?? false
+        debugLog("[PiP] enterPip: forBackground=\(forBackground) doviP5=\(isP5) doviP78=\(isP78)")
+
+        // Set isPipActive on options FIRST so MetalPlayView can adjust routing
+        // P7/P8: suppresses Metal DOVI → display layer shows HDR10 base layer
+        // P5: triggers Metal readback → DOVI-corrected frames enqueued to display layer
+        currentOptions?.isPipActive = true
+
+        if forBackground {
+            // Background path: Native willResignActive handler in KSPlayerLayer
+            // already prepares DOVI frame routing and delegate BEFORE the scene
+            // transitions (giving the display layer time to receive frames).
+            // This JS bridge path is a safety net — it arrives after willResignActive
+            // but ensures options.isPipActive stays set.
+            if #available(tvOS 14.0, *) {
+                guard playerLayer.player.pipController != nil else {
+                    debugLog("[PiP] enterPip(bg): no pip controller, reverting")
+                    currentOptions?.isPipActive = false
+                    return
+                }
+                playerLayer.player.pipController?.delegate = playerLayer
+                debugLog("[PiP] enterPip(bg): safety net — frame routing + delegate confirmed")
+            }
+        } else {
+            // Foreground (manual) path: small delay to let display layer receive first frame
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self = self, let playerLayer = self.playerView?.playerLayer else {
+                    self?.currentOptions?.isPipActive = false
+                    self?.debugLog("[PiP] enterPip: playerLayer gone after delay")
+                    return
+                }
+                if #available(tvOS 14.0, *) {
+                    let hasPipController = playerLayer.player.pipController != nil
+                    let isPipPossible = playerLayer.player.pipController?.isPictureInPicturePossible ?? false
+                    self.debugLog("[PiP] enterPip(fg): hasPipController=\(hasPipController) isPipPossible=\(isPipPossible)")
+                    if !hasPipController || !isPipPossible {
+                        self.debugLog("[PiP] enterPip(fg): PiP not possible, reverting")
+                        self.currentOptions?.isPipActive = false
+                        return
+                    }
+                }
+                self.debugLog("[PiP] enterPip(fg): setting playerLayer.isPipActive = true")
+                playerLayer.isPipActive = true
+            }
+        }
+    }
+
     func seek(to time: Double) {
         guard let player = playerView else {
             pendingSeek = time
@@ -778,6 +837,28 @@ extension KSPlayerView: PlayerControllerDelegate {
                     "width": Int(size.width),
                     "height": Int(size.height)
                 ])
+
+                // Observe PiP status changes and sync isPipActive on options
+                pipCancellable = playerLayer.$isPipActive
+                    .dropFirst() // skip initial value
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] isActive in
+                        print("[KSPlayer] PiP status changed: \(isActive)")
+                        self?.currentOptions?.isPipActive = isActive
+                        if !isActive && !(self?.isPaused ?? true) {
+                            // PiP ended while we were playing — the system's
+                            // AVPictureInPictureSampleBufferPlaybackDelegate calls
+                            // setPlaying(false) during PiP dismissal, which pauses
+                            // KSMEPlayer. Delay resume slightly so it lands after the
+                            // system's setPlaying(false) → pause() call completes.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                                guard let self = self, !self.isPaused else { return }
+                                print("[KSPlayer] PiP ended, resuming playback")
+                                self.playerView?.play()
+                            }
+                        }
+                        self?.onPipStatusChanged?(["isActive": isActive])
+                    }
 
                 // Report available tracks
                 reportTracks()

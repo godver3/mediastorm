@@ -73,6 +73,7 @@ import { updateNowPlaying, updatePlaybackPosition, clearNowPlaying, setupRemoteC
 // Safe import for pip-manager (Android mobile only, may not be available in dev builds)
 let enableAutoPip: (() => void) | null = null;
 let disableAutoPip: (() => void) | null = null;
+let addPipModeListener: ((callback: (event: { isActive: boolean }) => void) => { remove: () => void } | null) | null = null;
 if (Platform.OS === 'android' && !Platform.isTV) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -82,6 +83,7 @@ if (Platform.OS === 'android' && !Platform.isTV) {
     console.log('[PiP Debug] disableAutoPip:', typeof pipManager.disableAutoPip);
     enableAutoPip = pipManager.enableAutoPip;
     disableAutoPip = pipManager.disableAutoPip;
+    addPipModeListener = pipManager.addPipModeListener;
   } catch (e) {
     console.log('[PiP Debug] Failed to load pip-manager:', e);
     // Module not available - auto-PiP will be disabled
@@ -964,6 +966,18 @@ export default function PlayerScreen() {
     };
   }, [paused]);
 
+  // Listen for Android PiP mode changes from native module
+  useEffect(() => {
+    if (!addPipModeListener) return;
+    const subscription = addPipModeListener((event) => {
+      console.log('[PiP Debug] Android PiP mode changed:', event.isActive);
+      handlePictureInPictureStatusChanged(event.isActive);
+    });
+    return () => {
+      subscription?.remove();
+    };
+  }, [handlePictureInPictureStatusChanged]);
+
   // Auto-pause when app is backgrounded (mobile and TV)
   // Skip auto-pause when in PiP mode - video should keep playing
   const wasPlayingBeforeBackgroundRef = useRef(false);
@@ -1296,7 +1310,7 @@ export default function PlayerScreen() {
         if ((Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV && !paused) {
           console.log('[player] Auto-entering PiP on background');
           isPipActiveRef.current = true;
-          videoRef.current?.enterPip?.();
+          videoRef.current?.enterPip?.(true);
           return;
         }
         // App is being minimized - pause if currently playing
@@ -1306,7 +1320,12 @@ export default function PlayerScreen() {
           console.log('[player] Auto-paused: app went to background');
         }
       } else if (nextAppState === 'active') {
-        // App came back to foreground
+        // App came back to foreground - PiP is no longer active
+        if (isPipActiveRef.current) {
+          console.log('[player] Returning to foreground, clearing PiP state');
+          isPipActiveRef.current = false;
+          setIsPipActive(false);
+        }
         const backgroundDuration = backgroundedAtRef.current ? Date.now() - backgroundedAtRef.current : 0;
         backgroundedAtRef.current = null;
         wasPlayingBeforeBackgroundRef.current = false;
@@ -2954,13 +2973,6 @@ export default function PlayerScreen() {
           setPaused(false);
         }
 
-        // Prep iOS PiP controller by calling enterPip once - this initializes the
-        // AVPictureInPictureController so future PiP requests work on first try
-        if (Platform.OS === 'ios' && !Platform.isTV) {
-          console.log('[player] Prepping PiP controller on playback start');
-          videoRef.current?.enterPip?.();
-        }
-
         // Hide loading screen with a small delay to ensure player screen is fully visible
         setTimeout(() => {
           hideLoadingScreen();
@@ -3850,16 +3862,21 @@ export default function PlayerScreen() {
   };
 
   const handleEnterPip = useCallback(() => {
-    // Call enterPip FIRST, then update state. If we update state before calling
-    // enterPip, the re-render can interfere with the button press handling,
-    // causing the first tap to silently fail.
-    videoRef.current?.enterPip?.();
-    // Set the ref immediately after to prevent race condition
-    // with AppState listener (which would pause on background before the
-    // onPictureInPictureStatusChanged callback fires)
+    // Only call enterPip - don't set isPipActive state here. Let the native
+    // onPictureInPictureStatusChanged callback drive the render state. Setting it
+    // optimistically causes controls to disappear permanently if PiP fails
+    // to activate (e.g. unsupported content, disabled prop, etc).
+    // The ref is set for the AppState background listener race condition only,
+    // with a safety timeout to clear it if PiP never actually enters.
     isPipActiveRef.current = true;
-    setIsPipActive(true);
-  }, []);
+    videoRef.current?.enterPip?.();
+    // Safety: if PiP doesn't confirm within 2s, clear the ref
+    setTimeout(() => {
+      if (isPipActiveRef.current && !isPipActive) {
+        isPipActiveRef.current = false;
+      }
+    }, 2000);
+  }, [isPipActive]);
 
   const handlePictureInPictureStatusChanged = useCallback((isActive: boolean) => {
     if (isActive) {
@@ -6181,7 +6198,7 @@ export default function PlayerScreen() {
           )}
 
           {/* Double-tap overlay for mobile skip forward/backward */}
-          {isMobilePlatform && !isLiveTV && !usesSystemManagedControls && (
+          {isMobilePlatform && !isLiveTV && !usesSystemManagedControls && !isPipActive && (
             <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
           )}
 

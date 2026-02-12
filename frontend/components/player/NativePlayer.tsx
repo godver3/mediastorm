@@ -1,6 +1,17 @@
 import React, { forwardRef, useImperativeHandle, useRef, useCallback } from 'react';
 import { Platform, View, StyleProp, ViewStyle, Text, StyleSheet } from 'react-native';
 
+// Load pip-manager for Android programmatic PiP entry
+let pipEnterPip: (() => boolean) | null = null;
+if (Platform.OS === 'android' && !Platform.isTV) {
+  try {
+    const pipManager = require('pip-manager');
+    pipEnterPip = pipManager.enterPip;
+  } catch {
+    // pip-manager not available
+  }
+}
+
 // Types for track information
 export interface Track {
   id: number;
@@ -70,12 +81,14 @@ export interface NativePlayerProps {
   onError?: (error: ErrorEvent) => void;
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
+  onPipStatusChanged?: (isActive: boolean) => void;
 }
 
 export interface NativePlayerRef {
   seek: (time: number) => void;
   setAudioTrack: (trackId: number) => void;
   setSubtitleTrack: (trackId: number) => void;
+  enterPip: (forBackground?: boolean) => void;
 }
 
 // Lazy load platform-specific players
@@ -119,6 +132,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     onError,
     onTracksChanged,
     onBuffering,
+    onPipStatusChanged,
   } = props;
 
   const playerRef = useRef<any>(null);
@@ -142,6 +156,15 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     },
     setSubtitleTrack: (trackId: number) => {
       playerRef.current?.setSubtitleTrack(trackId);
+    },
+    enterPip: (forBackground?: boolean) => {
+      if (Platform.OS === 'android' && pipEnterPip) {
+        // On Android, PiP is Activity-level — use pip-manager module
+        pipEnterPip();
+      } else {
+        // On iOS, delegate to the native player view (KSPlayer)
+        playerRef.current?.enterPip(forBackground);
+      }
     },
   }));
 
@@ -216,6 +239,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
       onDebugLog={handleDebugLog}
+      onPipStatusChanged={onPipStatusChanged}
     />
   );
 });
@@ -225,7 +249,6 @@ NativePlayer.displayName = 'NativePlayer';
 const styles = StyleSheet.create({
   player: {
     flex: 1,
-    backgroundColor: '#000',
   },
   fallback: {
     flex: 1,

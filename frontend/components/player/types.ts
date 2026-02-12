@@ -5,7 +5,7 @@ export type VideoPlayerHandle = {
   toggleFullscreen?: () => void;
   play?: () => void;
   pause?: () => void;
-  enterPip?: () => void;
+  enterPip?: (forBackground?: boolean) => void;
 };
 
 export interface VideoProgressMeta {

@@ -56,4 +56,12 @@ class KSPlayerViewManager: RCTViewManager {
             }
         }
     }
+
+    @objc func enterPip(_ node: NSNumber, forBackground: Bool) {
+        DispatchQueue.main.async {
+            if let view = self.bridge.uiManager.view(forReactTag: node) as? KSPlayerView {
+                view.enterPip(forBackground: forBackground)
+            }
+        }
+    }
 }
