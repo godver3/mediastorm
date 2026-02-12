@@ -392,6 +392,16 @@ func TestCandidateMatchesEpisode(t *testing.T) {
 		{"Wrong season", "Show.S02E01.mkv", EpisodeCode{Season: 1, Episode: 1}, false},
 		{"Wrong episode", "Show.S01E02.mkv", EpisodeCode{Season: 1, Episode: 1}, false},
 		{"No episode info", "Show.1080p.mkv", EpisodeCode{Season: 1, Episode: 1}, false},
+
+		// Multi-season batch: Season 2 files should NOT match S01E02
+		{"Season 02 dir - wrong season", "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 05.mkv", EpisodeCode{Season: 1, Episode: 2}, false},
+		{"Season 02 dir - episode matches but wrong season", "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 02.mkv", EpisodeCode{Season: 1, Episode: 2}, false},
+		{"Season 02 dir - ep 01", "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 01.mkv", EpisodeCode{Season: 1, Episode: 1}, false},
+		// Season 1 files (no Season indicator) should still match
+		{"Season 1 bare ep match", "/[Anime Time] Record Of Ragnarok/02[Anime Time] Record Of Ragnarok - 02.mkv", EpisodeCode{Season: 1, Episode: 2}, true},
+		{"Season 1 dir with indicator", "/Show Season 01/Show - 02.mkv", EpisodeCode{Season: 1, Episode: 2}, true},
+		// parseEpisodeNumber should skip "Season 02" as episode number
+		{"Season number not episode", "/Show Season 02 - 05.mkv", EpisodeCode{Season: 1, Episode: 5}, false},
 	}
 
 	for _, tt := range tests {
@@ -520,6 +530,39 @@ func TestSelectBestCandidate_NoAbsoluteWhenSXXEXXMatches(t *testing.T) {
 
 	if idx != 1 {
 		t.Errorf("SelectBestCandidate returned index %d, want 1", idx)
+	}
+	t.Logf("Selection reason: %s", reason)
+}
+
+func TestSelectBestCandidate_MultiSeasonBatch(t *testing.T) {
+	// Exact reproduction of the Record of Ragnarok bug:
+	// Torrent has Season 1 (12 eps) + Season 2 (10 eps) in separate directories.
+	// Target is S01E02 but the selector was picking S02E05 because "Season 02"
+	// was being parsed as episode number 2.
+	candidates := []Candidate{
+		{Label: "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 05.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok/02[Anime Time] Record Of Ragnarok - 02.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok/03[Anime Time] Record Of Ragnarok - 03.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok/04[Anime Time] Record Of Ragnarok - 04.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok/05[Anime Time] Record Of Ragnarok - 05.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 01.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 02.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 03.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok Season 02/[Anime Time] Record Of Ragnarok Season 02 - 04.mkv", Priority: 1},
+		{Label: "/[Anime Time] Record Of Ragnarok/01[Anime Time] Record Of Ragnarok - 01.mkv", Priority: 1},
+	}
+
+	hints := SelectionHints{
+		ReleaseTitle:  "[Anime Time] Record Of Ragnarok (Season 01+ Season 02 (Part1)) [NF] [Dual Audio] [1080p][HEVC 10bit x265][AAC][Multi Sub] [Batch] (Shuumatsu no Walküre, Shuumatsu no Valkyrie)",
+		TargetSeason:  1,
+		TargetEpisode: 2,
+	}
+
+	idx, reason := SelectBestCandidate(candidates, hints)
+
+	// Should select index 1: the S01E02 file, NOT the S02E05 file
+	if idx != 1 {
+		t.Errorf("SelectBestCandidate returned index %d (%q), want 1 (S01E02 file)", idx, candidates[idx].Label)
 	}
 	t.Logf("Selection reason: %s", reason)
 }

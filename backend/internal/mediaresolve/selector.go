@@ -53,6 +53,7 @@ var (
 	episodeCodePattern    = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
 	episodeAltPattern     = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
 	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s](\d{1,2})[-_\s\[\.]`)   // Matches " - 01 - ", "_01_", "_01[", "_01." for anime
+	seasonIndicatorPattern = regexp.MustCompile(`(?i)season[\s._-]*(\d{1,2})`)    // Matches "Season 02", "Season.02", "season_02"
 
 	// Absolute episode patterns for anime (3-4 digit episode numbers)
 	// These patterns are specifically designed to match anime release formats
@@ -415,6 +416,19 @@ func CandidateMatchesEpisode(candidateLabel string, target EpisodeCode) bool {
 	// is ambiguous (e.g., "- 01" in a multi-season pack is likely S01E01, not S02E01).
 	// For season 2+, require explicit S##E## match or use absolute episode matching.
 	if target.Season == 1 {
+		// Before trying bare episode matching, check if the candidate has an
+		// explicit season indicator (e.g., "Season 02" in path) that differs
+		// from the target season. This prevents matching Season 2 files when
+		// looking for S01E02 in a multi-season batch torrent.
+		if seasonMatches := seasonIndicatorPattern.FindAllStringSubmatch(candidateLabel, -1); len(seasonMatches) > 0 {
+			lastMatch := seasonMatches[len(seasonMatches)-1]
+			if len(lastMatch) == 2 {
+				if fileSeason, err := strconv.Atoi(lastMatch[1]); err == nil && fileSeason != target.Season {
+					return false
+				}
+			}
+		}
+
 		episode, ok = parseEpisodeNumber(candidateLabel)
 		if ok && episode == target.Episode {
 			return true
@@ -462,13 +476,27 @@ func parseEpisodeNumber(value string) (int, bool) {
 		}
 	}
 
-	// Try " - XX - " format as fallback
-	matches = episodeNumberPattern.FindStringSubmatch(value)
-	if len(matches) == 2 {
-		episode, err := strconv.Atoi(matches[1])
-		if err == nil && episode > 0 {
-			return episode, true
+	// Try " - XX - " format as fallback, but skip numbers preceded by "season"
+	// (e.g., "Season 02 - 05.mkv" — "02" is the season number, not the episode)
+	lowerValue := strings.ToLower(value)
+	allLocs := episodeNumberPattern.FindAllStringSubmatchIndex(value, -1)
+	for _, loc := range allLocs {
+		if len(loc) < 4 {
+			continue
 		}
+		epStr := value[loc[2]:loc[3]]
+		episode, err := strconv.Atoi(epStr)
+		if err != nil || episode <= 0 {
+			continue
+		}
+		// Check if this number is preceded by "season" (case-insensitive)
+		if loc[0] > 0 {
+			prefix := strings.TrimRight(lowerValue[:loc[0]], " \t._-")
+			if strings.HasSuffix(prefix, "season") {
+				continue
+			}
+		}
+		return episode, true
 	}
 
 	return 0, false
