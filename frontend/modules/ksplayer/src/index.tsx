@@ -91,11 +91,12 @@ export interface KSPlayerProps {
   onBuffering?: (buffering: boolean) => void;
   onVideoInfo?: (data: VideoInfoEvent) => void;
   onDebugLog?: (data: DebugLogEvent) => void;
-  onPipStatusChanged?: (isActive: boolean) => void;
+  onPipStatusChanged?: (isActive: boolean, paused?: boolean) => void;
 }
 
 export interface PipStatusEvent {
   isActive: boolean;
+  paused?: boolean;
 }
 
 export interface KSPlayerRef {
@@ -301,8 +302,8 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
 
   const handlePipStatusChanged = useCallback(
     (event: NativeSyntheticEvent<PipStatusEvent>) => {
-      console.log('[KSPlayer] PiP status changed:', event.nativeEvent.isActive);
-      onPipStatusChanged?.(event.nativeEvent.isActive);
+      console.log('[KSPlayer] PiP status changed:', event.nativeEvent.isActive, 'paused:', event.nativeEvent.paused);
+      onPipStatusChanged?.(event.nativeEvent.isActive, event.nativeEvent.paused);
     },
     [onPipStatusChanged]
   );

@@ -81,7 +81,7 @@ export interface NativePlayerProps {
   onError?: (error: ErrorEvent) => void;
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
-  onPipStatusChanged?: (isActive: boolean) => void;
+  onPipStatusChanged?: (isActive: boolean, paused?: boolean) => void;
 }
 
 export interface NativePlayerRef {

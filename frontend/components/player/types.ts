@@ -60,8 +60,8 @@ export interface VideoPlayerProps {
   subtitleSize?: number;
   /** Video resize mode: 'cover' fills container (may crop), 'contain' shows full video (may letterbox). Default: 'cover' */
   resizeMode?: VideoResizeMode;
-  /** Called when PiP status changes (iOS only) */
-  onPictureInPictureStatusChanged?: (isActive: boolean) => void;
+  /** Called when PiP status changes (iOS only). paused is true if user paused during PiP. */
+  onPictureInPictureStatusChanged?: (isActive: boolean, paused?: boolean) => void;
   /** Called when native playback state changes (for syncing paused state on TV platforms) */
   onPlaybackStateChanged?: (isPlaying: boolean) => void;
   /** Whether player controls overlay is visible (for subtitle positioning) */

@@ -845,19 +845,26 @@ extension KSPlayerView: PlayerControllerDelegate {
                     .sink { [weak self] isActive in
                         print("[KSPlayer] PiP status changed: \(isActive)")
                         self?.currentOptions?.isPipActive = isActive
-                        if !isActive && !(self?.isPaused ?? true) {
-                            // PiP ended while we were playing — the system's
-                            // AVPictureInPictureSampleBufferPlaybackDelegate calls
-                            // setPlaying(false) during PiP dismissal, which pauses
-                            // KSMEPlayer. Delay resume slightly so it lands after the
-                            // system's setPlaying(false) → pause() call completes.
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                                guard let self = self, !self.isPaused else { return }
-                                print("[KSPlayer] PiP ended, resuming playback")
-                                self.playerView?.play()
+                        if !isActive {
+                            let userPausedInPip = self?.currentOptions?.pipUserPaused ?? false
+                            self?.currentOptions?.pipUserPaused = false
+                            if userPausedInPip {
+                                // User explicitly paused during PiP — stay paused, sync state
+                                print("[KSPlayer] PiP ended, user paused during PiP — staying paused")
+                                self?.isPaused = true
+                            } else if !(self?.isPaused ?? true) {
+                                // Was playing and user didn't pause in PiP — resume after
+                                // the system's setPlaying(false) during PiP dismissal.
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                                    guard let self = self, !self.isPaused else { return }
+                                    print("[KSPlayer] PiP ended, resuming playback")
+                                    self.playerView?.play()
+                                }
                             }
+                            self?.onPipStatusChanged?(["isActive": false, "paused": userPausedInPip])
+                        } else {
+                            self?.onPipStatusChanged?(["isActive": true])
                         }
-                        self?.onPipStatusChanged?(["isActive": isActive])
                     }
 
                 // Report available tracks

@@ -3878,7 +3878,7 @@ export default function PlayerScreen() {
     }, 2000);
   }, [isPipActive]);
 
-  const handlePictureInPictureStatusChanged = useCallback((isActive: boolean) => {
+  const handlePictureInPictureStatusChanged = useCallback((isActive: boolean, pipPaused?: boolean) => {
     if (isActive) {
       // Entering PiP - already handled in handleEnterPip, but update state to be safe
       isPipActiveRef.current = true;
@@ -3890,8 +3890,13 @@ export default function PlayerScreen() {
       setTimeout(() => {
         isPipActiveRef.current = false;
       }, 500);
+      // If user paused during PiP, sync the paused state so controls show correctly
+      if (pipPaused) {
+        console.log('[player] PiP ended with user pause — syncing paused state');
+        setPaused(true);
+      }
     }
-    console.log('[player] PiP status changed:', isActive);
+    console.log('[player] PiP status changed:', isActive, 'paused:', pipPaused);
   }, []);
 
   // Sync paused state with native playback state (for TV platforms where native
