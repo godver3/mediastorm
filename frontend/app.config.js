@@ -24,7 +24,6 @@ module.exports = ({ config }) => {
   const plugins = [
     'expo-router',
     'expo-web-browser',
-    './plugins/with-now-playing-manager',
     './plugins/with-android-pip',
     './plugins/with-mpv-player', // MPV native player for Android
     './plugins/with-ksplayer', // KSPlayer native player for iOS/tvOS

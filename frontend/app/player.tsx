@@ -3025,9 +3025,8 @@ export default function PlayerScreen() {
         reportProgress(absoluteTime, currentDuration);
       }
 
-      // Update iOS Now Playing position (throttled to every 10 seconds)
-      // Skip on tvOS - setting nowPlayingInfo causes MPRemoteCommandCenter to intercept Siri Remote buttons
-      if (Platform.OS === 'ios' && !Platform.isTV && hasStartedPlaying && currentDuration > 0) {
+      // Update iOS/tvOS Now Playing position (throttled to every 10 seconds)
+      if (Platform.OS === 'ios' && hasStartedPlaying && currentDuration > 0) {
         const now = Date.now();
         if (now - nowPlayingLastUpdateRef.current >= 10000) {
           nowPlayingLastUpdateRef.current = now;
@@ -3341,7 +3340,7 @@ export default function PlayerScreen() {
       });
     }
     return () => {
-      if (Platform.OS === 'ios' && !Platform.isTV) {
+      if (Platform.OS === 'ios') {
         clearNowPlaying().catch((err) => {
           console.warn('[player] Failed to clear Now Playing:', err);
         });
@@ -3349,10 +3348,9 @@ export default function PlayerScreen() {
     };
   }, []);
 
-  // iOS Now Playing - update info when playback starts
-  // Skip on tvOS - setting nowPlayingInfo causes MPRemoteCommandCenter to intercept Siri Remote buttons
+  // iOS/tvOS Now Playing - update info when playback starts
   useEffect(() => {
-    if (Platform.OS !== 'ios' || Platform.isTV || !hasStartedPlaying) {
+    if (Platform.OS !== 'ios' || !hasStartedPlaying) {
       return;
     }
 

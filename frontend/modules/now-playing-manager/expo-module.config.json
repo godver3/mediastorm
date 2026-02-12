@@ -1,6 +1,7 @@
 {
   "platforms": ["apple"],
   "apple": {
-    "modules": ["NowPlayingManagerModule"]
+    "modules": ["NowPlayingManagerModule"],
+    "podspecPath": "NowPlayingManager.podspec"
   }
 }
