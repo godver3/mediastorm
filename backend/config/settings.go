@@ -987,6 +987,21 @@ func (m *Manager) Load() (Settings, error) {
 		}
 	}
 
+	// Backfill shelf type for mdblist shelves missing the type field (legacy data)
+	for i := range s.HomeShelves.Shelves {
+		if s.HomeShelves.Shelves[i].Type == "" && strings.HasPrefix(s.HomeShelves.Shelves[i].ID, "mdblist-") {
+			s.HomeShelves.Shelves[i].Type = "mdblist"
+		}
+	}
+
+	// Migrate trending shelves to hideUnreleased=false (curated lists handle this now)
+	for i := range s.HomeShelves.Shelves {
+		id := s.HomeShelves.Shelves[i].ID
+		if id == "trending-movies" || id == "trending-tv" {
+			s.HomeShelves.Shelves[i].HideUnreleased = false
+		}
+	}
+
 	// Backfill TrendingMovieSource if empty (default to released-only)
 	if s.HomeShelves.TrendingMovieSource == "" {
 		s.HomeShelves.TrendingMovieSource = TrendingMovieSourceReleased

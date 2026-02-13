@@ -2104,11 +2104,9 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
-            const isCustom = !!s.listUrl;
-            const isTrending = s.id === 'trending-movies' || s.id === 'trending-tv';
-            const canFilter = isCustom || isTrending; // Shelves that support hideUnreleased filter
+            const isCustom = !!s.listUrl || (s.type === 'mdblist') || (s.id && s.id.startsWith('mdblist-'));
             const typeLabel = isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '';
-            const filterBadge = s.hideUnreleased ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
+            const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
 
             let actionsHtml = '';
             if (isCustom) {
@@ -2116,11 +2114,6 @@
                 actionsHtml = '<div class="shelf-actions">'+
                     '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>'+
                     '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>'+
-                '</div>';
-            } else if (isTrending) {
-                // Trending shelves: only edit (for hideUnreleased toggle)
-                actionsHtml = '<div class="shelf-actions">'+
-                    '<button class="shelf-edit-btn" onclick="editTrendingShelf(\''+s.id+'\')" title="Filter Settings">⚙</button>'+
                 '</div>';
             }
 
@@ -2470,84 +2463,6 @@
     function closeEditShelfModal() {
         const modal = document.getElementById('editShelfModal');
         if (modal) modal.remove();
-    }
-
-    // Edit trending shelf - simplified modal for hideUnreleased only
-    function editTrendingShelf(shelfId) {
-        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
-        let shelves;
-        if (selectedUserId && userSettings && isPerUserSection) {
-            ensureProfileShelves();
-            shelves = userSettings.homeShelves?.shelves || [];
-        } else {
-            shelves = currentSettings.homeShelves?.shelves || [];
-        }
-
-        const shelf = shelves.find(s => s.id === shelfId);
-        if (!shelf) return;
-
-        const shelfName = shelf.name || (shelfId === 'trending-movies' ? 'Trending Movies' : 'Trending TV Shows');
-
-        // Create modal HTML
-        const modalHtml = `
-            <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
-                <div style="background:#1a1a2e;border-radius:12px;padding:24px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">${shelfName} - Filter Settings</h3>
-                    <div style="margin-bottom:16px;">
-                        <label style="display:flex;align-items:flex-start;cursor:pointer;">
-                            <input type="checkbox" id="editShelfHideUnreleased" ${shelf.hideUnreleased ? 'checked' : ''} style="margin-right:10px;margin-top:3px;">
-                            <div>
-                                <span style="font-size:14px;font-weight:500;">Hide Unreleased</span>
-                                <p style="font-size:12px;color:#888;margin:4px 0 0 0;">Filter out movies not yet available for home viewing, and series that are upcoming or in production.</p>
-                            </div>
-                        </label>
-                    </div>
-                    <div style="display:flex;gap:12px;justify-content:flex-end;">
-                        <button onclick="closeEditShelfModal()" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:white;cursor:pointer;">Cancel</button>
-                        <button onclick="saveTrendingShelf('${shelfId}')" style="padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;">Save</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Add modal to body
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-
-        // Close on escape key
-        const handleEscape = (e) => {
-            if (e.key === 'Escape') {
-                closeEditShelfModal();
-                document.removeEventListener('keydown', handleEscape);
-            }
-        };
-        document.addEventListener('keydown', handleEscape);
-
-        // Close on backdrop click
-        document.getElementById('editShelfModal').addEventListener('click', (e) => {
-            if (e.target.id === 'editShelfModal') {
-                closeEditShelfModal();
-            }
-        });
-    }
-
-    function saveTrendingShelf(shelfId) {
-        const hideUnreleasedInput = document.getElementById('editShelfHideUnreleased');
-        const hideUnreleased = hideUnreleasedInput?.checked || false;
-
-        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
-        let shelves;
-        if (selectedUserId && userSettings && isPerUserSection) {
-            shelves = userSettings.homeShelves?.shelves || [];
-        } else {
-            shelves = currentSettings.homeShelves?.shelves || [];
-        }
-
-        const shelf = shelves.find(s => s.id === shelfId);
-        if (!shelf) return;
-
-        shelf.hideUnreleased = hideUnreleased;
-        closeEditShelfModal();
-        renderSettings();
     }
 
     function saveEditedShelf(shelfId) {

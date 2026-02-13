@@ -25,6 +25,10 @@ func (m *mockMetadataService) SeriesDetails(ctx context.Context, req models.Seri
 	return m.seriesDetails, nil
 }
 
+func (m *mockMetadataService) SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return m.SeriesDetails(ctx, req)
+}
+
 func (m *mockMetadataService) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error) {
 	if m.err != nil {
 		return nil, m.err

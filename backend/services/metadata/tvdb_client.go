@@ -607,9 +607,9 @@ type mdblistTVShow struct {
 	ReleaseYear int    `json:"release_year"`
 }
 
-// fetchMDBListMovies fetches the top movies of the week from MDBList
+// fetchMDBListMovies fetches trending movies from MDBList
 func (c *tvdbClient) fetchMDBListMovies() ([]mdblistMovie, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/godver3/trending-movies/json", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -632,9 +632,9 @@ func (c *tvdbClient) fetchMDBListMovies() ([]mdblistMovie, error) {
 	return movies, nil
 }
 
-// fetchMDBListTVShows fetches the latest TV shows from MDBList
+// fetchMDBListTVShows fetches trending TV shows from MDBList
 func (c *tvdbClient) fetchMDBListTVShows() ([]mdblistTVShow, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/garycrawfordgc/latest-tv-shows/json", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/godver3/trending-shows/json", nil)
 	if err != nil {
 		return nil, err
 	}

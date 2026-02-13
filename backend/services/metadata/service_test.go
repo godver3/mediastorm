@@ -49,9 +49,9 @@ func TestGetCustomListFetchesTranslations(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBuffer(body)), Header: make(http.Header)}, nil
 			}
 
-			// Handle TVDB series details - return Japanese overview
-			if path == "/v4/series/12345" {
-				body := bytes.NewBufferString(`{"data":{"id":12345,"name":"テストアニメ","overview":"これは日本語の概要です","score":100}}`)
+			// Handle TVDB series extended (includes name/overview/artwork/status) — primary call
+			if strings.HasPrefix(path, "/v4/series/12345/extended") {
+				body := bytes.NewBufferString(`{"data":{"id":12345,"name":"テストアニメ","overview":"これは日本語の概要です","artworks":[]}}`)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
@@ -60,12 +60,6 @@ func TestGetCustomListFetchesTranslations(t *testing.T) {
 				lang := strings.TrimPrefix(path, "/v4/series/12345/translations/")
 				translationsFetched = append(translationsFetched, lang)
 				body := bytes.NewBufferString(`{"data":{"language":"eng","name":"Test Anime English","overview":"This is the English overview"}}`)
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
-			}
-
-			// Handle TVDB series extended (for artwork)
-			if strings.HasPrefix(path, "/v4/series/12345/extended") {
-				body := bytes.NewBufferString(`{"data":{"id":12345,"artworks":[]}}`)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
@@ -82,13 +76,17 @@ func TestGetCustomListFetchesTranslations(t *testing.T) {
 	service.client.minInterval = 0
 
 	// Call GetCustomList
-	items, total, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/anime/json", 10)
+	items, filteredTotal, unfilteredTotal, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/anime/json", CustomListOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("GetCustomList failed: %v", err)
 	}
 
-	if total != 1 {
-		t.Fatalf("expected total=1, got %d", total)
+	if unfilteredTotal != 1 {
+		t.Fatalf("expected unfilteredTotal=1, got %d", unfilteredTotal)
+	}
+
+	if filteredTotal != 1 {
+		t.Fatalf("expected filteredTotal=1, got %d", filteredTotal)
 	}
 
 	if len(items) != 1 {
@@ -160,9 +158,9 @@ func TestGetCustomListMovieTranslations(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBuffer(body)), Header: make(http.Header)}, nil
 			}
 
-			// Handle TVDB movie details - return Japanese content
-			if path == "/v4/movies/67890" {
-				body := bytes.NewBufferString(`{"data":{"id":67890,"name":"テスト映画","overview":"これは日本語の映画概要です"}}`)
+			// Handle TVDB movie extended (includes name/overview/artwork) — now the primary call
+			if strings.HasPrefix(path, "/v4/movies/67890/extended") {
+				body := bytes.NewBufferString(`{"data":{"id":67890,"name":"テスト映画","overview":"これは日本語の映画概要です","artworks":[]}}`)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
@@ -171,12 +169,6 @@ func TestGetCustomListMovieTranslations(t *testing.T) {
 				lang := strings.TrimPrefix(path, "/v4/movies/67890/translations/")
 				translationsFetched = append(translationsFetched, lang)
 				body := bytes.NewBufferString(`{"data":{"language":"eng","name":"Test Movie English","overview":"This is the English movie overview"}}`)
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
-			}
-
-			// Handle TVDB movie extended (for artwork)
-			if strings.HasPrefix(path, "/v4/movies/67890/extended") {
-				body := bytes.NewBufferString(`{"data":{"id":67890,"artworks":[]}}`)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
@@ -190,18 +182,18 @@ func TestGetCustomListMovieTranslations(t *testing.T) {
 	service := &Service{
 		client:  newTVDBClient("test-api-key", "eng", httpc, 24),
 		cache:   newFileCache(tempDir, 24),
-		idCache: newFileCache(tempDir, 24*7), // ID cache with longer TTL
+		idCache: newFileCache(tempDir, 24*7),
 	}
 	service.client.minInterval = 0
 
 	// Call GetCustomList
-	items, total, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/movies/json", 10)
+	items, filteredTotal, _, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/movies/json", CustomListOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("GetCustomList failed: %v", err)
 	}
 
-	if total != 1 {
-		t.Fatalf("expected total=1, got %d", total)
+	if filteredTotal != 1 {
+		t.Fatalf("expected filteredTotal=1, got %d", filteredTotal)
 	}
 
 	if len(items) != 1 {
@@ -266,21 +258,15 @@ func TestGetCustomListNoTranslationWhenUnavailable(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBuffer(body)), Header: make(http.Header)}, nil
 			}
 
-			// Handle TVDB series details - return Japanese content
-			if path == "/v4/series/99999" {
-				body := bytes.NewBufferString(`{"data":{"id":99999,"name":"珍しいアニメ","overview":"日本語のみの概要","score":50}}`)
+			// Handle TVDB series extended (includes name/overview/artwork/status) — now the primary call
+			if strings.HasPrefix(path, "/v4/series/99999/extended") {
+				body := bytes.NewBufferString(`{"data":{"id":99999,"name":"珍しいアニメ","overview":"日本語のみの概要","artworks":[]}}`)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
 			// Handle TVDB series translations - return 404 (no translation available)
 			if strings.HasPrefix(path, "/v4/series/99999/translations/") {
 				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewBufferString(`{"status":"failure"}`)), Header: make(http.Header)}, nil
-			}
-
-			// Handle TVDB series extended (for artwork)
-			if strings.HasPrefix(path, "/v4/series/99999/extended") {
-				body := bytes.NewBufferString(`{"data":{"id":99999,"artworks":[]}}`)
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
 			t.Logf("Unhandled request: %s %s", req.Method, req.URL.String())
@@ -296,7 +282,7 @@ func TestGetCustomListNoTranslationWhenUnavailable(t *testing.T) {
 	service.client.minInterval = 0
 
 	// Call GetCustomList
-	items, _, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/obscure/json", 10)
+	items, _, _, err := service.GetCustomList(context.Background(), "https://mdblist.com/lists/test/obscure/json", CustomListOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("GetCustomList failed: %v", err)
 	}

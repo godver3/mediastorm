@@ -72,8 +72,8 @@ func (m *mockMetadataServiceDetailsBundle) StreamTrailer(_ context.Context, _ st
 func (m *mockMetadataServiceDetailsBundle) StreamTrailerWithRange(_ context.Context, _ string, _ string, _ io.Writer) error {
 	return nil
 }
-func (m *mockMetadataServiceDetailsBundle) GetCustomList(_ context.Context, _ string, _ int) ([]models.TrendingItem, int, error) {
-	return nil, 0, nil
+func (m *mockMetadataServiceDetailsBundle) GetCustomList(_ context.Context, _ string, _ metadatapkg.CustomListOptions) ([]models.TrendingItem, int, int, error) {
+	return nil, 0, 0, nil
 }
 func (m *mockMetadataServiceDetailsBundle) PrequeueTrailer(_ string) (string, error) {
 	return "", nil

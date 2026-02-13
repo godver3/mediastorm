@@ -30,7 +30,7 @@ type metadataService interface {
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
 	StreamTrailer(context.Context, string, io.Writer) error
 	StreamTrailerWithRange(context.Context, string, string, io.Writer) error
-	GetCustomList(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, int, error)
+	GetCustomList(ctx context.Context, listURL string, opts metadatapkg.CustomListOptions) ([]models.TrendingItem, int, int, error)
 	// Trailer prequeue methods for 1080p YouTube trailers
 	PrequeueTrailer(videoURL string) (string, error)
 	GetTrailerPrequeueStatus(id string) (*metadatapkg.TrailerPrequeueItem, error)
@@ -832,18 +832,19 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		listURL = listURL + "/json"
 	}
 
-	// When hideUnreleased or hideWatched is true, we need ALL items to get accurate filtered count
-	// Otherwise, fetch only what we need for pagination
-	fetchLimit := 0 // 0 = fetch all
-	if !hideUnreleased && !hideWatched {
-		if limit > 0 && offset > 0 {
-			fetchLimit = limit + offset
-		} else if limit > 0 {
-			fetchLimit = limit
-		}
+	// Build options — filtering + pagination handled inside the service
+	opts := metadatapkg.CustomListOptions{
+		Limit:          limit,
+		Offset:         offset,
+		HideUnreleased: hideUnreleased,
+		HideWatched:    hideWatched,
+		UserID:         userID,
+	}
+	if hideWatched && userID != "" && h.HistoryService != nil {
+		opts.HistorySvc = h.HistoryService
 	}
 
-	items, total, err := h.Service.GetCustomList(r.Context(), listURL, fetchLimit)
+	items, filteredTotal, unfilteredTotal, err := h.Service.GetCustomList(r.Context(), listURL, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -851,37 +852,8 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track pre-filter total for explore card logic
-	unfilteredTotal := total
-
-	// Apply unreleased filter if requested (before pagination)
-	if hideUnreleased {
-		items = filterUnreleasedItems(items)
-		total = len(items) // This is now accurate since we fetched all items
-	}
-
-	// Apply watched filter if requested (requires userID and history service)
-	if hideWatched && userID != "" && h.HistoryService != nil {
-		items = filterWatchedItems(items, userID, h.HistoryService)
-		total = len(items)
-	}
-
-	// Apply offset
-	if offset > 0 {
-		if offset >= len(items) {
-			items = []models.TrendingItem{}
-		} else {
-			items = items[offset:]
-		}
-	}
-
-	// Apply limit after offset
-	if limit > 0 && limit < len(items) {
-		items = items[:limit]
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	resp := CustomListResponse{Items: items, Total: total}
+	resp := CustomListResponse{Items: items, Total: filteredTotal}
 	if hideUnreleased || hideWatched {
 		resp.UnfilteredTotal = unfilteredTotal
 	}

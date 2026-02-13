@@ -254,6 +254,21 @@ func (s *Service) load() error {
 		return fmt.Errorf("decode user settings: %w", err)
 	}
 
+	// Migrate: force hideUnreleased=false on trending shelves (curated lists handle this now)
+	for userID, us := range settings {
+		changed := false
+		for i := range us.HomeShelves.Shelves {
+			id := us.HomeShelves.Shelves[i].ID
+			if (id == "trending-movies" || id == "trending-tv") && us.HomeShelves.Shelves[i].HideUnreleased {
+				us.HomeShelves.Shelves[i].HideUnreleased = false
+				changed = true
+			}
+		}
+		if changed {
+			settings[userID] = us
+		}
+	}
+
 	s.settings = settings
 	return nil
 }

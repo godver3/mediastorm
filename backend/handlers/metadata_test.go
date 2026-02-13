@@ -96,8 +96,8 @@ func (f *fakeMetadataService) CollectionDetails(_ context.Context, _ int64) (*mo
 	return nil, nil
 }
 
-func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ int) ([]models.TrendingItem, int, error) {
-	return nil, 0, nil
+func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ metadata.CustomListOptions) ([]models.TrendingItem, int, int, error) {
+	return nil, 0, 0, nil
 }
 
 func (f *fakeMetadataService) ExtractTrailerStreamURL(_ context.Context, _ string) (string, error) {

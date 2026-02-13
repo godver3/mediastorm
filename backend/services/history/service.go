@@ -27,6 +27,7 @@ var (
 // MetadataService provides series and movie metadata for continue watching generation.
 type MetadataService interface {
 	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+	SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
 	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
 	MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
@@ -515,7 +516,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 	// === PARALLEL METADATA LOOKUPS ===
 	// Use a semaphore to limit concurrent metadata requests
-	const maxConcurrent = 5
+	const maxConcurrent = 10
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -963,8 +964,8 @@ func (s *Service) getSeriesMetadataWithCache(ctx context.Context, seriesID, seri
 		}
 	}
 
-	// Fetch from metadata service
-	details, err := metadataSvc.SeriesDetails(ctx, query)
+	// Fetch from metadata service (lite variant skips TMDB/MDBList enrichment for speed)
+	details, err := metadataSvc.SeriesDetailsLite(ctx, query)
 	if err != nil {
 		return nil, err
 	}
