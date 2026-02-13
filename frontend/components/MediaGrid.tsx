@@ -765,6 +765,76 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
             renderItem={({ item, index }) => {
               // For landscape cards, render custom card with progress bar
               if (isLandscapeLayout) {
+                const isLandscapeExploreCard =
+                  item.mediaType === 'explore' && item.collagePosters && item.collagePosters.length >= 4;
+
+                if (isLandscapeExploreCard) {
+                  const yearDisplay = item.year ? `+${item.year} More` : undefined;
+                  return (
+                    <Pressable
+                      style={{
+                        width: actualCardWidth,
+                        height: actualCardHeight,
+                        marginRight: index === items.length - 1 ? 0 : gap,
+                        borderRadius: theme.radius.md,
+                        overflow: 'hidden',
+                        backgroundColor: theme.colors.background.surface,
+                      }}
+                      onPress={() => onItemPress?.(item)}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
+                        {item.collagePosters!.slice(0, 4).map((poster: string, i: number) => (
+                          <RNImage
+                            key={`collage-${i}`}
+                            source={{ uri: poster }}
+                            style={{ width: '50%', height: '50%' }}
+                            resizeMode="cover"
+                          />
+                        ))}
+                      </View>
+                      <View
+                        style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          paddingHorizontal: theme.spacing.sm,
+                          paddingTop: theme.spacing.lg,
+                          paddingBottom: theme.spacing.sm,
+                          zIndex: 3,
+                        }}>
+                        <LinearGradient
+                          pointerEvents="none"
+                          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                          locations={[0, 0.5, 1]}
+                          start={{ x: 0.5, y: 0 }}
+                          end={{ x: 0.5, y: 1 }}
+                          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                        />
+                        <Text
+                          style={{
+                            ...theme.typography.body.sm,
+                            color: theme.colors.text.primary,
+                            fontWeight: '600',
+                            zIndex: 1,
+                          }}
+                          numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        {yearDisplay ? (
+                          <Text
+                            style={{
+                              ...theme.typography.caption.sm,
+                              color: theme.colors.text.secondary,
+                              zIndex: 1,
+                            }}>
+                            {yearDisplay}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                }
+
                 const percentWatched = (item as any).percentWatched as number | undefined;
                 const itemIsUnreleased = (item as any).isUnreleased as boolean | undefined;
                 const showProgressBar = percentWatched !== undefined && percentWatched >= 5 && percentWatched < 100;

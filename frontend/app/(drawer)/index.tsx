@@ -149,13 +149,14 @@ function pickRandomPosters<T>(
 // Helper to create explore card with 4-poster collage
 // Uses random posters from displayed items on the shelf
 // Optional overrideRemainingCount can be passed when we know the total from API
-function createExploreCard(shelfId: string, allCards: CardData[], overrideRemainingCount?: number): CardData {
+function createExploreCard(shelfId: string, allCards: CardData[], overrideRemainingCount?: number, imageGetter?: (card: CardData) => string | undefined): CardData {
   const remainingCount = overrideRemainingCount ?? allCards.length - MAX_SHELF_ITEMS_ON_HOME;
   const totalCount =
     overrideRemainingCount !== undefined ? overrideRemainingCount + MAX_SHELF_ITEMS_ON_HOME : allCards.length;
 
   // Pick 4 posters from displayed items (deterministic based on shelfId and content)
-  const collagePosters = pickRandomPosters(allCards, (card) => card.cardImage, 4, shelfId);
+  const getImage = imageGetter ?? ((card: CardData) => card.cardImage);
+  const collagePosters = pickRandomPosters(allCards, getImage, 4, shelfId);
 
   return {
     id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
@@ -1020,7 +1021,7 @@ function IndexScreen() {
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
-    const exploreCard = createExploreCard('continue-watching', allCards);
+    const exploreCard = createExploreCard('continue-watching', allCards, undefined, (card) => card.backdropUrl || card.headerImage || card.cardImage);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
   }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition]);
@@ -1503,8 +1504,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick posters from displayed items (deterministic)
-    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'continue-watching');
+    // Pick backdrop images from displayed items for landscape collage (deterministic)
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.backdrop?.url || title?.poster?.url, 4, 'continue-watching');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}continue-watching`,
       name: 'Explore',
@@ -2956,20 +2957,24 @@ const ShelfCardContent = React.memo(
                 />
               ))}
             </View>
-            <View style={[styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
+            <View style={isLandscape ? styles.landscapeCardTextContainer : [styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
               <LinearGradient
                 pointerEvents="none"
-                colors={GRADIENT_COLORS_ANDROID_TV}
-                locations={GRADIENT_LOCATIONS_ANDROID_TV}
+                colors={isAndroidTV ? GRADIENT_COLORS_ANDROID_TV : GRADIENT_COLORS_DEFAULT}
+                locations={isAndroidTV ? GRADIENT_LOCATIONS_ANDROID_TV : GRADIENT_LOCATIONS_DEFAULT}
                 start={GRADIENT_START}
                 end={GRADIENT_END}
                 style={styles.cardTextGradient}
               />
-              <Text style={isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle} numberOfLines={1}>
+              <Text style={isLandscape
+                ? (isAndroidTV ? styles.landscapeCardTitleAndroidTV : styles.landscapeCardTitle)
+                : (isAndroidTV ? styles.cardTitleAndroidTV : styles.cardTitle)} numberOfLines={1}>
                 {card.title}
               </Text>
               {card.year ? (
-                <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
+                <Text style={isLandscape
+                  ? (isAndroidTV ? styles.landscapeCardMetaAndroidTV : styles.landscapeCardMeta)
+                  : (isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta)}>{card.year}</Text>
               ) : null}
             </View>
           </>
