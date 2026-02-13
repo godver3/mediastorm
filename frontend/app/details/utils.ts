@@ -80,6 +80,41 @@ export const episodesMatch = (a?: any, b?: any) => {
 export const getResultKey = (result: any) =>
   result.guid || result.downloadUrl || result.link || `${result.indexer}:${result.title}`;
 
+/** How many days out an unreleased episode can be and still appear in Continue Watching */
+const COMING_SOON_WINDOW_DAYS = 7;
+
+/**
+ * Check if an unreleased episode is "coming soon" (within the display window).
+ * Returns true only when the air date is in the future AND within COMING_SOON_WINDOW_DAYS.
+ * Episodes with no air date or beyond the window return false (should be hidden).
+ */
+export const isEpisodeComingSoon = (airedDate?: string): boolean => {
+  if (!airedDate) {
+    return false; // No date — don't show
+  }
+
+  try {
+    const airDate = new Date(airedDate + 'T00:00:00');
+    if (isNaN(airDate.getTime())) {
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (airDate <= today) {
+      return false; // Already aired
+    }
+
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + COMING_SOON_WINDOW_DAYS);
+
+    return airDate <= cutoff;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Check if an episode hasn't aired yet based on its air date.
  * Returns true if:

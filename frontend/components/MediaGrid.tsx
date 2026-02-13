@@ -879,19 +879,24 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                         pointerEvents="none"
                       />
                     )}
-                    {/* Unreleased episode badge (top-right) */}
+                    {/* Coming soon badge (top-right) */}
                     {itemIsUnreleased && (
                       <View
                         style={{
                           position: 'absolute',
                           top: theme.spacing.xs,
                           right: theme.spacing.xs,
-                          padding: 3,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 3,
+                          paddingHorizontal: 6,
+                          paddingVertical: 3,
                           borderRadius: 12,
                           backgroundColor: theme.colors.status.warning,
                           zIndex: 5,
                         }}>
-                        <Ionicons name="time" size={12} color="#000000" />
+                        <Ionicons name="calendar-outline" size={10} color="#000000" />
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#000000' }}>Soon</Text>
                       </View>
                     )}
                     {/* Text container with gradient */}

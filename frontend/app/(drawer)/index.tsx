@@ -57,7 +57,7 @@ import Animated, {
   useAnimatedReaction,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isEpisodeUnreleased } from '@/app/details/utils';
+import { isEpisodeComingSoon, isEpisodeUnreleased } from '@/app/details/utils';
 
 type CardData = {
   id: string | number;
@@ -3010,10 +3010,11 @@ const ShelfCardContent = React.memo(
                 <Text style={isAndroidTV ? styles.landscapeCardMetaAndroidTV : styles.landscapeCardMeta}>{card.year}</Text>
               ) : null}
             </View>
-            {/* Unreleased episode badge (top-right) */}
+            {/* Coming soon badge (top-right) */}
             {card.isUnreleased && (
               <View style={styles.unreleasedBadge}>
-                <Ionicons name="time" size={isAndroidTV ? 14 : isTV ? 16 : 12} color="#000000" />
+                <Ionicons name="calendar-outline" size={isAndroidTV ? 12 : isTV ? 14 : 10} color="#000000" />
+                <Text style={styles.unreleasedBadgeText}>Soon</Text>
               </View>
             )}
             {/* Progress bar at bottom */}
@@ -3896,10 +3897,19 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       position: 'absolute',
       top: isTV ? theme.spacing.sm : theme.spacing.xs,
       right: isTV ? theme.spacing.sm : theme.spacing.xs,
-      padding: isTV ? 4 : 3,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: isTV ? 4 : 3,
+      paddingHorizontal: isTV ? 8 : 6,
+      paddingVertical: isTV ? 4 : 3,
       borderRadius: 12,
       backgroundColor: theme.colors.status.warning,
       zIndex: 5,
+    },
+    unreleasedBadgeText: {
+      fontSize: isAndroidTV ? 10 : isTV ? 12 : 9,
+      fontWeight: '700',
+      color: '#000000',
     },
     progressBarContainer: {
       position: 'absolute',
@@ -4478,6 +4488,13 @@ function mapContinueWatchingToCards(
       // Prefer overview from API response, then async-fetched cache, then watchlist
       const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistItem?.overview || '';
 
+      // Hide unreleased episodes that are too far out; show "coming soon" for those within the window
+      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate) : false;
+      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate) : false;
+      if (unreleased && !comingSoon) {
+        return null; // Too far out — hide from continue watching
+      }
+
       // Compute series watch state and unwatched count
       const totalEpisodes = item.totalEpisodeCount ?? 0;
       const watchedEpisodes = item.watchedEpisodeCount ?? 0;
@@ -4503,7 +4520,7 @@ function mapContinueWatchingToCards(
         seriesOverview,
         watchState: seriesWatchState,
         unwatchedCount: seriesUnwatchedCount,
-        isUnreleased: next?.airDate ? isEpisodeUnreleased(next.airDate) : false,
+        isUnreleased: comingSoon,
       } as CardData;
     })
     .filter((card): card is CardData => card !== null);
@@ -4603,6 +4620,13 @@ function mapContinueWatchingToTitles(
       const code = formatEpisodeCode(next?.seasonNumber, next?.episodeNumber);
       const label = next?.title ? `${item.seriesTitle} • ${code} – ${next.title}` : `${item.seriesTitle} • ${code}`;
 
+      // Hide unreleased episodes that are too far out; show "coming soon" for those within the window
+      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate) : false;
+      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate) : false;
+      if (unreleased && !comingSoon) {
+        return null; // Too far out — hide from continue watching
+      }
+
       // Try to get series overview from cache, watchlist, or fall back to empty string
       const cachedOverview = seriesOverviews?.get(item.seriesId);
       const watchlistItem = watchlistItems?.find((w) => w.id === item.seriesId);
@@ -4622,7 +4646,7 @@ function mapContinueWatchingToTitles(
         tvdbId: parseNumeric(item.externalIds?.tvdb),
       };
 
-      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent, isUnreleased: next?.airDate ? isEpisodeUnreleased(next.airDate) : false };
+      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent, isUnreleased: comingSoon };
     })
     .filter((title): title is Title & { uniqueKey: string; percentWatched?: number; isUnreleased?: boolean } => title !== null);
 }
