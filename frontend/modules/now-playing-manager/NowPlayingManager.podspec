@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.author         = package['author']
   s.license        = package['license']
   s.homepage       = 'https://github.com/example/now-playing-manager'
-  s.platforms      = { :ios => '15.1', :tvos => '17.0' }
+  s.platforms      = { :ios => '15.1', :tvos => '15.1' }
   s.source         = { :git => 'https://github.com/example/now-playing-manager.git', :tag => "v#{s.version}" }
   s.static_framework = true
 
