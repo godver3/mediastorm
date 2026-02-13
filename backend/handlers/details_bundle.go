@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"novastream/models"
 
@@ -76,6 +77,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	tvdbID := trimAndParseInt64(query.Get("tvdbId"))
 	tmdbID := trimAndParseInt64(query.Get("tmdbId"))
 
+	bundleStart := time.Now()
 	resp := DetailsBundleResponse{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -84,6 +86,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		start := time.Now()
 		if contentType == "series" {
 			details, err := h.metadata.SeriesDetails(r.Context(), models.SeriesDetailsQuery{
 				TitleID: titleID,
@@ -92,6 +95,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 				TVDBID:  tvdbID,
 				TMDBID:  tmdbID,
 			})
+			log.Printf("[details-bundle timing] series details: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err != nil {
 				log.Printf("[details-bundle] series details error: %v", err)
 				return
@@ -108,6 +112,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 				TMDBID:  tmdbID,
 				TVDBID:  tvdbID,
 			})
+			log.Printf("[details-bundle timing] movie details: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err != nil {
 				log.Printf("[details-bundle] movie details error: %v", err)
 				return
@@ -123,7 +128,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			titles, err := h.metadata.Similar(r.Context(), contentType, tmdbID)
+			log.Printf("[details-bundle timing] similar: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err != nil {
 				log.Printf("[details-bundle] similar error: %v", err)
 				return
@@ -138,6 +145,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		start := time.Now()
 		trailerResp, err := h.metadata.Trailers(r.Context(), models.TrailerQuery{
 			MediaType:    contentType,
 			TitleID:      titleID,
@@ -148,6 +156,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			TVDBID:       tvdbID,
 			SeasonNumber: season,
 		})
+		log.Printf("[details-bundle timing] trailers: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 		if err != nil {
 			log.Printf("[details-bundle] trailers error: %v", err)
 			return
@@ -162,7 +171,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			pref, err := h.contentPrefs.Get(userID, titleID)
+			log.Printf("[details-bundle timing] content preference: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err != nil {
 				log.Printf("[details-bundle] content preference error: %v", err)
 				return
@@ -178,7 +189,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			state, err := h.history.GetSeriesWatchState(userID, titleID)
+			log.Printf("[details-bundle timing] watch state: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err != nil {
 				log.Printf("[details-bundle] watch state error: %v", err)
 				return
@@ -193,7 +206,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		start := time.Now()
 		items, err := h.history.ListPlaybackProgress(userID)
+		log.Printf("[details-bundle timing] playback progress: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 		if err != nil {
 			log.Printf("[details-bundle] playback progress error: %v", err)
 			return
@@ -204,6 +219,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	}()
 
 	wg.Wait()
+	log.Printf("[details-bundle timing] TOTAL: %dms (type=%s, titleId=%s)", time.Since(bundleStart).Milliseconds(), contentType, titleID)
 
 	// Ensure nil slices become empty arrays in JSON
 	if resp.Similar == nil {

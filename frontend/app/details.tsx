@@ -1,5 +1,6 @@
 import type { PlaybackPreference } from '@/components/BackendSettingsContext';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
+import { msSinceNavStart } from '@/utils/nav-timing';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
@@ -338,6 +339,8 @@ const CertificationBadge = ({
 let detailsInstanceCounter = 0;
 
 export default function DetailsScreen() {
+  console.log(`[NAV TIMING] DetailsScreen function body executing, +${msSinceNavStart()}ms since nav start`);
+
   const params = useLocalSearchParams<LocalParams>();
   const router = useRouter();
   const pathname = usePathname();
@@ -363,6 +366,12 @@ export default function DetailsScreen() {
     }
     prevTitleIdRef.current = params.titleId;
   }, [params.titleId, instanceId]);
+
+  // NAV TIMING: Track when component effects first fire (React commit phase)
+  useEffect(() => {
+    console.log(`[NAV TIMING] DetailsScreen useEffect[] mount, +${msSinceNavStart()}ms since nav start`);
+  }, []);
+
   const theme = useTheme();
   const styles = useMemo(() => createDetailsStyles(theme), [theme]);
   const spatialNavigator = useSpatialNavigator();
@@ -524,13 +533,22 @@ export default function DetailsScreen() {
   const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     if (!logoUrl) {
+      console.log(`[NAV TIMING] Logo getSize: no URL, +${msSinceNavStart()}ms`);
       setLogoDimensions(null);
       return;
     }
+    const _logoStart = Date.now();
+    console.log(`[NAV TIMING] Logo getSize starting, +${msSinceNavStart()}ms, url=${logoUrl.substring(0, 80)}...`);
     RNImage.getSize(
       logoUrl,
-      (width, height) => setLogoDimensions({ width, height }),
-      () => setLogoDimensions(null)
+      (width, height) => {
+        console.log(`[NAV TIMING] Logo getSize completed in ${Date.now() - _logoStart}ms, +${msSinceNavStart()}ms, ${width}x${height}`);
+        setLogoDimensions({ width, height });
+      },
+      () => {
+        console.log(`[NAV TIMING] Logo getSize failed in ${Date.now() - _logoStart}ms, +${msSinceNavStart()}ms`);
+        setLogoDimensions(null);
+      }
     );
   }, [logoUrl]);
 
@@ -539,13 +557,22 @@ export default function DetailsScreen() {
   const posterToPreload = posterUrl || backdropUrl;
   useEffect(() => {
     if (!posterToPreload) {
+      console.log(`[NAV TIMING] Poster preload: no URL, marking ready immediately, +${msSinceNavStart()}ms`);
       setIsPosterPreloaded(true);
       return;
     }
     setIsPosterPreloaded(false);
+    const _prefetchStart = Date.now();
+    console.log(`[NAV TIMING] Poster prefetch starting, +${msSinceNavStart()}ms, url=${posterToPreload.substring(0, 80)}...`);
     RNImage.prefetch(posterToPreload)
-      .then(() => setIsPosterPreloaded(true))
-      .catch(() => setIsPosterPreloaded(true)); // Still show page on error
+      .then(() => {
+        console.log(`[NAV TIMING] Poster prefetch completed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
+        setIsPosterPreloaded(true);
+      })
+      .catch(() => {
+        console.log(`[NAV TIMING] Poster prefetch failed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
+        setIsPosterPreloaded(true);
+      }); // Still show page on error
   }, [posterToPreload]);
 
   // Calculate logo style to maintain constant area across different aspect ratios
@@ -1145,6 +1172,8 @@ export default function DetailsScreen() {
     let cancelled = false;
 
     const bundleType = isSeries ? 'series' : 'movie';
+    const _bundleStart = Date.now();
+    console.log(`[NAV TIMING] Details bundle fetch starting, +${msSinceNavStart()}ms, type=${bundleType}, titleId=${titleId}`);
 
     apiService
       .getDetailsBundleData(activeUserId, {
@@ -1158,11 +1187,13 @@ export default function DetailsScreen() {
       })
       .then((data) => {
         if (cancelled) return;
+        console.log(`[NAV TIMING] Details bundle fetch completed in ${Date.now() - _bundleStart}ms, +${msSinceNavStart()}ms`);
         setDetailsBundle(data);
         setBundleReady(true);
       })
       .catch((error) => {
         if (cancelled) return;
+        console.log(`[NAV TIMING] Details bundle fetch failed in ${Date.now() - _bundleStart}ms, +${msSinceNavStart()}ms`);
         console.log('[details-bundle] fetch failed, falling back to individual requests:', error);
         setDetailsBundle(null);
         setBundleReady(true);
@@ -1903,6 +1934,7 @@ export default function DetailsScreen() {
   useEffect(() => {
     if (!movieDetailsQuery) {
       console.log('[Details] No movie details query, skipping fetch');
+      console.log(`[NAV TIMING] movieDetailsLoading=false (no query), +${msSinceNavStart()}ms`);
       setMovieDetails(null);
       setMovieDetailsLoading(false);
       setMovieDetailsError(null);
@@ -1913,6 +1945,7 @@ export default function DetailsScreen() {
     if (detailsBundle?.movieDetails && !hydratedFromBundle.current.movieDetails) {
       hydratedFromBundle.current.movieDetails = true;
       setMovieDetails(detailsBundle.movieDetails);
+      console.log(`[NAV TIMING] movieDetailsLoading=false (from bundle), +${msSinceNavStart()}ms`);
       setMovieDetailsLoading(false);
       return;
     }
@@ -1942,6 +1975,7 @@ export default function DetailsScreen() {
           backdropUrl: details.backdrop?.url,
         });
         setMovieDetails(details);
+        console.log(`[NAV TIMING] movieDetailsLoading=false (individual fetch), +${msSinceNavStart()}ms`);
         setMovieDetailsLoading(false);
       })
       .catch((error) => {
@@ -1950,6 +1984,7 @@ export default function DetailsScreen() {
         }
         console.warn('[details] movie metadata fetch failed', error);
         setMovieDetails(null);
+        console.log(`[NAV TIMING] movieDetailsLoading=false (individual fetch error), +${msSinceNavStart()}ms`);
         setMovieDetailsLoading(false);
         setMovieDetailsError(error instanceof Error ? error.message : 'Unable to load movie metadata.');
       });
@@ -2008,6 +2043,7 @@ export default function DetailsScreen() {
   useEffect(() => {
     if (!isSeries) {
       setSeriesDetailsData(null);
+      console.log(`[NAV TIMING] seriesDetailsLoading=false (not series), +${msSinceNavStart()}ms`);
       setSeriesDetailsLoading(false);
       return;
     }
@@ -2015,6 +2051,7 @@ export default function DetailsScreen() {
     const normalizedTitle = title?.trim();
     if (!normalizedTitle && !tvdbIdNumber && !titleId) {
       setSeriesDetailsData(null);
+      console.log(`[NAV TIMING] seriesDetailsLoading=false (no identifiers), +${msSinceNavStart()}ms`);
       setSeriesDetailsLoading(false);
       return;
     }
@@ -2023,6 +2060,7 @@ export default function DetailsScreen() {
     if (detailsBundle?.seriesDetails && !hydratedFromBundle.current.seriesDetails) {
       hydratedFromBundle.current.seriesDetails = true;
       setSeriesDetailsData(detailsBundle.seriesDetails);
+      console.log(`[NAV TIMING] seriesDetailsLoading=false (from bundle), +${msSinceNavStart()}ms`);
       setSeriesDetailsLoading(false);
       return;
     }
@@ -2050,6 +2088,7 @@ export default function DetailsScreen() {
         }
         // Store full SeriesDetails for sharing with SeriesEpisodes
         setSeriesDetailsData(details);
+        console.log(`[NAV TIMING] seriesDetailsLoading=false (individual fetch), +${msSinceNavStart()}ms`);
         setSeriesDetailsLoading(false);
       })
       .catch((error) => {
@@ -2058,6 +2097,7 @@ export default function DetailsScreen() {
         }
         console.warn('[details] series metadata fetch failed', error);
         setSeriesDetailsData(null);
+        console.log(`[NAV TIMING] seriesDetailsLoading=false (individual fetch error), +${msSinceNavStart()}ms`);
         setSeriesDetailsLoading(false);
       });
 
@@ -6449,6 +6489,10 @@ export default function DetailsScreen() {
   const isLogoReady = !logoUrl || logoDimensions !== null;
   const isPosterReady = isPosterPreloaded;
   const shouldHideUntilMetadataReady = (isTV || isMobile) && (isMetadataLoading || !isLogoReady || !isPosterReady);
+  // Log at render time (not useEffect) to get accurate timing of when React first renders content
+  if (!shouldHideUntilMetadataReady) {
+    console.log(`[NAV TIMING] Content rendering in JSX (render phase), +${msSinceNavStart()}ms`);
+  }
   const shouldAnimateBackground = isTV || isMobile;
 
   // Fade in background when metadata is ready
@@ -6520,7 +6564,7 @@ export default function DetailsScreen() {
   }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
 
   useEffect(() => {
-    console.log('[Details] Visibility state:', {
+    console.log(`[NAV TIMING] Visibility gate, +${msSinceNavStart()}ms:`, {
       shouldHideUntilMetadataReady,
       isMetadataLoading,
       isLogoReady,
@@ -6529,6 +6573,9 @@ export default function DetailsScreen() {
       logoDimensions: !!logoDimensions,
       posterToPreload: !!posterToPreload,
     });
+    if (!shouldHideUntilMetadataReady) {
+      console.log(`[NAV TIMING] === DETAILS PAGE VISIBLE === +${msSinceNavStart()}ms since nav start`);
+    }
   }, [shouldHideUntilMetadataReady, isMetadataLoading, isLogoReady, isPosterReady, logoUrl, logoDimensions, posterToPreload]);
 
   // On Android TV (low-RAM devices like Fire Stick), unmount heavy content when the player is
