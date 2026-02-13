@@ -205,6 +205,16 @@ func (s *Service) Refresh(ctx context.Context) error {
 		newSchedule.SourceType = "xmltv"
 	}
 
+	// Supplement with per-channel Xtream EPG data (fresher than bulk xmltv.php)
+	if settings.Live.Mode == "xtream" &&
+		settings.Live.XtreamHost != "" &&
+		settings.Live.XtreamUsername != "" &&
+		settings.Live.XtreamPassword != "" {
+		if err := s.supplementWithXtreamPerChannel(ctx, &settings, newSchedule); err != nil {
+			log.Printf("[epg] per-channel supplement failed (non-fatal): %v", err)
+		}
+	}
+
 	// Prune old programs based on retention
 	retentionDays := settings.Live.EPG.RetentionDays
 	if retentionDays <= 0 {
