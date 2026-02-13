@@ -181,9 +181,7 @@ func (c *tvdbClient) doGET(u string, q url.Values, v any) error {
 		req, _ := http.NewRequest(http.MethodGet, u, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		if c.language != "" {
-			if acceptLang := normalizeLanguageCode(c.language); acceptLang != "" {
-				req.Header.Set("Accept-Language", acceptLang)
-			}
+			req.Header.Set("Accept-Language", c.language)
 		}
 		log.Printf("[tvdb] GET %s acceptLanguage=%q", u, req.Header.Get("Accept-Language"))
 		resp, err := c.httpc.Do(req)

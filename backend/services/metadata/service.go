@@ -1524,25 +1524,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func normalizeLanguageCode(lang string) string {
-	trimmed := strings.TrimSpace(lang)
-	if trimmed == "" {
-		return ""
-	}
-	if idx := strings.Index(trimmed, ";"); idx >= 0 {
-		trimmed = trimmed[:idx]
-	}
-	trimmed = strings.TrimSpace(trimmed)
-	trimmed = strings.ToLower(trimmed)
-	if idx := strings.IndexAny(trimmed, "-_"); idx >= 0 {
-		trimmed = trimmed[:idx]
-	}
-	if len(trimmed) > 2 {
-		trimmed = trimmed[:2]
-	}
-	return trimmed
-}
-
 func normalizeTVDBImageURL(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1649,7 +1630,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
@@ -2197,7 +2178,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	}
 
 	// Check the same file cache used by SeriesDetails
-	cacheID := cacheKey("tvdb", "series", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details lite cache hit tvdbId=%d seasons=%d", tvdbID, len(cached.Seasons))
@@ -2458,7 +2439,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 			continue
 		}
 
-		cacheID := cacheKey("tvdb", "series", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 			log.Printf("[metadata] batch series cache hit index=%d tvdbId=%d name=%q", i, tvdbID, query.Name)
@@ -2987,7 +2968,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	}
 
 	// Check cache (v2 adds collection data)
-	cacheID := cacheKey("tvdb", "movie", "details", "v2", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "movie", "details", "v3", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
 		log.Printf("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)
