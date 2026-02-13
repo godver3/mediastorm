@@ -28,6 +28,7 @@ import { MenuProvider } from '../components/MenuContext';
 import { ContinueWatchingProvider } from '../components/ContinueWatchingContext';
 import { PinEntryModal } from '../components/PinEntryModal';
 import { ProfileSelectorModal } from '../components/ProfileSelectorModal';
+import { StartupDataProvider } from '../components/StartupDataContext';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
@@ -81,68 +82,70 @@ function AuthGate() {
     <UserProfilesProvider>
       <PinEntryModal />
       <ProfileSelectorModal />
-      <LiveProvider>
-        <MultiscreenProvider>
-          <MovieReleasesProvider>
-            <WatchlistProvider>
-              <WatchStatusProvider>
-                <ContinueWatchingProvider>
-                  <MenuProvider>
-                    <NovaThemeProvider>
-                      <LoadingScreenProvider>
-                        <ToastProvider>
-                          <ThemeProvider value={DarkTheme}>
-                            <SpatialNavigationDeviceTypeProvider>
-                              <ConfigureRemoteControl />
-                              <GoBackConfiguration />
-                              <Stack
-                                screenOptions={{
-                                  headerShown: false,
-                                  // Enable native swipe-back gesture on touch devices (phones + tablets)
-                                  gestureEnabled: hasTouchSupport,
-                                  gestureDirection: 'horizontal',
-                                  // Tablets keep animations despite TV layout; only actual TV disables them
-                                  animation: hasTouchSupport ? 'default' : 'none',
-                                  // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
-                                  freezeOnBlur: true,
-                                }}>
-                                {/* Drawer as the main screen - uses file-based routing */}
-                                <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-                                {/* Details should render as a standard screen so it shares navigation affordances */}
-                                <Stack.Screen
-                                  name="details"
-                                  options={{
+      <StartupDataProvider>
+        <LiveProvider>
+          <MultiscreenProvider>
+            <MovieReleasesProvider>
+              <WatchlistProvider>
+                <WatchStatusProvider>
+                  <ContinueWatchingProvider>
+                    <MenuProvider>
+                      <NovaThemeProvider>
+                        <LoadingScreenProvider>
+                          <ToastProvider>
+                            <ThemeProvider value={DarkTheme}>
+                              <SpatialNavigationDeviceTypeProvider>
+                                <ConfigureRemoteControl />
+                                <GoBackConfiguration />
+                                <Stack
+                                  screenOptions={{
                                     headerShown: false,
-                                    // Enable swipe-back gesture on touch devices
+                                    // Enable native swipe-back gesture on touch devices (phones + tablets)
                                     gestureEnabled: hasTouchSupport,
                                     gestureDirection: 'horizontal',
-                                    animation: hasTouchSupport ? 'slide_from_right' : 'none',
-                                  }}
-                                />
-                                <Stack.Screen
-                                  name="player"
-                                  options={{
-                                    presentation: Platform.isTV ? 'card' : 'fullScreenModal',
-                                    animation: 'fade',
-                                  }}
-                                />
-                                <Stack.Screen
-                                  name="multiscreen"
-                                  options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
-                                />
-                              </Stack>
-                            </SpatialNavigationDeviceTypeProvider>
-                          </ThemeProvider>
-                        </ToastProvider>
-                      </LoadingScreenProvider>
-                    </NovaThemeProvider>
-                  </MenuProvider>
-                </ContinueWatchingProvider>
-              </WatchStatusProvider>
-            </WatchlistProvider>
-          </MovieReleasesProvider>
-        </MultiscreenProvider>
-      </LiveProvider>
+                                    // Tablets keep animations despite TV layout; only actual TV disables them
+                                    animation: hasTouchSupport ? 'default' : 'none',
+                                    // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
+                                    freezeOnBlur: true,
+                                  }}>
+                                  {/* Drawer as the main screen - uses file-based routing */}
+                                  <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+                                  {/* Details should render as a standard screen so it shares navigation affordances */}
+                                  <Stack.Screen
+                                    name="details"
+                                    options={{
+                                      headerShown: false,
+                                      // Enable swipe-back gesture on touch devices
+                                      gestureEnabled: hasTouchSupport,
+                                      gestureDirection: 'horizontal',
+                                      animation: hasTouchSupport ? 'slide_from_right' : 'none',
+                                    }}
+                                  />
+                                  <Stack.Screen
+                                    name="player"
+                                    options={{
+                                      presentation: Platform.isTV ? 'card' : 'fullScreenModal',
+                                      animation: 'fade',
+                                    }}
+                                  />
+                                  <Stack.Screen
+                                    name="multiscreen"
+                                    options={{ presentation: Platform.isTV ? 'card' : 'fullScreenModal' }}
+                                  />
+                                </Stack>
+                              </SpatialNavigationDeviceTypeProvider>
+                            </ThemeProvider>
+                          </ToastProvider>
+                        </LoadingScreenProvider>
+                      </NovaThemeProvider>
+                    </MenuProvider>
+                  </ContinueWatchingProvider>
+                </WatchStatusProvider>
+              </WatchlistProvider>
+            </MovieReleasesProvider>
+          </MultiscreenProvider>
+        </LiveProvider>
+      </StartupDataProvider>
     </UserProfilesProvider>
   );
 }

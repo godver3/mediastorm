@@ -1,6 +1,7 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
+import { useStartupData } from '@/components/StartupDataContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import {
   apiService,
@@ -60,6 +61,8 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [error, setError] = useState<string | null>(null);
   const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
+  const { startupData, ready: startupReady } = useStartupData();
+  const hydratedFromStartup = useRef(false);
 
   const requireUserId = useCallback(() => {
     if (!activeUserId) {
@@ -107,10 +110,26 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!activeUserId) {
       setItems([]);
       setLoading(false);
+      hydratedFromStartup.current = false;
       return;
     }
-    void refresh();
-  }, [isReady, backendUrl, activeUserId, refresh]);
+    // Hydrate from startup bundle if available (avoids separate HTTP request)
+    if (startupData?.watchlist && !hydratedFromStartup.current) {
+      setItems(normaliseItems(startupData.watchlist));
+      setLoading(false);
+      setError(null);
+      hydratedFromStartup.current = true;
+      return;
+    }
+    // Wait for startup bundle before falling back to independent fetch
+    if (!startupReady) {
+      return;
+    }
+    // Fallback: fetch independently (startup failed or didn't include watchlist)
+    if (!hydratedFromStartup.current) {
+      void refresh();
+    }
+  }, [isReady, backendUrl, activeUserId, refresh, startupData, startupReady]);
 
   const addToWatchlist = useCallback(
     async (payload: WatchlistUpsertPayload) => {

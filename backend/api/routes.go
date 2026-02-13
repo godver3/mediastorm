@@ -105,6 +105,8 @@ func Register(
 	clientsHandler *handlers.ClientsHandler,
 	contentPreferencesHandler *handlers.ContentPreferencesHandler,
 	imageHandler *handlers.ImageHandler,
+	startupHandler *handlers.StartupHandler,
+	detailsBundleHandler *handlers.DetailsBundleHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -498,6 +500,18 @@ func Register(
 		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.GetPreference).Methods(http.MethodGet)
 		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.DeletePreference).Methods(http.MethodDelete)
 		profileProtected.HandleFunc("/{userID}/preferences/content/{contentID}", contentPreferencesHandler.Options).Methods(http.MethodOptions)
+	}
+
+	// Startup bundle endpoint (combines multiple API calls into one for low-power devices)
+	if startupHandler != nil {
+		profileProtected.HandleFunc("/{userID}/startup", startupHandler.GetStartup).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/startup", startupHandler.Options).Methods(http.MethodOptions)
+	}
+
+	// Details bundle endpoint (combines details-page API calls into one for low-power devices)
+	if detailsBundleHandler != nil {
+		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.GetDetailsBundle).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.Options).Methods(http.MethodOptions)
 	}
 }
 

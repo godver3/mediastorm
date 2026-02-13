@@ -294,6 +294,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   const retryFnRef = useRef<(() => Promise<boolean>) | null>(null);
   const lastAppliedNetworkUrlRef = useRef<string | null>(null);
   const clientIdRef = useRef<string | null>(null);
+  const inflightRefreshRef = useRef<Promise<{ success: boolean; authRequired: boolean }> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -475,58 +476,70 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       return { success: false, authRequired: false };
     }
 
-    setLoading(true);
-    try {
-      const result = (await apiService.getSettings()) as BackendSettings;
-      if (!mountedRef.current) {
-        return { success: false, authRequired: false };
-      }
-      console.log(
-        '[BackendSettings] Successfully connected to backend, has live playlist:',
-        !!result?.live?.playlistUrl,
-      );
-      setSettings(result);
-      setError(null);
-      setLastLoadedAt(Date.now());
-      setIsBackendReachable(true);
-      stopRetryTimer();
-
-      // Cache network settings for offline use
-      if (result?.network) {
-        await cacheNetworkSettings(result.network);
-        console.log('[BackendSettings] Cached network settings:', result.network.homeWifiSSID || '(none)');
-      }
-
-      return { success: true, authRequired: false };
-    } catch (err) {
-      const message = formatErrorMessage(err);
-      const networkFailure = isNetworkError(err);
-      // Check if this is an auth error (401) - if so, don't treat as a connection error
-      // The user just needs to log in first, settings will be fetched after authentication
-      const isAuthError = message.includes('401') || message.toLowerCase().includes('unauthorized');
-      console.warn('[BackendSettings] Failed to connect:', message, isAuthError ? '(auth required)' : '');
-      if (mountedRef.current) {
-        setSettings(null);
-        // Don't set error for auth failures - this is expected before login
-        if (!isAuthError) {
-          setError(message);
-        } else {
-          // Clear any previous error when we detect auth is required
-          setError(null);
-        }
-        if (networkFailure) {
-          setIsBackendReachable(false);
-        } else if (isAuthError) {
-          // Server is reachable, just needs auth
-          setIsBackendReachable(true);
-        }
-      }
-      return { success: false, authRequired: isAuthError };
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
+    // Deduplicate concurrent calls (e.g. BackendSettings init + AuthContext post-validation)
+    if (inflightRefreshRef.current) {
+      return inflightRefreshRef.current;
     }
+
+    const doRefresh = async (): Promise<{ success: boolean; authRequired: boolean }> => {
+      setLoading(true);
+      try {
+        const result = (await apiService.getSettings()) as BackendSettings;
+        if (!mountedRef.current) {
+          return { success: false, authRequired: false };
+        }
+        console.log(
+          '[BackendSettings] Successfully connected to backend, has live playlist:',
+          !!result?.live?.playlistUrl,
+        );
+        setSettings(result);
+        setError(null);
+        setLastLoadedAt(Date.now());
+        setIsBackendReachable(true);
+        stopRetryTimer();
+
+        // Cache network settings for offline use
+        if (result?.network) {
+          await cacheNetworkSettings(result.network);
+          console.log('[BackendSettings] Cached network settings:', result.network.homeWifiSSID || '(none)');
+        }
+
+        return { success: true, authRequired: false };
+      } catch (err) {
+        const message = formatErrorMessage(err);
+        const networkFailure = isNetworkError(err);
+        // Check if this is an auth error (401) - if so, don't treat as a connection error
+        // The user just needs to log in first, settings will be fetched after authentication
+        const isAuthError = message.includes('401') || message.toLowerCase().includes('unauthorized');
+        console.warn('[BackendSettings] Failed to connect:', message, isAuthError ? '(auth required)' : '');
+        if (mountedRef.current) {
+          setSettings(null);
+          // Don't set error for auth failures - this is expected before login
+          if (!isAuthError) {
+            setError(message);
+          } else {
+            // Clear any previous error when we detect auth is required
+            setError(null);
+          }
+          if (networkFailure) {
+            setIsBackendReachable(false);
+          } else if (isAuthError) {
+            // Server is reachable, just needs auth
+            setIsBackendReachable(true);
+          }
+        }
+        return { success: false, authRequired: isAuthError };
+      } finally {
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+        inflightRefreshRef.current = null;
+      }
+    };
+
+    const promise = doRefresh();
+    inflightRefreshRef.current = promise;
+    return promise;
   }, [stopRetryTimer]);
 
   // Keep the retry function ref in sync with the latest version

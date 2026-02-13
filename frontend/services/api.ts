@@ -822,6 +822,33 @@ export interface UserSettings {
   network: UserNetworkSettings;
 }
 
+// Combined startup data (reduces ~21 HTTP requests to 1 for low-power devices)
+export interface TrendingResponse {
+  items: TrendingItem[];
+  total: number;
+  unfilteredTotal?: number;
+}
+
+export interface StartupData {
+  userSettings: UserSettings | null;
+  watchlist: WatchlistItem[];
+  continueWatching: SeriesWatchState[];
+  playbackProgress: PlaybackProgress[];
+  watchHistory: WatchStatusItem[];
+  trendingMovies: TrendingResponse;
+  trendingSeries: TrendingResponse;
+}
+
+export interface DetailsBundleData {
+  seriesDetails: SeriesDetails | null;
+  movieDetails: Title | null;
+  similar: Title[];
+  trailers: TrailerResponse | null;
+  contentPreference: ContentPreference | null;
+  watchState: SeriesWatchState | null;
+  playbackProgress: PlaybackProgress[];
+}
+
 // Per-content language preferences (overrides user settings for specific content)
 export interface ContentPreference {
   contentId: string; // e.g., "tmdb:tv:12345" for series, "tmdb:movie:67890" for movies
@@ -1067,9 +1094,8 @@ class ApiService {
       if (duration > 200) {
         apiRequestStats.push({ endpoint, duration, method: options.method || 'GET' });
       }
-      if (duration > 1000) {
-        console.log(`[API:Perf] Slow request: ${options.method || 'GET'} ${endpoint} took ${duration.toFixed(0)}ms`);
-      }
+      // Log all requests to identify duplicates and unnecessary calls
+      console.log(`[API] ${options.method || 'GET'} ${endpoint} ${duration.toFixed(0)}ms`);
     }
 
     if (!response.ok) {
@@ -1485,6 +1511,51 @@ class ApiService {
   async getUserSettings(userId: string): Promise<UserSettings> {
     const safeUserId = this.normaliseUserId(userId);
     return this.request<UserSettings>(`/users/${safeUserId}/settings`);
+  }
+
+  // Get combined startup data (reduces ~21 requests to 1 for low-power devices)
+  async getStartupData(
+    userId: string,
+    options?: { hideUnreleased?: boolean; hideWatched?: boolean },
+  ): Promise<StartupData> {
+    const safeUserId = this.normaliseUserId(userId);
+    const params = new URLSearchParams();
+    if (options?.hideUnreleased) {
+      params.set('hideUnreleased', 'true');
+    }
+    if (options?.hideWatched) {
+      params.set('hideWatched', 'true');
+    }
+    const qs = params.toString();
+    const url = `/users/${safeUserId}/startup${qs ? `?${qs}` : ''}`;
+    return this.request<StartupData>(url);
+  }
+
+  // Fetch all details-page data in a single request (bundle endpoint)
+  async getDetailsBundleData(
+    userId: string,
+    params: {
+      type: 'series' | 'movie';
+      titleId?: string;
+      name?: string;
+      year?: number;
+      tvdbId?: number;
+      tmdbId?: number;
+      imdbId?: string;
+      season?: number;
+    },
+  ): Promise<DetailsBundleData> {
+    const safeUserId = this.normaliseUserId(userId);
+    const qs = new URLSearchParams();
+    qs.set('type', params.type);
+    if (params.titleId) qs.set('titleId', params.titleId);
+    if (params.name) qs.set('name', params.name);
+    if (params.year) qs.set('year', String(params.year));
+    if (params.tvdbId) qs.set('tvdbId', String(params.tvdbId));
+    if (params.tmdbId) qs.set('tmdbId', String(params.tmdbId));
+    if (params.imdbId) qs.set('imdbId', params.imdbId);
+    if (params.season) qs.set('season', String(params.season));
+    return this.request<DetailsBundleData>(`/users/${safeUserId}/details-bundle?${qs.toString()}`);
   }
 
   // Update user-specific settings

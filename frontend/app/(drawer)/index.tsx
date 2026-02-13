@@ -571,8 +571,9 @@ function IndexScreen() {
   }, [userSettings?.homeShelves?.exploreCardPosition, settings?.homeShelves?.exploreCardPosition]);
 
   // Fetch custom list data when custom shelves change
+  // Wait for activeUserId to avoid duplicate fetches (once without userId, once with)
   useEffect(() => {
-    if (customShelves.length === 0) return;
+    if (customShelves.length === 0 || !activeUserId) return;
 
     const fetchCustomLists = async () => {
       for (const shelf of customShelves) {

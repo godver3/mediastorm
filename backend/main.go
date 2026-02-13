@@ -329,6 +329,17 @@ func main() {
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
 
+	// Startup handler bundles multiple API calls for low-power devices
+	startupHandler := handlers.NewStartupHandler(
+		userSettingsService, watchlistService, historyService,
+		metadataService, cfgManager, userService,
+	)
+
+	// Details bundle handler bundles details-page API calls for low-power devices
+	detailsBundleHandler := handlers.NewDetailsBundleHandler(
+		metadataService, historyService, contentPreferencesService, userService,
+	)
+
 	// Create prequeue handler now that history service is available
 	// Video prober and HLS creator are optional - we'll set them after videoHandler is created
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
@@ -422,6 +433,8 @@ func main() {
 		clientsHandler,
 		contentPreferencesHandler,
 		imageHandler,
+		startupHandler,
+		detailsBundleHandler,
 		accountsService,
 		sessionsService,
 		userService,

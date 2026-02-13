@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
+import { useStartupData } from '@/components/StartupDataContext';
 
 import { apiService, SearchResult, TrendingItem } from '../services/api';
 
@@ -33,18 +34,36 @@ export function useTrendingMovies(
   hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
+  const { startupData, ready: startupReady } = useStartupData();
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const hydratedFromStartup = useRef(false);
 
   const refetch = useCallback(() => {
+    hydratedFromStartup.current = false;
     setRefreshToken((t) => t + 1);
   }, []);
 
   useEffect(() => {
     if (!isReady || !enabled) {
       setLoading(false);
+      return;
+    }
+
+    // Hydrate from startup bundle if available (avoids separate HTTP request)
+    if (startupData?.trendingMovies && !hydratedFromStartup.current && refreshToken === 0) {
+      console.log('[useTrendingMovies] Hydrating from startup bundle');
+      setData(startupData.trendingMovies.items);
+      setLoading(false);
+      setError(null);
+      hydratedFromStartup.current = true;
+      return;
+    }
+
+    // Wait for startup bundle before falling back to independent fetch
+    if (!startupReady && refreshToken === 0) {
       return;
     }
 
@@ -83,12 +102,14 @@ export function useTrendingMovies(
       }
     };
 
-    fetchData();
+    if (!hydratedFromStartup.current) {
+      fetchData();
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken]);
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
   return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);
@@ -102,18 +123,36 @@ export function useTrendingTVShows(
   hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
+  const { startupData, ready: startupReady } = useStartupData();
   const [data, setData] = useState<TrendingItem[] | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const hydratedFromStartup = useRef(false);
 
   const refetch = useCallback(() => {
+    hydratedFromStartup.current = false;
     setRefreshToken((t) => t + 1);
   }, []);
 
   useEffect(() => {
     if (!isReady || !enabled) {
       setLoading(false);
+      return;
+    }
+
+    // Hydrate from startup bundle if available (avoids separate HTTP request)
+    if (startupData?.trendingSeries && !hydratedFromStartup.current && refreshToken === 0) {
+      console.log('[useTrendingTVShows] Hydrating from startup bundle');
+      setData(startupData.trendingSeries.items);
+      setLoading(false);
+      setError(null);
+      hydratedFromStartup.current = true;
+      return;
+    }
+
+    // Wait for startup bundle before falling back to independent fetch
+    if (!startupReady && refreshToken === 0) {
       return;
     }
 
@@ -147,12 +186,14 @@ export function useTrendingTVShows(
       }
     };
 
-    fetchData();
+    if (!hydratedFromStartup.current) {
+      fetchData();
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken]);
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
   return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);

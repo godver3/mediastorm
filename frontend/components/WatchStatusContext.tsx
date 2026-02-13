@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { apiService, WatchStatusItem, WatchStatusUpdate } from '../services/api';
+import { useStartupData } from './StartupDataContext';
 import { useUserProfiles } from './UserProfilesContext';
 
 interface WatchStatusContextValue {
@@ -22,6 +23,8 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { activeUser } = useUserProfiles();
+  const { startupData, ready: startupReady } = useStartupData();
+  const hydratedFromStartup = useRef(false);
 
   const normaliseKeyPart = (value: string | undefined | null): string => {
     return value?.trim().toLowerCase() ?? '';
@@ -60,8 +63,27 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [activeUser?.id]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!activeUser?.id) {
+      hydratedFromStartup.current = false;
+      return;
+    }
+    // Hydrate from startup bundle if available (avoids separate HTTP request)
+    if (startupData?.watchHistory && !hydratedFromStartup.current) {
+      setItems(startupData.watchHistory || []);
+      setLoading(false);
+      setError(null);
+      hydratedFromStartup.current = true;
+      return;
+    }
+    // Wait for startup bundle before falling back to independent fetch
+    if (!startupReady) {
+      return;
+    }
+    // Fallback: fetch independently (startup failed or didn't include watch history)
+    if (!hydratedFromStartup.current) {
+      refresh();
+    }
+  }, [refresh, activeUser?.id, startupData, startupReady]);
 
   const isWatched = useCallback(
     (mediaType: string, id: string): boolean => {

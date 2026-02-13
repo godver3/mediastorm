@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { apiService, UserSettings } from '@/services/api';
 
+import { useStartupData } from './StartupDataContext';
 import { useUserProfiles } from './UserProfilesContext';
 
 interface LiveContextValue {
@@ -34,7 +35,9 @@ const LiveContext = createContext<LiveContextValue | undefined>(undefined);
 export const LiveProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mountedRef = useRef(true);
   const { activeUserId } = useUserProfiles();
+  const { startupData, ready: startupReady } = useStartupData();
   const userSettingsRef = useRef<UserSettings | null>(null);
+  const hydratedFromStartup = useRef(false);
 
   // State
   const [playlistUrl, setPlaylistUrlState] = useState('');
@@ -49,64 +52,72 @@ export const LiveProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  // Apply user settings to Live TV state
+  const applySettings = useCallback((settings: UserSettings | null) => {
+    if (!mountedRef.current) return;
+    userSettingsRef.current = settings;
+    const liveTV = settings?.liveTV;
+    if (liveTV) {
+      setFavorites(new Set(liveTV.favoriteChannels || []));
+      setHiddenChannels(new Set(liveTV.hiddenChannels || []));
+      setSelectedCategoriesState(liveTV.selectedCategories || []);
+    } else {
+      setFavorites(new Set());
+      setHiddenChannels(new Set());
+      setSelectedCategoriesState([]);
+    }
+    setIsReady(true);
+  }, []);
+
   // Load Live TV data from backend when active user changes
   useEffect(() => {
     let cancelled = false;
 
-    const loadUserSettings = async () => {
-      if (!activeUserId) {
-        // No active user, reset to defaults
-        if (mountedRef.current) {
-          setFavorites(new Set());
-          setHiddenChannels(new Set());
-          setSelectedCategoriesState([]);
-          setIsReady(true);
-        }
-        return;
+    if (!activeUserId) {
+      hydratedFromStartup.current = false;
+      if (mountedRef.current) {
+        setFavorites(new Set());
+        setHiddenChannels(new Set());
+        setSelectedCategoriesState([]);
+        setIsReady(true);
       }
+      return;
+    }
 
-      try {
-        const settings = await apiService.getUserSettings(activeUserId);
+    // Hydrate from startup bundle if available (avoids separate HTTP request)
+    if (startupData?.userSettings && !hydratedFromStartup.current) {
+      applySettings(startupData.userSettings);
+      hydratedFromStartup.current = true;
+      return;
+    }
 
-        if (cancelled || !mountedRef.current) {
-          return;
+    // Wait for startup bundle before falling back to independent fetch
+    if (!startupReady) {
+      return;
+    }
+
+    // Fallback: fetch independently (startup failed or didn't include userSettings)
+    if (!hydratedFromStartup.current) {
+      setIsReady(false);
+      const fetchSettings = async () => {
+        try {
+          const settings = await apiService.getUserSettings(activeUserId);
+          if (cancelled || !mountedRef.current) return;
+          applySettings(settings);
+        } catch (err) {
+          console.warn('Failed to load Live TV user settings.', err);
+          if (mountedRef.current) {
+            applySettings(null);
+          }
         }
-
-        userSettingsRef.current = settings;
-
-        // Load Live TV settings from user settings
-        const liveTV = settings.liveTV;
-        if (liveTV) {
-          setFavorites(new Set(liveTV.favoriteChannels || []));
-          setHiddenChannels(new Set(liveTV.hiddenChannels || []));
-          setSelectedCategoriesState(liveTV.selectedCategories || []);
-        } else {
-          setFavorites(new Set());
-          setHiddenChannels(new Set());
-          setSelectedCategoriesState([]);
-        }
-      } catch (err) {
-        console.warn('Failed to load Live TV user settings.', err);
-        // Reset to defaults on error
-        if (mountedRef.current) {
-          setFavorites(new Set());
-          setHiddenChannels(new Set());
-          setSelectedCategoriesState([]);
-        }
-      } finally {
-        if (!cancelled && mountedRef.current) {
-          setIsReady(true);
-        }
-      }
-    };
-
-    setIsReady(false);
-    void loadUserSettings();
+      };
+      void fetchSettings();
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [activeUserId]);
+  }, [activeUserId, startupData, startupReady, applySettings]);
 
   // Helper to save Live TV settings to backend
   const saveLiveTVSettings = useCallback(
