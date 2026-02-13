@@ -1483,18 +1483,6 @@ function SettingsScreen() {
           },
         ],
       },
-      {
-        type: 'header',
-        id: 'debug-header',
-        title: 'Developer Tools',
-        description: 'Debug tools for testing native player implementations (MPV on Android, KSPlayer on iOS).',
-      },
-      {
-        type: 'button',
-        id: 'native-player-debug',
-        label: 'Native Player Debug',
-        action: 'native-player-debug',
-      },
     ],
     [backendUrl, isSubmittingLogs, account, isRefreshing],
   );
@@ -1529,9 +1517,6 @@ function SettingsScreen() {
           break;
         case 'reload':
           void handleReloadSettings();
-          break;
-        case 'native-player-debug':
-          router.push('/native-player-debug');
           break;
       }
     },
@@ -2109,20 +2094,6 @@ function SettingsScreen() {
                 </View>
               )}
 
-              {/* Developer Tools section - shown on Connection tab for native platforms */}
-              {!Platform.isTV && activeTab === 'connection' && (Platform.OS === 'ios' || Platform.OS === 'android') && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Developer Tools</Text>
-                  <Text style={styles.sectionDescription}>
-                    Debug tools for testing native player implementations ({Platform.OS === 'android' ? 'MPV' : 'KSPlayer'}).
-                  </Text>
-                  <FocusablePressable
-                    text="Native Player Debug"
-                    onSelect={() => router.push('/native-player-debug')}
-                    style={[styles.debugButton, { marginTop: 12 }]}
-                  />
-                </View>
-              )}
             </ScrollView>
           </View>
         )}
