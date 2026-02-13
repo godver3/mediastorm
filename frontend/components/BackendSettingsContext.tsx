@@ -295,6 +295,8 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
   const lastAppliedNetworkUrlRef = useRef<string | null>(null);
   const clientIdRef = useRef<string | null>(null);
   const inflightRefreshRef = useRef<Promise<{ success: boolean; authRequired: boolean }> | null>(null);
+  const lastRefreshSuccessRef = useRef<number>(0);
+  const REFRESH_COOLDOWN_MS = 2000;
 
   useEffect(() => {
     return () => {
@@ -481,6 +483,12 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       return inflightRefreshRef.current;
     }
 
+    // Skip if we recently refreshed successfully (prevents rapid sequential calls
+    // e.g. AuthContext login + BackendSettings init completing back-to-back)
+    if (lastRefreshSuccessRef.current > 0 && Date.now() - lastRefreshSuccessRef.current < REFRESH_COOLDOWN_MS) {
+      return { success: true, authRequired: false };
+    }
+
     const doRefresh = async (): Promise<{ success: boolean; authRequired: boolean }> => {
       setLoading(true);
       try {
@@ -496,6 +504,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         setError(null);
         setLastLoadedAt(Date.now());
         setIsBackendReachable(true);
+        lastRefreshSuccessRef.current = Date.now();
         stopRetryTimer();
 
         // Cache network settings for offline use

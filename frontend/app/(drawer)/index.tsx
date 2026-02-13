@@ -771,9 +771,12 @@ function IndexScreen() {
     callAndReport('User Profiles', refreshUserProfiles);
     callAndReport('Continue Watching', refreshContinueWatching);
     callAndReport('Watchlist', refreshWatchlist);
-    callAndReport('Trending Movies', refetchTrendingMovies);
-    callAndReport('Trending TV Shows', refetchTrendingTVShows);
-  }, [refreshUserProfiles, refreshContinueWatching, refreshWatchlist, refetchTrendingMovies, refetchTrendingTVShows]);
+    // Note: Trending movies/TV shows are NOT reloaded here — they self-manage
+    // via the startup bundle and their own dependency arrays (hideUnreleased,
+    // hideWatched, userId, etc.). Calling refetch() here would defeat startup
+    // bundle hydration by resetting the hydration flag and forcing independent
+    // HTTP requests.
+  }, [refreshUserProfiles, refreshContinueWatching, refreshWatchlist]);
 
   // Full reload when settings are applied/saved (settingsLastLoadedAt changes)
   useEffect(() => {
@@ -790,18 +793,28 @@ function IndexScreen() {
     }
   }, [settingsLastLoadedAt, triggerReloadAfterAuthFailure]);
 
-  // Reload content when backend becomes reachable after being unreachable
+  // Reload content when backend reconnects after going down.
+  // Only cascades on actual reconnection (was reachable, went down, came back).
+  // Does NOT cascade on the first time becoming reachable (initial login) because
+  // context providers already handle initial data loading via the startup bundle.
   const previousBackendReachableRef = React.useRef<boolean | null>(null);
+  const hasEverBeenReachableRef = React.useRef(false);
   useEffect(() => {
     // Skip initial mount
     if (previousBackendReachableRef.current === null) {
       previousBackendReachableRef.current = isBackendReachable;
+      if (isBackendReachable) {
+        hasEverBeenReachableRef.current = true;
+      }
       return;
     }
 
-    // If backend just became reachable, trigger a full reload
-    if (isBackendReachable && !previousBackendReachableRef.current) {
-      triggerReloadAfterAuthFailure();
+    if (isBackendReachable) {
+      // Only reload on reconnection (not first connection)
+      if (!previousBackendReachableRef.current && hasEverBeenReachableRef.current) {
+        triggerReloadAfterAuthFailure();
+      }
+      hasEverBeenReachableRef.current = true;
     }
     previousBackendReachableRef.current = isBackendReachable;
   }, [isBackendReachable, triggerReloadAfterAuthFailure]);
@@ -843,6 +856,16 @@ function IndexScreen() {
       };
     }, []),
   );
+
+  // Refs for refresh functions used in the focus effect below.
+  // This prevents the effect from re-running when activeUserId changes during
+  // startup (which gives refresh a new identity), which would be misinterpreted
+  // as a "return from navigation" and trigger redundant fetches before the
+  // startup bundle arrives.
+  const refreshContinueWatchingRef = useRef(refreshContinueWatching);
+  refreshContinueWatchingRef.current = refreshContinueWatching;
+  const refreshWatchlistRef = useRef(refreshWatchlist);
+  refreshWatchlistRef.current = refreshWatchlist;
 
   // Reload data when screen becomes visible (including when navigating back from details)
   // Using useEffect with focused instead of useFocusEffect because the screen stays mounted
@@ -919,16 +942,17 @@ function IndexScreen() {
     // Initial load data is already fresh from the context providers
     if (isReturnFromNavigation) {
       // Silently refresh continue watching and watchlist when returning from details
-      refreshContinueWatching?.({ silent: true }).catch(() => {
+      // Uses refs to avoid re-triggering this effect when function identity changes during startup
+      refreshContinueWatchingRef.current?.({ silent: true }).catch(() => {
         // Silent refresh failed - not critical
       });
 
-      refreshWatchlist?.({ silent: true }).catch(() => {
+      refreshWatchlistRef.current?.({ silent: true }).catch(() => {
         // Silent refresh failed - not critical
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally omit card arrays and settings to prevent focus grab on every data update
-  }, [focused, settingsLoading, hasAuthFailure, refreshContinueWatching, refreshWatchlist, scrollToShelf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally omit card arrays, settings, and refresh refs to prevent re-triggering on startup state changes
+  }, [focused, settingsLoading, hasAuthFailure, scrollToShelf]);
 
   useEffect(() => {
     const hadAuthFailure = hasAuthFailureRef.current;
