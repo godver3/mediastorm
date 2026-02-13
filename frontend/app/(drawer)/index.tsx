@@ -361,6 +361,7 @@ function enrichTrendingItemsWithWatchStatus(
 // Debug logging for index page render/load analysis
 const DEBUG_INDEX_RENDERS = __DEV__ && false; // Set to true for render debugging
 const DEBUG_PERF = __DEV__ && false; // Performance profiling
+const DEBUG_VNAV = false; // Vertical navigation timing
 let indexRenderCount = 0;
 let renderStartTime = 0;
 
@@ -687,8 +688,9 @@ function IndexScreen() {
 
       const performScroll = (rawY: number) => {
         const targetY = Math.max(0, rawY - topOffset);
-        if (skipAnimation || isInitialLoadRef.current) {
-          // No animation: use direct scroll
+        if (skipAnimation || isInitialLoadRef.current || isAndroidTV) {
+          // No animation: instant snap (Android TV: avoids frame drops from
+          // removeClippedSubviews reattaching views across the scroll animation)
           scrollViewRef.current?.scrollTo({ y: targetY, animated: false });
         } else {
           // Animated: use shared value for UI-thread smoothness
@@ -1639,7 +1641,7 @@ function IndexScreen() {
 
   // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
-  const [heroImageDimensions, setHeroImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  // heroImageDimensions removed — now computed inline in TVHero component
 
   // Remove from Continue Watching confirmation modal state
   const [isRemoveConfirmVisible, setIsRemoveConfirmVisible] = useState(false);
@@ -1718,35 +1720,7 @@ function IndexScreen() {
     setIsVersionMismatchVisible(false);
   }, []);
 
-  // Detect image orientation from URL pattern (avoids expensive Image.getSize network call)
-  // backdropUrl = landscape, posterUrl = portrait, headerImage = check for poster patterns
-  useEffect(() => {
-    if (!focusedDesktopCard || !Platform.isTV) {
-      setHeroImageDimensions(null);
-      return;
-    }
-
-    const imageUrl = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
-    if (!imageUrl) {
-      setHeroImageDimensions(null);
-      return;
-    }
-
-    // Detect portrait from URL pattern instead of fetching image
-    // Poster URLs typically contain width indicators (w185, w342, w500, w780) for portrait images
-    // Backdrop URLs use larger widths (w780, w1280, original) for landscape
-    const isPosterUrl =
-      /\/w(?:185|342|500)\//i.test(imageUrl) ||
-      (!focusedDesktopCard.backdropUrl && focusedDesktopCard.posterUrl === imageUrl);
-
-    if (isPosterUrl) {
-      // Portrait aspect ratio (2:3)
-      setHeroImageDimensions({ width: 500, height: 750 });
-    } else {
-      // Landscape aspect ratio (16:9)
-      setHeroImageDimensions({ width: 1920, height: 1080 });
-    }
-  }, [focusedDesktopCard]);
+  // heroImageDimensions effect removed — orientation is now computed inline in TVHero
 
   // Update focused card when cards array changes (e.g., episode progress updates)
   useEffect(() => {
@@ -2152,6 +2126,8 @@ function IndexScreen() {
   // Combines: menu close, shelf tracking, vertical scroll, and debounced hero update
   const handleShelfItemFocus = useCallback(
     (card: CardData, shelfKey: string, cardIndex: number): void => {
+      const isVertical = focusedShelfKeyRef.current !== shelfKey;
+
       // Close menu if open (no-op if already closed)
       closeMenu();
 
@@ -2163,10 +2139,14 @@ function IndexScreen() {
       }
 
       // Debounced hero update - only update after focus settles
+      // Use longer debounce for vertical navigation to avoid hero image decode
+      // stalling frames mid-scroll-animation
       if (focusDebounceRef.current) {
         clearTimeout(focusDebounceRef.current);
       }
-      const debounceMs = isAndroidTV ? 150 : 500;
+      const debounceMs = isAndroidTV
+        ? (isVertical ? 600 : 150)  // Vertical: defer past scroll animation; Horizontal: quick
+        : 500;
       focusDebounceRef.current = setTimeout(() => {
         setFocusedDesktopCard(card);
       }, debounceMs);
@@ -2185,14 +2165,16 @@ function IndexScreen() {
     [scrollMetricsRef],
   );
 
-  const handleDesktopContentSizeChange = useCallback((width: number, height: number) => {
-    if (__DEV__ && Platform.OS === 'ios') {
-      console.log('[SafeArea] Home desktop ScrollView content size', { width, height });
-    }
-    // Clear cached shelf positions when content size changes - positions are now stale
-    if (Platform.isTV) {
+  const lastContentHeightRef = useRef(0);
+  const handleDesktopContentSizeChange = useCallback((_width: number, height: number) => {
+    // Only invalidate cached shelf positions when content height changes significantly
+    // (e.g., a shelf expanding/collapsing). Minor changes from badge updates or text
+    // reflow don't meaningfully shift shelf positions and would force expensive
+    // measureLayout calls on the next vertical navigation.
+    if (Platform.isTV && Math.abs(height - lastContentHeightRef.current) > 100) {
       shelfPositionsRef.current = {};
     }
+    lastContentHeightRef.current = height;
   }, []);
 
   // Desktop shelves configuration - moved before conditional return to satisfy React hooks rules
@@ -2609,87 +2591,9 @@ function IndexScreen() {
     <View ref={pageRef} style={desktopStyles?.styles.page}>
       {Platform.isTV && (
         <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
-          {focusedDesktopCard &&
-            heroImageDimensions &&
-            (() => {
-              const imageUrl = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
-              const isPortrait = heroImageDimensions.height > heroImageDimensions.width;
-
-              // Android TV: use cover fit and no blur for performance
-              if (isAndroidTV) {
-                return (
-                  <View style={desktopStyles?.styles.topContent}>
-                    <View style={desktopStyles?.styles.topHeroContainer}>
-                      <Image
-                        source={imageUrl}
-                        style={desktopStyles?.styles.topHeroImage}
-                        contentFit="cover"
-                        transition={0}
-                      />
-                    </View>
-                    <View style={desktopStyles?.styles.topTextContainer}>
-                      <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
-                        {focusedDesktopCard.title}
-                      </Text>
-                      {focusedDesktopCard.year != null && Number(focusedDesktopCard.year) > 0 && (
-                        <Text
-                          style={[
-                            desktopStyles?.styles.topYear,
-                            {
-                              fontSize: desktopStyles?.styles.topYear.fontSize * 1.25,
-                              lineHeight: desktopStyles?.styles.topYear.lineHeight * 1.25,
-                            },
-                          ]}>
-                          {focusedDesktopCard.year}
-                        </Text>
-                      )}
-                      <Text
-                        style={[
-                          desktopStyles?.styles.topDescription,
-                          {
-                            fontSize: desktopStyles?.styles.topDescription.fontSize * 1.25,
-                            lineHeight: desktopStyles?.styles.topDescription.lineHeight * 1.25,
-                          },
-                        ]}
-                        numberOfLines={4}>
-                        {focusedDesktopCard.description}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              }
-
-              return (
-                <View style={desktopStyles?.styles.topContent}>
-                  <View style={desktopStyles?.styles.topHeroContainer}>
-                    {isPortrait ? (
-                      <>
-                        <Image
-                          source={imageUrl}
-                          style={[StyleSheet.absoluteFillObject]}
-                          contentFit="cover"
-                          blurRadius={50}
-                        />
-                        <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
-                      </>
-                    ) : (
-                      <Image source={imageUrl} style={desktopStyles?.styles.topHeroImage} contentFit="contain" />
-                    )}
-                  </View>
-                  <View style={desktopStyles?.styles.topTextContainer}>
-                    <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
-                      {focusedDesktopCard.title}
-                    </Text>
-                    {focusedDesktopCard.year != null && Number(focusedDesktopCard.year) > 0 && (
-                      <Text style={desktopStyles?.styles.topYear}>{focusedDesktopCard.year}</Text>
-                    )}
-                    <Text style={desktopStyles?.styles.topDescription} numberOfLines={6}>
-                      {focusedDesktopCard.description}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })()}
+          {focusedDesktopCard && (
+            <TVHero card={focusedDesktopCard} styles={desktopStyles!.styles} />
+          )}
         </View>
       )}
       {/* Bottom gradient fade for visual polish on TV */}
@@ -2923,6 +2827,72 @@ type ShelfCardContentProps = {
   styles: ReturnType<typeof createDesktopStyles>['styles'];
   cardLayout?: 'portrait' | 'landscape';
 };
+
+// Memoized TV hero component — isolates re-renders from the main page tree.
+// When focusedDesktopCard changes (debounced), only this component re-renders
+// instead of the entire IndexScreen (which contains all shelves, ScrollView, etc.).
+type TVHeroProps = {
+  card: CardData;
+  styles: ReturnType<typeof createDesktopStyles>['styles'];
+};
+
+const TVHero = React.memo(function TVHero({ card, styles }: TVHeroProps) {
+  const imageUrl = card.backdropUrl || card.headerImage;
+  if (!imageUrl) return null;
+
+  // Compute image orientation inline (avoids separate state + effect cycle)
+  const isPosterUrl =
+    /\/w(?:185|342|500)\//i.test(imageUrl) ||
+    (!card.backdropUrl && card.posterUrl === imageUrl);
+  const isPortrait = isPosterUrl;
+
+  if (isAndroidTV) {
+    return (
+      <View style={styles.topContent}>
+        <View style={styles.topHeroContainer}>
+          <Image source={imageUrl} style={styles.topHeroImage} contentFit="cover" transition={0} />
+        </View>
+        <View style={styles.topTextContainer}>
+          <Text style={styles.topTitle} numberOfLines={2}>
+            {card.title}
+          </Text>
+          {card.year != null && Number(card.year) > 0 && (
+            <Text style={styles.topYearScaled}>{card.year}</Text>
+          )}
+          <Text style={styles.topDescriptionScaled} numberOfLines={4}>
+            {card.description}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.topContent}>
+      <View style={styles.topHeroContainer}>
+        {isPortrait ? (
+          <>
+            <Image source={imageUrl} style={[StyleSheet.absoluteFillObject]} contentFit="cover" blurRadius={50} />
+            <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" />
+          </>
+        ) : (
+          <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" />
+        )}
+      </View>
+      <View style={styles.topTextContainer}>
+        <Text style={styles.topTitle} numberOfLines={2}>
+          {card.title}
+        </Text>
+        {card.year != null && Number(card.year) > 0 && (
+          <Text style={styles.topYear}>{card.year}</Text>
+        )}
+        <Text style={styles.topDescription} numberOfLines={6}>
+          {card.description}
+        </Text>
+      </View>
+    </View>
+  );
+});
 
 const ShelfCardContent = React.memo(
   function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait' }: ShelfCardContentProps) {
@@ -3265,7 +3235,7 @@ function VirtualizedShelf({
 
       flatListRef.current.scrollToOffset({
         offset: targetX,
-        animated: true,
+        animated: !isAndroidTV,
       });
     },
     [cards.length, itemSize],
@@ -3469,6 +3439,7 @@ function VirtualizedShelf({
         orientation="horizontal"
         numberOfRenderedItems={21}
         numberOfItemsVisibleOnScreen={isAndroidTV ? 6 : 8}
+        scrollDuration={isAndroidTV ? 0 : 200}
       />
     </View>
   );
@@ -3645,6 +3616,19 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       // Design for tvOS at 1.5x, Android TV at 1.8x (20% larger)
       fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.8 : 1.5) * tvScale),
       lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.8 : 1.5) * tvScale),
+      color: theme.colors.text.secondary,
+    },
+    // Pre-scaled variants for Android TV hero (avoids creating inline style objects on every render)
+    topYearScaled: {
+      ...theme.typography.body.lg,
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 2.1 : 1.75) * tvScale * 1.25),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 2.1 : 1.75) * tvScale * 1.25),
+      color: theme.colors.text.secondary,
+    },
+    topDescriptionScaled: {
+      ...theme.typography.body.lg,
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.8 : 1.5) * tvScale * 1.25),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.8 : 1.5) * tvScale * 1.25),
       color: theme.colors.text.secondary,
     },
     heroContainer: {
