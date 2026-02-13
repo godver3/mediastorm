@@ -134,6 +134,7 @@ export interface Title {
   language: string;
   poster?: Image;
   backdrop?: Image;
+  backdrops?: Image[]; // Additional backdrop options beyond the primary
   logo?: Image;
   mediaType: string;
   tvdbId?: number;

@@ -1,6 +1,7 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
+import { markNavStart } from '@/utils/nav-timing';
 import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
 import { getMovieReleaseIcon, type ReleaseIconInfo } from '@/components/MediaItem';
@@ -14,7 +15,7 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
+import { apiService, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
@@ -38,6 +39,7 @@ import { Image } from '@/components/Image';
 import {
   findNodeHandle,
   FlatList,
+  Image as RNImage,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -52,9 +54,11 @@ import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
 import Animated, {
   useAnimatedRef,
+  useAnimatedStyle,
   scrollTo as reanimatedScrollTo,
   useSharedValue,
   useAnimatedReaction,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isEpisodeComingSoon, isEpisodeUnreleased } from '@/app/details/utils';
@@ -364,6 +368,78 @@ const DEBUG_PERF = __DEV__ && false; // Performance profiling
 const DEBUG_VNAV = false; // Vertical navigation timing
 let indexRenderCount = 0;
 let renderStartTime = 0;
+
+// Enriched hero data fetched from details API for TV hero display
+type EnrichedHeroData = {
+  logoUrl?: string;
+  isLogoDark?: boolean;
+  ratings?: Rating[];
+  genres?: string[];
+  certification?: string;
+  backdropUrl?: string; // Alternate backdrop from details API
+};
+
+// Rating source display order (lower = first)
+const RATING_ORDER: Record<string, number> = {
+  imdb: 1,
+  tmdb: 2,
+  trakt: 3,
+  tomatoes: 4,
+  audience: 5,
+  metacritic: 6,
+  letterboxd: 7,
+};
+
+const getRatingConfig = (
+  source: string,
+  baseUrl: string,
+  value?: number,
+  max?: number,
+): { color: string; iconUrl: string | null } => {
+  const iconBase = `${baseUrl}/static/rating_icons`;
+  switch (source) {
+    case 'imdb':
+      return { color: '#F5C518', iconUrl: `${iconBase}/imdb.png` };
+    case 'tmdb':
+      return { color: '#01D277', iconUrl: `${iconBase}/tmdb.png` };
+    case 'trakt':
+      return { color: '#ED1C24', iconUrl: `${iconBase}/trakt.png` };
+    case 'letterboxd':
+      return { color: '#00E054', iconUrl: `${iconBase}/letterboxd.png` };
+    case 'tomatoes': {
+      const percent = max === 100 ? value : value !== undefined ? value * 10 : 60;
+      const isFresh = (percent ?? 60) >= 60;
+      return {
+        color: isFresh ? '#FA320A' : '#6B8E23',
+        iconUrl: `${iconBase}/${isFresh ? 'rt_critics' : 'rt_rotten'}.png`,
+      };
+    }
+    case 'audience':
+      return { color: '#FA320A', iconUrl: `${iconBase}/rt_audience.png` };
+    case 'metacritic':
+      return { color: '#FFCC34', iconUrl: `${iconBase}/metacritic.png` };
+    default:
+      return { color: '#888888', iconUrl: null };
+  }
+};
+
+const formatRating = (rating: Rating): string => {
+  switch (rating.source) {
+    case 'imdb':
+    case 'letterboxd':
+      return rating.value.toFixed(1);
+    case 'tmdb':
+    case 'trakt':
+    case 'tomatoes':
+    case 'audience':
+    case 'metacritic':
+      return `${Math.round(rating.value)}%`;
+    default:
+      return rating.max === 10 ? rating.value.toFixed(1) : `${Math.round(rating.value)}%`;
+  }
+};
+
+const MAX_ENRICHED_CACHE = 50;
 
 function IndexScreen() {
   // Memory monitoring - logs every 60s on Android TV
@@ -1630,6 +1706,14 @@ function IndexScreen() {
   }, [trendingTVShows, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
+  const [enrichedHeroData, setEnrichedHeroData] = useState<EnrichedHeroData | null>(null);
+  const enrichedCacheRef = useRef<Map<string, EnrichedHeroData>>(new Map());
+  const enrichedAbortRef = useRef<AbortController | null>(null);
+  const [enrichedLoading, setEnrichedLoading] = useState(false);
+  const heroContentOpacity = useSharedValue(0);
+  const heroContentAnimStyle = useAnimatedStyle(() => ({
+    opacity: heroContentOpacity.value,
+  }));
   const [mobileHeroIndex, setMobileHeroIndex] = useState(0);
 
   // Ref for hero carousel ScrollView
@@ -1745,6 +1829,120 @@ function IndexScreen() {
       setFocusedDesktopCard(updatedCard);
     }
   }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards, focusedDesktopCard]);
+
+  // Fetch enriched hero data (logo, ratings, genres) when focused card changes on TV
+  useEffect(() => {
+    if (!Platform.isTV || !focusedDesktopCard) {
+      setEnrichedHeroData(null);
+      setEnrichedLoading(false);
+      return;
+    }
+
+    // Skip explore cards
+    if (String(focusedDesktopCard.id).startsWith(EXPLORE_CARD_ID_PREFIX)) {
+      setEnrichedHeroData(null);
+      setEnrichedLoading(false);
+      return;
+    }
+
+    const cacheKey = `${focusedDesktopCard.mediaType}:${focusedDesktopCard.tmdbId ?? focusedDesktopCard.id}`;
+
+    // Check cache first — instant, no loading flash
+    const cached = enrichedCacheRef.current.get(cacheKey);
+    if (cached) {
+      setEnrichedHeroData(cached);
+      setEnrichedLoading(false);
+      return;
+    }
+
+    // Mark loading — hero content hidden until fetch completes
+    setEnrichedHeroData(null);
+    setEnrichedLoading(true);
+
+    // Abort previous in-flight fetch
+    enrichedAbortRef.current?.abort();
+    const controller = new AbortController();
+    enrichedAbortRef.current = controller;
+
+    const fetchDetails = async () => {
+      try {
+        const card = focusedDesktopCard;
+        const params = {
+          tmdbId: card.tmdbId,
+          tvdbId: card.tvdbId,
+          imdbId: card.imdbId,
+          name: card.title,
+          year: card.year ? Number(card.year) : undefined,
+        };
+
+        let title: Title | undefined;
+
+        if (card.mediaType === 'series' || card.mediaType === 'tv') {
+          const result = await apiService.getSeriesDetails(params);
+          title = result?.title;
+        } else if (card.mediaType === 'movie') {
+          title = await apiService.getMovieDetails(params);
+        }
+
+        if (controller.signal.aborted || !title) return;
+
+        // Sort ratings by preferred order, take top 3
+        const sortedRatings = [...(title.ratings ?? [])].sort((a, b) => {
+          return (RATING_ORDER[a.source] ?? 99) - (RATING_ORDER[b.source] ?? 99);
+        }).slice(0, 3);
+
+        // Pick an alternate backdrop different from what the card already shows
+        const cardBackdrop = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
+        const allBackdrops = [
+          ...(title.backdrops ?? []),
+          ...(title.backdrop ? [title.backdrop] : []),
+        ];
+        const alternateBackdrop = allBackdrops.find((b) => b.url !== cardBackdrop)?.url;
+
+        const enriched: EnrichedHeroData = {
+          logoUrl: title.logo?.url,
+          isLogoDark: title.logo?.is_dark,
+          ratings: sortedRatings.length > 0 ? sortedRatings : undefined,
+          genres: title.genres?.slice(0, 3),
+          certification: title.certification,
+          backdropUrl: alternateBackdrop,
+        };
+
+        // Store in cache with size cap
+        enrichedCacheRef.current.set(cacheKey, enriched);
+        if (enrichedCacheRef.current.size > MAX_ENRICHED_CACHE) {
+          const firstKey = enrichedCacheRef.current.keys().next().value;
+          if (firstKey) enrichedCacheRef.current.delete(firstKey);
+        }
+
+        if (!controller.signal.aborted) {
+          setEnrichedHeroData(enriched);
+          setEnrichedLoading(false);
+        }
+      } catch (err) {
+        // Fetch failed — show fallback title/year/overview
+        if (!controller.signal.aborted) {
+          console.log('[HeroEnrich] Failed to fetch details:', err);
+          setEnrichedLoading(false);
+        }
+      }
+    };
+
+    fetchDetails();
+
+    return () => {
+      controller.abort();
+    };
+  }, [focusedDesktopCard]);
+
+  // Animate hero content opacity — instant hide when loading, smooth fade in when ready
+  useEffect(() => {
+    if (enrichedLoading || !focusedDesktopCard) {
+      heroContentOpacity.value = 0; // Instant hide — no animation delay
+    } else {
+      heroContentOpacity.value = withTiming(1, { duration: 300 });
+    }
+  }, [enrichedLoading, focusedDesktopCard]);
 
   // Debounce ref for hero updates
   const focusDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1886,6 +2084,8 @@ function IndexScreen() {
 
   const handleCardSelect = useCallback(
     (card: CardData) => {
+      const _navStart = Date.now();
+      console.log(`[NAV TIMING] handleCardSelect fired at ${_navStart} for "${card.title}" (${card.id})`);
       // Handle explore cards
       if (typeof card.id === 'string' && card.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = card.id.replace(EXPLORE_CARD_ID_PREFIX, '');
@@ -1943,16 +2143,21 @@ function IndexScreen() {
         initialEpisode: metadata?.nextEpisode ? String(metadata.nextEpisode.episodeNumber ?? '') : '',
       };
 
+      console.log(`[NAV TIMING] handleCardSelect calling router.push at +${Date.now() - _navStart}ms`);
+      markNavStart();
       router.push({
         pathname: '/details',
         params,
       });
+      console.log(`[NAV TIMING] handleCardSelect router.push returned at +${Date.now() - _navStart}ms`);
     },
     [router, continueWatchingItems, watchlistItems, seriesOverviews],
   );
 
   const handleTitlePress = useCallback(
     (item: Title) => {
+      const _navStart = Date.now();
+      console.log(`[NAV TIMING] handleTitlePress fired at ${_navStart} for "${item.name}" (${item.id})`);
       // Handle explore cards
       if (typeof item.id === 'string' && item.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = item.id.replace(EXPLORE_CARD_ID_PREFIX, '');
@@ -1979,6 +2184,8 @@ function IndexScreen() {
         }
       }
 
+      console.log(`[NAV TIMING] handleTitlePress calling router.push at +${Date.now() - _navStart}ms`);
+      markNavStart();
       router.push({
         pathname: '/details',
         params: {
@@ -1997,12 +2204,15 @@ function IndexScreen() {
           initialEpisode,
         },
       });
+      console.log(`[NAV TIMING] handleTitlePress router.push returned at +${Date.now() - _navStart}ms`);
     },
     [router, continueWatchingItems],
   );
 
   const handleContinueWatchingPress = useCallback(
     (item: Title) => {
+      const _navStart = Date.now();
+      console.log(`[NAV TIMING] handleContinueWatchingPress fired at ${_navStart} for "${item.name}" (${item.id})`);
       const metadata = continueWatchingItems?.find((state) => state.seriesId === item.id);
       if (!metadata || !metadata.nextEpisode) {
         handleTitlePress(item);
@@ -2014,6 +2224,8 @@ function IndexScreen() {
       const posterUrl = metadata.posterUrl || '';
       const backdropUrl = metadata.backdropUrl || '';
 
+      console.log(`[NAV TIMING] handleContinueWatchingPress calling router.push at +${Date.now() - _navStart}ms`);
+      markNavStart();
       router.push({
         pathname: '/details',
         params: {
@@ -2144,14 +2356,20 @@ function IndexScreen() {
       if (focusDebounceRef.current) {
         clearTimeout(focusDebounceRef.current);
       }
+
       const debounceMs = isAndroidTV
-        ? (isVertical ? 600 : 150)  // Vertical: defer past scroll animation; Horizontal: quick
-        : 500;
+        ? (isVertical ? 400 : 100)  // Vertical: defer past scroll animation; Horizontal: quick
+        : 350;
+
+      // Fade out over the debounce period — invisible by the time content swaps
+      heroContentOpacity.value = withTiming(0, { duration: debounceMs });
       focusDebounceRef.current = setTimeout(() => {
+        // Batch both updates in same render so content swaps while invisible
+        setEnrichedLoading(true);
         setFocusedDesktopCard(card);
       }, debounceMs);
     },
-    [closeMenu, scrollToShelf],
+    [closeMenu, scrollToShelf, heroContentOpacity],
   );
 
   // These callbacks do actual work in production, not just logging
@@ -2589,23 +2807,96 @@ function IndexScreen() {
   // Wrap content in SpatialNavigationRoot for TV platforms
   const desktopContent = (
     <View ref={pageRef} style={desktopStyles?.styles.page}>
+      {/* Full-screen background art for TV — crossfades as user navigates between items */}
+      {Platform.isTV && focusedDesktopCard && (
+        <Animated.View style={[desktopStyles?.styles.tvBackgroundArt, heroContentAnimStyle]} pointerEvents="none">
+          <Image
+            source={enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={500}
+          />
+          {/* Bottom fade to background base */}
+          <LinearGradient
+            colors={['transparent', 'rgba(11,11,15,0.1)', 'rgba(11,11,15,0.45)', '#0b0b0f']}
+            locations={[0, 0.6, 0.85, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={desktopStyles?.styles.tvBackgroundOverlay}
+          />
+          {/* Left edge fade to background base */}
+          <LinearGradient
+            colors={['#0b0b0f', 'rgba(11,11,15,0.3)', 'rgba(11,11,15,0.1)', 'transparent']}
+            locations={[0, 0.08, 0.25, 0.5]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={desktopStyles?.styles.tvBackgroundOverlay}
+          />
+        </Animated.View>
+      )}
       {Platform.isTV && (
         <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
           {focusedDesktopCard && (
-            <TVHero card={focusedDesktopCard} styles={desktopStyles!.styles} />
+            <Animated.View style={[desktopStyles?.styles.tvHeroOverview, heroContentAnimStyle]}>
+              <View style={desktopStyles?.styles.tvHeroOverviewBg}>
+                {/* Logo or title text */}
+                {enrichedHeroData?.logoUrl ? (
+                  <RNImage
+                    source={{ uri: enrichedHeroData.logoUrl }}
+                    style={[
+                      desktopStyles?.styles.tvHeroLogo,
+                      enrichedHeroData.isLogoDark ? { tintColor: 'white' } : undefined,
+                    ]}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Text style={desktopStyles?.styles.tvHeroTitle} numberOfLines={2}>
+                    {focusedDesktopCard.title}
+                  </Text>
+                )}
+                {/* Ratings row */}
+                {enrichedHeroData?.ratings && enrichedHeroData.ratings.length > 0 && (
+                  <View style={desktopStyles?.styles.tvHeroRatingsRow}>
+                    {enrichedHeroData.ratings.map((rating) => {
+                      const ratingBaseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+                      const config = getRatingConfig(rating.source, ratingBaseUrl, rating.value, rating.max);
+                      return (
+                        <View key={rating.source} style={desktopStyles?.styles.tvHeroRatingBadge}>
+                          {config.iconUrl && (
+                            <Image
+                              source={config.iconUrl}
+                              style={desktopStyles?.styles.tvHeroRatingIcon}
+                              contentFit="contain"
+                            />
+                          )}
+                          <Text style={[desktopStyles?.styles.tvHeroRatingValue, { color: config.color }]}>
+                            {formatRating(rating)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+                {/* Genres row */}
+                {enrichedHeroData?.genres && enrichedHeroData.genres.length > 0 && (
+                  <View style={desktopStyles?.styles.tvHeroGenresRow}>
+                    {enrichedHeroData.genres.map((genre) => (
+                      <View key={genre} style={desktopStyles?.styles.tvHeroGenreBadge}>
+                        <Text style={desktopStyles?.styles.tvHeroGenreText}>{genre}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {focusedDesktopCard.year != null && Number(focusedDesktopCard.year) > 0 && (
+                  <Text style={desktopStyles?.styles.tvHeroYear}>{focusedDesktopCard.year}</Text>
+                )}
+                <Text style={desktopStyles?.styles.tvHeroDescription} numberOfLines={6}>
+                  {focusedDesktopCard.seriesOverview ?? focusedDesktopCard.description}
+                </Text>
+              </View>
+            </Animated.View>
           )}
         </View>
-      )}
-      {/* Bottom gradient fade for visual polish on TV */}
-      {Platform.isTV && (
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.6)']}
-          locations={[0, 0.4, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={desktopStyles?.styles.bottomFadeGradient}
-          pointerEvents="none"
-        />
       )}
 
       <Animated.ScrollView
@@ -3562,9 +3853,107 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       top: 0,
       left: 0,
       right: 0,
-      height: screenHeight * 0.4, // 40% of screen height for tvOS
+      height: screenHeight * 0.53, // 53% of screen height — shelves start just past midpoint
       backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base,
       zIndex: 1,
+    },
+    tvBackgroundArt: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: '85%',
+      height: '85%',
+      zIndex: 0,
+    },
+    tvBackgroundOverlay: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    tvHeroOverview: {
+      position: 'absolute',
+      bottom: theme.spacing.lg,
+      left: theme.spacing['3xl'],
+      right: '60%', // Constrain to left ~40% of screen
+    },
+    tvHeroOverviewBg: {
+      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing['xl'],
+      gap: theme.spacing.sm,
+    },
+    tvHeroTitle: {
+      ...theme.typography.title.xl,
+      fontSize: Math.round(theme.typography.title.xl.fontSize * (isAndroidTV ? 2.2 : 1.8) * tvScale),
+      lineHeight: Math.round(theme.typography.title.xl.lineHeight * (isAndroidTV ? 2.2 : 1.8) * tvScale),
+      color: theme.colors.text.primary,
+      fontWeight: '700',
+      textShadowColor: 'rgba(0, 0, 0, 0.8)',
+      textShadowOffset: { width: 0, height: 2 },
+      textShadowRadius: 8,
+    },
+    tvHeroYear: {
+      ...theme.typography.body.lg,
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.4 : 1.15) * tvScale),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.4 : 1.15) * tvScale),
+      color: theme.colors.text.muted,
+      fontStyle: 'italic',
+      textShadowColor: 'rgba(0, 0, 0, 0.8)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 6,
+    },
+    tvHeroDescription: {
+      ...theme.typography.body.lg,
+      fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.6 : 1.3) * tvScale),
+      lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.6 : 1.3) * tvScale),
+      color: theme.colors.text.secondary,
+      textShadowColor: 'rgba(0, 0, 0, 0.8)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 6,
+    },
+    tvHeroLogo: {
+      width: '80%',
+      height: Math.round(140 * tvScale),
+      alignSelf: 'flex-start' as const,
+      marginBottom: theme.spacing.md,
+    },
+    tvHeroRatingsRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: Math.round(8 * tvScale),
+    },
+    tvHeroRatingBadge: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: Math.round(4 * tvScale),
+      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+      paddingHorizontal: Math.round(8 * tvScale),
+      paddingVertical: Math.round(4 * tvScale),
+      borderRadius: Math.round(6 * tvScale),
+    },
+    tvHeroRatingIcon: {
+      width: Math.round(17 * tvScale),
+      height: Math.round(17 * tvScale),
+    },
+    tvHeroRatingValue: {
+      fontSize: Math.round(14 * tvScale),
+      fontWeight: '700' as const,
+    },
+    tvHeroGenresRow: {
+      flexDirection: 'row' as const,
+      flexWrap: 'wrap' as const,
+      gap: Math.round(8 * tvScale),
+    },
+    tvHeroGenreBadge: {
+      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+      paddingHorizontal: Math.round(12 * tvScale),
+      paddingVertical: Math.round(6 * tvScale),
+      borderRadius: Math.round(16 * tvScale),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255, 255, 255, 0.15)',
+    },
+    tvHeroGenreText: {
+      fontSize: Math.round(12 * tvScale),
+      fontWeight: '500' as const,
+      color: theme.colors.text.secondary,
     },
     bottomFadeGradient: {
       position: 'absolute',
@@ -3689,7 +4078,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
     pageScroll: {
       flex: 1,
-      marginTop: Platform.isTV ? screenHeight * 0.4 : 0,
+      marginTop: Platform.isTV ? screenHeight * 0.53 : 0,
     },
     pageScrollContent: {
       // Add extra bottom padding on TV to ensure the last shelf can scroll properly

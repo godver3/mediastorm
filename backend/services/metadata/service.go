@@ -1553,6 +1553,7 @@ func applyTVDBArtworks(title *models.Title, arts []tvdbArtwork) bool {
 		return false
 	}
 	updated := false
+	const maxBackdrops = 5
 	for _, art := range arts {
 		normalized := normalizeTVDBImageURL(art.Image)
 		if normalized == "" {
@@ -1562,11 +1563,17 @@ func applyTVDBArtworks(title *models.Title, arts []tvdbArtwork) bool {
 			title.Poster = &models.Image{URL: normalized, Type: "poster", Width: art.Width, Height: art.Height}
 			updated = true
 		}
-		if title.Backdrop == nil && artworkLooksLikeBackdrop(art) {
-			title.Backdrop = &models.Image{URL: normalized, Type: "backdrop", Width: art.Width, Height: art.Height}
-			updated = true
+		if artworkLooksLikeBackdrop(art) {
+			img := models.Image{URL: normalized, Type: "backdrop", Width: art.Width, Height: art.Height}
+			if title.Backdrop == nil {
+				title.Backdrop = &img
+				updated = true
+			} else if len(title.Backdrops) < maxBackdrops && normalized != title.Backdrop.URL {
+				title.Backdrops = append(title.Backdrops, img)
+				updated = true
+			}
 		}
-		if title.Poster != nil && title.Backdrop != nil {
+		if title.Poster != nil && title.Backdrop != nil && len(title.Backdrops) >= maxBackdrops {
 			break
 		}
 	}

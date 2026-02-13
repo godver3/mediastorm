@@ -45,6 +45,7 @@ type Title struct {
 	Language        string    `json:"language"`
 	Poster          *Image    `json:"poster,omitempty"`
 	Backdrop        *Image    `json:"backdrop,omitempty"`
+	Backdrops       []Image   `json:"backdrops,omitempty"` // Additional backdrop options beyond the primary
 	Logo            *Image    `json:"logo,omitempty"`
 	MediaType       string    `json:"mediaType"` // series | movie
 	TVDBID          int64     `json:"tvdbId,omitempty"`
