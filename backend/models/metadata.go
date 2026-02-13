@@ -7,6 +7,7 @@ type Image struct {
 	Type   string `json:"type"` // poster, backdrop, logo
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
+	IsDark bool   `json:"is_dark,omitempty"`
 }
 
 type Trailer struct {
