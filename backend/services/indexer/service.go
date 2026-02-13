@@ -657,6 +657,24 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
 	preferredLang := settings.Metadata.Language
 
+	// Helper to inject daily show attributes into results (same as Search path)
+	injectDailyAttrs := func(results []models.NZBResult) {
+		if !opts.IsDaily && opts.TargetAirDate == "" {
+			return
+		}
+		for i := range results {
+			if results[i].Attributes == nil {
+				results[i].Attributes = make(map[string]string)
+			}
+			if opts.IsDaily {
+				results[i].Attributes["isDaily"] = "true"
+			}
+			if opts.TargetAirDate != "" {
+				results[i].Attributes["targetAirDate"] = opts.TargetAirDate
+			}
+		}
+	}
+
 	// Helper to apply ranking sort to results
 	applyRanking := func(results []models.NZBResult) {
 		if len(results) == 0 {
@@ -731,6 +749,9 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 			}
 		}
 
+		// Inject daily show attributes for file matching
+		injectDailyAttrs(debridResults)
+
 		// Apply ranking sort so prequeue gets results in the same order as manual search
 		applyRanking(debridResults)
 
@@ -760,6 +781,9 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 				usenetResults[i].ServiceType = models.ServiceTypeUsenet
 			}
 		}
+
+		// Inject daily show attributes for file matching
+		injectDailyAttrs(usenetResults)
 
 		// Apply ranking sort so prequeue gets results in the same order as manual search
 		applyRanking(usenetResults)
