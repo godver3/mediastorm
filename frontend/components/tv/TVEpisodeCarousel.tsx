@@ -16,7 +16,7 @@ import {
   SpatialNavigationVirtualizedList,
 } from '@/services/tv-navigation';
 import TVEpisodeThumbnail, { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from './TVEpisodeThumbnail';
-import { getSeasonLabel } from '@/app/details/utils';
+import { getSeasonLabel, isEpisodeUnreleased } from '@/app/details/utils';
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
@@ -207,6 +207,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
               isActive={isSelected}
               isFocused={isFocused}
               isWatched={isWatched}
+              isUnreleased={isEpisodeUnreleased(episode.airedDate)}
               progress={progress}
               theme={theme}
               showSelectedBadge={isSelected}

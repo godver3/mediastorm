@@ -22,7 +22,7 @@ import type { NovaTheme } from '../theme';
 import { isAndroidTablet, isTablet } from '../theme/tokens/tvScale';
 import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
 
@@ -766,6 +766,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
               // For landscape cards, render custom card with progress bar
               if (isLandscapeLayout) {
                 const percentWatched = (item as any).percentWatched as number | undefined;
+                const itemIsUnreleased = (item as any).isUnreleased as boolean | undefined;
                 const showProgressBar = percentWatched !== undefined && percentWatched >= 5 && percentWatched < 100;
                 const imageUrl = item.backdrop?.url || item.poster?.url;
 
@@ -793,6 +794,36 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                     ) : (
                       <View style={{ flex: 1, backgroundColor: theme.colors.background.elevated }} />
                     )}
+                    {/* Desaturation overlay for unreleased episodes */}
+                    {itemIsUnreleased && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                          zIndex: 2,
+                        }}
+                        pointerEvents="none"
+                      />
+                    )}
+                    {/* Unreleased episode badge (top-right) */}
+                    {itemIsUnreleased && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: theme.spacing.xs,
+                          right: theme.spacing.xs,
+                          padding: 3,
+                          borderRadius: 12,
+                          backgroundColor: theme.colors.status.warning,
+                          zIndex: 5,
+                        }}>
+                        <Ionicons name="time" size={12} color="#000000" />
+                      </View>
+                    )}
                     {/* Text container with gradient */}
                     <View
                       style={{
@@ -803,6 +834,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                         paddingHorizontal: theme.spacing.sm,
                         paddingTop: theme.spacing.lg,
                         paddingBottom: showProgressBar ? theme.spacing.sm + 4 : theme.spacing.sm,
+                        zIndex: 3, // Above unreleased overlay (zIndex 2)
                       }}>
                       <LinearGradient
                         pointerEvents="none"

@@ -11,7 +11,7 @@ import {
   SpatialNavigationFocusableView,
 } from '@/services/tv-navigation';
 import FocusablePressable from '@/components/FocusablePressable';
-import { getSeasonLabel } from './utils';
+import { getSeasonLabel, isEpisodeUnreleased } from './utils';
 
 interface EpisodeSelectorProps {
   visible: boolean;
@@ -160,7 +160,7 @@ export function EpisodeSelector({
                                     <Text style={styles.episodeNumber}>
                                       E{String(episode.episodeNumber).padStart(2, '0')}
                                     </Text>
-                                    {watched && (
+                                    {watched ? (
                                       <View style={styles.watchedBadge}>
                                         <Ionicons
                                           name="checkmark-circle"
@@ -168,7 +168,15 @@ export function EpisodeSelector({
                                           color={theme.colors.accent.primary}
                                         />
                                       </View>
-                                    )}
+                                    ) : isEpisodeUnreleased(episode.airedDate) ? (
+                                      <View style={styles.watchedBadge}>
+                                        <Ionicons
+                                          name="time"
+                                          size={Platform.isTV ? 24 : 16}
+                                          color={theme.colors.status.warning}
+                                        />
+                                      </View>
+                                    ) : null}
                                   </View>
                                   {episode.name && (
                                     <Text style={styles.episodeTitle} numberOfLines={2}>

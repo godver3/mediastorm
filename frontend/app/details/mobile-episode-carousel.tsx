@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
 import MarqueeText from '@/components/tv/MarqueeText';
-import { getSeasonLabel } from './utils';
+import { getSeasonLabel, isEpisodeUnreleased } from './utils';
 
 interface MobileEpisodeCarouselProps {
   seasons: SeriesSeason[];
@@ -265,7 +265,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                       <Text style={styles.episodeNumberText}>{episode.episodeNumber}</Text>
                     </View>
 
-                    {/* Progress percentage or watched checkmark */}
+                    {/* Progress percentage or watched checkmark or unreleased badge */}
                     {progress > 0 && progress < 100 ? (
                       <View style={styles.progressBadge}>
                         <Text style={styles.progressBadgeText}>{Math.round(progress)}%</Text>
@@ -273,6 +273,10 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                     ) : (isWatched || isFlashing) ? (
                       <View style={[styles.watchedBadge, isFlashing && styles.watchedBadgeFlashing]}>
                         <Ionicons name={isWatched ? 'checkmark' : 'eye-outline'} size={14} color="#fff" />
+                      </View>
+                    ) : isEpisodeUnreleased(episode.airedDate) ? (
+                      <View style={styles.unreleasedBadge}>
+                        <Ionicons name="time" size={12} color="#000000" />
                       </View>
                     ) : null}
 
@@ -414,6 +418,17 @@ const createStyles = (theme: NovaTheme, _screenWidth: number) =>
     watchedBadgeFlashing: {
       backgroundColor: theme.colors.status.success,
       transform: [{ scale: 1.2 }],
+    },
+    unreleasedBadge: {
+      position: 'absolute',
+      top: theme.spacing.xs,
+      right: theme.spacing.xs,
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: theme.colors.status.warning,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     progressBadge: {
       position: 'absolute',

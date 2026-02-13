@@ -5,7 +5,7 @@ import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
 import { getMovieReleaseIcon, type ReleaseIconInfo } from '@/components/MediaItem';
 import { useMovieReleases } from '@/components/MovieReleasesContext';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
 import { TvModal } from '@/components/TvModal';
@@ -57,6 +57,7 @@ import Animated, {
   useAnimatedReaction,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { isEpisodeUnreleased } from '@/app/details/utils';
 
 type CardData = {
   id: string | number;
@@ -79,6 +80,7 @@ type CardData = {
   releaseIcon?: ReleaseIconInfo; // Pre-computed release icon to avoid computation at render time
   watchState?: 'none' | 'partial' | 'complete'; // Watch state for series/movies
   unwatchedCount?: number; // Number of unwatched episodes for series
+  isUnreleased?: boolean; // Next episode hasn't aired yet (continue watching)
 };
 
 type HeroContent = {
@@ -2983,6 +2985,10 @@ const ShelfCardContent = React.memo(
               cachePolicy="disk"
               recyclingKey={cardKey}
             />
+            {/* Desaturation overlay for unreleased episodes */}
+            {card.isUnreleased && !isFocused && (
+              <View style={styles.unreleasedOverlay} pointerEvents="none" />
+            )}
             <View style={styles.landscapeCardTextContainer}>
               <LinearGradient
                 pointerEvents="none"
@@ -2999,6 +3005,12 @@ const ShelfCardContent = React.memo(
                 <Text style={isAndroidTV ? styles.landscapeCardMetaAndroidTV : styles.landscapeCardMeta}>{card.year}</Text>
               ) : null}
             </View>
+            {/* Unreleased episode badge (top-right) */}
+            {card.isUnreleased && (
+              <View style={styles.unreleasedBadge}>
+                <Ionicons name="time" size={isAndroidTV ? 14 : isTV ? 16 : 12} color="#000000" />
+              </View>
+            )}
             {/* Progress bar at bottom */}
             {showProgressBar && (
               <View style={styles.progressBarContainer}>
@@ -3090,6 +3102,7 @@ const ShelfCardContent = React.memo(
       prev.card.year === next.card.year &&
       prev.card.watchState === next.card.watchState &&
       prev.card.unwatchedCount === next.card.unwatchedCount &&
+      prev.card.isUnreleased === next.card.isUnreleased &&
       prev.cardKey === next.cardKey &&
       prev.isFocused === next.isFocused &&
       prev.isLastItem === next.isLastItem &&
@@ -3809,6 +3822,15 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       borderWidth: 3,
       borderColor: 'transparent',
     },
+    unreleasedOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      zIndex: 2,
+    },
     landscapeCardTextContainer: {
       position: 'absolute',
       bottom: 0,
@@ -3820,6 +3842,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       alignItems: 'flex-start',
       justifyContent: 'flex-end',
       minHeight: '50%',
+      zIndex: 3, // Above unreleased overlay (zIndex 2)
     },
     landscapeCardTitle: {
       ...(isTV ? theme.typography.body.md : theme.typography.body.md),
@@ -3864,6 +3887,15 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       zIndex: 1,
     },
     // Progress bar styles (at bottom of landscape card)
+    unreleasedBadge: {
+      position: 'absolute',
+      top: isTV ? theme.spacing.sm : theme.spacing.xs,
+      right: isTV ? theme.spacing.sm : theme.spacing.xs,
+      padding: isTV ? 4 : 3,
+      borderRadius: 12,
+      backgroundColor: theme.colors.status.warning,
+      zIndex: 5,
+    },
     progressBarContainer: {
       position: 'absolute',
       bottom: 0,
@@ -4466,6 +4498,7 @@ function mapContinueWatchingToCards(
         seriesOverview,
         watchState: seriesWatchState,
         unwatchedCount: seriesUnwatchedCount,
+        isUnreleased: next?.airDate ? isEpisodeUnreleased(next.airDate) : false,
       } as CardData;
     })
     .filter((card): card is CardData => card !== null);
@@ -4584,9 +4617,9 @@ function mapContinueWatchingToTitles(
         tvdbId: parseNumeric(item.externalIds?.tvdb),
       };
 
-      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent };
+      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent, isUnreleased: next?.airDate ? isEpisodeUnreleased(next.airDate) : false };
     })
-    .filter((title): title is Title & { uniqueKey: string; percentWatched?: number } => title !== null);
+    .filter((title): title is Title & { uniqueKey: string; percentWatched?: number; isUnreleased?: boolean } => title !== null);
 }
 
 export default React.memo(IndexScreen);

@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { View as RNView } from 'react-native';
 import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { episodesMatch, formatPublishDate, getSeasonLabel, padNumber } from './utils';
+import { episodesMatch, formatPublishDate, getSeasonLabel, isEpisodeUnreleased, padNumber } from './utils';
 import MarqueeText from '@/components/tv/MarqueeText';
 
 // Helper function to determine if we're on TV platform
@@ -738,11 +738,16 @@ export const SeriesEpisodes = ({
                           <Text style={[styles.episodeTitle, isActive && styles.episodeTitleFocused]} numberOfLines={2}>
                             {episode.name || `Episode ${episode.episodeNumber}`}
                           </Text>
-                          <Text style={[styles.episodeMeta, isActive && styles.episodeMetaFocused]} numberOfLines={1}>
-                            {`S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`}
-                            {episode.airedDate ? ` • ${formatPublishDate(episode.airedDate)}` : ''}
-                            {episode.runtimeMinutes ? ` • ${episode.runtimeMinutes}m` : ''}
-                          </Text>
+                          <View style={styles.episodeMetaRow}>
+                            {isEpisodeUnreleased(episode.airedDate) && (
+                              <Ionicons name="time" size={12} color={isActive ? '#ffffff' : theme.colors.status.warning} />
+                            )}
+                            <Text style={[styles.episodeMeta, isActive && styles.episodeMetaFocused]} numberOfLines={1}>
+                              {`S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`}
+                              {episode.airedDate ? ` • ${formatPublishDate(episode.airedDate)}` : ''}
+                              {episode.runtimeMinutes ? ` • ${episode.runtimeMinutes}m` : ''}
+                            </Text>
+                          </View>
                           {episode.overview && (
                             <Text style={styles.episodeOverview} numberOfLines={3}>
                               {episode.overview}
@@ -844,13 +849,18 @@ export const SeriesEpisodes = ({
                                       numberOfLines={2}>
                                       {episode.name || `Episode ${episode.episodeNumber}`}
                                     </Text>
-                                    <Text
-                                      style={[styles.episodeMeta, isFocused && styles.episodeMetaFocused]}
-                                      numberOfLines={1}>
-                                      {`S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`}
-                                      {episode.airedDate ? ` • ${formatPublishDate(episode.airedDate)}` : ''}
-                                      {episode.runtimeMinutes ? ` • ${episode.runtimeMinutes}m` : ''}
-                                    </Text>
+                                    <View style={styles.episodeMetaRow}>
+                                      {isEpisodeUnreleased(episode.airedDate) && (
+                                        <Ionicons name="time" size={12} color={isFocused ? '#ffffff' : theme.colors.status.warning} />
+                                      )}
+                                      <Text
+                                        style={[styles.episodeMeta, isFocused && styles.episodeMetaFocused]}
+                                        numberOfLines={1}>
+                                        {`S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`}
+                                        {episode.airedDate ? ` • ${formatPublishDate(episode.airedDate)}` : ''}
+                                        {episode.runtimeMinutes ? ` • ${episode.runtimeMinutes}m` : ''}
+                                      </Text>
+                                    </View>
                                     {episode.overview && (
                                       <Text
                                         style={[styles.episodeOverview, isFocused && styles.episodeOverviewFocused]}
@@ -1146,6 +1156,11 @@ const createSeriesEpisodesStyles = (theme: NovaTheme) => {
     },
     episodeTitleFocused: {
       color: selectedTextColor,
+    },
+    episodeMetaRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: theme.spacing.xs,
     },
     episodeMeta: {
       ...theme.typography.body.sm,

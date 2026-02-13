@@ -7,6 +7,7 @@ import React, { memo, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import type { SeriesEpisode } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
@@ -27,6 +28,7 @@ interface TVEpisodeThumbnailProps {
   isActive: boolean; // Currently selected episode for playback
   isFocused: boolean; // Has D-pad focus (from style function)
   isWatched: boolean;
+  isUnreleased: boolean; // Episode hasn't aired yet
   progress: number; // 0-100 percent watched
   theme: NovaTheme;
   showSelectedBadge?: boolean; // Show "Selected - Press to play" indicator
@@ -44,6 +46,7 @@ const TVEpisodeThumbnail = memo(
     isActive,
     isFocused,
     isWatched,
+    isUnreleased,
     progress,
     theme,
     showSelectedBadge = false,
@@ -70,7 +73,7 @@ const TVEpisodeThumbnail = memo(
           <Text style={styles.episodeBadgeText}>{episode.episodeNumber}</Text>
         </View>
 
-        {/* Progress percentage or watched checkmark (top-right) */}
+        {/* Progress percentage or watched checkmark or unreleased badge (top-right) */}
         {showProgress ? (
           <View style={styles.progressBadge}>
             <Text style={styles.progressBadgeText}>{Math.round(progress)}%</Text>
@@ -78,6 +81,10 @@ const TVEpisodeThumbnail = memo(
         ) : isWatched ? (
           <View style={styles.watchedBadge}>
             <Text style={styles.watchedCheckmark}>✓</Text>
+          </View>
+        ) : isUnreleased ? (
+          <View style={styles.unreleasedBadge}>
+            <Ionicons name="time" size={tvScale(16)} color="#000000" />
           </View>
         ) : null}
 
@@ -112,6 +119,7 @@ const TVEpisodeThumbnail = memo(
       prev.isActive === next.isActive &&
       prev.isFocused === next.isFocused &&
       prev.isWatched === next.isWatched &&
+      prev.isUnreleased === next.isUnreleased &&
       prev.progress === next.progress &&
       prev.showSelectedBadge === next.showSelectedBadge &&
       prev.theme === next.theme
@@ -197,6 +205,17 @@ const createStyles = (theme: NovaTheme) =>
       color: '#fff',
       fontSize: tvScale(16),
       fontWeight: '700',
+    },
+    unreleasedBadge: {
+      position: 'absolute',
+      top: tvScale(8),
+      right: tvScale(8),
+      width: tvScale(28),
+      height: tvScale(28),
+      borderRadius: tvScale(14),
+      backgroundColor: theme.colors.status.warning,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     bottomGradient: {
       position: 'absolute',

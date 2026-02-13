@@ -2,11 +2,13 @@ import React, { memo, useMemo, useState, useEffect } from 'react';
 import { Image } from './Image';
 import { StyleSheet, Text, View, Platform, Pressable } from 'react-native';
 import Animated, { useSharedValue, withTiming, Easing } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 
 import type { SeriesEpisode } from '../services/api';
 import type { NovaTheme } from '../theme';
 import { useTheme } from '../theme';
 import { tvScale, isTV, getTVScaleMultiplier } from '../theme/tokens/tvScale';
+import { isEpisodeUnreleased } from '../app/details/utils';
 
 interface EpisodeCardProps {
   episode: SeriesEpisode;
@@ -88,6 +90,12 @@ const createStyles = (theme: NovaTheme) => {
       paddingVertical: isTV ? theme.spacing.sm : theme.spacing.xs,
       borderRadius: theme.radius.sm,
       zIndex: 10,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: isTV ? theme.spacing.xs : 3,
+    },
+    releaseDateOverlayUnreleased: {
+      backgroundColor: theme.colors.status.warning,
     },
     releaseDateText: {
       ...theme.typography.caption.sm,
@@ -103,6 +111,9 @@ const createStyles = (theme: NovaTheme) => {
           }),
       color: theme.colors.text.primary,
       fontWeight: '700',
+    },
+    releaseDateTextUnreleased: {
+      color: '#000000',
     },
     progressCorner: {
       position: 'absolute',
@@ -273,8 +284,11 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
             </View>
           )}
           {airDate ? (
-            <View style={styles.releaseDateOverlay}>
-              <Text style={styles.releaseDateText}>{airDate}</Text>
+            <View style={[styles.releaseDateOverlay, isEpisodeUnreleased(episode.airedDate) && styles.releaseDateOverlayUnreleased]}>
+              {isEpisodeUnreleased(episode.airedDate) && (
+                <Ionicons name="time" size={isTV ? 14 : 10} color="#000000" />
+              )}
+              <Text style={[styles.releaseDateText, isEpisodeUnreleased(episode.airedDate) && styles.releaseDateTextUnreleased]}>{airDate}</Text>
             </View>
           ) : (
             (console.log('[EpisodeCard] No air date to display - airDate is:', airDate), null)
