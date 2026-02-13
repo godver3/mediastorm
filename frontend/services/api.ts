@@ -42,6 +42,7 @@ export interface Image {
   type: string;
   width: number;
   height: number;
+  is_dark?: boolean;
 }
 
 export interface Trailer {

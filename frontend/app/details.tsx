@@ -513,6 +513,13 @@ export default function DetailsScreen() {
     return null;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
 
+  // Check if logo has dark pixels (black text on transparent background)
+  const isLogoDark = useMemo(() => {
+    if (!isSeries && movieDetails?.logo?.is_dark) return true;
+    if (isSeries && seriesDetailsForBackdrop?.logo?.is_dark) return true;
+    return false;
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
   // Measure logo dimensions to calculate proper sizing within bounding box
   const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
@@ -616,14 +623,13 @@ export default function DetailsScreen() {
     };
   }, [logoDimensions, windowWidth, isTV, tvScale, styles.titleLogo]);
 
-  // Shadow style for logo wrapper - applied to View, not Image, to avoid clipping
-  const logoGlowStyle = {
+  // Shadow/glow style for logo wrapper (iOS only — traces content alpha channel)
+  const logoGlowStyle = Platform.OS === 'ios' || Platform.OS === 'macos' ? {
     shadowColor: 'rgba(255, 255, 255, 0.2)',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 6,
-    elevation: 2,
-  };
+  } : {};
 
   // Compute final description/overview, preferring params but falling back to fetched metadata
   const displayDescription = useMemo(() => {
@@ -5174,7 +5180,7 @@ export default function DetailsScreen() {
             <View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
-                style={logoStyle}
+                style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
             </View>
@@ -6023,7 +6029,7 @@ export default function DetailsScreen() {
             <View style={[{ padding: 12, overflow: 'visible' }, logoGlowStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
-                style={logoStyle}
+                style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
             </View>

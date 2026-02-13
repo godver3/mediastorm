@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/png"
 	"log"
 	"math"
 	"net/http"
@@ -387,6 +389,9 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 			return li.VoteAverage > lj.VoteAverage
 		})
 		result.Logo = buildTMDBImage(payload.Logos[0].FilePath, tmdbLogoSize, "logo")
+		if result.Logo != nil {
+			result.Logo.IsDark = c.isImageDark(ctx, result.Logo.URL)
+		}
 	}
 
 	// Find best textless poster (no language = textless)
@@ -407,6 +412,75 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 	}
 
 	return result, nil
+}
+
+// isImageDark fetches a small thumbnail of the logo and checks if the non-transparent
+// pixels are predominantly dark (average luminance < 50/255). Used to detect black
+// logos on transparent backgrounds that need tinting on dark UI.
+func (c *tmdbClient) isImageDark(ctx context.Context, imageURL string) bool {
+	// Use w92 thumbnail for analysis — tiny and fast to download
+	analysisURL := strings.Replace(imageURL, "/w500/", "/w92/", 1)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, analysisURL, nil)
+	if err != nil {
+		log.Printf("[metadata] logo brightness: failed to create request: %v", err)
+		return false
+	}
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		log.Printf("[metadata] logo brightness: fetch failed: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[metadata] logo brightness: fetch returned %d", resp.StatusCode)
+		return false
+	}
+
+	img, _, err := image.Decode(resp.Body)
+	if err != nil {
+		log.Printf("[metadata] logo brightness: decode failed: %v", err)
+		return false
+	}
+
+	bounds := img.Bounds()
+	var totalLuminance float64
+	var opaquePixels int
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			// Skip transparent pixels (alpha < 128 in 8-bit = 32768 in 16-bit)
+			if a < 32768 {
+				continue
+			}
+			// Convert from 16-bit [0,65535] to 8-bit [0,255] for luminance calc
+			r8 := float64(r) / 257.0
+			g8 := float64(g) / 257.0
+			b8 := float64(b) / 257.0
+			// Handle pre-multiplied alpha: un-premultiply
+			if a < 65535 {
+				alpha := float64(a) / 65535.0
+				r8 /= alpha
+				g8 /= alpha
+				b8 /= alpha
+			}
+			totalLuminance += 0.299*r8 + 0.587*g8 + 0.114*b8
+			opaquePixels++
+		}
+	}
+
+	if opaquePixels == 0 {
+		log.Printf("[metadata] logo brightness: no opaque pixels")
+		return false
+	}
+
+	avgLuminance := totalLuminance / float64(opaquePixels)
+	isDark := avgLuminance < 50
+	log.Printf("[metadata] logo brightness: avg=%.1f opaque=%d dark=%v url=%s", avgLuminance, opaquePixels, isDark, analysisURL)
+	return isDark
 }
 
 // fetchSeriesGenres retrieves genres for a TV series from TMDB
