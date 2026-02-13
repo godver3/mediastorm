@@ -546,8 +546,8 @@ export const launchNativePlayer = (
     preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
     passthroughName?: string; // AIOStreams passthrough format: raw display name
     passthroughDescription?: string; // AIOStreams passthrough format: raw description
-    preselectedAudioTrack?: number; // Track index baked into HLS session
-    preselectedSubtitleTrack?: number; // Track index baked into HLS session
+    preselectedAudioTrack?: number; // 0-based native player track index
+    preselectedSubtitleTrack?: number; // 0-based native player track index
     useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
   } = {},
 ) => {
@@ -816,8 +816,10 @@ export const initiatePlayback = async (
   let hasHDR10 = false;
   let dolbyVisionProfile = '';
   let needsAudioTranscode = false; // TrueHD, DTS, etc.
-  let selectedAudioTrack: number | undefined;
-  let selectedSubtitleTrack: number | undefined;
+  let selectedAudioTrack: number | undefined; // ffprobe stream index (for HLS/stream URL)
+  let selectedSubtitleTrack: number | undefined; // ffprobe stream index (for HLS/stream URL)
+  let metadataAudioStreams: { index: number }[] | undefined;
+  let metadataSubtitleStreams: { index: number }[] | undefined;
 
   const playbackSettings = options.userSettings?.playback ?? settings?.playback;
   const isNativePlatform = Platform.OS !== 'web';
@@ -832,6 +834,10 @@ export const initiatePlayback = async (
         clientId: apiService.getClientId() ?? undefined,
         audioLang: playbackSettings?.preferredAudioLanguage,
       });
+
+      // Save stream arrays for ffprobe-to-native index conversion later
+      metadataAudioStreams = metadata.audioStreams;
+      metadataSubtitleStreams = metadata.subtitleStreams;
 
       // Detect HDR
       hasDolbyVision = detectDolbyVision(metadata);
@@ -1013,6 +1019,22 @@ export const initiatePlayback = async (
       ? JSON.stringify(Object.values(playback.subtitleSessions))
       : undefined;
 
+  // Convert ffprobe stream indices to 0-based native player indices
+  const nativeAudioTrack =
+    typeof selectedAudioTrack === 'number' && metadataAudioStreams
+      ? metadataAudioStreams.findIndex((s) => s.index === selectedAudioTrack)
+      : undefined;
+  const nativeSubtitleTrack =
+    typeof selectedSubtitleTrack === 'number' && metadataSubtitleStreams
+      ? metadataSubtitleStreams.findIndex((s) => s.index === selectedSubtitleTrack)
+      : undefined;
+  if (nativeAudioTrack !== undefined || nativeSubtitleTrack !== undefined) {
+    console.log('🎬 Track index conversion (ffprobe → native):', {
+      audio: selectedAudioTrack !== undefined ? `${selectedAudioTrack} → ${nativeAudioTrack}` : undefined,
+      subtitle: selectedSubtitleTrack !== undefined ? `${selectedSubtitleTrack} → ${nativeSubtitleTrack}` : undefined,
+    });
+  }
+
   // Extract passthrough format data from AIOStreams results
   const passthroughName = result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_name : undefined;
   const passthroughDescription =
@@ -1031,9 +1053,13 @@ export const initiatePlayback = async (
     ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
     ...(passthroughName ? { passthroughName } : {}),
     ...(passthroughDescription ? { passthroughDescription } : {}),
-    // Pass selected tracks so player UI shows correct selection
-    ...(typeof selectedAudioTrack === 'number' ? { preselectedAudioTrack: selectedAudioTrack } : {}),
-    ...(typeof selectedSubtitleTrack === 'number' ? { preselectedSubtitleTrack: selectedSubtitleTrack } : {}),
+    // Pass selected tracks as 0-based native player indices (converted from ffprobe stream indices above)
+    ...(nativeAudioTrack !== undefined && nativeAudioTrack >= 0
+      ? { preselectedAudioTrack: nativeAudioTrack }
+      : {}),
+    ...(nativeSubtitleTrack !== undefined && nativeSubtitleTrack >= 0
+      ? { preselectedSubtitleTrack: nativeSubtitleTrack }
+      : {}),
     // Native player flags for direct streaming (bypasses HLS)
     ...(isNativePlatform ? { useNativePlayer: true } : {}),
   });
