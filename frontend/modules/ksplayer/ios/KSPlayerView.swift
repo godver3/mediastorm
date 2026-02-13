@@ -392,7 +392,9 @@ public class KSPlayerView: UIView {
     }
 
     func setVolume(_ volume: Float) {
-        playerView?.playerLayer?.player.isMuted = volume == 0
+        guard let player = playerView?.playerLayer?.player else { return }
+        player.isMuted = volume == 0
+        player.playbackVolume = volume
     }
 
     func setPlaybackRate(_ rate: Float) {
@@ -866,6 +868,10 @@ extension KSPlayerView: PlayerControllerDelegate {
                             self?.onPipStatusChanged?(["isActive": true])
                         }
                     }
+
+                // Apply volume/mute state (may have been set before playerLayer was ready)
+                playerLayer.player.isMuted = volume == 0
+                playerLayer.player.playbackVolume = volume
 
                 // Report available tracks
                 reportTracks()

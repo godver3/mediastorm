@@ -19,6 +19,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { isTablet } from '@/theme/tokens/tvScale';
 import type { MultiscreenChannel } from '@/services/api';
 
 interface LayoutPosition {
@@ -222,6 +223,37 @@ export default function MultiscreenPage() {
     KeepAwake.activateKeepAwakeAsync();
     return () => {
       KeepAwake.deactivateKeepAwake();
+    };
+  }, []);
+
+  // Enable rotation for multiscreen on mobile devices (same as player.tsx)
+  useEffect(() => {
+    if (Platform.OS === 'web' || Platform.isTV) {
+      return;
+    }
+
+    const unlockOrientation = async () => {
+      try {
+        const ScreenOrientation = require('expo-screen-orientation');
+        await ScreenOrientation.unlockAsync();
+      } catch (error) {
+        console.warn('[multiscreen] Failed to unlock screen orientation:', error);
+      }
+    };
+
+    unlockOrientation();
+
+    return () => {
+      if (isTablet) return;
+      const lockOrientation = async () => {
+        try {
+          const ScreenOrientation = require('expo-screen-orientation');
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        } catch (error) {
+          console.warn('[multiscreen] Failed to lock screen orientation:', error);
+        }
+      };
+      lockOrientation();
     };
   }, []);
 

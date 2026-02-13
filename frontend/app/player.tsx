@@ -1,4 +1,4 @@
-import { clearMemoryCache as clearImageMemoryCache } from '@/components/Image';
+import { clearMemoryCache as clearImageMemoryCache, clearDiskCache as clearImageDiskCache } from '@/components/Image';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import LoadingIndicator from '@/components/LoadingIndicator';
 import Controls from '@/components/player/Controls';
@@ -1149,13 +1149,17 @@ export default function PlayerScreen() {
   //   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
   // }, [subtitleDebugParam]);
 
-  // Clear image memory cache on Android TV to free RAM for video decoder
-  // This is critical for low-memory devices like Fire Stick playing 4K content
+  // Aggressively free image memory on Android TV for low-RAM devices (Fire Stick = 1.7GB RAM).
+  // Clear both memory cache (decoded bitmaps) and disk cache (prevents re-decode pressure).
+  // The details screen also unmounts its heavy content when player is active.
   useEffect(() => {
     if (Platform.OS === 'android' && Platform.isTV) {
-      console.log('[PlayerScreen] Clearing image memory cache for Android TV');
-      clearImageMemoryCache().catch((err) => {
-        console.warn('[PlayerScreen] Failed to clear image cache:', err);
+      console.log('[PlayerScreen] Clearing image caches for Android TV');
+      Promise.all([
+        clearImageMemoryCache(),
+        clearImageDiskCache(),
+      ]).catch((err) => {
+        console.warn('[PlayerScreen] Failed to clear image caches:', err);
       });
     }
   }, []);
@@ -6212,7 +6216,7 @@ export default function PlayerScreen() {
           )}
 
           {/* Double-tap overlay for mobile skip forward/backward */}
-          {isMobilePlatform && !isLiveTV && !usesSystemManagedControls && !isPipActive && (
+          {isMobilePlatform && !usesSystemManagedControls && !isPipActive && (
             <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
           )}
 
