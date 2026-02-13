@@ -33,6 +33,7 @@ import {
   type AudioTrackInfo,
   type CastMember,
   type ContentPreference,
+  type DetailsBundleData,
   type EpisodeWatchPayload,
   type NZBResult,
   type PrequeueStatusResponse,
@@ -353,9 +354,6 @@ export default function DetailsScreen() {
   if (initialTitleIdRef.current === null) {
     initialTitleIdRef.current = params.titleId ?? null;
   }
-
-  // Debug: Log component render
-  console.log(`[Details DEBUG ${instanceId}] Render - titleId: ${params.titleId}, initial: ${initialTitleIdRef.current}, pathname: ${pathname}`);
 
   // Debug: Track titleId changes within the same instance
   const prevTitleIdRef = useRef<string | undefined>(undefined);
@@ -978,12 +976,17 @@ export default function DetailsScreen() {
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
 
   // Clear black overlay, loading screen, and refresh progress when returning to details page
+  const isInitialFocus = useRef(true);
   useFocusEffect(
     useCallback(() => {
       setShowBlackOverlay(false);
       hideLoadingScreen();
-      // Trigger progress refresh when returning from playback
-      setProgressRefreshKey((k) => k + 1);
+      // Trigger progress refresh when returning from playback (skip initial mount)
+      if (isInitialFocus.current) {
+        isInitialFocus.current = false;
+      } else {
+        setProgressRefreshKey((k) => k + 1);
+      }
     }, [hideLoadingScreen]),
   );
 
@@ -1059,6 +1062,20 @@ export default function DetailsScreen() {
   const [contentPreference, setContentPreference] = useState<ContentPreference | null>(null);
   const [episodeProgressMap, setEpisodeProgressMap] = useState<Map<string, number>>(new Map());
 
+  // Details bundle: single-request hydration for all details-page data
+  const [detailsBundle, setDetailsBundle] = useState<DetailsBundleData | null>(null);
+  const [bundleReady, setBundleReady] = useState(false);
+  const hydratedFromBundle = useRef({
+    seriesDetails: false,
+    movieDetails: false,
+    similar: false,
+    trailers: false,
+    contentPreference: false,
+    watchState: false,
+    playbackProgress: false,
+  });
+  const bundleTrailerSeasonRef = useRef<number | undefined>(undefined);
+
   const _overlayOpen =
     manualVisible ||
     trailerModalVisible ||
@@ -1112,6 +1129,43 @@ export default function DetailsScreen() {
       });
     }
   }, [activeEpisode, isEpisodeStripFocused, isSeries, episodesLoading]);
+
+  // === Details Bundle: single-request hydration ===
+  useEffect(() => {
+    if (!activeUserId) return;
+    // Need at least one identifier to be useful
+    if (!titleId && !title) return;
+
+    let cancelled = false;
+
+    const bundleType = isSeries ? 'series' : 'movie';
+
+    apiService
+      .getDetailsBundleData(activeUserId, {
+        type: bundleType,
+        titleId: titleId || undefined,
+        name: title || undefined,
+        year: yearNumber || undefined,
+        tvdbId: tvdbIdNumber || undefined,
+        tmdbId: tmdbIdNumber || undefined,
+        imdbId: imdbId || undefined,
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setDetailsBundle(data);
+        setBundleReady(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.log('[details-bundle] fetch failed, falling back to individual requests:', error);
+        setDetailsBundle(null);
+        setBundleReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUserId, titleId, title, isSeries, yearNumber, tvdbIdNumber, tmdbIdNumber, imdbId]);
 
   // Prequeue state for pre-loading playback
   const [prequeueId, setPrequeueId] = useState<string | null>(null);
@@ -1269,13 +1323,27 @@ export default function DetailsScreen() {
   // Only activate spatial navigation when we're on the details page (not on player or other pages)
   const isDetailsPageActive = pathname === '/details';
 
-  // Debug: Log component unmount
+  // Debug: Log component lifecycle and planned requests
   useEffect(() => {
-    console.log(`[Details DEBUG ${instanceId}] Mounted - titleId: ${titleId}`);
+    console.log(`[Details] Mounted`, {
+      titleId,
+      isSeries,
+      mediaType,
+      seriesIdentifier,
+      activeUserId,
+      plannedRequests: [
+        isSeries ? 'seriesDetails' : 'movieDetails',
+        'similar',
+        'trailers',
+        isSeries ? 'listPlaybackProgress (episode map + display)' : 'getPlaybackProgress (display)',
+        'seriesWatchState',
+        'prequeue',
+      ].filter(Boolean),
+    });
     return () => {
-      console.log(`[Details DEBUG ${instanceId}] Unmounting - titleId: ${titleId}`);
+      console.log(`[Details] Unmounting - titleId: ${titleId}`);
     };
-  }, [instanceId, titleId]);
+  }, [instanceId, titleId, isSeries, mediaType, seriesIdentifier, activeUserId]);
 
   useEffect(() => {
     if (Platform.isTV) {
@@ -1333,34 +1401,47 @@ export default function DetailsScreen() {
       return;
     }
 
+    // Process watch state from any source (bundle or individual fetch)
+    const processWatchState = (watchState: import('@/services/api').SeriesWatchState | null) => {
+      const watchedEpisodesCount = watchState?.watchedEpisodes ? Object.keys(watchState.watchedEpisodes).length : 0;
+      setHasWatchedEpisodes(watchedEpisodesCount > 0);
+
+      if (!watchState?.nextEpisode) {
+        return;
+      }
+
+      const matchingEpisode = allEpisodes.find(
+        (ep) =>
+          ep.seasonNumber === watchState.nextEpisode!.seasonNumber &&
+          ep.episodeNumber === watchState.nextEpisode!.episodeNumber,
+      );
+
+      if (matchingEpisode) {
+        console.log('📺 Found next up episode:', matchingEpisode);
+        setNextUpEpisode(matchingEpisode);
+      }
+    };
+
+    // Hydrate from bundle if available
+    if (detailsBundle && !hydratedFromBundle.current.watchState) {
+      hydratedFromBundle.current.watchState = true;
+      processWatchState(detailsBundle.watchState);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back
+    if (!bundleReady) return;
+
+    // Already hydrated from bundle — no need to fetch individually
+    if (hydratedFromBundle.current.watchState) return;
+
     let cancelled = false;
 
     apiService
       .getSeriesWatchState(activeUserId, seriesIdentifier)
       .then((watchState) => {
-        if (cancelled) {
-          return;
-        }
-
-        // Check if there are any watched episodes
-        const watchedEpisodesCount = watchState?.watchedEpisodes ? Object.keys(watchState.watchedEpisodes).length : 0;
-        setHasWatchedEpisodes(watchedEpisodesCount > 0);
-
-        if (!watchState?.nextEpisode) {
-          return;
-        }
-
-        // Find the matching episode in our series details
-        const matchingEpisode = allEpisodes.find(
-          (ep) =>
-            ep.seasonNumber === watchState.nextEpisode!.seasonNumber &&
-            ep.episodeNumber === watchState.nextEpisode!.episodeNumber,
-        );
-
-        if (matchingEpisode) {
-          console.log('📺 Found next up episode:', matchingEpisode);
-          setNextUpEpisode(matchingEpisode);
-        }
+        if (cancelled) return;
+        processWatchState(watchState);
       })
       .catch((error) => {
         if (!cancelled) {
@@ -1372,7 +1453,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isSeries, seriesIdentifier, activeUserId, allEpisodes]);
+  }, [isSeries, seriesIdentifier, activeUserId, allEpisodes, detailsBundle, bundleReady]);
 
   // Fetch content preference for language override indicator
   useEffect(() => {
@@ -1382,6 +1463,19 @@ export default function DetailsScreen() {
       setContentPreference(null);
       return;
     }
+
+    // Hydrate from bundle if available
+    if (detailsBundle && !hydratedFromBundle.current.contentPreference) {
+      hydratedFromBundle.current.contentPreference = true;
+      setContentPreference(detailsBundle.contentPreference);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back
+    if (!bundleReady) return;
+
+    // Already hydrated from bundle — no need to fetch individually
+    if (hydratedFromBundle.current.contentPreference) return;
 
     let cancelled = false;
 
@@ -1402,7 +1496,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, seriesIdentifier, titleId]);
+  }, [activeUserId, isSeries, seriesIdentifier, titleId, detailsBundle, bundleReady]);
 
   // Prequeue playback when details page loads
   useEffect(() => {
@@ -1622,38 +1716,62 @@ export default function DetailsScreen() {
     };
   }, [prequeueId]);
 
-  // Fetch and display progress indicator for the current item
+  // Display progress indicator for the current item
+  // For series: derived from episodeProgressMap (already fetched for progress bars — no extra API call)
+  // For movies: derived from bundle or fetched individually
   useEffect(() => {
     if (!activeUserId) {
       setDisplayProgress(null);
       return;
     }
 
+    // For series, derive from episodeProgressMap to avoid a separate HTTP request
+    if (isSeries) {
+      const episodeToShow = activeEpisode || nextUpEpisode;
+      if (!episodeToShow) {
+        setDisplayProgress(null);
+        return;
+      }
+      const key = `${episodeToShow.seasonNumber}-${episodeToShow.episodeNumber}`;
+      const percent = episodeProgressMap.get(key);
+      setDisplayProgress(percent ?? null);
+      return;
+    }
+
+    // For movies, try bundle first
+    const itemId = seriesIdentifier || titleId;
+    if (!itemId) {
+      setDisplayProgress(null);
+      return;
+    }
+
+    // Derive from bundle's playback progress if available (initial load only)
+    if (detailsBundle && progressRefreshKey === 0) {
+      const bundleProgress = detailsBundle.playbackProgress.find(
+        (p) => p.mediaType === 'movie' && p.itemId === itemId,
+      );
+      if (bundleProgress && bundleProgress.percentWatched > 5 && bundleProgress.percentWatched < 95) {
+        setDisplayProgress(Math.round(bundleProgress.percentWatched));
+      } else {
+        setDisplayProgress(null);
+      }
+      return;
+    }
+
+    // Wait for bundle on initial load
+    if (!bundleReady && progressRefreshKey === 0) return;
+
+    // Fallback: fetch individually
+    console.log('[Details:Progress] Display progress falling through to individual fetch', { bundleReady, progressRefreshKey, hasBundle: !!detailsBundle, itemId });
     let cancelled = false;
 
     const fetchProgress = async () => {
       try {
-        // For movies, use the titleId/seriesIdentifier
-        // For series, use activeEpisode if available, otherwise nextUpEpisode
-        const episodeToShow = activeEpisode || nextUpEpisode;
-        const itemId =
-          isSeries && episodeToShow && seriesIdentifier
-            ? `${seriesIdentifier}:S${String(episodeToShow.seasonNumber).padStart(2, '0')}E${String(episodeToShow.episodeNumber).padStart(2, '0')}`
-            : seriesIdentifier || titleId;
+        console.log('[Details:Progress] Fetching display progress', { mediaType: 'movie', itemId, source: 'displayProgress' });
+        const progress = await apiService.getPlaybackProgress(activeUserId, 'movie', itemId);
 
-        if (!itemId) {
-          setDisplayProgress(null);
-          return;
-        }
+        if (cancelled) return;
 
-        const mediaType = isSeries && episodeToShow ? 'episode' : 'movie';
-        const progress = await apiService.getPlaybackProgress(activeUserId, mediaType, itemId);
-
-        if (cancelled) {
-          return;
-        }
-
-        // Only show progress if it's meaningful (between 5% and 95%)
         if (progress && progress.percentWatched > 5 && progress.percentWatched < 95) {
           setDisplayProgress(Math.round(progress.percentWatched));
         } else {
@@ -1672,16 +1790,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [
-    activeUserId,
-    isSeries,
-    activeEpisode,
-    nextUpEpisode,
-    seriesIdentifier,
-    titleId,
-    watchStatusItems,
-    progressRefreshKey,
-  ]);
+  }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, episodeProgressMap, seriesIdentifier, titleId, progressRefreshKey, detailsBundle, bundleReady]);
 
   // Fetch progress for all episodes when series loads
   useEffect(() => {
@@ -1690,47 +1799,61 @@ export default function DetailsScreen() {
       return;
     }
 
-    let cancelled = false;
+    // Helper to build episode progress map from a progress list
+    const buildProgressMap = (progressList: import('@/services/api').PlaybackProgress[]) => {
+      const progressMap = new Map<string, number>();
+      const itemIdPrefix = `${seriesIdentifier}:`;
+      for (const progress of progressList) {
+        if (progress.mediaType !== 'episode') continue;
 
-    const fetchAllProgress = async () => {
-      try {
-        const progressList = await apiService.listPlaybackProgress(activeUserId);
-        if (cancelled) return;
+        const matchesSeriesId = progress.seriesId === seriesIdentifier;
+        const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
 
-        const progressMap = new Map<string, number>();
-        // Match progress by seriesId OR by itemId prefix (more reliable)
-        const itemIdPrefix = `${seriesIdentifier}:`;
-        for (const progress of progressList) {
-          if (progress.mediaType !== 'episode') continue;
+        if (matchesSeriesId || matchesItemIdPrefix) {
+          let seasonNum = progress.seasonNumber;
+          let episodeNum = progress.episodeNumber;
 
-          // Check if this progress belongs to this series
-          const matchesSeriesId = progress.seriesId === seriesIdentifier;
-          const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
-
-          if (matchesSeriesId || matchesItemIdPrefix) {
-            // Get season/episode from progress fields or parse from itemId
-            let seasonNum = progress.seasonNumber;
-            let episodeNum = progress.episodeNumber;
-
-            if ((!seasonNum || !episodeNum) && progress.itemId) {
-              // Parse from itemId format: "seriesId:S01E02"
-              const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
-              if (match) {
-                seasonNum = parseInt(match[1], 10);
-                episodeNum = parseInt(match[2], 10);
-              }
+          if ((!seasonNum || !episodeNum) && progress.itemId) {
+            const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
+            if (match) {
+              seasonNum = parseInt(match[1], 10);
+              episodeNum = parseInt(match[2], 10);
             }
+          }
 
-            if (seasonNum && episodeNum) {
-              const key = `${seasonNum}-${episodeNum}`;
-              // Only include meaningful progress (between 5% and 95%)
-              if (progress.percentWatched > 5 && progress.percentWatched < 95) {
-                progressMap.set(key, Math.round(progress.percentWatched));
-              }
+          if (seasonNum && episodeNum) {
+            const key = `${seasonNum}-${episodeNum}`;
+            if (progress.percentWatched > 5 && progress.percentWatched < 95) {
+              progressMap.set(key, Math.round(progress.percentWatched));
             }
           }
         }
-        setEpisodeProgressMap(progressMap);
+      }
+      return progressMap;
+    };
+
+    // Hydrate from bundle on initial load (progressRefreshKey === 0)
+    if (detailsBundle && !hydratedFromBundle.current.playbackProgress && progressRefreshKey === 0) {
+      hydratedFromBundle.current.playbackProgress = true;
+      setEpisodeProgressMap(buildProgressMap(detailsBundle.playbackProgress));
+      return;
+    }
+
+    // Wait for bundle attempt before falling back (only on initial load)
+    if (!bundleReady && progressRefreshKey === 0) return;
+
+    // Already hydrated from bundle on initial load — skip redundant fetch
+    if (hydratedFromBundle.current.playbackProgress && progressRefreshKey === 0) return;
+
+    let cancelled = false;
+
+    console.log('[Details:Progress] Episode progress falling through to individual fetch', { bundleReady, progressRefreshKey, hasBundle: !!detailsBundle, hydrated: hydratedFromBundle.current.playbackProgress, seriesIdentifier });
+    const fetchAllProgress = async () => {
+      try {
+        console.log('[Details:Progress] Fetching ALL progress for episode map', { seriesIdentifier, source: 'episodeProgressMap' });
+        const progressList = await apiService.listPlaybackProgress(activeUserId);
+        if (cancelled) return;
+        setEpisodeProgressMap(buildProgressMap(progressList));
       } catch (error) {
         if (!cancelled) {
           console.log('Unable to fetch episode progress:', error);
@@ -1743,7 +1866,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey]);
+  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey, detailsBundle, bundleReady]);
 
   useEffect(() => {
     if (!selectionError) {
@@ -1780,6 +1903,20 @@ export default function DetailsScreen() {
       return;
     }
 
+    // Hydrate from bundle if available
+    if (detailsBundle?.movieDetails && !hydratedFromBundle.current.movieDetails) {
+      hydratedFromBundle.current.movieDetails = true;
+      setMovieDetails(detailsBundle.movieDetails);
+      setMovieDetailsLoading(false);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back
+    if (!bundleReady) return;
+
+    // Already hydrated from bundle — no need to fetch individually
+    if (hydratedFromBundle.current.movieDetails) return;
+
     console.log('[Details] Fetching movie details with query:', movieDetailsQuery);
     let cancelled = false;
     setMovieDetailsLoading(true);
@@ -1814,7 +1951,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [movieDetailsQuery]);
+  }, [movieDetailsQuery, detailsBundle, bundleReady]);
 
   // Fetch similar content ("More Like This") when TMDB ID is available
   useEffect(() => {
@@ -1823,6 +1960,20 @@ export default function DetailsScreen() {
       setSimilarLoading(false);
       return;
     }
+
+    // Hydrate from bundle if available
+    if (detailsBundle && !hydratedFromBundle.current.similar) {
+      hydratedFromBundle.current.similar = true;
+      setSimilarContent(detailsBundle.similar);
+      setSimilarLoading(false);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back
+    if (!bundleReady) return;
+
+    // Already hydrated from bundle — no need to fetch individually
+    if (hydratedFromBundle.current.similar) return;
 
     let cancelled = false;
     setSimilarLoading(true);
@@ -1845,7 +1996,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [tmdbIdNumber, isSeries]);
+  }, [tmdbIdNumber, isSeries, detailsBundle, bundleReady]);
 
   // Fetch series details for backdrop updates AND episodes (shared with SeriesEpisodes)
   useEffect(() => {
@@ -1861,6 +2012,20 @@ export default function DetailsScreen() {
       setSeriesDetailsLoading(false);
       return;
     }
+
+    // Hydrate from bundle if available
+    if (detailsBundle?.seriesDetails && !hydratedFromBundle.current.seriesDetails) {
+      hydratedFromBundle.current.seriesDetails = true;
+      setSeriesDetailsData(detailsBundle.seriesDetails);
+      setSeriesDetailsLoading(false);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back
+    if (!bundleReady) return;
+
+    // Already hydrated from bundle — no need to fetch individually
+    if (hydratedFromBundle.current.seriesDetails) return;
 
     let cancelled = false;
     setSeriesDetailsLoading(true);
@@ -1893,7 +2058,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isSeries, title, titleId, tvdbIdNumber, tmdbIdNumber, yearNumber]);
+  }, [isSeries, title, titleId, tvdbIdNumber, tmdbIdNumber, yearNumber, detailsBundle, bundleReady]);
 
   useEffect(() => {
     const shouldAttempt = Boolean(tmdbIdNumber || tvdbIdNumber || titleId || title);
@@ -1903,6 +2068,33 @@ export default function DetailsScreen() {
       setTrailersError(null);
       setTrailersLoading(false);
       return;
+    }
+
+    // For series, wait until the child component reports the initial season selection
+    // to avoid a duplicate fetch (once with season=undefined, again with season=N)
+    if (isSeries && !selectedSeason) {
+      return;
+    }
+
+    // Hydrate from bundle on initial load (before user changes season)
+    if (detailsBundle?.trailers && !hydratedFromBundle.current.trailers) {
+      hydratedFromBundle.current.trailers = true;
+      bundleTrailerSeasonRef.current = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
+      const nextTrailers = detailsBundle.trailers.trailers ?? [];
+      setTrailers(nextTrailers);
+      setPrimaryTrailer(detailsBundle.trailers.primaryTrailer ?? (nextTrailers.length ? nextTrailers[0] : null));
+      setTrailersLoading(false);
+      return;
+    }
+
+    // Wait for bundle attempt before falling back (only if we haven't hydrated yet)
+    if (!bundleReady && !hydratedFromBundle.current.trailers) return;
+
+    // Already hydrated from bundle — only re-fetch if season changed
+    if (hydratedFromBundle.current.trailers) {
+      const currentSeason = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
+      if (currentSeason === bundleTrailerSeasonRef.current) return;
+      bundleTrailerSeasonRef.current = currentSeason;
     }
 
     let cancelled = false;
@@ -1949,7 +2141,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber]);
+  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber, detailsBundle, bundleReady]);
 
   // Prequeue YouTube trailers for 1080p playback on mobile
   useEffect(() => {
@@ -2009,6 +2201,7 @@ export default function DetailsScreen() {
     }
 
     let cancelled = false;
+    let lastStatus = trailerPrequeueStatus;
     const pollInterval = setInterval(async () => {
       if (cancelled) return;
 
@@ -2016,16 +2209,20 @@ export default function DetailsScreen() {
         const status = await apiService.getTrailerPrequeueStatus(trailerPrequeueId);
         if (cancelled) return;
 
-        setTrailerPrequeueStatus(status.status);
-
         if (status.status === 'ready') {
           // Trailer is ready - set the serve URL
+          setTrailerPrequeueStatus('ready');
           const serveUrl = apiService.getTrailerPrequeueServeUrl(trailerPrequeueId);
           setTrailerStreamUrl(serveUrl);
           clearInterval(pollInterval);
         } else if (status.status === 'failed') {
+          setTrailerPrequeueStatus('failed');
           console.warn('[trailer-prequeue] download failed:', status.error);
           clearInterval(pollInterval);
+        } else if (status.status !== lastStatus) {
+          // Only update state when status actually changes (avoids re-renders while pending)
+          lastStatus = status.status;
+          setTrailerPrequeueStatus(status.status);
         }
       } catch (err) {
         if (cancelled) return;
@@ -6316,15 +6513,30 @@ export default function DetailsScreen() {
     };
   }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
 
-  console.log('[Details] Visibility state:', {
-    shouldHideUntilMetadataReady,
-    isMetadataLoading,
-    isLogoReady,
-    isPosterReady,
-    logoUrl: !!logoUrl,
-    logoDimensions: !!logoDimensions,
-    posterToPreload: !!posterToPreload,
-  });
+  useEffect(() => {
+    console.log('[Details] Visibility state:', {
+      shouldHideUntilMetadataReady,
+      isMetadataLoading,
+      isLogoReady,
+      isPosterReady,
+      logoUrl: !!logoUrl,
+      logoDimensions: !!logoDimensions,
+      posterToPreload: !!posterToPreload,
+    });
+  }, [shouldHideUntilMetadataReady, isMetadataLoading, isLogoReady, isPosterReady, logoUrl, logoDimensions, posterToPreload]);
+
+  // On Android TV (low-RAM devices like Fire Stick), unmount heavy content when the player is
+  // active. This frees all image bitmaps, view hierarchy, and list memory (~50-100MB) while
+  // the player is consuming memory for video decode. Content re-renders when user navigates back.
+  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
+  if (isAndroidTV && !isDetailsPageActive) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={{ flex: 1, backgroundColor: '#0b0b0f' }} />
+      </>
+    );
+  }
 
   return (
     <>

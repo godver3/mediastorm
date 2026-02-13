@@ -2886,63 +2886,77 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		_ = s.maybeHydrateMovieArtworkFromTMDB(ctx, &movieTitle, req)
 	}
 
-	tmdbIDForReleases := movieTitle.TMDBID
-	if tmdbIDForReleases == 0 {
-		tmdbIDForReleases = req.TMDBID
+	// Fetch releases, ratings, credits, and images concurrently — each writes to
+	// independent fields on movieTitle so no mutex is needed.
+	tmdbIDForEnrichment := movieTitle.TMDBID
+	if tmdbIDForEnrichment == 0 {
+		tmdbIDForEnrichment = req.TMDBID
 	}
-	if s.enrichMovieReleases(ctx, &movieTitle, tmdbIDForReleases) && len(movieTitle.Releases) > 0 {
-		log.Printf("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForReleases, len(movieTitle.Releases))
+	imdbIDForRatings := movieTitle.IMDBID
+	if imdbIDForRatings == "" {
+		imdbIDForRatings = req.IMDBID
 	}
 
-	// Fetch ratings from MDBList if enabled, requested, and IMDB ID is available
-	if includeRatings {
-		imdbIDForRatings := movieTitle.IMDBID
-		if imdbIDForRatings == "" {
-			imdbIDForRatings = req.IMDBID
+	var enrichWg sync.WaitGroup
+
+	// 1. Release dates (TMDB)
+	enrichWg.Add(1)
+	go func() {
+		defer enrichWg.Done()
+		if s.enrichMovieReleases(ctx, &movieTitle, tmdbIDForEnrichment) && len(movieTitle.Releases) > 0 {
+			log.Printf("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForEnrichment, len(movieTitle.Releases))
 		}
-		if imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+	}()
+
+	// 2. MDBList ratings
+	if includeRatings && imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+		enrichWg.Add(1)
+		go func() {
+			defer enrichWg.Done()
 			if ratings, err := s.mdblist.GetRatings(ctx, imdbIDForRatings, "movie"); err != nil {
 				log.Printf("[metadata] error fetching ratings for movie imdbId=%s: %v", imdbIDForRatings, err)
 			} else if len(ratings) > 0 {
 				movieTitle.Ratings = ratings
 				log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
 			}
-		}
+		}()
 	}
 
-	// Fetch cast credits from TMDB if configured
-	tmdbIDForCredits := movieTitle.TMDBID
-	if tmdbIDForCredits == 0 {
-		tmdbIDForCredits = req.TMDBID
-	}
-	if tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-		if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
-			movieTitle.Credits = credits
-			log.Printf("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
-		} else if err != nil {
-			log.Printf("[metadata] failed to fetch credits for movie tmdbId=%d: %v", tmdbIDForCredits, err)
-		}
+	// 3. Cast credits (TMDB)
+	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		enrichWg.Add(1)
+		go func() {
+			defer enrichWg.Done()
+			if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
+				movieTitle.Credits = credits
+				log.Printf("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
+			} else if err != nil {
+				log.Printf("[metadata] failed to fetch credits for movie tmdbId=%d: %v", tmdbIDForEnrichment, err)
+			}
+		}()
 	}
 
-	// Fetch logo and textless poster from TMDB if configured
-	tmdbIDForImages := movieTitle.TMDBID
-	if tmdbIDForImages == 0 {
-		tmdbIDForImages = req.TMDBID
-	}
-	if tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-		if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
-			if images.Logo != nil {
-				movieTitle.Logo = images.Logo
-				log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForImages)
+	// 4. Logo and textless poster (TMDB)
+	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		enrichWg.Add(1)
+		go func() {
+			defer enrichWg.Done()
+			if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForEnrichment); err == nil && images != nil {
+				if images.Logo != nil {
+					movieTitle.Logo = images.Logo
+					log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForEnrichment)
+				}
+				if images.TextlessPoster != nil {
+					movieTitle.Poster = images.TextlessPoster
+					log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForEnrichment)
+				}
+			} else if err != nil {
+				log.Printf("[metadata] failed to fetch images for movie tmdbId=%d: %v", tmdbIDForEnrichment, err)
 			}
-			if images.TextlessPoster != nil {
-				movieTitle.Poster = images.TextlessPoster
-				log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForImages)
-			}
-		} else if err != nil {
-			log.Printf("[metadata] failed to fetch images for movie tmdbId=%d: %v", tmdbIDForImages, err)
-		}
+		}()
 	}
+
+	enrichWg.Wait()
 
 	// Cache the result
 	_ = s.cache.set(cacheID, movieTitle)
