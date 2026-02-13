@@ -49,8 +49,8 @@ func TestTVDBClientSetsAcceptLanguageHeader(t *testing.T) {
 	if !loginDone {
 		t.Fatalf("expected login request to occur")
 	}
-	if captured != "en" {
-		t.Fatalf("expected Accept-Language header 'en', got %q", captured)
+	if captured != "eng" {
+		t.Fatalf("expected Accept-Language header 'eng', got %q", captured)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestTVDBClientSeriesEpisodesBySeasonType(t *testing.T) {
 			if req.URL.Path == "/v4/series/42/episodes/official/eng" {
 				page := req.URL.Query().Get("page")
 				pageCalls = append(pageCalls, page)
-				if req.Header.Get("Accept-Language") != "en" {
+				if req.Header.Get("Accept-Language") != "eng" {
 					t.Fatalf("unexpected Accept-Language: %q", req.Header.Get("Accept-Language"))
 				}
 				var payload string
