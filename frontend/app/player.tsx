@@ -30,6 +30,7 @@ import { Animated, AppState, BackHandler, Image, Platform, Pressable, ScrollView
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useChannelEPG } from '@/hooks/useChannelEPG';
 import { isTablet } from '@/theme/tokens/tvScale';
+import { isEpisodeUnreleased } from '@/app/details/utils';
 
 // TVMenuControl is available on tvOS but not typed in RN types
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -3159,8 +3160,10 @@ export default function PlayerScreen() {
     let isShuffleEpisode = false;
 
     if (shuffleMode && allEpisodes.length > 1) {
-      // Shuffle mode: pick a random episode (different from current, excludes season 0/specials)
-      const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
+      // Shuffle mode: pick a random episode (different from current, excludes season 0/specials and unreleased)
+      const shuffleableEpisodes = allEpisodes.filter(
+        (ep) => ep.seasonNumber !== 0 && !isEpisodeUnreleased(ep.airedDate),
+      );
       if (shuffleableEpisodes.length > 0) {
         let randomIndex: number;
         do {
@@ -3174,8 +3177,12 @@ export default function PlayerScreen() {
         isShuffleEpisode = true;
       }
     } else if (currentIndex >= 0 && currentIndex < allEpisodes.length - 1) {
-      // Sequential mode: get next episode
+      // Sequential mode: get next episode (skip unreleased)
       nextEpisode = allEpisodes[currentIndex + 1];
+      if (nextEpisode && isEpisodeUnreleased(nextEpisode.airedDate)) {
+        console.log('[player] Skipping next episode prequeue - episode not yet released:', nextEpisode.airedDate);
+        return;
+      }
     }
 
     if (!nextEpisode) return;
@@ -4214,13 +4221,14 @@ export default function PlayerScreen() {
       }
 
       // No prequeue - fall back to existing logic
-      // Shuffle mode: pick a random episode (different from current)
-      if (shuffleMode && allEpisodes.length > 1) {
+      // Shuffle mode: pick a random released episode (different from current)
+      const releasedEpisodes = allEpisodes.filter((ep) => !isEpisodeUnreleased(ep.airedDate));
+      if (shuffleMode && releasedEpisodes.length > 1) {
         let randomIndex: number;
         let nextEp: SeriesEpisode;
         do {
-          randomIndex = Math.floor(Math.random() * allEpisodes.length);
-          nextEp = allEpisodes[randomIndex];
+          randomIndex = Math.floor(Math.random() * releasedEpisodes.length);
+          nextEp = releasedEpisodes[randomIndex];
         } while (nextEp.seasonNumber === seasonNumber && nextEp.episodeNumber === episodeNumber);
 
         console.log('🔀 Shuffle: playing random episode', {
@@ -4238,14 +4246,14 @@ export default function PlayerScreen() {
         return;
       }
 
-      // Sequential mode: find next episode in order
+      // Sequential mode: find next released episode in order
       const currentIndex = allEpisodes.findIndex(
         (ep) => ep.seasonNumber === seasonNumber && ep.episodeNumber === episodeNumber,
       );
       const hasNext = currentIndex >= 0 && currentIndex < allEpisodes.length - 1;
       const nextEp = hasNext ? allEpisodes[currentIndex + 1] : null;
 
-      if (nextEp) {
+      if (nextEp && !isEpisodeUnreleased(nextEp.airedDate)) {
         console.log('🎬 Auto-playing next episode', {
           season: nextEp.seasonNumber,
           episode: nextEp.episodeNumber,
@@ -5832,7 +5840,10 @@ export default function PlayerScreen() {
   }, [allEpisodes, seasonNumber, episodeNumber]);
 
   const hasPreviousEpisode = currentEpisodeIndex > 0;
-  const hasNextEpisode = currentEpisodeIndex >= 0 && currentEpisodeIndex < allEpisodes.length - 1;
+  const hasNextEpisode =
+    currentEpisodeIndex >= 0 &&
+    currentEpisodeIndex < allEpisodes.length - 1 &&
+    !isEpisodeUnreleased(allEpisodes[currentEpisodeIndex + 1]?.airedDate);
 
   // Keep ref updated for use in callbacks defined earlier in the component
   hasNextEpisodeRef.current = hasNextEpisode;

@@ -1110,6 +1110,15 @@ func (s *Service) findNextUnwatchedEpisode(
 		}
 
 		if foundLast {
+			// Skip unreleased episodes
+			if ep.details.AiredDate != "" {
+				if airDate, err := time.Parse("2006-01-02", ep.details.AiredDate); err == nil {
+					if airDate.After(time.Now()) {
+						continue
+					}
+				}
+			}
+
 			key := episodeKey(ep.season, ep.episode)
 			if !watchedSet[key] {
 				// Found next unwatched episode
