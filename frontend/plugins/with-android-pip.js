@@ -72,8 +72,10 @@ const withPipMainActivity = (config) => {
       // Add required imports
       const importsToAdd = [
         'import android.app.PictureInPictureParams',
+        'import android.content.res.Configuration',
         'import android.os.Build',
         'import android.util.Rational',
+        'import expo.modules.pipmanager.PipManagerModule',
       ];
 
       for (const importLine of importsToAdd) {
@@ -114,6 +116,12 @@ const withPipMainActivity = (config) => {
     } else {
       android.util.Log.d("AndroidPiP", "Not entering PiP (disabled or unsupported)")
     }
+  }
+
+  override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    android.util.Log.d("AndroidPiP", "onPictureInPictureModeChanged: $isInPictureInPictureMode")
+    PipManagerModule.notifyPipModeChanged(isInPictureInPictureMode, this)
   }
 `;
 

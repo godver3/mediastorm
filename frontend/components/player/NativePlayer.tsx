@@ -217,9 +217,6 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     );
   }
 
-  // Log props being passed to native component
-  console.log('[NativePlayer] render with tracks:', { audioTrack, subtitleTrack });
-
   return (
     <PlayerComponent
       ref={playerRef}

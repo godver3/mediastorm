@@ -4,6 +4,7 @@ import {
   Platform,
   UIManager,
   findNodeHandle,
+  NativeModules,
   NativeSyntheticEvent,
   StyleProp,
   ViewStyle,
@@ -48,6 +49,10 @@ export interface MpvPlayerSource {
   headers?: Record<string, string>;
 }
 
+export interface DebugLogEvent {
+  message: string;
+}
+
 export interface MpvPlayerProps {
   source?: MpvPlayerSource;
   paused?: boolean;
@@ -65,6 +70,7 @@ export interface MpvPlayerProps {
   onError?: (error: ErrorEvent) => void;
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
+  onDebugLog?: (data: DebugLogEvent) => void;
 }
 
 export interface MpvPlayerRef {
@@ -91,6 +97,7 @@ interface NativeMpvPlayerProps {
   onError?: (event: NativeSyntheticEvent<ErrorEvent>) => void;
   onTracksChanged?: (event: NativeSyntheticEvent<TracksEvent>) => void;
   onBuffering?: (event: NativeSyntheticEvent<BufferingEvent>) => void;
+  onDebugLog?: (event: NativeSyntheticEvent<DebugLogEvent>) => void;
 }
 
 // Only load native component on Android - cache to prevent double registration on hot reload
@@ -127,6 +134,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     onError,
     onTracksChanged,
     onBuffering,
+    onDebugLog,
   } = props;
 
   const nativeRef = useRef<any>(null);
@@ -217,6 +225,14 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     [onBuffering]
   );
 
+  const handleDebugLog = useCallback(
+    (event: NativeSyntheticEvent<DebugLogEvent>) => {
+      console.log('[MpvPlayer]', event.nativeEvent.message);
+      onDebugLog?.(event.nativeEvent);
+    },
+    [onDebugLog]
+  );
+
   if (!NativeMpvPlayerView) {
     console.log('[MpvPlayer] Native view not available on this platform');
     return null;
@@ -241,10 +257,55 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
       onError={handleError}
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
+      onDebugLog={handleDebugLog}
     />
   );
 });
 
 MpvPlayer.displayName = 'MpvPlayer';
+
+// === Native PlayerActivity launcher (Android TV only) ===
+
+export interface PlayerLaunchParams {
+  streamUrl: string;
+  title: string;
+  authToken: string;
+  userId: string;
+  mediaType: string;
+  itemId: string;
+  backendUrl: string;
+  startOffset?: number;
+  durationHint?: number;
+  preselectedAudioTrack?: number;
+  preselectedSubtitleTrack?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  seriesId?: string;
+  seriesName?: string;
+  episodeName?: string;
+  titleId?: string;
+  imdbId?: string;
+  tvdbId?: string;
+  isHDR?: boolean;
+  isDolbyVision?: boolean;
+}
+
+export interface PlayerResult {
+  lastPosition: number;
+  completed: boolean;
+  percentWatched: number;
+}
+
+/**
+ * Launch the native PlayerActivity (Android TV only).
+ * Returns playback result when the Activity finishes.
+ */
+export async function launchPlayer(params: PlayerLaunchParams): Promise<PlayerResult> {
+  const { PlayerLauncherModule } = NativeModules;
+  if (!PlayerLauncherModule) {
+    throw new Error('PlayerLauncherModule is not available');
+  }
+  return PlayerLauncherModule.launch(params);
+}
 
 export default MpvPlayer;

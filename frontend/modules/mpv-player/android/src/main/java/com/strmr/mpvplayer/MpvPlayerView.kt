@@ -1,5 +1,9 @@
 package com.strmr.mpvplayer
 
+import android.app.ActivityManager
+import android.content.ComponentCallbacks2
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -17,7 +21,7 @@ import com.facebook.react.uimanager.events.RCTEventEmitter
 import dev.jdtech.mpv.MPVLib
 
 class MpvPlayerView(context: ThemedReactContext) :
-    FrameLayout(context), MPVLib.EventObserver, SurfaceHolder.Callback {
+    FrameLayout(context), MPVLib.EventObserver, SurfaceHolder.Callback, ComponentCallbacks2 {
 
     companion object {
         private const val TAG = "MpvPlayerView"
@@ -30,6 +34,10 @@ class MpvPlayerView(context: ThemedReactContext) :
         // mpv event ID constants
         private const val MPV_EVENT_END_FILE = 7
         private const val MPV_EVENT_FILE_LOADED = 8
+
+        // Memory tier thresholds
+        private const val LOW_RAM_THRESHOLD_MB = 2048L   // <= 2 GB
+        private const val MID_RAM_THRESHOLD_MB = 3072L   // <= 3 GB
     }
 
     private val surfaceView = SurfaceView(context)
@@ -58,24 +66,58 @@ class MpvPlayerView(context: ThemedReactContext) :
     private var lastProgressEmitTime = 0L
     private var currentDuration = 0.0
 
+    private val isLowRamDevice: Boolean
+
     init {
         addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         surfaceView.holder.addCallback(this)
+        // Tag the SurfaceView so PipManagerModule can find and reparent it during PiP
+        surfaceView.tag = "mpv_player_surface"
+
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(memInfo)
+        val totalMb = memInfo.totalMem / (1024 * 1024)
+        isLowRamDevice = am.isLowRamDevice || totalMb <= LOW_RAM_THRESHOLD_MB
 
         try {
             MPVLib.create(context.applicationContext)
 
-            // Options must be set before init()
+            // Detect device memory and choose cache sizes
+            val (demuxerMax, demuxerBack) = getDemuxerCacheSizes(totalMb, am.isLowRamDevice)
+
+            // Use mpv's built-in fast profile (simpler scaling, fewer shader passes)
+            MPVLib.setOptionString("profile", "fast")
+
+            // Video output: always GPU with Android OpenGL ES context
+            // (all reference apps — mpv-android, Findroid, Flixor — use this)
             MPVLib.setOptionString("vo", "gpu")
             MPVLib.setOptionString("gpu-context", "android")
-            MPVLib.setOptionString("hwdec", "mediacodec")
-            MPVLib.setOptionString("ao", "audiotrack")
-            MPVLib.setOptionString("keep-open", "yes")
+            MPVLib.setOptionString("opengl-es", "yes")
+
+            // Hardware decode with fallback chain
+            MPVLib.setOptionString("hwdec", "mediacodec,mediacodec-copy")
+            MPVLib.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
+
+            // Workaround for mpv issue #14651
+            MPVLib.setOptionString("vd-lavc-film-grain", "cpu")
+
+            MPVLib.setOptionString("ao", "audiotrack,opensles")
             MPVLib.setOptionString("save-position-on-quit", "no")
             MPVLib.setOptionString("ytdl", "no")
+            MPVLib.setOptionString("force-window", "no")
+
+            // Cache/demuxer limits — tighter on low-RAM devices
             MPVLib.setOptionString("cache", "yes")
-            MPVLib.setOptionString("demuxer-max-bytes", "32MiB")
-            MPVLib.setOptionString("demuxer-max-back-bytes", "16MiB")
+            MPVLib.setOptionString("demuxer-max-bytes", demuxerMax)
+            MPVLib.setOptionString("demuxer-max-back-bytes", demuxerBack)
+            MPVLib.setOptionString("demuxer-readahead-secs", if (isLowRamDevice) "15" else "30")
+
+            // Limit MediaCodec output buffer count on low-RAM to reduce memory pressure
+            if (isLowRamDevice) {
+                MPVLib.setOptionString("hwdec-extra-frames", "2")
+                MPVLib.setOptionString("video-latency-hacks", "yes")
+            }
 
             // Subtitle rendering
             MPVLib.setOptionString("sub-visibility", "yes")
@@ -93,11 +135,37 @@ class MpvPlayerView(context: ThemedReactContext) :
             MPVLib.observeProperty("eof-reached", MPV_FORMAT_FLAG)
             MPVLib.observeProperty("paused-for-cache", MPV_FORMAT_FLAG)
 
+            // Register for system memory pressure callbacks
+            context.applicationContext.registerComponentCallbacks(this)
+
             initialized = true
-            Log.d(TAG, "MPV initialized successfully")
+            Log.d(TAG, "MPV initialized (vo=gpu, RAM=${totalMb}MB, lowRam=$isLowRamDevice, cache: $demuxerMax / $demuxerBack)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize MPV", e)
             mainHandler.post { emitError("Failed to initialize MPV: ${e.message}") }
+        }
+    }
+
+    /**
+     * Determine demuxer cache sizes based on device total RAM.
+     * Fire Stick (1.7 GB) and similar low-RAM devices get much smaller caches
+     * to avoid being killed by the LowMemoryKiller.
+     */
+    private fun getDemuxerCacheSizes(totalMb: Long, isSystemLowRam: Boolean): Pair<String, String> {
+        Log.d(TAG, "Device RAM: ${totalMb}MB, isLowRamDevice: $isSystemLowRam")
+
+        return when {
+            isSystemLowRam || totalMb <= LOW_RAM_THRESHOLD_MB -> {
+                Log.d(TAG, "Low-RAM device detected — using minimal demuxer cache")
+                Pair("4MiB", "2MiB")
+            }
+            totalMb <= MID_RAM_THRESHOLD_MB -> {
+                Log.d(TAG, "Mid-RAM device detected — using reduced demuxer cache")
+                Pair("16MiB", "16MiB")
+            }
+            else -> {
+                Pair("32MiB", "32MiB")
+            }
         }
     }
 
@@ -105,8 +173,10 @@ class MpvPlayerView(context: ThemedReactContext) :
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         if (!initialized || destroyed) return
-        Log.d(TAG, "Surface created")
+        emitDebugLog("surfaceCreated")
         MPVLib.attachSurface(holder.surface)
+        MPVLib.setOptionString("force-window", "yes")
+        MPVLib.setOptionString("vo", "gpu")
         surfaceReady = true
 
         // Load pending file if source was set before surface was ready
@@ -119,13 +189,17 @@ class MpvPlayerView(context: ThemedReactContext) :
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (!initialized || destroyed) return
+        emitDebugLog("surfaceChanged: ${width}x${height}")
         MPVLib.setPropertyString("android-surface-size", "${width}x${height}")
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         if (!initialized || destroyed) return
-        Log.d(TAG, "Surface destroyed")
+        emitDebugLog("surfaceDestroyed")
         surfaceReady = false
+        // Disable VO before detaching surface to avoid rendering to a dead surface
+        MPVLib.setOptionString("vo", "null")
+        MPVLib.setOptionString("force-window", "no")
         MPVLib.detachSurface()
     }
 
@@ -506,6 +580,51 @@ class MpvPlayerView(context: ThemedReactContext) :
         emitEvent("onBuffering", data)
     }
 
+    private fun emitDebugLog(message: String) {
+        Log.d(TAG, message)
+        val data = Arguments.createMap().apply {
+            putString("message", "[MpvPlayer-PiP] $message")
+        }
+        emitEvent("onDebugLog", data)
+    }
+
+    // ========== ComponentCallbacks2 (memory pressure) ==========
+
+    override fun onTrimMemory(level: Int) {
+        if (!initialized || destroyed) return
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
+                Log.w(TAG, "CRITICAL memory pressure (level=$level) — dropping demuxer cache to minimum")
+                try {
+                    MPVLib.setPropertyString("demuxer-max-bytes", "2MiB")
+                    MPVLib.setPropertyString("demuxer-max-back-bytes", "1MiB")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "5")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to reduce cache on trim", e)
+                }
+            }
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                Log.w(TAG, "Low memory pressure (level=$level) — reducing demuxer cache")
+                try {
+                    MPVLib.setPropertyString("demuxer-max-bytes", if (isLowRamDevice) "2MiB" else "8MiB")
+                    MPVLib.setPropertyString("demuxer-max-back-bytes", if (isLowRamDevice) "1MiB" else "4MiB")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", if (isLowRamDevice) "8" else "15")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to reduce cache on trim", e)
+                }
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        // Required by ComponentCallbacks2, no action needed
+    }
+
+    override fun onLowMemory() {
+        // Fallback for pre-API-14 — onTrimMemory handles this on modern devices
+        onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL)
+    }
+
     // ========== Cleanup ==========
 
     fun destroy() {
@@ -514,6 +633,12 @@ class MpvPlayerView(context: ThemedReactContext) :
         Log.d(TAG, "Destroying MpvPlayerView")
 
         mainHandler.removeCallbacksAndMessages(null)
+
+        try {
+            context.applicationContext.unregisterComponentCallbacks(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister component callbacks", e)
+        }
 
         if (initialized) {
             try {

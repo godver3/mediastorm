@@ -3,10 +3,12 @@
  */
 
 import type { PlaybackPreference } from '@/components/BackendSettingsContext';
+import { clearMemoryCache } from '@/components/Image';
 import { apiService, type ApiError, type NZBResult, type PlaybackResolutionResponse } from '@/services/api';
 import { Linking, Platform } from 'react-native';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from './track-selection';
 import { formatFileSize } from './utils';
+import type { PlayerLaunchParams } from 'mpv-player';
 
 const APP_SCHEME = 'com.strmr.app';
 
@@ -517,7 +519,7 @@ export const buildExternalPlayerTargets = (
   return [];
 };
 
-export const launchNativePlayer = (
+export const launchNativePlayer = async (
   streamUrl: string,
   headerImage: string,
   title: string,
@@ -536,6 +538,7 @@ export const launchNativePlayer = (
     releaseName?: string; // Original release name for subtitle matching
     dv?: boolean;
     dvProfile?: string;
+    hdr10?: boolean;
     forceAAC?: boolean;
     startOffset?: number;
     titleId?: string;
@@ -549,6 +552,7 @@ export const launchNativePlayer = (
     preselectedAudioTrack?: number; // 0-based native player track index
     preselectedSubtitleTrack?: number; // 0-based native player track index
     useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
+    userId?: string; // For native Android TV player progress reporting
   } = {},
 ) => {
   const {
@@ -565,6 +569,7 @@ export const launchNativePlayer = (
     releaseName,
     dv,
     dvProfile,
+    hdr10,
     forceAAC,
     startOffset,
     titleId,
@@ -578,7 +583,52 @@ export const launchNativePlayer = (
     preselectedAudioTrack,
     preselectedSubtitleTrack,
     useNativePlayer,
+    userId,
   } = options;
+
+  // Android TV: launch standalone native PlayerActivity (saves ~150-200MB RAM vs RN player)
+  if (Platform.isTV && Platform.OS === 'android') {
+    try {
+      const { launchPlayer } = require('mpv-player') as typeof import('mpv-player');
+      // Free GL-cached decoded bitmaps (~447MB on Fire Stick) before native player allocates its own buffers
+      await clearMemoryCache();
+      const isHDRContent = dv || hdr10;
+      const params: PlayerLaunchParams = {
+        streamUrl,
+        title,
+        authToken: apiService.getAuthToken() || '',
+        userId: userId || '',
+        mediaType: mediaType || '',
+        itemId: titleId || '',
+        backendUrl: apiService.getBaseUrl(),
+        ...(typeof startOffset === 'number' ? { startOffset } : {}),
+        ...(durationHint ? { durationHint } : {}),
+        ...(typeof preselectedAudioTrack === 'number' && preselectedAudioTrack >= 0
+          ? { preselectedAudioTrack }
+          : {}),
+        ...(typeof preselectedSubtitleTrack === 'number' && preselectedSubtitleTrack >= 0
+          ? { preselectedSubtitleTrack }
+          : {}),
+        ...(seasonNumber ? { seasonNumber } : {}),
+        ...(episodeNumber ? { episodeNumber } : {}),
+        ...(titleId ? { seriesId: titleId } : {}),
+        ...(seriesTitle ? { seriesName: seriesTitle } : {}),
+        ...(episodeName ? { episodeName } : {}),
+        ...(titleId ? { titleId } : {}),
+        ...(imdbId ? { imdbId } : {}),
+        ...(tvdbId ? { tvdbId } : {}),
+        ...(isHDRContent ? { isHDR: true } : {}),
+        ...(dv ? { isDolbyVision: true } : {}),
+      };
+      const result = await launchPlayer(params);
+      console.log('[launchNativePlayer] Android TV native player result:', result);
+      return;
+    } catch (e) {
+      console.error('[launchNativePlayer] Android TV native player failed, falling back to RN player:', e);
+      // Fall through to RN player below
+    }
+  }
+
   let debugLogs: string | undefined;
   if (typeof window !== 'undefined' && window.location?.search) {
     const debugParam = new URLSearchParams(window.location.search).get('debugLogs');
@@ -655,6 +705,7 @@ export const initiatePlayback = async (
     profileName?: string;
     shuffleMode?: boolean;
     trackOverrides?: { audioTrack?: number; subtitleTrack?: number }; // Manual track selection override
+    userId?: string; // For native Android TV player progress reporting
   } = {},
 ) => {
   setSelectionError(null);
@@ -1040,7 +1091,7 @@ export const initiatePlayback = async (
   const passthroughDescription =
     result.attributes?.passthrough_format === 'true' ? result.attributes?.raw_description : undefined;
 
-  launchNativePlayer(streamUrl, headerImage, title, router, {
+  await launchNativePlayer(streamUrl, headerImage, title, router, {
     ...options,
     ...(hlsDuration ? { durationHint: hlsDuration } : {}),
     sourcePath: playback.webdavPath,

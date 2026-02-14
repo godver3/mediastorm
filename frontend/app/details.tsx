@@ -3282,6 +3282,56 @@ export default function DetailsScreen() {
         })),
         streamUrl: streamUrl.substring(0, 100) + '...',
       });
+
+      // Android TV: launch standalone native PlayerActivity (saves ~150-200MB RAM vs RN player)
+      if (Platform.isTV && Platform.OS === 'android') {
+        try {
+          const { launchPlayer } = require('mpv-player') as typeof import('mpv-player');
+          // Compute native track indices (same conversion as below)
+          const nativeAudioTrack = (() => {
+            if (selectedAudioTrack === undefined || selectedAudioTrack < 0) return -1;
+            const hasTrackArray = prequeueStatus.audioTracks && prequeueStatus.audioTracks.length > 0;
+            return hasTrackArray
+              ? prequeueStatus.audioTracks!.findIndex((t) => t.index === selectedAudioTrack)
+              : selectedAudioTrack;
+          })();
+          const nativeSubtitleTrack = (() => {
+            if (selectedSubtitleTrack === undefined || selectedSubtitleTrack < 0) return -1;
+            const hasTrackArray = prequeueStatus.subtitleTracks && prequeueStatus.subtitleTracks.length > 0;
+            return hasTrackArray
+              ? prequeueStatus.subtitleTracks!.findIndex((t) => t.index === selectedSubtitleTrack)
+              : selectedSubtitleTrack;
+          })();
+          const result = await launchPlayer({
+            streamUrl,
+            title: displayTitle,
+            authToken: apiService.getAuthToken() || '',
+            userId: activeUserId || '',
+            mediaType: isSeries ? 'episode' : 'movie',
+            itemId: titleId || '',
+            backendUrl: apiService.getBaseUrl(),
+            ...(typeof startOffset === 'number' ? { startOffset } : {}),
+            ...(typeof hlsDuration === 'number' ? { durationHint: hlsDuration } : {}),
+            ...(nativeAudioTrack >= 0 ? { preselectedAudioTrack: nativeAudioTrack } : {}),
+            ...(nativeSubtitleTrack >= 0 ? { preselectedSubtitleTrack: nativeSubtitleTrack } : {}),
+            ...(prequeueStatus.targetEpisode
+              ? {
+                  seasonNumber: prequeueStatus.targetEpisode.seasonNumber,
+                  episodeNumber: prequeueStatus.targetEpisode.episodeNumber,
+                }
+              : {}),
+            ...(titleId ? { seriesId: titleId, titleId } : {}),
+            ...(isSeries ? { seriesName: title } : {}),
+            ...(imdbId ? { imdbId } : {}),
+            ...(tvdbId ? { tvdbId } : {}),
+          });
+          console.log('[prequeue] Android TV native player result:', result);
+          return;
+        } catch (e) {
+          console.error('[prequeue] Android TV native player failed, falling back to RN player:', e);
+        }
+      }
+
       router.push({
         pathname: '/player',
         params: {
