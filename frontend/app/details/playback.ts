@@ -2,6 +2,8 @@
  * Playback resolution and player launching functionality for the details screen
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import type { PlaybackPreference } from '@/components/BackendSettingsContext';
 import { clearMemoryCache } from '@/components/Image';
 import { apiService, type ApiError, type NZBResult, type PlaybackResolutionResponse } from '@/services/api';
@@ -11,6 +13,29 @@ import { formatFileSize } from './utils';
 import type { PlayerLaunchParams } from 'mpv-player';
 
 const APP_SCHEME = 'com.strmr.app';
+
+// Persists a timestamp to AsyncStorage before launching the native Android TV player.
+// Android may kill the RN process while the native PlayerActivity is in the foreground
+// (especially on low-memory devices like Fire Stick). On process recreation the JS
+// context is fresh, so in-memory flags/globalThis are lost. AsyncStorage survives.
+const NATIVE_PLAYER_LAUNCHED_KEY = '@strmr/nativePlayerLaunchedAt';
+const markNativePlayerLaunching = async () => {
+  await AsyncStorage.setItem(NATIVE_PLAYER_LAUNCHED_KEY, Date.now().toString());
+};
+const clearNativePlayerLaunching = async () => {
+  await AsyncStorage.removeItem(NATIVE_PLAYER_LAUNCHED_KEY);
+};
+export const wasNativePlayerRecentlyActive = async (): Promise<boolean> => {
+  const raw = await AsyncStorage.getItem(NATIVE_PLAYER_LAUNCHED_KEY);
+  if (!raw) return false;
+  const launchedAt = parseInt(raw, 10);
+  if (isNaN(launchedAt)) return false;
+  const elapsed = Date.now() - launchedAt;
+  // Player sessions can be hours long — any stored timestamp means we launched
+  // the native player and haven't cleared it yet (process was killed).
+  // 4-hour cap as a safety net against stale entries.
+  return elapsed < 4 * 60 * 60 * 1000;
+};
 
 const formatProviderName = (provider?: string, demoMode?: boolean): string => {
   if (demoMode) {
@@ -620,11 +645,17 @@ export const launchNativePlayer = async (
         ...(isHDRContent ? { isHDR: true } : {}),
         ...(dv ? { isDolbyVision: true } : {}),
       };
+      // Write BEFORE launching — Android may kill the RN process while
+      // the native player is in the foreground (low-memory devices).
+      await markNativePlayerLaunching();
       const result = await launchPlayer(params);
       console.log('[launchNativePlayer] Android TV native player result:', result);
+      // Clear after player returns (only reached if RN process survived).
+      await clearNativePlayerLaunching();
       return;
     } catch (e) {
       console.error('[launchNativePlayer] Android TV native player failed, falling back to RN player:', e);
+      await clearNativePlayerLaunching();
       // Fall through to RN player below
     }
   }

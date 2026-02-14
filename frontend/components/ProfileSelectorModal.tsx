@@ -9,6 +9,7 @@ import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { UserProfile } from '@/services/api';
+import { wasNativePlayerRecentlyActive } from '@/app/details/playback';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { responsiveSize } from '@/theme/tokens/tvScale';
@@ -222,12 +223,23 @@ export const ProfileSelectorModal: React.FC = () => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // Only show if the app was away for >2s — brief inactive blips from
         // screen transitions (e.g. player dismiss) are ignored.
-        // Also skip if the player is active (PiP return to foreground).
+        // Also skip if the player is active (PiP return to foreground)
+        // or the native Android TV player was just open.
         const awayMs = Date.now() - leftActiveAtRef.current;
-        const onPlayer = pathnameRef.current === '/player';
-        if (awayMs > 2000 && !onPlayer) {
-          setVisible(true);
+        const onRNPlayer = pathnameRef.current === '/player';
+        if (awayMs <= 2000 || onRNPlayer) {
+          appStateRef.current = nextAppState;
+          return;
         }
+        // Async check: was a native Android TV player recently launched?
+        // AsyncStorage survives process kills (Fire Stick etc.)
+        wasNativePlayerRecentlyActive().then((nativeRecent) => {
+          if (!nativeRecent) {
+            setVisible(true);
+          }
+        }).catch(() => {
+          setVisible(true);
+        });
       }
       appStateRef.current = nextAppState;
     });
