@@ -553,12 +553,22 @@ export default function DetailsScreen() {
   }, [logoUrl]);
 
   // Preload poster/backdrop image so it's ready when page displays
+  // Once first poster is preloaded, URL changes silently background-prefetch without resetting isPosterPreloaded
   const [isPosterPreloaded, setIsPosterPreloaded] = useState(false);
+  const posterPreloadedOnceRef = useRef(false);
   const posterToPreload = posterUrl || backdropUrl;
   useEffect(() => {
     if (!posterToPreload) {
       console.log(`[NAV TIMING] Poster preload: no URL, marking ready immediately, +${msSinceNavStart()}ms`);
       setIsPosterPreloaded(true);
+      posterPreloadedOnceRef.current = true;
+      return;
+    }
+    // After first successful preload, URL changes (e.g. textless poster from bundle)
+    // silently background-prefetch without resetting isPosterPreloaded — prevents re-gating
+    if (posterPreloadedOnceRef.current) {
+      console.log(`[NAV TIMING] Poster URL changed after initial preload, background prefetch, +${msSinceNavStart()}ms`);
+      RNImage.prefetch(posterToPreload).catch(() => {});
       return;
     }
     setIsPosterPreloaded(false);
@@ -568,10 +578,12 @@ export default function DetailsScreen() {
       .then(() => {
         console.log(`[NAV TIMING] Poster prefetch completed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
         setIsPosterPreloaded(true);
+        posterPreloadedOnceRef.current = true;
       })
       .catch(() => {
         console.log(`[NAV TIMING] Poster prefetch failed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
         setIsPosterPreloaded(true);
+        posterPreloadedOnceRef.current = true;
       }); // Still show page on error
   }, [posterToPreload]);
 
@@ -1079,7 +1091,7 @@ export default function DetailsScreen() {
 
   // Similar content ("More Like This") state
   const [similarContent, setSimilarContent] = useState<Title[]>([]);
-  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarLoading, setSimilarLoading] = useState(true);
 
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
@@ -1123,8 +1135,10 @@ export default function DetailsScreen() {
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
   const descriptionHeight = useSharedValue(0);
-  // TV: Track topContent height for dynamic spacer sizing
-  const [tvTopContentHeight, setTvTopContentHeight] = useState(0);
+  // TV: Track topContent height for dynamic spacer sizing via shared value
+  // so the spacer updates on the UI thread in the same frame as the layout measurement.
+  // Default to 300 (typical height) to minimize any initial frame shift.
+  const tvTopContentHeightSV = useSharedValue(300);
 
   // Reset description height measurements when displayDescription changes
   // This ensures the container re-measures when overview loads asynchronously
@@ -1203,6 +1217,87 @@ export default function DetailsScreen() {
       cancelled = true;
     };
   }, [activeUserId, titleId, title, isSeries, yearNumber, tvdbIdNumber, tmdbIdNumber, imdbId]);
+
+  // === Consolidated bundle hydration: one batch of state updates when bundle arrives ===
+  // This replaces the scattered hydration blocks in individual effects.
+  // All state updates happen in a single synchronous batch (React 18 auto-batches in effects),
+  // preventing cascading re-renders that would cause the visibility gate to re-close.
+  useEffect(() => {
+    if (!detailsBundle) return;
+
+    console.log(`[NAV TIMING] Hydrating from bundle (single batch), +${msSinceNavStart()}ms`);
+
+    // movieDetails
+    if (detailsBundle.movieDetails && !hydratedFromBundle.current.movieDetails) {
+      hydratedFromBundle.current.movieDetails = true;
+      setMovieDetails(detailsBundle.movieDetails);
+      console.log(`[NAV TIMING] movieDetailsLoading=false (from bundle batch), +${msSinceNavStart()}ms`);
+      setMovieDetailsLoading(false);
+    }
+
+    // seriesDetails
+    if (detailsBundle.seriesDetails && !hydratedFromBundle.current.seriesDetails) {
+      hydratedFromBundle.current.seriesDetails = true;
+      setSeriesDetailsData(detailsBundle.seriesDetails);
+      console.log(`[NAV TIMING] seriesDetailsLoading=false (from bundle batch), +${msSinceNavStart()}ms`);
+      setSeriesDetailsLoading(false);
+    }
+
+    // similar
+    if (!hydratedFromBundle.current.similar) {
+      hydratedFromBundle.current.similar = true;
+      setSimilarContent(detailsBundle.similar);
+      setSimilarLoading(false);
+    }
+
+    // trailers
+    if (detailsBundle.trailers && !hydratedFromBundle.current.trailers) {
+      hydratedFromBundle.current.trailers = true;
+      bundleTrailerSeasonRef.current = undefined; // initial load — no season selected yet
+      const nextTrailers = detailsBundle.trailers.trailers ?? [];
+      setTrailers(nextTrailers);
+      setPrimaryTrailer(detailsBundle.trailers.primaryTrailer ?? (nextTrailers.length ? nextTrailers[0] : null));
+      setTrailersLoading(false);
+    }
+
+    // contentPreference
+    if (!hydratedFromBundle.current.contentPreference) {
+      hydratedFromBundle.current.contentPreference = true;
+      setContentPreference(detailsBundle.contentPreference);
+    }
+
+    // episodeProgressMap (series only)
+    if (isSeries && seriesIdentifier && !hydratedFromBundle.current.playbackProgress) {
+      hydratedFromBundle.current.playbackProgress = true;
+      const progressMap = new Map<string, number>();
+      const itemIdPrefix = `${seriesIdentifier}:`;
+      for (const progress of detailsBundle.playbackProgress) {
+        if (progress.mediaType !== 'episode') continue;
+        const matchesSeriesId = progress.seriesId === seriesIdentifier;
+        const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
+        if (matchesSeriesId || matchesItemIdPrefix) {
+          let seasonNum = progress.seasonNumber;
+          let episodeNum = progress.episodeNumber;
+          if ((!seasonNum || !episodeNum) && progress.itemId) {
+            const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
+            if (match) {
+              seasonNum = parseInt(match[1], 10);
+              episodeNum = parseInt(match[2], 10);
+            }
+          }
+          if (seasonNum && episodeNum) {
+            const key = `${seasonNum}-${episodeNum}`;
+            if (progress.percentWatched > 5 && progress.percentWatched < 95) {
+              progressMap.set(key, Math.round(progress.percentWatched));
+            }
+          }
+        }
+      }
+      setEpisodeProgressMap(progressMap);
+    }
+
+    // watchState is NOT hydrated here — it depends on allEpisodes which may not be ready yet
+  }, [detailsBundle, isSeries, seriesIdentifier]);
 
   // Prequeue state for pre-loading playback
   const [prequeueId, setPrequeueId] = useState<string | null>(null);
@@ -1501,17 +1596,10 @@ export default function DetailsScreen() {
       return;
     }
 
-    // Hydrate from bundle if available
-    if (detailsBundle && !hydratedFromBundle.current.contentPreference) {
-      hydratedFromBundle.current.contentPreference = true;
-      setContentPreference(detailsBundle.contentPreference);
-      return;
-    }
-
     // Wait for bundle attempt before falling back
     if (!bundleReady) return;
 
-    // Already hydrated from bundle — no need to fetch individually
+    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
     if (hydratedFromBundle.current.contentPreference) return;
 
     let cancelled = false;
@@ -1533,10 +1621,16 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, seriesIdentifier, titleId, detailsBundle, bundleReady]);
+  }, [activeUserId, isSeries, seriesIdentifier, titleId, bundleReady]);
 
-  // Prequeue playback when details page loads
+  // Prequeue playback when details page loads — deferred until bundle is ready
+  // to avoid heavy POST requests competing with the initial render
   useEffect(() => {
+    // Don't start prequeue until the details bundle has settled — the POST
+    // requests are heavy (2+ seconds) and block the JS thread if they fire
+    // before the page is visible
+    if (!bundleReady) return;
+
     console.log('[prequeue] useEffect triggered', {
       activeUserId: activeUserId ?? 'null',
       titleId: titleId ?? 'null',
@@ -1678,7 +1772,7 @@ export default function DetailsScreen() {
       }
       prequeuePromiseRef.current = null;
     };
-  }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode]);
+  }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode, bundleReady]);
 
   // Poll prequeue status until ready
   useEffect(() => {
@@ -1690,50 +1784,55 @@ export default function DetailsScreen() {
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
+    let lastStatus = '';
 
     const pollStatus = async () => {
       try {
         const response = await apiService.getPrequeueStatus(prequeueId);
         if (cancelled) return;
 
-        // When ready, compute expected subtitle track based on user preferences for display
-        let displayResponse = response;
-        if (response.status === 'ready' && response.subtitleTracks && response.subtitleTracks.length > 0) {
-          // Only compute if backend didn't already select a track
-          if (response.selectedSubtitleTrack === undefined || response.selectedSubtitleTrack < 0) {
-            const playbackSettings = userSettings?.playback ?? settings?.playback;
-            const subLang = playbackSettings?.preferredSubtitleLanguage ?? 'eng';
-            const subModeRaw = playbackSettings?.preferredSubtitleMode ?? 'off';
-            const subMode = subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
-
-            // Convert track format for findSubtitleTrackByPreference
-            const subtitleStreams = response.subtitleTracks.map((t) => ({
-              index: t.index,
-              language: t.language || '',
-              title: t.title,
-              isForced: t.forced,
-              disposition: t.forced ? { forced: 1 } : undefined,
-            }));
-
-            const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode);
-            if (computedSubtitleTrack !== null) {
-              displayResponse = { ...response, selectedSubtitleTrack: computedSubtitleTrack };
-            }
-          }
-        }
-
-        // Always update display info to show current status
-        setPrequeueDisplayInfo(displayResponse);
+        // Only update state when status actually changes (avoids re-renders while polling)
+        const statusChanged = response.status !== lastStatus;
+        lastStatus = response.status;
 
         if (response.status === 'ready') {
+          // When ready, compute expected subtitle track based on user preferences for display
+          let displayResponse = response;
+          if (response.subtitleTracks && response.subtitleTracks.length > 0) {
+            if (response.selectedSubtitleTrack === undefined || response.selectedSubtitleTrack < 0) {
+              const playbackSettings = userSettings?.playback ?? settings?.playback;
+              const subLang = playbackSettings?.preferredSubtitleLanguage ?? 'eng';
+              const subModeRaw = playbackSettings?.preferredSubtitleMode ?? 'off';
+              const subMode = subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
+
+              const subtitleStreams = response.subtitleTracks.map((t) => ({
+                index: t.index,
+                language: t.language || '',
+                title: t.title,
+                isForced: t.forced,
+                disposition: t.forced ? { forced: 1 } : undefined,
+              }));
+
+              const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode);
+              if (computedSubtitleTrack !== null) {
+                displayResponse = { ...response, selectedSubtitleTrack: computedSubtitleTrack };
+              }
+            }
+          }
+
           console.log('[prequeue] Prequeue is ready:', prequeueId);
+          setPrequeueDisplayInfo(displayResponse);
           setPrequeueReady(true);
         } else if (apiService.isPrequeueInProgress(response.status)) {
-          // Still in progress, poll again
+          // Only update display info when status changes to avoid re-renders
+          if (statusChanged) {
+            setPrequeueDisplayInfo(response);
+          }
           timeoutId = setTimeout(pollStatus, 1000);
         } else {
           // Failed or expired
           console.log('[prequeue] Prequeue failed/expired:', prequeueId, response.status);
+          setPrequeueDisplayInfo(response);
           setPrequeueReady(false);
         }
       } catch (error) {
@@ -1869,17 +1968,10 @@ export default function DetailsScreen() {
       return progressMap;
     };
 
-    // Hydrate from bundle on initial load (progressRefreshKey === 0)
-    if (detailsBundle && !hydratedFromBundle.current.playbackProgress && progressRefreshKey === 0) {
-      hydratedFromBundle.current.playbackProgress = true;
-      setEpisodeProgressMap(buildProgressMap(detailsBundle.playbackProgress));
-      return;
-    }
-
     // Wait for bundle attempt before falling back (only on initial load)
     if (!bundleReady && progressRefreshKey === 0) return;
 
-    // Already hydrated from bundle on initial load — skip redundant fetch
+    // Already hydrated from bundle (via consolidated effect) on initial load — skip redundant fetch
     if (hydratedFromBundle.current.playbackProgress && progressRefreshKey === 0) return;
 
     let cancelled = false;
@@ -1903,7 +1995,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey, detailsBundle, bundleReady]);
+  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey, bundleReady]);
 
   useEffect(() => {
     if (!selectionError) {
@@ -1941,19 +2033,10 @@ export default function DetailsScreen() {
       return;
     }
 
-    // Hydrate from bundle if available
-    if (detailsBundle?.movieDetails && !hydratedFromBundle.current.movieDetails) {
-      hydratedFromBundle.current.movieDetails = true;
-      setMovieDetails(detailsBundle.movieDetails);
-      console.log(`[NAV TIMING] movieDetailsLoading=false (from bundle), +${msSinceNavStart()}ms`);
-      setMovieDetailsLoading(false);
-      return;
-    }
-
     // Wait for bundle attempt before falling back
     if (!bundleReady) return;
 
-    // Already hydrated from bundle — no need to fetch individually
+    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
     if (hydratedFromBundle.current.movieDetails) return;
 
     console.log('[Details] Fetching movie details with query:', movieDetailsQuery);
@@ -1992,7 +2075,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [movieDetailsQuery, detailsBundle, bundleReady]);
+  }, [movieDetailsQuery, bundleReady]);
 
   // Fetch similar content ("More Like This") when TMDB ID is available
   useEffect(() => {
@@ -2002,18 +2085,10 @@ export default function DetailsScreen() {
       return;
     }
 
-    // Hydrate from bundle if available
-    if (detailsBundle && !hydratedFromBundle.current.similar) {
-      hydratedFromBundle.current.similar = true;
-      setSimilarContent(detailsBundle.similar);
-      setSimilarLoading(false);
-      return;
-    }
-
     // Wait for bundle attempt before falling back
     if (!bundleReady) return;
 
-    // Already hydrated from bundle — no need to fetch individually
+    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
     if (hydratedFromBundle.current.similar) return;
 
     let cancelled = false;
@@ -2037,7 +2112,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [tmdbIdNumber, isSeries, detailsBundle, bundleReady]);
+  }, [tmdbIdNumber, isSeries, bundleReady]);
 
   // Fetch series details for backdrop updates AND episodes (shared with SeriesEpisodes)
   useEffect(() => {
@@ -2056,19 +2131,10 @@ export default function DetailsScreen() {
       return;
     }
 
-    // Hydrate from bundle if available
-    if (detailsBundle?.seriesDetails && !hydratedFromBundle.current.seriesDetails) {
-      hydratedFromBundle.current.seriesDetails = true;
-      setSeriesDetailsData(detailsBundle.seriesDetails);
-      console.log(`[NAV TIMING] seriesDetailsLoading=false (from bundle), +${msSinceNavStart()}ms`);
-      setSeriesDetailsLoading(false);
-      return;
-    }
-
     // Wait for bundle attempt before falling back
     if (!bundleReady) return;
 
-    // Already hydrated from bundle — no need to fetch individually
+    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
     if (hydratedFromBundle.current.seriesDetails) return;
 
     let cancelled = false;
@@ -2104,7 +2170,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isSeries, title, titleId, tvdbIdNumber, tmdbIdNumber, yearNumber, detailsBundle, bundleReady]);
+  }, [isSeries, title, titleId, tvdbIdNumber, tmdbIdNumber, yearNumber, bundleReady]);
 
   useEffect(() => {
     const shouldAttempt = Boolean(tmdbIdNumber || tvdbIdNumber || titleId || title);
@@ -2116,24 +2182,7 @@ export default function DetailsScreen() {
       return;
     }
 
-    // For series, wait until the child component reports the initial season selection
-    // to avoid a duplicate fetch (once with season=undefined, again with season=N)
-    if (isSeries && !selectedSeason) {
-      return;
-    }
-
-    // Hydrate from bundle on initial load (before user changes season)
-    if (detailsBundle?.trailers && !hydratedFromBundle.current.trailers) {
-      hydratedFromBundle.current.trailers = true;
-      bundleTrailerSeasonRef.current = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
-      const nextTrailers = detailsBundle.trailers.trailers ?? [];
-      setTrailers(nextTrailers);
-      setPrimaryTrailer(detailsBundle.trailers.primaryTrailer ?? (nextTrailers.length ? nextTrailers[0] : null));
-      setTrailersLoading(false);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back (only if we haven't hydrated yet)
+    // Wait for bundle attempt before falling back
     if (!bundleReady && !hydratedFromBundle.current.trailers) return;
 
     // Already hydrated from bundle — only re-fetch if season changed
@@ -2141,6 +2190,13 @@ export default function DetailsScreen() {
       const currentSeason = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
       if (currentSeason === bundleTrailerSeasonRef.current) return;
       bundleTrailerSeasonRef.current = currentSeason;
+    }
+
+    // For series, wait until the child component reports the initial season selection
+    // to avoid a duplicate fetch (once with season=undefined, again with season=N)
+    // This guard only applies to individual re-fetches — initial hydration from bundle is already done
+    if (isSeries && !selectedSeason) {
+      return;
     }
 
     let cancelled = false;
@@ -2187,7 +2243,7 @@ export default function DetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber, detailsBundle, bundleReady]);
+  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber, bundleReady]);
 
   // Prequeue YouTube trailers for 1080p playback on mobile
   useEffect(() => {
@@ -5259,8 +5315,9 @@ export default function DetailsScreen() {
           isTV
             ? (e) => {
                 const height = e.nativeEvent.layout.height;
-                if (height > 0 && height !== tvTopContentHeight) {
-                  setTvTopContentHeight(height);
+                console.log(`[LAYOUT SHIFT] topContent height=${Math.round(height)}, +${msSinceNavStart()}ms`);
+                if (height > 0) {
+                  tvTopContentHeightSV.value = height;
                 }
               }
             : undefined
@@ -5462,7 +5519,10 @@ export default function DetailsScreen() {
             )}
           </Pressable>
         ) : (
-          <Text style={styles.description}>{displayDescription}</Text>
+          <Text
+            style={[styles.description, !displayDescription && isMetadataLoadingForSkeleton && { minHeight: tvScale * 60 }]}
+            onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] description height=${Math.round(e.nativeEvent.layout.height)}, text=${displayDescription ? displayDescription.length : 0}chars, +${msSinceNavStart()}ms`) : undefined}
+          >{displayDescription}</Text>
         )}
       </View>
       <SpatialNavigationNode
@@ -5470,7 +5530,9 @@ export default function DetailsScreen() {
         focusKey="details-content-column"
         onActive={() => console.log('[Details NAV DEBUG] details-content-column ACTIVE')}
         onInactive={() => console.log('[Details NAV DEBUG] details-content-column INACTIVE')}>
-        <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
+        <View
+          style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}
+          onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] bottomContent height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
           {/* Action Row - moved above episode carousel for TV */}
           <SpatialNavigationNode
             orientation="horizontal"
@@ -5480,7 +5542,9 @@ export default function DetailsScreen() {
               handleTVFocusAreaChange('actions');
             }}
             onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            <View style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
+            <View
+              style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
+              onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] actionRow height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
               {Platform.isTV && TVActionButton ? (
                 <TVActionButton
                   text={watchNowLabel}
@@ -5863,9 +5927,10 @@ export default function DetailsScreen() {
           {/* TV Track Selection - always render wrapper node to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
           {Platform.isTV && (
+            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] trackSelection height=${Math.round(e.nativeEvent.layout.height)}, hasInfo=${!!prequeueDisplayInfo}, +${msSinceNavStart()}ms`)}>
             <SpatialNavigationNode orientation="horizontal" focusKey="details-track-selection">
               {prequeueDisplayInfo && (prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
-                <View style={[styles.prequeueTrackRow, styles.tvTrackSelectionContainer]}>
+                <View style={[styles.prequeueTrackRow, styles.tvTrackSelectionContainer]} onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] trackRow inner height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
                   {/* Audio track */}
                   {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
                     <SpatialNavigationFocusableView
@@ -5953,20 +6018,24 @@ export default function DetailsScreen() {
                     </SpatialNavigationFocusableView>
                   )}
                 </View>
+              ) : prequeueDisplayInfo ? (
+                <View style={styles.tvTrackSelectionContainer} />
               ) : (
                 <View />
               )}
             </SpatialNavigationNode>
+            </View>
           )}
           {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
           {Platform.isTV && isSeries && (
+            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] episodeSection height=${Math.round(e.nativeEvent.layout.height)}, seasons=${seasons.length}, deferred=${tvEpisodesDeferred}, hasActiveEp=${!!activeEpisode}, +${msSinceNavStart()}ms`)}>
             <SpatialNavigationNode
               orientation="vertical"
               focusKey="episode-section-wrapper"
               onActive={() => console.log('[Details NAV DEBUG] episode-section-wrapper ACTIVE')}
               onInactive={() => console.log('[Details NAV DEBUG] episode-section-wrapper INACTIVE')}>
-              {seasons.length > 0 && TVEpisodeCarousel ? (
+              {seasons.length > 0 && TVEpisodeCarousel && !tvEpisodesDeferred ? (
                 <TVEpisodeCarousel
                   seasons={seasons}
                   selectedSeason={selectedSeason}
@@ -5993,45 +6062,42 @@ export default function DetailsScreen() {
                   onBlur={handleEpisodeStripBlur}
                 />
               ) : (
-                <View />
+                <View style={{ minHeight: tvScale * 500 }} />
               )}
             </SpatialNavigationNode>
+            </View>
           )}
           {/* TV Cast Section - always render wrapper node to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at wrong position)
               Navigation disabled for kids profiles */}
           {Platform.isTV && TVCastSection && (
+            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] castSection height=${Math.round(e.nativeEvent.layout.height)}, hasCredits=${!!credits}, isLoading=${isMetadataLoadingForSkeleton}, +${msSinceNavStart()}ms`)}>
             <SpatialNavigationNode orientation="horizontal" focusKey="details-cast-section">
-              {(isMetadataLoadingForSkeleton || credits) ? (
-                <TVCastSection
-                  credits={credits}
-                  isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-                  maxCast={10}
-                  onFocus={() => handleTVFocusAreaChange('cast')}
-                  compactMargin
-                  onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
-                />
-              ) : (
-                <View />
-              )}
+              <TVCastSection
+                credits={credits}
+                isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+                maxCast={10}
+                onFocus={() => handleTVFocusAreaChange('cast')}
+                compactMargin
+                onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
+              />
             </SpatialNavigationNode>
+            </View>
           )}
           {/* TV More Like This Section - always render wrapper node to maintain navigation order
               Navigation disabled for kids profiles */}
           {Platform.isTV && TVMoreLikeThisSection && (
+            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] similarSection height=${Math.round(e.nativeEvent.layout.height)}, count=${similarContent?.length ?? 0}, isLoading=${similarLoading}, +${msSinceNavStart()}ms`)}>
             <SpatialNavigationNode orientation="horizontal" focusKey="details-similar-section">
-              {(similarLoading || similarContent.length > 0) ? (
-                <TVMoreLikeThisSection
-                  titles={similarContent}
-                  isLoading={similarLoading}
-                  maxTitles={20}
-                  onFocus={() => handleTVFocusAreaChange('similar')}
-                  onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
-                />
-              ) : (
-                <View />
-              )}
+              <TVMoreLikeThisSection
+                titles={similarContent}
+                isLoading={similarLoading}
+                maxTitles={20}
+                onFocus={() => handleTVFocusAreaChange('similar')}
+                onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
+              />
             </SpatialNavigationNode>
+            </View>
           )}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>
@@ -6061,8 +6127,10 @@ export default function DetailsScreen() {
               />
             </View>
           )}
-          {/* Hidden SeriesEpisodes component to load data */}
-          {isSeries ? (
+          {/* Hidden SeriesEpisodes component to load data.
+              On TV, this is pre-mounted outside the visibility gate to avoid
+              blocking the initial paint. Only render here for non-TV. */}
+          {isSeries && !isTV ? (
             <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
               <SeriesEpisodes
                 isSeries={isSeries}
@@ -6535,13 +6603,32 @@ export default function DetailsScreen() {
   const safeAreaProps = isTV ? {} : { edges: ['top'] as ('top' | 'bottom' | 'left' | 'right')[] };
 
   // On TV/mobile, wait for metadata, logo, and poster to load before showing the page to prevent pop-in
+  // Once the gate opens, it never re-closes — prevents re-hiding from cascading state updates
+  const hasBeenDisplayedRef = useRef(false);
   const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
   const isLogoReady = !logoUrl || logoDimensions !== null;
   const isPosterReady = isPosterPreloaded;
-  const shouldHideUntilMetadataReady = (isTV || isMobile) && (isMetadataLoading || !isLogoReady || !isPosterReady);
+  const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current && (isMetadataLoading || !isLogoReady || !isPosterReady);
+  if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
+    hasBeenDisplayedRef.current = true;
+  }
+
+  // Defer episode carousel render on TV so the initial paint (metadata, poster,
+  // logo, play buttons) isn't blocked by spatial navigation tree registration.
+  // The carousel renders on the next frame after the page becomes visible.
+  const [tvEpisodesDeferred, setTvEpisodesDeferred] = useState(isTV && isSeries);
+  useEffect(() => {
+    if (isTV && isSeries && !shouldHideUntilMetadataReady && tvEpisodesDeferred) {
+      requestAnimationFrame(() => setTvEpisodesDeferred(false));
+    }
+  }, [shouldHideUntilMetadataReady, tvEpisodesDeferred, isTV, isSeries]);
+
   // Log at render time (not useEffect) to get accurate timing of when React first renders content
   if (!shouldHideUntilMetadataReady) {
     console.log(`[NAV TIMING] Content rendering in JSX (render phase), +${msSinceNavStart()}ms`);
+  }
+  if (isTV && !shouldHideUntilMetadataReady) {
+    console.log(`[LAYOUT SHIFT] render state: metaLoading=${isMetadataLoadingForSkeleton}, similarLoading=${similarLoading}, similarCount=${similarContent?.length ?? 0}, hasCredits=${!!credits}, seasons=${seasons.length}, deferred=${tvEpisodesDeferred}, hasActiveEp=${!!activeEpisode}, hasPrequeue=${!!prequeueDisplayInfo}, desc=${displayDescription ? displayDescription.length : 0}chars, +${msSinceNavStart()}ms`);
   }
   const shouldAnimateBackground = isTV || isMobile;
 
@@ -6558,6 +6645,16 @@ export default function DetailsScreen() {
       tvScrollY.value = event.contentOffset.y;
     },
   });
+  // TV spacer height — driven by shared value so it updates on the UI thread
+  // in the same frame as the topContent onLayout measurement (no visible shift).
+  const minSpacer = windowHeight * 0.35;
+  const baseSpacer = windowHeight * 0.65;
+  const baselineHeight = 200 * tvScale;
+  const tvSpacerStyle = useAnimatedStyle(() => ({
+    height: Math.round(
+      Math.max(minSpacer, baseSpacer - Math.max(0, tvTopContentHeightSV.value - baselineHeight))
+    ),
+  }));
 
   // Immersive mode opacity animation for trailer auto-play
   const immersiveContentOpacity = useSharedValue(1);
@@ -6660,6 +6757,43 @@ export default function DetailsScreen() {
         <Stack.Screen options={{ headerShown: false }} />
         <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
           <View style={styles.container}>
+            {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate so episode
+                data processing happens while we wait for logo dimensions. This moves
+                ~2s of data processing off the critical render path. */}
+            {isTV && isSeries && (
+              <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
+                <SeriesEpisodes
+                  isSeries={isSeries}
+                  title={title}
+                  tvdbId={tvdbId}
+                  titleId={titleId}
+                  yearNumber={yearNumber}
+                  seriesDetails={seriesDetailsData}
+                  seriesDetailsLoading={seriesDetailsLoading}
+                  initialSeasonNumber={initialSeasonNumber}
+                  initialEpisodeNumber={initialEpisodeNumber}
+                  isTouchSeasonLayout={isTouchSeasonLayout}
+                  shouldUseSeasonModal={shouldUseSeasonModal}
+                  shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
+                  onSeasonSelect={handleSeasonSelect}
+                  onEpisodeSelect={handleEpisodeSelect}
+                  onEpisodeFocus={handleEpisodeFocus}
+                  onPlaySeason={handlePlaySeason}
+                  onPlayEpisode={handlePlayEpisode}
+                  onEpisodeLongPress={handleToggleEpisodeWatched}
+                  onToggleEpisodeWatched={handleToggleEpisodeWatched}
+                  isEpisodeWatched={isEpisodeWatched}
+                  renderContent={false}
+                  activeEpisode={activeEpisode}
+                  isResolving={isResolving}
+                  theme={theme}
+                  onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
+                  onRequestFocusShift={handleRequestFocusShift}
+                  onEpisodesLoaded={handleEpisodesLoaded}
+                  onSeasonsLoaded={handleSeasonsLoaded}
+                />
+              </View>
+            )}
             {/* Hide all content until metadata (and logo) is ready to prevent progressive loading */}
             {shouldHideUntilMetadataReady ? null : (
               <>
@@ -6746,17 +6880,10 @@ export default function DetailsScreen() {
                     scrollEventThrottle={16}
                     // Disable native scroll-to-focus - we control scroll programmatically
                     scrollEnabled={false}>
-                    {/* Transparent spacer - shrinks when topContent is taller to keep action row at consistent position */}
-                    <View
-                      style={{
-                        height: Math.round(
-                          Math.max(
-                            windowHeight * 0.35, // Minimum 35% backdrop visible
-                            windowHeight * 0.65 - Math.max(0, tvTopContentHeight - 200 * tvScale) // Shrink for taller content
-                          )
-                        ),
-                      }}
-                    />
+                    {/* Transparent spacer - shrinks when topContent is taller to keep action row at consistent position.
+                        Uses Reanimated shared value so height updates on the UI thread in the same frame as
+                        the topContent onLayout measurement, eliminating the visible shift. */}
+                    <Animated.View style={tvSpacerStyle} />
                     {/* Content area with gradient background - starts higher with softer transition */}
                     <Animated.View style={autoPlayTrailersTV && immersiveContentStyle}>
                       <LinearGradient

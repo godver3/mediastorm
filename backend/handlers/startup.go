@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// startupShelfLimit caps list data in the startup bundle to reduce payload
+// size on low-power devices. Full lists are fetched on demand (e.g. explore page).
+const startupShelfLimit = 20
 
 // StartupHandler serves a combined startup payload to reduce the number of
 // HTTP round-trips required when the frontend initialises.  All seven data
@@ -46,13 +51,12 @@ func NewStartupHandler(
 
 // StartupResponse is the combined payload returned by GET /api/users/{userID}/startup.
 type StartupResponse struct {
-	UserSettings     *models.UserSettings         `json:"userSettings"`
-	Watchlist        []models.WatchlistItem        `json:"watchlist"`
-	ContinueWatching []models.SeriesWatchState     `json:"continueWatching"`
-	PlaybackProgress []models.PlaybackProgress     `json:"playbackProgress"`
-	WatchHistory     []models.WatchHistoryItem     `json:"watchHistory"`
-	TrendingMovies   *DiscoverNewResponse          `json:"trendingMovies"`
-	TrendingSeries   *DiscoverNewResponse          `json:"trendingSeries"`
+	UserSettings     *models.UserSettings      `json:"userSettings"`
+	Watchlist        []models.WatchlistItem    `json:"watchlist"`
+	ContinueWatching []models.SeriesWatchState  `json:"continueWatching"`
+	WatchHistory     []models.WatchHistoryItem  `json:"watchHistory"`
+	TrendingMovies   *DiscoverNewResponse      `json:"trendingMovies"`
+	TrendingSeries   *DiscoverNewResponse      `json:"trendingSeries"`
 }
 
 // GetStartup returns all initial user data in a single response.
@@ -88,7 +92,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		resp.UserSettings = &settings
 	}()
 
-	// 2. Watchlist
+	// 2. Watchlist (capped to startupShelfLimit — full list fetched on demand)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -97,10 +101,15 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[startup] watchlist error for %s: %v", userID, err)
 			return
 		}
+		if len(items) > startupShelfLimit {
+			items = items[:startupShelfLimit]
+		}
 		resp.Watchlist = items
 	}()
 
-	// 3. Continue watching
+	// 3. Continue watching + playback progress (merged server-side so the
+	// frontend doesn't need to build progress maps on the JS thread,
+	// capped to startupShelfLimit)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -109,37 +118,31 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[startup] continue watching error for %s: %v", userID, err)
 			return
 		}
-		resp.ContinueWatching = items
-	}()
-
-	// 4. Playback progress
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		items, err := h.history.ListPlaybackProgress(userID)
+		progress, err := h.history.ListPlaybackProgress(userID)
 		if err != nil {
 			log.Printf("[startup] playback progress error for %s: %v", userID, err)
+			if len(items) > startupShelfLimit {
+				items = items[:startupShelfLimit]
+			}
+			resp.ContinueWatching = items
 			return
 		}
-		resp.PlaybackProgress = items
+		merged := mergeProgressIntoContinueWatching(items, progress)
+		if len(merged) > startupShelfLimit {
+			merged = merged[:startupShelfLimit]
+		}
+		resp.ContinueWatching = merged
 	}()
 
-	// 5. Watch history
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		items, err := h.history.ListWatchHistory(userID)
-		if err != nil {
-			log.Printf("[startup] watch history error for %s: %v", userID, err)
-			return
-		}
-		resp.WatchHistory = items
-	}()
+	// 5. Watch history — excluded from startup bundle to keep payload small.
+	// WatchStatusContext will fetch this independently after the initial render.
+	// With ~3000 items (~1 MB), including it blocks the React Native JS bridge
+	// on low-power devices (Fire Stick) for 7+ seconds during deserialization.
 
 	// Determine trending source from user or global settings
 	trendingSource := h.getTrendingSource(userID)
 
-	// 6. Trending movies
+	// 6. Trending movies (slimmed — heavy Title fields stripped for startup)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -150,10 +153,11 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+		items = slimTrendingItems(items)
 		resp.TrendingMovies = &DiscoverNewResponse{Items: items, Total: len(items)}
 	}()
 
-	// 7. Trending series
+	// 7. Trending series (slimmed — heavy Title fields stripped for startup)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -164,6 +168,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+		items = slimTrendingItems(items)
 		resp.TrendingSeries = &DiscoverNewResponse{Items: items, Total: len(items)}
 	}()
 
@@ -175,9 +180,6 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.ContinueWatching == nil {
 		resp.ContinueWatching = []models.SeriesWatchState{}
-	}
-	if resp.PlaybackProgress == nil {
-		resp.PlaybackProgress = []models.PlaybackProgress{}
 	}
 	if resp.WatchHistory == nil {
 		resp.WatchHistory = []models.WatchHistoryItem{}
@@ -226,6 +228,106 @@ func (h *StartupHandler) applyFilters(items []models.TrendingItem, userID string
 		items = filterWatchedItems(items, userID, h.history)
 	}
 	return items
+}
+
+// mergeProgressIntoContinueWatching computes PercentWatched and ResumePercent
+// for each continue-watching item using the playback progress data. This moves
+// the map-building + lookup work from the frontend JS thread to the backend,
+// eliminating ~48 KB of playbackProgress data from the startup payload and
+// ~60 lines of JS processing on low-power devices.
+func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress []models.PlaybackProgress) []models.SeriesWatchState {
+	// Build lookup maps (mirrors the frontend's ContinueWatchingContext logic)
+	byItemID := make(map[string]float64, len(progress)*2)
+	byEpisode := make(map[string]float64)
+
+	for _, p := range progress {
+		if p.ItemID != "" {
+			byItemID[p.ItemID] = p.PercentWatched
+		}
+		if p.ID != "" {
+			byItemID[p.ID] = p.PercentWatched
+		}
+		if p.MediaType == "episode" && p.SeriesID != "" {
+			key := fmt.Sprintf("%s:S%dE%d", p.SeriesID, p.SeasonNumber, p.EpisodeNumber)
+			byEpisode[key] = p.PercentWatched
+		}
+	}
+
+	episodePercent := func(ep *models.EpisodeReference, seriesID string) float64 {
+		if ep == nil {
+			return 0
+		}
+		if ep.EpisodeID != "" {
+			if pct, ok := byItemID[ep.EpisodeID]; ok {
+				return pct
+			}
+		}
+		key := fmt.Sprintf("%s:S%dE%d", seriesID, ep.SeasonNumber, ep.EpisodeNumber)
+		if pct, ok := byEpisode[key]; ok {
+			return pct
+		}
+		return 0
+	}
+
+	merged := make([]models.SeriesWatchState, len(items))
+	for i, item := range items {
+		merged[i] = item
+
+		if item.NextEpisode == nil {
+			// Movie — look up by seriesId
+			moviePct := byItemID[item.SeriesID]
+			merged[i].PercentWatched = moviePct
+			merged[i].ResumePercent = moviePct
+		} else {
+			nextPct := episodePercent(item.NextEpisode, item.SeriesID)
+			lastPct := episodePercent(&item.LastWatched, item.SeriesID)
+			isSame := item.LastWatched.SeasonNumber == item.NextEpisode.SeasonNumber &&
+				item.LastWatched.EpisodeNumber == item.NextEpisode.EpisodeNumber
+
+			resumePct := nextPct
+			if resumePct == 0 && isSame {
+				resumePct = lastPct
+			}
+			pctWatched := resumePct
+			if lastPct > pctWatched {
+				pctWatched = lastPct
+			}
+
+			merged[i].PercentWatched = pctWatched
+			merged[i].ResumePercent = resumePct
+		}
+	}
+
+	return merged
+}
+
+// slimTrendingItems strips heavy Title fields (releases, trailers, ratings,
+// credits, etc.) that the home screen doesn't render. This typically saves
+// ~10 KB per movie (92 per-country release entries) and removes trailers,
+// ratings, credits, and collection metadata.
+func slimTrendingItems(items []models.TrendingItem) []models.TrendingItem {
+	slim := make([]models.TrendingItem, len(items))
+	for i, item := range items {
+		slim[i] = models.TrendingItem{
+			Rank: item.Rank,
+			Title: models.Title{
+				ID:         item.Title.ID,
+				Name:       item.Title.Name,
+				Overview:   item.Title.Overview,
+				Year:       item.Title.Year,
+				Poster:     item.Title.Poster,
+				Backdrop:   item.Title.Backdrop,
+				MediaType:  item.Title.MediaType,
+				TVDBID:     item.Title.TVDBID,
+				IMDBID:     item.Title.IMDBID,
+				TMDBID:     item.Title.TMDBID,
+				Theatrical: item.Title.Theatrical,
+				HomeRelease: item.Title.HomeRelease,
+				Genres:     item.Title.Genres,
+			},
+		}
+	}
+	return slim
 }
 
 // getDefaultsFromGlobal extracts per-user setting defaults from global config.

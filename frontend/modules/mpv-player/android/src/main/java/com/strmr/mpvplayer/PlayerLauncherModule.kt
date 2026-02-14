@@ -5,6 +5,8 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 import android.os.Bundle
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -120,11 +122,14 @@ class PlayerLauncherModule(private val reactContext: ReactApplicationContext) :
         if (params.hasKey("isHDR")) intent.putExtra("isHDR", params.getBoolean("isHDR"))
         if (params.hasKey("isDolbyVision")) intent.putExtra("isDolbyVision", params.getBoolean("isDolbyVision"))
 
-        // Hint the entire app (RN, framework caches, etc.) to shed memory before player launch
-        (activity.applicationContext as? Application)?.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL)
-        System.gc()
-
+        // onTrimMemory triggers component callbacks (e.g. expo-image clearing GL textures)
+        // that must run on the main thread. startActivity should also be on the UI thread.
+        // @ReactMethod runs on the NativeModules thread, so dispatch to main.
         Log.d(TAG, "Launching PlayerActivity: title=${params.getString("title")}")
-        activity.startActivity(intent)
+        Handler(Looper.getMainLooper()).post {
+            (activity.applicationContext as? Application)?.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL)
+            System.gc()
+            activity.startActivity(intent)
+        }
     }
 }

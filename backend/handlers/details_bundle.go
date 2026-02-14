@@ -136,7 +136,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 				return
 			}
 			mu.Lock()
-			resp.Similar = titles
+			resp.Similar = slimTitles(titles)
 			mu.Unlock()
 		}()
 	}
@@ -202,7 +202,8 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		}()
 	}
 
-	// 6. Playback progress
+	// 6. Playback progress — filtered to just this title's items to avoid
+	// sending all 293+ items (113 KB) when only 1–20 are needed.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -213,8 +214,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			log.Printf("[details-bundle] playback progress error: %v", err)
 			return
 		}
+		filtered := filterProgressForTitle(items, titleID, contentType)
 		mu.Lock()
-		resp.PlaybackProgress = items
+		resp.PlaybackProgress = filtered
 		mu.Unlock()
 	}()
 
@@ -239,6 +241,53 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 // Options handles CORS preflight for the details-bundle endpoint.
 func (h *DetailsBundleHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// slimTitles strips heavy fields from Title objects that aren't needed for
+// card rendering (releases, trailers, ratings, credits, collection, etc.).
+func slimTitles(titles []models.Title) []models.Title {
+	slim := make([]models.Title, len(titles))
+	for i, t := range titles {
+		slim[i] = models.Title{
+			ID:          t.ID,
+			Name:        t.Name,
+			Overview:    t.Overview,
+			Year:        t.Year,
+			Poster:      t.Poster,
+			Backdrop:    t.Backdrop,
+			MediaType:   t.MediaType,
+			TVDBID:      t.TVDBID,
+			IMDBID:      t.IMDBID,
+			TMDBID:      t.TMDBID,
+			Theatrical:  t.Theatrical,
+			HomeRelease: t.HomeRelease,
+			Genres:      t.Genres,
+		}
+	}
+	return slim
+}
+
+// filterProgressForTitle returns only playback progress items relevant to the
+// given title. For movies, this is typically 1 item; for series, it's the
+// episodes of that series. This avoids sending all ~300 items (113 KB) when
+// only a handful are needed.
+func filterProgressForTitle(items []models.PlaybackProgress, titleID, contentType string) []models.PlaybackProgress {
+	if titleID == "" {
+		return items
+	}
+	prefix := titleID + ":"
+	var filtered []models.PlaybackProgress
+	for _, p := range items {
+		// Match by seriesId (episodes of this series) or by itemId/ID (direct match for movies)
+		if p.SeriesID == titleID || p.ItemID == titleID || p.ID == titleID ||
+			strings.HasPrefix(p.ItemID, prefix) || strings.HasPrefix(p.ID, prefix) {
+			filtered = append(filtered, p)
+		}
+	}
+	if filtered == nil {
+		filtered = []models.PlaybackProgress{}
+	}
+	return filtered
 }
 
 func trimAndParseInt(value string) int {

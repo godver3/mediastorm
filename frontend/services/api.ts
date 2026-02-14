@@ -835,7 +835,6 @@ export interface StartupData {
   userSettings: UserSettings | null;
   watchlist: WatchlistItem[];
   continueWatching: SeriesWatchState[];
-  playbackProgress: PlaybackProgress[];
   watchHistory: WatchStatusItem[];
   trendingMovies: TrendingResponse;
   trendingSeries: TrendingResponse;

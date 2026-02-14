@@ -1,5 +1,6 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
+import { useStartupData } from '@/components/StartupDataContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { markNavStart } from '@/utils/nav-timing';
 import { FloatingHero } from '@/components/FloatingHero';
@@ -33,7 +34,7 @@ import { isTV, isTablet, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
 import {
@@ -362,10 +363,30 @@ function enrichTrendingItemsWithWatchStatus(
   }));
 }
 
+// Delay (ms) before firing secondary data fetches (overviews, years, releases, custom shelves).
+// On Android TV, animations are disabled so InteractionManager.runAfterInteractions() fires
+// instantly — it never actually defers. A real timeout lets the home screen paint and become
+// responsive before the batch metadata calls (which take 10-12s) start competing for the JS thread.
+const SECONDARY_FETCH_DELAY_MS = Platform.isTV ? 2000 : 0;
+
 // Debug logging for index page render/load analysis
 const DEBUG_INDEX_RENDERS = __DEV__ && false; // Set to true for render debugging
 const DEBUG_PERF = __DEV__ && false; // Performance profiling
 const DEBUG_VNAV = false; // Vertical navigation timing
+
+// === STARTUP DEBUG KILL SWITCHES ===
+// Toggle these to isolate what's choking Fire Stick startup.
+// Set to true to DISABLE each suspect. Check logs after each change.
+const KILL_SERIES_OVERVIEWS = false;
+const KILL_WATCHLIST_YEARS = false;
+const KILL_MOVIE_RELEASES = false;
+const KILL_CUSTOM_SHELVES = false;
+const KILL_FOCUS_REFRESH = false;
+const KILL_HERO_ENRICHMENT = false;
+const DEBUG_MAX_CARDS_PER_SHELF = 0;
+const KILL_ALL_SHELVES = false;
+// === END KILL SWITCHES ===
+
 let indexRenderCount = 0;
 let renderStartTime = 0;
 
@@ -445,9 +466,28 @@ function IndexScreen() {
   // Memory monitoring - logs every 60s on Android TV
   useMemoryMonitor('IndexPage', 60000, DEBUG_PERF && isAndroidTV);
 
+  // Startup timing — log mount time and kill switch status
+  const mountTimeRef = useRef(Date.now());
+  useEffect(() => {
+    const kills = [
+      KILL_SERIES_OVERVIEWS && 'SERIES_OVERVIEWS',
+      KILL_WATCHLIST_YEARS && 'WATCHLIST_YEARS',
+      KILL_MOVIE_RELEASES && 'MOVIE_RELEASES',
+      KILL_CUSTOM_SHELVES && 'CUSTOM_SHELVES',
+      KILL_FOCUS_REFRESH && 'FOCUS_REFRESH',
+      KILL_HERO_ENRICHMENT && 'HERO_ENRICHMENT',
+      KILL_ALL_SHELVES && 'ALL_SHELVES',
+    ].filter(Boolean);
+    console.log(`[STARTUP] IndexScreen mounted, kill switches: ${kills.length > 0 ? kills.join(', ') : 'NONE'}`);
+  }, []);
+
   // Track render count and timing
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
+  // Log every render with timestamp on TV to find the 9s gap
+  if (Platform.isTV && renderCountRef.current <= 30) {
+    console.log(`[RENDER] #${renderCountRef.current} at ${new Date().toISOString()}`);
+  }
 
   if (DEBUG_PERF) {
     renderStartTime = performance.now();
@@ -482,6 +522,7 @@ function IndexScreen() {
     isBackendReachable,
     retryCountdown,
   } = useBackendSettings();
+  const { ready: startupReady } = useStartupData();
 
   // Extract hideUnreleased settings for trending shelves from settings
   const trendingMoviesHideUnreleased = useMemo(() => {
@@ -554,8 +595,11 @@ function IndexScreen() {
   const pageRef = React.useRef<RNView | null>(null);
   // Track initial load to skip scroll animations on first render
   const isInitialLoadRef = React.useRef(true);
-  // Track if we've been focused before (to detect navigation returns vs initial load)
+  // Track focus transitions to detect navigation returns vs initial load vs dep-change re-runs.
+  // wasFocusedRef tracks the previous value of `focused` so we only detect actual false→true
+  // transitions as "return from navigation," not effect re-runs from dep changes while focused.
   const hasBeenFocusedRef = React.useRef(false);
+  const wasFocusedRef = React.useRef(false);
   const { showToast } = useToast();
   const hasAuthFailureRef = React.useRef(false);
   const previousSettingsLoadedAtRef = React.useRef<number | null>(null);
@@ -654,43 +698,57 @@ function IndexScreen() {
   // Wait for activeUserId to avoid duplicate fetches (once without userId, once with)
   useEffect(() => {
     if (customShelves.length === 0 || !activeUserId) return;
+    if (KILL_CUSTOM_SHELVES) { console.log('[KILL] Custom shelves disabled'); return; }
+    // Don't fire until startup bundle has settled to avoid duplicate fetches
+    if (!startupReady) return;
 
-    const fetchCustomLists = async () => {
-      for (const shelf of customShelves) {
-        if (!shelf.listUrl) continue;
-        // Use shelf's configured limit if set, otherwise use default
-        const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
-        // Create cache key that includes URL, limit, hideUnreleased, hideWatched, and userId so changes trigger re-fetch
-        const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}:${hideWatched}:${activeUserId ?? ''}`;
-        // Skip if we've already fetched this URL with these parameters
-        if (fetchedListUrlsRef.current.has(cacheKey)) continue;
+    // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
+    const timer = setTimeout(() => {
+      const fetchCustomLists = async () => {
+        for (const shelf of customShelves) {
+          if (!shelf.listUrl) continue;
+          // Use shelf's configured limit if set, otherwise use default
+          const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
+          // Create cache key that includes URL, limit, hideUnreleased, hideWatched, and userId so changes trigger re-fetch
+          const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}:${hideWatched}:${activeUserId ?? ''}`;
+          // Skip if we've already fetched this URL with these parameters
+          if (fetchedListUrlsRef.current.has(cacheKey)) continue;
 
-        fetchedListUrlsRef.current.add(cacheKey);
-        setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
+          fetchedListUrlsRef.current.add(cacheKey);
+          startTransition(() => {
+            setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
+          });
 
-        try {
-          const { items, total, unfilteredTotal } = await apiService.getCustomList(
-            shelf.listUrl,
-            activeUserId ?? undefined, // userId for hideWatched filtering
-            itemLimit,
-            undefined, // offset
-            shelf.hideUnreleased,
-            hideWatched,
-          );
-          setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
-          setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
-          // Store unfilteredTotal for explore card logic (falls back to total if not filtering)
-          setCustomListUnfilteredTotals((prev) => ({ ...prev, [shelf.id]: unfilteredTotal ?? total }));
-        } catch (err) {
-          console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
-        } finally {
-          setCustomListLoading((prev) => ({ ...prev, [shelf.id]: false }));
+          try {
+            const { items, total, unfilteredTotal } = await apiService.getCustomList(
+              shelf.listUrl,
+              activeUserId ?? undefined, // userId for hideWatched filtering
+              itemLimit,
+              undefined, // offset
+              shelf.hideUnreleased,
+              hideWatched,
+            );
+            startTransition(() => {
+              setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
+              setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
+              // Store unfilteredTotal for explore card logic (falls back to total if not filtering)
+              setCustomListUnfilteredTotals((prev) => ({ ...prev, [shelf.id]: unfilteredTotal ?? total }));
+            });
+          } catch (err) {
+            console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
+          } finally {
+            startTransition(() => {
+              setCustomListLoading((prev) => ({ ...prev, [shelf.id]: false }));
+            });
+          }
         }
-      }
-    };
+      };
 
-    void fetchCustomLists();
-  }, [customShelves, activeUserId, hideWatched]);
+      void fetchCustomLists();
+    }, SECONDARY_FETCH_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [customShelves, activeUserId, hideWatched, startupReady]);
 
   const backendLoadError = useMemo(() => {
     if (settingsLoading || settingsError) {
@@ -950,16 +1008,16 @@ function IndexScreen() {
   // when details page is pushed on top, so useFocusEffect doesn't trigger on navigation back
   useEffect(() => {
     if (!focused) {
+      wasFocusedRef.current = false;
       return;
     }
 
-    // Determine if this is a return from navigation (not initial load)
-    const isReturnFromNavigation = hasBeenFocusedRef.current;
-
-    // Mark that we've been focused at least once
-    if (!hasBeenFocusedRef.current) {
-      hasBeenFocusedRef.current = true;
-    }
+    // Detect actual focus transition (false→true), not dep-change re-runs while focused.
+    // isReturnFromNavigation is true ONLY when: we've been focused before AND focused just
+    // transitioned from false→true (i.e. user navigated away and came back).
+    const isFocusTransition = !wasFocusedRef.current; // false→true transition
+    wasFocusedRef.current = true;
+    const isReturnFromNavigation = hasBeenFocusedRef.current && isFocusTransition;
 
     // Clear cached shelf positions on every focus - layout may not be ready yet or may have changed
     if (Platform.isTV) {
@@ -1016,9 +1074,16 @@ function IndexScreen() {
       return;
     }
 
+    // Mark that we've been focused at least once — AFTER the settingsLoading guard
+    // so that when settingsLoading transitions false, we don't misidentify it as
+    // a return from navigation
+    if (!hasBeenFocusedRef.current) {
+      hasBeenFocusedRef.current = true;
+    }
+
     // Only silently refresh when RETURNING from navigation, not on initial load
     // Initial load data is already fresh from the context providers
-    if (isReturnFromNavigation) {
+    if (isReturnFromNavigation && !KILL_FOCUS_REFRESH) {
       // Silently refresh continue watching and watchlist when returning from details
       // Uses refs to avoid re-triggering this effect when function identity changes during startup
       refreshContinueWatchingRef.current?.({ silent: true }).catch(() => {
@@ -1132,87 +1197,96 @@ function IndexScreen() {
     if (!continueWatchingItems || continueWatchingItems.length === 0) {
       return;
     }
+    if (KILL_SERIES_OVERVIEWS) { console.log('[KILL] Series overviews disabled'); return; }
+    // Don't fire until startup bundle has settled to avoid duplicate fetches
+    if (!startupReady) return;
 
-    // Fetch overviews for items that don't have them yet
-    const fetchOverviews = async () => {
-      const updates = new Map<string, string>();
-      const queriesToFetch: Array<{
-        seriesId: string;
-        tvdbId?: string;
-        tmdbId?: string;
-        titleId: string;
-        name: string;
-        year?: number;
-      }> = [];
+    // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
+    const timer = setTimeout(() => {
+      const fetchOverviews = async () => {
+        const updates = new Map<string, string>();
+        const queriesToFetch: Array<{
+          seriesId: string;
+          tvdbId?: string;
+          tmdbId?: string;
+          titleId: string;
+          name: string;
+          year?: number;
+        }> = [];
 
-      for (const item of continueWatchingItems) {
-        // Skip if we already have the overview
-        if (seriesOverviews.has(item.seriesId)) {
-          continue;
+        for (const item of continueWatchingItems) {
+          // Skip if we already have the overview
+          if (seriesOverviews.has(item.seriesId)) {
+            continue;
+          }
+
+          // Check if series is in watchlist first (fast path)
+          const watchlistItem = watchlistItems?.find((w) => w.id === item.seriesId);
+          if (watchlistItem?.overview) {
+            updates.set(item.seriesId, watchlistItem.overview);
+            continue;
+          }
+
+          // Extract identifiers from seriesId
+          // Format could be: "tvdb:123456", "tvdb:series:123456", "tmdb:tv:123456", etc.
+          const tvdbMatch = item.seriesId.match(/tvdb:(?:series:)?(\d+)/);
+          const tmdbMatch = item.seriesId.match(/tmdb:(?:tv:)?(\d+)/);
+          const tvdbId = tvdbMatch ? tvdbMatch[1] : undefined;
+          const tmdbId = tmdbMatch ? tmdbMatch[1] : undefined;
+
+          if (tvdbId || tmdbId) {
+            queriesToFetch.push({
+              seriesId: item.seriesId,
+              tvdbId,
+              tmdbId,
+              titleId: item.seriesId,
+              name: item.seriesTitle,
+              year: item.year,
+            });
+          }
         }
 
-        // Check if series is in watchlist first (fast path)
-        const watchlistItem = watchlistItems?.find((w) => w.id === item.seriesId);
-        if (watchlistItem?.overview) {
-          updates.set(item.seriesId, watchlistItem.overview);
-          continue;
+        // Batch fetch all queries in a single request
+        if (queriesToFetch.length > 0) {
+          try {
+            const batchResponse = await apiService.batchSeriesDetails(
+              queriesToFetch.map((q) => ({
+                tvdbId: q.tvdbId,
+                tmdbId: q.tmdbId,
+                titleId: q.titleId,
+                name: q.name,
+                year: q.year,
+              })),
+            );
+
+            // Process results
+            for (let i = 0; i < batchResponse.results.length; i++) {
+              const result = batchResponse.results[i];
+              const query = queriesToFetch[i];
+
+              if (result.details?.title.overview) {
+                updates.set(query.seriesId, result.details.title.overview);
+              } else if (result.error) {
+                console.warn(`Failed to fetch overview for ${query.name}:`, result.error);
+              }
+            }
+          } catch (error) {
+            console.warn('Failed to batch fetch series overviews:', error);
+          }
         }
 
-        // Extract identifiers from seriesId
-        // Format could be: "tvdb:123456", "tvdb:series:123456", "tmdb:tv:123456", etc.
-        const tvdbMatch = item.seriesId.match(/tvdb:(?:series:)?(\d+)/);
-        const tmdbMatch = item.seriesId.match(/tmdb:(?:tv:)?(\d+)/);
-        const tvdbId = tvdbMatch ? tvdbMatch[1] : undefined;
-        const tmdbId = tmdbMatch ? tmdbMatch[1] : undefined;
-
-        if (tvdbId || tmdbId) {
-          queriesToFetch.push({
-            seriesId: item.seriesId,
-            tvdbId,
-            tmdbId,
-            titleId: item.seriesId,
-            name: item.seriesTitle,
-            year: item.year,
+        if (updates.size > 0) {
+          startTransition(() => {
+            setSeriesOverviews((prev) => capMapSize(new Map([...prev, ...updates]), MAX_SERIES_OVERVIEWS_CACHE));
           });
         }
-      }
+      };
 
-      // Batch fetch all queries in a single request
-      if (queriesToFetch.length > 0) {
-        try {
-          const batchResponse = await apiService.batchSeriesDetails(
-            queriesToFetch.map((q) => ({
-              tvdbId: q.tvdbId,
-              tmdbId: q.tmdbId,
-              titleId: q.titleId,
-              name: q.name,
-              year: q.year,
-            })),
-          );
+      void fetchOverviews();
+    }, SECONDARY_FETCH_DELAY_MS);
 
-          // Process results
-          for (let i = 0; i < batchResponse.results.length; i++) {
-            const result = batchResponse.results[i];
-            const query = queriesToFetch[i];
-
-            if (result.details?.title.overview) {
-              updates.set(query.seriesId, result.details.title.overview);
-            } else if (result.error) {
-              console.warn(`Failed to fetch overview for ${query.name}:`, result.error);
-            }
-          }
-        } catch (error) {
-          console.warn('Failed to batch fetch series overviews:', error);
-        }
-      }
-
-      if (updates.size > 0) {
-        setSeriesOverviews((prev) => capMapSize(new Map([...prev, ...updates]), MAX_SERIES_OVERVIEWS_CACHE));
-      }
-    };
-
-    void fetchOverviews();
-  }, [continueWatchingItems, watchlistItems]);
+    return () => clearTimeout(timer);
+  }, [continueWatchingItems, watchlistItems, startupReady]);
 
   // Fetch missing year data for watchlist items
   // Uses ref to track already-fetched IDs to prevent re-fetch cascade
@@ -1220,114 +1294,127 @@ function IndexScreen() {
     if (!watchlistItems || watchlistItems.length === 0) {
       return;
     }
+    if (KILL_WATCHLIST_YEARS) { console.log('[KILL] Watchlist years disabled'); return; }
+    // Don't fire until startup bundle has settled to avoid duplicate fetches
+    if (!startupReady) return;
 
-    const fetchMissingYears = async () => {
-      const updates = new Map<string, number>();
-      const seriesToFetch: Array<{
-        id: string;
-        tvdbId?: string;
-        tmdbId?: string;
-        name: string;
-      }> = [];
-      const moviesToFetch: Array<{
-        id: string;
-        imdbId?: string;
-        tmdbId?: string;
-        name: string;
-      }> = [];
+    // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
+    const timer = setTimeout(() => {
+      const fetchMissingYears = async () => {
+        const updates = new Map<string, number>();
+        const seriesToFetch: Array<{
+          id: string;
+          tvdbId?: string;
+          tmdbId?: string;
+          name: string;
+        }> = [];
+        const moviesToFetch: Array<{
+          id: string;
+          imdbId?: string;
+          tmdbId?: string;
+          name: string;
+        }> = [];
 
-      for (const item of watchlistItems) {
-        // Skip if we already have the year (either from API or cached)
-        if (item.year && item.year > 0) {
-          continue;
+        for (const item of watchlistItems) {
+          // Skip if we already have the year (either from API or cached)
+          if (item.year && item.year > 0) {
+            continue;
+          }
+          // Use ref to check (not state) to prevent re-fetch cascade
+          if (fetchedYearIdsRef.current.has(item.id)) {
+            continue;
+          }
+
+          const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
+
+          if (isSeries) {
+            seriesToFetch.push({
+              id: item.id,
+              tvdbId: item.externalIds?.tvdb,
+              tmdbId: item.externalIds?.tmdb,
+              name: item.name,
+            });
+          } else {
+            moviesToFetch.push({
+              id: item.id,
+              imdbId: item.externalIds?.imdb,
+              tmdbId: item.externalIds?.tmdb,
+              name: item.name,
+            });
+          }
         }
-        // Use ref to check (not state) to prevent re-fetch cascade
-        if (fetchedYearIdsRef.current.has(item.id)) {
-          continue;
+
+        // Mark all IDs as queued BEFORE fetching to prevent duplicate fetches
+        for (const series of seriesToFetch) {
+          fetchedYearIdsRef.current.add(series.id);
+        }
+        for (const movie of moviesToFetch) {
+          fetchedYearIdsRef.current.add(movie.id);
         }
 
-        const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
-
-        if (isSeries) {
-          seriesToFetch.push({
-            id: item.id,
-            tvdbId: item.externalIds?.tvdb,
-            tmdbId: item.externalIds?.tmdb,
-            name: item.name,
-          });
-        } else {
-          moviesToFetch.push({
-            id: item.id,
-            imdbId: item.externalIds?.imdb,
-            tmdbId: item.externalIds?.tmdb,
-            name: item.name,
-          });
+        if (seriesToFetch.length === 0 && moviesToFetch.length === 0) {
+          return;
         }
-      }
 
-      // Mark all IDs as queued BEFORE fetching to prevent duplicate fetches
-      for (const series of seriesToFetch) {
-        fetchedYearIdsRef.current.add(series.id);
-      }
-      for (const movie of moviesToFetch) {
-        fetchedYearIdsRef.current.add(movie.id);
-      }
+        if (DEBUG_INDEX_RENDERS) {
+          console.log(`[IndexPage] Fetching years for ${seriesToFetch.length} series, ${moviesToFetch.length} movies`);
+        }
 
-      if (seriesToFetch.length === 0 && moviesToFetch.length === 0) {
-        return;
-      }
+        // Batch fetch series details
+        if (seriesToFetch.length > 0) {
+          try {
+            const batchResponse = await apiService.batchSeriesDetails(
+              seriesToFetch.map((q) => ({
+                tvdbId: q.tvdbId,
+                tmdbId: q.tmdbId,
+                name: q.name,
+              })),
+            );
 
-      if (DEBUG_INDEX_RENDERS) {
-        console.log(`[IndexPage] Fetching years for ${seriesToFetch.length} series, ${moviesToFetch.length} movies`);
-      }
+            for (let i = 0; i < batchResponse.results.length; i++) {
+              const result = batchResponse.results[i];
+              const query = seriesToFetch[i];
 
-      // Batch fetch series details
-      if (seriesToFetch.length > 0) {
-        try {
-          const batchResponse = await apiService.batchSeriesDetails(
-            seriesToFetch.map((q) => ({
-              tvdbId: q.tvdbId,
-              tmdbId: q.tmdbId,
-              name: q.name,
-            })),
+              if (result.details?.title.year && result.details.title.year > 0) {
+                updates.set(query.id, result.details.title.year);
+              }
+            }
+          } catch (error) {
+            console.warn('Failed to batch fetch series years:', error);
+          }
+        }
+
+        // Fetch movie details in parallel (no batch API for movies)
+        if (moviesToFetch.length > 0) {
+          const movieResults = await Promise.allSettled(
+            moviesToFetch.map(async (movie) => {
+              const details = await apiService.getMovieDetails({
+                imdbId: movie.imdbId,
+                tmdbId: movie.tmdbId ? Number(movie.tmdbId) : undefined,
+                name: movie.name,
+              });
+              return { id: movie.id, year: details?.year };
+            }),
           );
-
-          for (let i = 0; i < batchResponse.results.length; i++) {
-            const result = batchResponse.results[i];
-            const query = seriesToFetch[i];
-
-            if (result.details?.title.year && result.details.title.year > 0) {
-              updates.set(query.id, result.details.title.year);
+          for (const settled of movieResults) {
+            if (settled.status === 'fulfilled' && settled.value.year && settled.value.year > 0) {
+              updates.set(settled.value.id, settled.value.year);
             }
           }
-        } catch (error) {
-          console.warn('Failed to batch fetch series years:', error);
         }
-      }
 
-      // Fetch movie details individually (no batch API for movies)
-      for (const movie of moviesToFetch) {
-        try {
-          const details = await apiService.getMovieDetails({
-            imdbId: movie.imdbId,
-            tmdbId: movie.tmdbId ? Number(movie.tmdbId) : undefined,
-            name: movie.name,
+        if (updates.size > 0) {
+          startTransition(() => {
+            setWatchlistYears((prev) => capMapSize(new Map([...prev, ...updates]), MAX_WATCHLIST_YEARS_CACHE));
           });
-          if (details?.year && details.year > 0) {
-            updates.set(movie.id, details.year);
-          }
-        } catch (error) {
-          console.warn(`Failed to fetch movie year for ${movie.name}:`, error);
         }
-      }
+      };
 
-      if (updates.size > 0) {
-        setWatchlistYears((prev) => capMapSize(new Map([...prev, ...updates]), MAX_WATCHLIST_YEARS_CACHE));
-      }
-    };
+      void fetchMissingYears();
+    }, SECONDARY_FETCH_DELAY_MS);
 
-    void fetchMissingYears();
-  }, [watchlistItems]);
+    return () => clearTimeout(timer);
+  }, [watchlistItems, startupReady]);
 
   // Queue release data fetches for movies when releaseStatus badge is enabled
   // Uses MovieReleasesContext which handles batching, deduplication, and persistence
@@ -1336,71 +1423,79 @@ function IndexScreen() {
     if (!badgeVisibility.includes('releaseStatus')) {
       return;
     }
+    if (KILL_MOVIE_RELEASES) { console.log('[KILL] Movie releases disabled'); return; }
+    // Don't fire until startup bundle has settled to avoid duplicate fetches
+    if (!startupReady) return;
 
-    // Collect all movies that need release data
-    const moviesToFetch: Array<{ id: string; tmdbId?: number; imdbId?: string }> = [];
+    // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
+    const timer = setTimeout(() => {
+      // Collect all movies that need release data
+      const moviesToFetch: Array<{ id: string; tmdbId?: number; imdbId?: string }> = [];
 
-    // From trending movies
-    if (trendingMovies) {
-      for (const item of trendingMovies) {
-        if (
-          item.title.mediaType === 'movie' &&
-          (item.title.tmdbId || item.title.imdbId) &&
-          !hasMovieRelease(item.title.id) &&
-          !item.title.theatricalRelease &&
-          !item.title.homeRelease
-        ) {
-          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+      // From trending movies
+      if (trendingMovies) {
+        for (const item of trendingMovies) {
+          if (
+            item.title.mediaType === 'movie' &&
+            (item.title.tmdbId || item.title.imdbId) &&
+            !hasMovieRelease(item.title.id) &&
+            !item.title.theatricalRelease &&
+            !item.title.homeRelease
+          ) {
+            moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+          }
         }
       }
-    }
 
-    // From custom lists
-    for (const items of Object.values(customListData)) {
-      for (const item of items) {
-        if (
-          item.title.mediaType === 'movie' &&
-          (item.title.tmdbId || item.title.imdbId) &&
-          !hasMovieRelease(item.title.id) &&
-          !item.title.theatricalRelease &&
-          !item.title.homeRelease
-        ) {
-          moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+      // From custom lists
+      for (const items of Object.values(customListData)) {
+        for (const item of items) {
+          if (
+            item.title.mediaType === 'movie' &&
+            (item.title.tmdbId || item.title.imdbId) &&
+            !hasMovieRelease(item.title.id) &&
+            !item.title.theatricalRelease &&
+            !item.title.homeRelease
+          ) {
+            moviesToFetch.push({ id: item.title.id, tmdbId: item.title.tmdbId, imdbId: item.title.imdbId });
+          }
         }
       }
-    }
 
-    // From continue watching (movies only - no nextEpisode)
-    if (continueWatchingItems) {
-      for (const item of continueWatchingItems) {
-        const isMovie = !item.nextEpisode;
-        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
-        if (isMovie && tmdbId && !hasMovieRelease(item.seriesId)) {
-          moviesToFetch.push({ id: item.seriesId, tmdbId });
+      // From continue watching (movies only - no nextEpisode)
+      if (continueWatchingItems) {
+        for (const item of continueWatchingItems) {
+          const isMovie = !item.nextEpisode;
+          const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+          if (isMovie && tmdbId && !hasMovieRelease(item.seriesId)) {
+            moviesToFetch.push({ id: item.seriesId, tmdbId });
+          }
         }
       }
-    }
 
-    // From watchlist (movies only)
-    if (watchlistItems) {
-      for (const item of watchlistItems) {
-        const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
-        if (item.mediaType === 'movie' && tmdbId && !hasMovieRelease(item.id)) {
-          moviesToFetch.push({ id: item.id, tmdbId });
+      // From watchlist (movies only)
+      if (watchlistItems) {
+        for (const item of watchlistItems) {
+          const tmdbId = item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined;
+          if (item.mediaType === 'movie' && tmdbId && !hasMovieRelease(item.id)) {
+            moviesToFetch.push({ id: item.id, tmdbId });
+          }
         }
       }
-    }
 
-    if (moviesToFetch.length === 0) {
-      return;
-    }
+      if (moviesToFetch.length === 0) {
+        return;
+      }
 
-    if (DEBUG_INDEX_RENDERS) {
-      console.log(`[IndexPage] Queueing release fetch for ${moviesToFetch.length} movies`);
-    }
+      if (DEBUG_INDEX_RENDERS) {
+        console.log(`[IndexPage] Queueing release fetch for ${moviesToFetch.length} movies`);
+      }
 
-    // Queue for fetching - context handles batching and deduplication
-    queueReleaseFetch(moviesToFetch);
+      // Queue for fetching - context handles batching and deduplication
+      queueReleaseFetch(moviesToFetch);
+    }, SECONDARY_FETCH_DELAY_MS);
+
+    return () => clearTimeout(timer);
   }, [
     trendingMovies,
     customListData,
@@ -1409,6 +1504,7 @@ function IndexScreen() {
     badgeVisibility,
     hasMovieRelease,
     queueReleaseFetch,
+    startupReady,
   ]);
 
   const trendingMovieCards = useMemo(() => {
@@ -1837,6 +1933,8 @@ function IndexScreen() {
       setEnrichedLoading(false);
       return;
     }
+
+    if (KILL_HERO_ENRICHMENT) { console.log('[KILL] Hero enrichment disabled'); return; }
 
     // Skip explore cards
     if (String(focusedDesktopCard.id).startsWith(EXPLORE_CARD_ID_PREFIX)) {
@@ -2399,6 +2497,7 @@ function IndexScreen() {
   const desktopShelves = useMemo(() => {
     // Skip computation for mobile layout
     if (shouldUseMobileLayout) return [];
+    if (KILL_ALL_SHELVES) { console.log('[KILL] All shelves disabled'); return []; }
     if (DEBUG_INDEX_RENDERS) {
       console.log(
         `[IndexPage] useMemo: desktopShelves recomputing - CW:${continueWatchingCards.length} WL:${watchlistCards.length} TM:${trendingMovieCards.length} TS:${trendingShowCards.length}`,
@@ -2486,11 +2585,12 @@ function IndexScreen() {
         if (!data) {
           return null;
         }
+        const cards = DEBUG_MAX_CARDS_PER_SHELF > 0 ? data.cards.slice(0, DEBUG_MAX_CARDS_PER_SHELF) : data.cards;
         return {
           key: config.id,
           title: config.name,
-          cards: data.cards,
-          autoFocus: index === 0 && data.cards.length > 0,
+          cards,
+          autoFocus: index === 0 && cards.length > 0,
           collapseIfEmpty: data.collapseIfEmpty,
           showEmptyState: data.showEmptyState,
           cardLayout: data.cardLayout,
@@ -2498,6 +2598,9 @@ function IndexScreen() {
       })
       .filter((shelf): shelf is NonNullable<typeof shelf> => shelf !== null);
 
+    if (DEBUG_MAX_CARDS_PER_SHELF > 0) {
+      console.log(`[DEBUG] Card cap: ${DEBUG_MAX_CARDS_PER_SHELF}/shelf, shelves: ${shelves.map(s => `${s.key}(${s.cards.length})`).join(', ')}`);
+    }
     return shelves;
   }, [
     shouldUseMobileLayout,

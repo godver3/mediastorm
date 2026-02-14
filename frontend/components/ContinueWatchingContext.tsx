@@ -181,71 +181,12 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
       hydratedFromStartup.current = false;
       return;
     }
-    // Hydrate from startup bundle if available (avoids 2 separate HTTP requests)
+    // Hydrate from startup bundle if available. The backend pre-merges
+    // playbackProgress into continueWatching items (percentWatched + resumePercent
+    // are already computed), so we just set items directly — no JS-side processing.
     if (startupData?.continueWatching && !hydratedFromStartup.current) {
       console.log('[ContinueWatching] Hydrating from startup bundle');
-      const response = startupData.continueWatching;
-      const progressList = startupData.playbackProgress ?? [];
-
-      const progressByItemId = new Map<string, number>();
-      const progressByEpisode = new Map<string, number>();
-      const formatEpisodeProgressKey = (seriesId?: string, seasonNumber?: number, episodeNumber?: number) => {
-        if (!seriesId || typeof seasonNumber !== 'number' || typeof episodeNumber !== 'number') {
-          return null;
-        }
-        return `${seriesId}:S${seasonNumber}E${episodeNumber}`;
-      };
-
-      for (const progress of progressList) {
-        if (progress.itemId) {
-          progressByItemId.set(progress.itemId, progress.percentWatched);
-        }
-        if (progress.id) {
-          progressByItemId.set(progress.id, progress.percentWatched);
-        }
-        if (progress.mediaType === 'episode') {
-          const episodeKey = formatEpisodeProgressKey(
-            progress.seriesId,
-            progress.seasonNumber,
-            progress.episodeNumber,
-          );
-          if (episodeKey) {
-            progressByEpisode.set(episodeKey, progress.percentWatched);
-          }
-        }
-      }
-
-      const getEpisodePercent = (episode?: SeriesWatchState['nextEpisode'], seriesId?: string) => {
-        if (!episode) return 0;
-        if (episode.episodeId) {
-          const byId = progressByItemId.get(episode.episodeId);
-          if (typeof byId === 'number') return byId;
-        }
-        const episodeKey = formatEpisodeProgressKey(seriesId, episode.seasonNumber, episode.episodeNumber);
-        if (episodeKey) {
-          const byEpisodeKey = progressByEpisode.get(episodeKey);
-          if (typeof byEpisodeKey === 'number') return byEpisodeKey;
-        }
-        return 0;
-      };
-
-      const itemsWithProgress = (response || []).map((item) => {
-        if (!item.nextEpisode) {
-          const moviePercent = progressByItemId.get(item.seriesId) || 0;
-          return { ...item, percentWatched: moviePercent, resumePercent: moviePercent };
-        }
-        const nextProgress = getEpisodePercent(item.nextEpisode, item.seriesId);
-        const lastProgress = getEpisodePercent(item.lastWatched, item.seriesId);
-        const isSameEpisode =
-          !!item.lastWatched &&
-          item.lastWatched.seasonNumber === item.nextEpisode.seasonNumber &&
-          item.lastWatched.episodeNumber === item.nextEpisode.episodeNumber;
-        const resumePercent = nextProgress > 0 ? nextProgress : isSameEpisode ? lastProgress : 0;
-        const percentWatched = Math.max(resumePercent, lastProgress);
-        return { ...item, percentWatched, resumePercent };
-      });
-
-      setItems(normaliseItems(itemsWithProgress));
+      setItems(normaliseItems(startupData.continueWatching));
       setLoading(false);
       setError(null);
       hydratedFromStartup.current = true;

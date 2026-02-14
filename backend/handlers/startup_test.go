@@ -237,7 +237,7 @@ func TestStartupHandler_Success(t *testing.T) {
 	// Check all fields are present
 	expectedFields := []string{
 		"userSettings", "watchlist", "continueWatching",
-		"playbackProgress", "watchHistory", "trendingMovies", "trendingSeries",
+		"watchHistory", "trendingMovies", "trendingSeries",
 	}
 	for _, field := range expectedFields {
 		if _, ok := resp[field]; !ok {
@@ -293,7 +293,7 @@ func TestStartupHandler_PartialFailure(t *testing.T) {
 	// All fields should be present (with null/empty defaults)
 	expectedFields := []string{
 		"userSettings", "watchlist", "continueWatching",
-		"playbackProgress", "watchHistory", "trendingMovies", "trendingSeries",
+		"watchHistory", "trendingMovies", "trendingSeries",
 	}
 	for _, field := range expectedFields {
 		if _, ok := resp[field]; !ok {

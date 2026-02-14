@@ -194,6 +194,7 @@ const createStyles = (theme: NovaTheme) =>
     },
     skeletonRow: {
       flexDirection: 'row',
+      height: CARD_HEIGHT + tvScale(8),
       paddingHorizontal: tvScale(48),
       gap: CARD_GAP,
     },
