@@ -144,9 +144,18 @@ export const ProfileSelectorModal: React.FC = () => {
 
   // Start visible so the overlay covers the home screen immediately (no flash).
   // We dismiss once we know the selector isn't needed.
-  const [visible, setVisible] = useState(true);
+  const [visible, _setVisible] = useState(true);
+  const setVisible = useCallback((v: boolean) => {
+    console.log(`[ProfileSelector] setVisible(${v})`, new Error().stack?.split('\n').slice(1, 4).join(' | '));
+    _setVisible(v);
+  }, []);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const hasShownInitialRef = useRef(false);
+
+  useEffect(() => {
+    console.log(`[ProfileSelector] MOUNT — initial visible=true`);
+    return () => console.log(`[ProfileSelector] UNMOUNT`);
+  }, []);
 
   const isEnabled = settings?.display?.alwaysShowProfileSelector !== false;
   const hasMultipleUsers = users.length > 1;
@@ -218,6 +227,7 @@ export const ProfileSelectorModal: React.FC = () => {
       return;
     }
     const subscription = AppState.addEventListener('change', (nextAppState) => {
+      console.log(`[ProfileSelector] AppState: ${appStateRef.current} → ${nextAppState}, pathname=${pathnameRef.current}`);
       if (appStateRef.current === 'active' && nextAppState !== 'active') {
         leftActiveAtRef.current = Date.now();
       }
@@ -228,13 +238,16 @@ export const ProfileSelectorModal: React.FC = () => {
         // or the native Android TV player was just open.
         const awayMs = Date.now() - leftActiveAtRef.current;
         const onRNPlayer = pathnameRef.current === '/player';
+        console.log(`[ProfileSelector] Resume check: awayMs=${awayMs}, onRNPlayer=${onRNPlayer}`);
         if (awayMs <= 2000 || onRNPlayer) {
+          console.log(`[ProfileSelector] Skipping modal (awayMs<=2000 or on player)`);
           appStateRef.current = nextAppState;
           return;
         }
         // Async check: was a native Android TV player recently launched?
         // AsyncStorage survives process kills (Fire Stick etc.)
         wasNativePlayerRecentlyActive().then((nativeRecent) => {
+          console.log(`[ProfileSelector] wasNativePlayerRecentlyActive=${nativeRecent}`);
           if (nativeRecent) {
             // Flag was valid — suppress modal and clear for next resume
             clearNativePlayerLaunching().catch(() => {});

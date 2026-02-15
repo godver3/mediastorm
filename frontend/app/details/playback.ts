@@ -19,10 +19,10 @@ const APP_SCHEME = 'com.strmr.app';
 // (especially on low-memory devices like Fire Stick). On process recreation the JS
 // context is fresh, so in-memory flags/globalThis are lost. AsyncStorage survives.
 const NATIVE_PLAYER_LAUNCHED_KEY = '@strmr/nativePlayerLaunchedAt';
-const markNativePlayerLaunching = async () => {
+export const markNativePlayerLaunching = async () => {
   await AsyncStorage.setItem(NATIVE_PLAYER_LAUNCHED_KEY, Date.now().toString());
 };
-const clearNativePlayerLaunching = async () => {
+export const clearNativePlayerLaunching = async () => {
   await AsyncStorage.removeItem(NATIVE_PLAYER_LAUNCHED_KEY);
 };
 export const wasNativePlayerRecentlyActive = async (): Promise<boolean> => {
@@ -650,8 +650,9 @@ export const launchNativePlayer = async (
       await markNativePlayerLaunching();
       const result = await launchPlayer(params);
       console.log('[launchNativePlayer] Android TV native player result:', result);
-      // Clear after player returns (only reached if RN process survived).
-      await clearNativePlayerLaunching();
+      // Don't clear the flag here — onActivityDestroyed resolves the promise
+      // BEFORE RN's onResume fires, so ProfileSelectorModal's AppState listener
+      // hasn't checked the flag yet. The modal clears it after reading.
       return;
     } catch (e) {
       console.error('[launchNativePlayer] Android TV native player failed, falling back to RN player:', e);
