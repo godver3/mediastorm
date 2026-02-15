@@ -651,13 +651,14 @@ public class KSPlayerView: UIView {
         currentExternalSubtitleInfo = subtitleInfo
     }
 
-    /// Apply the user font size multiplier for bitmap subtitles.
-    /// Resolution-based scaling (playerHeight / authoringHeight) is computed per-part
-    /// in VideoPlayerView using each SubtitlePart's bitmapAuthoringHeight from the codec.
+    /// Apply the user font size multiplier and video source height for bitmap subtitle scaling.
+    /// Per-part resolution scaling is computed in VideoPlayerView using bitmapAuthoringHeight
+    /// and videoSourceHeight to pick the correct denominator for each platform.
     private func updateBitmapSubtitleScale() {
         guard let pv = playerView else { return }
         pv.bitmapSubtitleScale = userFontSizeMultiplier
-        print("[KSPlayer] bitmapSubtitleScale=\(userFontSizeMultiplier) (user multiplier only, per-part authoring height used at render)")
+        pv.videoSourceHeight = videoSourceHeight
+        print("[KSPlayer] bitmapSubtitleScale=\(userFontSizeMultiplier), videoSourceHeight=\(videoSourceHeight)")
     }
 
     func enterPip(forBackground: Bool = false) {
