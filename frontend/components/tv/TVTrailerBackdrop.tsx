@@ -123,6 +123,8 @@ const TVTrailerBackdrop = memo(function TVTrailerBackdrop({
             controls={false}
             playInBackground={false}
             playWhenInactive={false}
+            preventDisplayModeSwitch
+            useTextureView
             bufferConfig={{
               minBufferMs: 2000,
               maxBufferMs: 5000,
