@@ -667,6 +667,8 @@ function IndexScreen() {
         order: 10 + index, // After built-in shelves
         type: 'mdblist' as const,
         listUrl,
+        limit: undefined as number | undefined,
+        hideUnreleased: undefined as boolean | undefined,
       };
     });
   }, [isKidsCuratedMode, activeUser?.kidsAllowedLists]);

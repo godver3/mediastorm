@@ -7,7 +7,7 @@ import { NovaTheme, useTheme } from '../theme';
 import { isAndroidTV, tvScale } from '../theme/tokens/tvScale';
 import { useLoadingScreen } from './LoadingScreenContext';
 
-export type ToastTone = 'info' | 'success' | 'danger';
+export type ToastTone = 'info' | 'success' | 'danger' | 'neutral';
 
 export type ToastOptions = {
   tone?: ToastTone;

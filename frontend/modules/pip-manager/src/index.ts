@@ -1,4 +1,4 @@
-import { requireNativeModule, Platform, EventEmitter, type Subscription } from 'expo-modules-core';
+import { requireNativeModule, Platform, EventEmitter, type EventSubscription } from 'expo-modules-core';
 
 interface PipManagerModule {
   enableAutoPip(): void;
@@ -28,7 +28,9 @@ const PipManagerNative = loadNativeModule();
 console.log('[PipManager] PipManagerNative is:', PipManagerNative ? 'available' : 'NULL');
 
 // Event emitter for PiP mode change events
-const emitter = PipManagerNative ? new EventEmitter(PipManagerNative as any) : null;
+const emitter = PipManagerNative
+  ? new EventEmitter<{ onPipModeChanged: (event: { isActive: boolean }) => void }>(PipManagerNative as any)
+  : null;
 
 /**
  * Enable auto Picture-in-Picture when the app goes to background.
@@ -78,7 +80,7 @@ export function enterPip(): boolean {
  * Callback receives { isActive: boolean }.
  * Returns a Subscription that should be removed on cleanup.
  */
-export function addPipModeListener(callback: (event: { isActive: boolean }) => void): Subscription | null {
+export function addPipModeListener(callback: (event: { isActive: boolean }) => void): EventSubscription | null {
   if (!emitter) return null;
   return emitter.addListener('onPipModeChanged', callback);
 }

@@ -968,16 +968,18 @@ export default function PlayerScreen() {
   }, [paused]);
 
   // Listen for Android PiP mode changes from native module
+  // Use a ref to avoid dependency on handlePictureInPictureStatusChanged (declared later)
+  const handlePipStatusRef = useRef<((isActive: boolean) => void) | null>(null);
   useEffect(() => {
     if (!addPipModeListener) return;
     const subscription = addPipModeListener((event) => {
       console.log('[PiP Debug] Android PiP mode changed:', event.isActive);
-      handlePictureInPictureStatusChanged(event.isActive);
+      handlePipStatusRef.current?.(event.isActive);
     });
     return () => {
       subscription?.remove();
     };
-  }, [handlePictureInPictureStatusChanged]);
+  }, []);
 
   // Auto-pause when app is backgrounded (mobile and TV)
   // Skip auto-pause when in PiP mode - video should keep playing
@@ -3907,6 +3909,8 @@ export default function PlayerScreen() {
     }
     console.log('[player] PiP status changed:', isActive, 'paused:', pipPaused);
   }, []);
+  // Keep ref in sync for Android PiP listener
+  handlePipStatusRef.current = handlePictureInPictureStatusChanged;
 
   // Sync paused state with native playback state (for TV platforms where native
   // media controls can toggle playback directly via MPRemoteCommandCenter)
@@ -4312,7 +4316,7 @@ export default function PlayerScreen() {
       const playerAudioOptions: TrackOption[] = audioTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
         .map((track, idx) => {
-          let label = track.name;
+          let label: string | undefined = track.name;
           let description: string | undefined;
           if (!label && audioStreamMetadata?.[idx]) {
             const meta = audioStreamMetadata[idx];

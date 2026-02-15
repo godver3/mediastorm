@@ -88,7 +88,7 @@ export function useTrendingMovies(
         console.log('[useTrendingMovies] Received', (result as TrendingItem[]).length, 'items');
         if ((result as TrendingItem[]).length > 0) {
           const first = (result as TrendingItem[])[0];
-          console.log('[useTrendingMovies] First item:', first.name, 'certification:', first.certification);
+          console.log('[useTrendingMovies] First item:', first.title.name, 'certification:', first.title.certification);
         }
         setData(result as TrendingItem[]);
       } catch (err) {

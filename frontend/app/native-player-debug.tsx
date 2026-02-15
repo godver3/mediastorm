@@ -69,7 +69,7 @@ const fallbackTheme = {
     background: { base: '#0b0b0f', elevated: '#1a1a1f', surface: '#141418' },
     text: { primary: '#ffffff', secondary: '#a0a0a0', muted: '#666666', inverse: '#000000' },
     border: { subtle: '#2a2a2f' },
-    brand: { primary: '#3f66ff' },
+    accent: { primary: '#3f66ff' },
     status: { danger: '#ff4444' },
   },
   spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
@@ -79,7 +79,7 @@ const fallbackTheme = {
 export default function NativePlayerDebugScreen() {
   const contextTheme = useTheme();
   // Use fallback if theme context isn't ready (can happen during hot reload)
-  const theme = contextTheme?.colors?.brand?.primary ? contextTheme : fallbackTheme as any;
+  const theme = contextTheme?.colors?.accent?.primary ? contextTheme : fallbackTheme as any;
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const playerRef = useRef<NativePlayerRef>(null);
@@ -95,7 +95,7 @@ export default function NativePlayerDebugScreen() {
   const [logs, setLogs] = useState<string[]>([]);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-hide controls after 4 seconds
   const resetControlsTimeout = useCallback(() => {
@@ -500,7 +500,7 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.primary,
     },
     launchButton: {
-      backgroundColor: theme.colors.brand.primary,
+      backgroundColor: theme.colors.accent.primary,
       paddingVertical: theme.spacing.md,
       paddingHorizontal: theme.spacing.xl,
       borderRadius: theme.radius.md,
@@ -684,7 +684,7 @@ const createStyles = (theme: NovaTheme) =>
     },
     progressFill: {
       height: '100%',
-      backgroundColor: theme.colors.brand.primary,
+      backgroundColor: theme.colors.accent.primary,
     },
     trackInfo: {
       gap: theme.spacing.xs,
