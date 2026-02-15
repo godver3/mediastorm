@@ -952,7 +952,7 @@
     }
 
     // Map filtering field paths to client settings keys
-    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms', 'bypassFilteringForAioStreamsOnly'];
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'bypassFilteringForAioStreamsOnly'];
     // Map network field paths to client settings keys
     const clientNetworkFields = ['homeWifiSSID', 'homeBackendUrl', 'remoteBackendUrl'];
 
@@ -1777,10 +1777,6 @@
         if (!profileHomeShelves || !globalHomeShelves) return profileHomeShelves === globalHomeShelves;
         // Compare shelves using lenient comparison
         if (!shelvesEqual(profileHomeShelves.shelves, globalHomeShelves.shelves)) return false;
-        // Compare trendingMovieSource
-        const profileTMS = profileHomeShelves.trendingMovieSource || '';
-        const globalTMS = globalHomeShelves.trendingMovieSource || '';
-        if (profileTMS !== globalTMS) return false;
         return true;
     }
 

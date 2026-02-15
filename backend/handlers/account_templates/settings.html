@@ -571,7 +571,7 @@ function collectSettings() {
             subtitleSize: parseFloat(document.getElementById('subtitleSize').value) || 1.0,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },
-        homeShelves: currentSettings.homeShelves || { shelves: [], trendingMovieSource: 'released' },
+        homeShelves: currentSettings.homeShelves || { shelves: [] },
         filtering: {
             maxSizeMovieGb: parseFloat(document.getElementById('maxSizeMovieGb').value) || 0,
             maxSizeEpisodeGb: parseFloat(document.getElementById('maxSizeEpisodeGb').value) || 0,

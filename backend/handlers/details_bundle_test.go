@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"novastream/config"
 	"novastream/handlers"
 	"novastream/models"
 	metadatapkg "novastream/services/metadata"
@@ -45,7 +44,7 @@ func (m *mockMetadataServiceDetailsBundle) Trailers(_ context.Context, _ models.
 }
 
 // Stub remaining metadataService methods
-func (m *mockMetadataServiceDetailsBundle) Trending(_ context.Context, _ string, _ config.TrendingMovieSource) ([]models.TrendingItem, error) {
+func (m *mockMetadataServiceDetailsBundle) Trending(_ context.Context, _ string) ([]models.TrendingItem, error) {
 	return nil, nil
 }
 func (m *mockMetadataServiceDetailsBundle) Search(_ context.Context, _ string, _ string) ([]models.SearchResult, error) {

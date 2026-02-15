@@ -33,7 +33,7 @@ type fakeMetadataService struct {
 	lastMovieQuery   models.MovieDetailsQuery
 }
 
-func (f *fakeMetadataService) Trending(_ context.Context, mediaType string, _ config.TrendingMovieSource) ([]models.TrendingItem, error) {
+func (f *fakeMetadataService) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
 	f.lastTrendingType = mediaType
 	return f.trendingResp, f.trendingErr
 }
@@ -137,7 +137,7 @@ func testConfigManager(t *testing.T) *config.Manager {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "settings.json")
 	mgr := config.NewManager(cfgPath)
-	if err := os.WriteFile(cfgPath, []byte(`{"server":{},"metadata":{},"cache":{},"homeShelves":{"shelves":[],"trendingMovieSource":"released"}}`), 0644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{"server":{},"metadata":{},"cache":{},"homeShelves":{"shelves":[]}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return mgr

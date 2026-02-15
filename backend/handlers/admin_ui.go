@@ -1419,8 +1419,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			UseLoadingScreen:          globalSettings.Playback.UseLoadingScreen,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),
-			TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
+			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:                   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -1559,8 +1558,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						SubtitleSize:              globalSettings.Playback.SubtitleSize,
 					},
 					HomeShelves: models.HomeShelvesSettings{
-						Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),
-						TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
+						Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
 					},
 				}
 			}
