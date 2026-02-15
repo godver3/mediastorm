@@ -84,6 +84,8 @@ public class KSPlayerView: UIView {
     private var pendingSubtitleTrack: Int?
     private var subtitleRetryCount: Int = 0
     private var lastReportedDynamicRange: String = ""
+    private var videoSourceHeight: CGFloat = 0
+    private var userFontSizeMultiplier: CGFloat = 1.0
 
     // MARK: - React Native Event Blocks
     @objc var onLoad: RCTDirectEventBlock?
@@ -298,8 +300,14 @@ public class KSPlayerView: UIView {
             return
         }
 
-        debugLog("setSource: uri=\(uri.prefix(100))...")
+        debugLog("setSource: full uri=\(uri)")
         debugLog("setSource: headers=\(source["headers"] ?? "nil")")
+        if let preselectedSub = source["preselectedSubtitleTrack"] as? Int {
+            debugLog("setSource: preselectedSubtitleTrack=\(preselectedSub)")
+        }
+        if let preselectedAudio = source["preselectedAudioTrack"] as? Int {
+            debugLog("setSource: preselectedAudioTrack=\(preselectedAudio)")
+        }
 
         // Reset state for new source
         currentSource = source
@@ -499,19 +507,19 @@ public class KSPlayerView: UIView {
 
         // Font size (multiplier, 1.0 = default)
         if let fontSize = style["fontSize"] as? Double {
-            // KSPlayer's default font size is around 20pt on iOS
-            // Scale it by the multiplier
-            // tvOS needs larger base size due to viewing distance (matching SubtitleOverlay at 62pt)
+            // Text subtitle scaling (via font size)
             #if os(tvOS)
             let baseSize: CGFloat = 60.0
             #else
             let baseSize: CGFloat = 24.0
             #endif
             SubtitleModel.textFontSize = baseSize * CGFloat(fontSize)
-            // Update the label's font to reflect the new size
-            // (SubtitleModel.textFont is a computed property that uses textFontSize)
             playerView?.subtitleLabel.font = SubtitleModel.textFont
             print("[KSPlayer] Subtitle font size set to: \(SubtitleModel.textFontSize)")
+
+            // Bitmap subtitle scaling (via image resizing in VideoPlayerView)
+            userFontSizeMultiplier = CGFloat(fontSize)
+            updateBitmapSubtitleScale()
         }
 
         // Text color (hex string like '#FFFFFF') - convert to SwiftUI Color
@@ -579,6 +587,22 @@ public class KSPlayerView: UIView {
             }
         }
         print("[KSPlayer] Subtitle position updated: controlsVisible=\(controlsVisible), offset=\(controlsOffset)")
+    }
+
+    /// Recalculate and apply the bitmap subtitle scale on VideoPlayerView.
+    /// Scale = (playerViewHeight / videoSourceHeight) * userFontSizeMultiplier
+    /// This ensures PGS/bitmap subs render at a consistent proportional size regardless of line length.
+    private func updateBitmapSubtitleScale() {
+        guard let pv = playerView else { return }
+        let playerHeight = pv.bounds.height
+        guard videoSourceHeight > 0, playerHeight > 0 else {
+            pv.bitmapSubtitleScale = userFontSizeMultiplier
+            print("[KSPlayer] bitmapSubtitleScale=\(pv.bitmapSubtitleScale) (no video height yet, using multiplier only)")
+            return
+        }
+        let scale = (playerHeight / videoSourceHeight) * userFontSizeMultiplier
+        pv.bitmapSubtitleScale = scale
+        print("[KSPlayer] bitmapSubtitleScale=\(scale) (playerH=\(playerHeight), videoH=\(videoSourceHeight), multiplier=\(userFontSizeMultiplier))")
     }
 
     func enterPip(forBackground: Bool = false) {
@@ -650,10 +674,18 @@ public class KSPlayerView: UIView {
 
     func getAvailableTracks() -> [String: Any] {
         guard let player = playerView?.playerLayer?.player else {
+            debugLog("getAvailableTracks: player is nil")
             return ["audioTracks": [], "subtitleTracks": []]
         }
 
-        let audioTracks = player.tracks(mediaType: .audio).enumerated().map { (index, track) -> [String: Any] in
+        // Log all tracks KSPlayer knows about (all media types)
+        let allAudio = player.tracks(mediaType: .audio)
+        let allVideo = player.tracks(mediaType: .video)
+        let allSubtitle = player.tracks(mediaType: .subtitle)
+        debugLog("getAvailableTracks: player reports \(allVideo.count) video, \(allAudio.count) audio, \(allSubtitle.count) subtitle tracks")
+
+        let audioTracks = allAudio.enumerated().map { (index, track) -> [String: Any] in
+            debugLog("  audio[\(index)]: name=\(track.name), lang=\(track.language ?? track.languageCode ?? "?"), codecType=\(track.codecType), trackID=\(track.trackID)")
             return [
                 "id": index,
                 "type": "audio",
@@ -665,16 +697,31 @@ public class KSPlayerView: UIView {
         }
 
         // First try player.tracks() which reads from FFmpeg's asset tracks
-        var subtitleTracksList = player.tracks(mediaType: .subtitle)
+        var subtitleTracksList = allSubtitle
         debugLog("getAvailableTracks: player.tracks(subtitle) count=\(subtitleTracksList.count)")
+        for (i, track) in subtitleTracksList.enumerated() {
+            debugLog("  subtitle[\(i)]: name=\(track.name), lang=\(track.language ?? track.languageCode ?? "?"), codecType=\(track.codecType), trackID=\(track.trackID), isImageSubtitle=\(track.isImageSubtitle), isEnabled=\(track.isEnabled)")
+        }
+
+        // Also log srtControl state regardless
+        if let pv = playerView {
+            let srtInfos = pv.srtControl.subtitleInfos
+            debugLog("getAvailableTracks: srtControl.subtitleInfos count=\(srtInfos.count)")
+            for (i, info) in srtInfos.enumerated() {
+                let lang = (info as? MediaPlayerTrack)?.language ?? (info as? MediaPlayerTrack)?.languageCode ?? "?"
+                let isImg = (info as? MediaPlayerTrack)?.isImageSubtitle ?? false
+                let trackID = (info as? MediaPlayerTrack)?.trackID ?? -1
+                debugLog("  srtInfo[\(i)]: name=\(info.name), lang=\(lang), isImageSubtitle=\(isImg), trackID=\(trackID), isEnabled=\(info.isEnabled)")
+            }
+        }
 
         // If player.tracks() is empty, fall back to srtControl.subtitleInfos
         // VideoPlayerView delays loading embedded subtitles by ~1 second after readyToPlay,
         // so srtControl may have tracks that player.tracks() missed or hasn't reported yet
         if subtitleTracksList.isEmpty, let pv = playerView {
             let srtInfos = pv.srtControl.subtitleInfos
-            debugLog("getAvailableTracks: srtControl.subtitleInfos count=\(srtInfos.count)")
             if !srtInfos.isEmpty {
+                debugLog("getAvailableTracks: using srtControl fallback (\(srtInfos.count) tracks)")
                 // Use srtControl infos — these include PGS/bitmap subtitle tracks
                 let subtitleTracks = srtInfos.enumerated().map { (index, info) -> [String: Any] in
                     return [
@@ -704,6 +751,7 @@ public class KSPlayerView: UIView {
             ]
         }
 
+        debugLog("getAvailableTracks: returning \(audioTracks.count) audio, \(subtitleTracks.count) subtitle tracks")
         return [
             "audioTracks": audioTracks,
             "subtitleTracks": subtitleTracks
@@ -712,6 +760,9 @@ public class KSPlayerView: UIView {
 
     private func reportTracks() {
         let tracks = getAvailableTracks()
+        let audioCount = (tracks["audioTracks"] as? [[String: Any]])?.count ?? 0
+        let subCount = (tracks["subtitleTracks"] as? [[String: Any]])?.count ?? 0
+        debugLog("reportTracks: sending \(audioCount) audio, \(subCount) subtitle tracks to JS")
         onTracksChanged?(tracks)
 
         // Subtitles may have loaded after readyToPlay - trigger a retry attempt
@@ -833,6 +884,10 @@ extension KSPlayerView: PlayerControllerDelegate {
                 let duration = rawDuration.isFinite && rawDuration > 0 ? rawDuration : 0.0
                 let size = playerLayer.player.naturalSize
                 print("[KSPlayer] readyToPlay - duration=\(duration) (raw=\(rawDuration)), size=\(size)")
+
+                // Store video source height for bitmap subtitle proportional scaling
+                videoSourceHeight = size.height
+                updateBitmapSubtitleScale()
 
                 onLoad?([
                     "duration": duration,
