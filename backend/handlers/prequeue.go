@@ -783,34 +783,37 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		return false
 	}
 
-	// Helper to try resolving usenet results (requires health check first)
+	// Helper to try resolving usenet results
 	tryUsenetResults := func() bool {
 		if len(usenetResults) == 0 {
 			return false
 		}
 
-		// Run health checks on usenet results
-		healthCheckStart := time.Now()
-		log.Printf("[prequeue] TIMING: starting usenet health check for %d candidates", len(usenetResults))
-		healthResults := h.playbackSvc.ParallelHealthCheck(ctx, usenetResults, 10)
+		// NOTE: Usenet health pre-checking disabled — was adding latency without much benefit.
+		// To re-enable, uncomment the health check block below and switch back to ResolveWithHealthResult.
+		//
+		// healthCheckStart := time.Now()
+		// log.Printf("[prequeue] TIMING: starting usenet health check for %d candidates", len(usenetResults))
+		// healthResults := h.playbackSvc.ParallelHealthCheck(ctx, usenetResults, 10)
+		//
+		// select {
+		// case <-ctx.Done():
+		// 	return false
+		// default:
+		// }
+		//
+		// healthMap := make(map[string]playback.HealthCheckResult)
+		// for _, hr := range healthResults {
+		// 	key := hr.Candidate.DownloadURL
+		// 	if key == "" {
+		// 		key = hr.Candidate.Link
+		// 	}
+		// 	healthMap[key] = hr
+		// }
+		// log.Printf("[prequeue] TIMING: usenet health check complete (took: %v)", time.Since(healthCheckStart))
 
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-
-		healthMap := make(map[string]playback.HealthCheckResult)
-		for _, hr := range healthResults {
-			key := hr.Candidate.DownloadURL
-			if key == "" {
-				key = hr.Candidate.Link
-			}
-			healthMap[key] = hr
-		}
-		log.Printf("[prequeue] TIMING: usenet health check complete (took: %v)", time.Since(healthCheckStart))
-
-		// Try usenet results in priority order
+		// Try usenet results in priority order (no health pre-check)
+		log.Printf("[prequeue] TIMING: trying usenet resolution (%d results, no health pre-check)", len(usenetResults))
 		for i, result := range usenetResults {
 			select {
 			case <-ctx.Done():
@@ -822,21 +825,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 				continue
 			}
 
-			key := result.DownloadURL
-			if key == "" {
-				key = result.Link
-			}
-			hr, found := healthMap[key]
-			if !found {
-				log.Printf("[prequeue] No health result for usenet %s, skipping", result.Title)
-				continue
-			}
-			if !hr.Healthy {
-				log.Printf("[prequeue] Usenet %s unhealthy, skipping", result.Title)
-				continue
-			}
-
-			resolution, lastErr = h.playbackSvc.ResolveWithHealthResult(ctx, hr)
+			// Resolve directly without health pre-check
+			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
 			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
 				log.Printf("[prequeue] Resolved usenet result [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
 
