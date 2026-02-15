@@ -236,8 +236,8 @@ func TestStartupHandler_Success(t *testing.T) {
 
 	// Check all fields are present
 	expectedFields := []string{
-		"userSettings", "watchlist", "continueWatching",
-		"watchHistory", "trendingMovies", "trendingSeries",
+		"userSettings", "watchlist", "watchlistTotal", "continueWatching",
+		"continueWatchingTotal", "watchHistory", "trendingMovies", "trendingSeries",
 	}
 	for _, field := range expectedFields {
 		if _, ok := resp[field]; !ok {
@@ -252,6 +252,22 @@ func TestStartupHandler_Success(t *testing.T) {
 	}
 	if len(watchlist) != 1 || watchlist[0].Name != "Test Movie" {
 		t.Errorf("unexpected watchlist: %+v", watchlist)
+	}
+
+	// Verify totals reflect full counts (before capping)
+	var watchlistTotal int
+	if err := json.Unmarshal(resp["watchlistTotal"], &watchlistTotal); err != nil {
+		t.Fatalf("failed to decode watchlistTotal: %v", err)
+	}
+	if watchlistTotal != 1 {
+		t.Errorf("expected watchlistTotal=1, got %d", watchlistTotal)
+	}
+	var cwTotal int
+	if err := json.Unmarshal(resp["continueWatchingTotal"], &cwTotal); err != nil {
+		t.Fatalf("failed to decode continueWatchingTotal: %v", err)
+	}
+	if cwTotal != 1 {
+		t.Errorf("expected continueWatchingTotal=1, got %d", cwTotal)
 	}
 }
 

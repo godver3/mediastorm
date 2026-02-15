@@ -515,7 +515,7 @@ function IndexScreen() {
     isBackendReachable,
     retryCountdown,
   } = useBackendSettings();
-  const { ready: startupReady } = useStartupData();
+  const { startupData, ready: startupReady } = useStartupData();
 
   // Extract hideUnreleased settings for trending shelves from settings
   const trendingMoviesHideUnreleased = useMemo(() => {
@@ -1165,13 +1165,14 @@ function IndexScreen() {
       ? enrichedItems.filter((item) => !isWatched(item.title.mediaType, item.title.id))
       : enrichedItems;
     const allCards = mapTrendingToCards(filteredItems, movieReleases);
-    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+    const knownTotal = startupData?.watchlistTotal ?? allCards.length;
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
-    const exploreCard = createExploreCard('watchlist', allCards);
+    const exploreCard = createExploreCard('watchlist', allCards, knownTotal > allCards.length ? knownTotal - MAX_SHELF_ITEMS_ON_HOME : undefined);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems, hideWatched]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems, hideWatched, startupData?.watchlistTotal]);
   const continueWatchingCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
       console.log(
@@ -1179,13 +1180,14 @@ function IndexScreen() {
       );
     }
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
-    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
+    const knownTotal = startupData?.continueWatchingTotal ?? allCards.length;
+    if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
-    const exploreCard = createExploreCard('continue-watching', allCards, undefined, (card) => card.backdropUrl || card.headerImage || card.cardImage);
+    const exploreCard = createExploreCard('continue-watching', allCards, knownTotal > allCards.length ? knownTotal - MAX_SHELF_ITEMS_ON_HOME : undefined, (card) => card.backdropUrl || card.headerImage || card.cardImage);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition]);
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, startupData?.continueWatchingTotal]);
 
   useEffect(() => {
     if (!continueWatchingItems || continueWatchingItems.length === 0) {
@@ -1647,16 +1649,18 @@ function IndexScreen() {
     const allTitles = hideWatched
       ? enrichedTitles.filter((title) => !isWatched(title.mediaType, title.id))
       : enrichedTitles;
-    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+    const knownTotal = startupData?.watchlistTotal ?? allTitles.length;
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
-    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    const totalCount = Math.max(knownTotal, allTitles.length);
+    const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
     // Pick posters from displayed items (deterministic)
     const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'watchlist');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}watchlist`,
       name: 'Explore',
-      overview: `View all ${allTitles.length} items`,
+      overview: `View all ${totalCount} items`,
       year: remainingCount, // Will be displayed as "+X More"
       language: 'en',
       mediaType: 'explore',
@@ -1671,7 +1675,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems, hideWatched]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems, hideWatched, startupData?.watchlistTotal]);
   const continueWatchingTitles = useMemo(() => {
     const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
     // Merge cached release data for movies
@@ -1692,16 +1696,18 @@ function IndexScreen() {
     const allTitles = shouldEnrichWatchStatus
       ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
       : titlesWithReleases;
-    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
+    const knownTotal = startupData?.continueWatchingTotal ?? allTitles.length;
+    if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
-    const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
+    const totalCount = Math.max(knownTotal, allTitles.length);
+    const remainingCount = totalCount - MAX_SHELF_ITEMS_ON_HOME;
     // Pick backdrop images from displayed items for landscape collage (deterministic)
     const collagePosters = pickRandomPosters(allTitles, (title) => title?.backdrop?.url || title?.poster?.url, 4, 'continue-watching');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}continue-watching`,
       name: 'Explore',
-      overview: `View all ${allTitles.length} items`,
+      overview: `View all ${totalCount} items`,
       year: remainingCount,
       language: 'en',
       mediaType: 'explore',
@@ -1716,7 +1722,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems]);
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, startupData?.continueWatchingTotal]);
   const trendingMovieTitles = useMemo(() => {
     const titlesWithReleases =
       trendingMovies?.map((item) => {

@@ -51,12 +51,14 @@ func NewStartupHandler(
 
 // StartupResponse is the combined payload returned by GET /api/users/{userID}/startup.
 type StartupResponse struct {
-	UserSettings     *models.UserSettings      `json:"userSettings"`
-	Watchlist        []models.WatchlistItem    `json:"watchlist"`
-	ContinueWatching []models.SeriesWatchState  `json:"continueWatching"`
-	WatchHistory     []models.WatchHistoryItem  `json:"watchHistory"`
-	TrendingMovies   *DiscoverNewResponse      `json:"trendingMovies"`
-	TrendingSeries   *DiscoverNewResponse      `json:"trendingSeries"`
+	UserSettings          *models.UserSettings     `json:"userSettings"`
+	Watchlist             []models.WatchlistItem   `json:"watchlist"`
+	WatchlistTotal        int                      `json:"watchlistTotal"`
+	ContinueWatching      []models.SeriesWatchState `json:"continueWatching"`
+	ContinueWatchingTotal int                      `json:"continueWatchingTotal"`
+	WatchHistory          []models.WatchHistoryItem `json:"watchHistory"`
+	TrendingMovies        *DiscoverNewResponse     `json:"trendingMovies"`
+	TrendingSeries        *DiscoverNewResponse     `json:"trendingSeries"`
 }
 
 // GetStartup returns all initial user data in a single response.
@@ -101,6 +103,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[startup] watchlist error for %s: %v", userID, err)
 			return
 		}
+		resp.WatchlistTotal = len(items)
 		if len(items) > startupShelfLimit {
 			items = items[:startupShelfLimit]
 		}
@@ -118,6 +121,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[startup] continue watching error for %s: %v", userID, err)
 			return
 		}
+		resp.ContinueWatchingTotal = len(items)
 		progress, err := h.history.ListPlaybackProgress(userID)
 		if err != nil {
 			log.Printf("[startup] playback progress error for %s: %v", userID, err)

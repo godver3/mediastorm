@@ -215,10 +215,21 @@ export default function WatchlistScreen() {
   }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves, shelfId]);
 
   // Watchlist data
-  const { items, loading: watchlistLoading, error: watchlistError } = useWatchlist();
+  const { items, loading: watchlistLoading, error: watchlistError, refresh: refreshWatchlist } = useWatchlist();
 
   // Continue watching data
-  const { items: continueWatchingItems, loading: continueWatchingLoading } = useContinueWatching();
+  const { items: continueWatchingItems, loading: continueWatchingLoading, refresh: refreshContinueWatching } = useContinueWatching();
+
+  // The startup bundle caps watchlist/continue-watching to 20 items.
+  // When this page needs the full list, silently refresh the context.
+  useEffect(() => {
+    if (shelfId === 'continue-watching') {
+      void refreshContinueWatching({ silent: true });
+    } else if (!isExploreMode) {
+      void refreshWatchlist({ silent: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
+  }, []);
 
   // Watch status data for watchState badge
   const { isWatched, items: watchStatusItems } = useWatchStatus();

@@ -833,7 +833,9 @@ export interface TrendingResponse {
 export interface StartupData {
   userSettings: UserSettings | null;
   watchlist: WatchlistItem[];
+  watchlistTotal: number;
   continueWatching: SeriesWatchState[];
+  continueWatchingTotal: number;
   watchHistory: WatchStatusItem[];
   trendingMovies: TrendingResponse;
   trendingSeries: TrendingResponse;
