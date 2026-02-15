@@ -1,6 +1,5 @@
 import type { PlaybackPreference } from '@/components/BackendSettingsContext';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
-import { msSinceNavStart } from '@/utils/nav-timing';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
@@ -14,14 +13,12 @@ import EpisodeCard from '@/components/EpisodeCard';
 import TVEpisodeStrip from '@/components/TVEpisodeStrip';
 
 // Safely import new TV components - fallback to TVEpisodeStrip if unavailable
-let TVActionButton: typeof import('@/components/tv').TVActionButton | null = null;
 let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
 let TVCastSection: typeof import('@/components/tv').TVCastSection | null = null;
 let TVMoreLikeThisSection: typeof import('@/components/tv').TVMoreLikeThisSection | null = null;
 let TVTrailerBackdrop: typeof import('@/components/tv').TVTrailerBackdrop | null = null;
 try {
   const tvComponents = require('@/components/tv');
-  TVActionButton = tvComponents.TVActionButton;
   TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
   TVCastSection = tvComponents.TVCastSection;
   TVMoreLikeThisSection = tvComponents.TVMoreLikeThisSection;
@@ -31,37 +28,22 @@ try {
 }
 import {
   apiService,
-  type AudioTrackInfo,
   type CastMember,
-  type ContentPreference,
-  type DetailsBundleData,
-  type EpisodeWatchPayload,
-  type NZBResult,
-  type PrequeueStatusResponse,
   type Rating,
-  type SeriesDetails,
   type SeriesEpisode,
   type SeriesSeason,
-  type SubtitleTrackInfo,
   type Title,
   type Trailer,
-  type TrailerPrequeueStatus,
 } from '@/services/api';
-import { SpatialNavigationNode, SpatialNavigationRoot, SpatialNavigationFocusableView, useSpatialNavigator } from '@/services/tv-navigation';
-import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import { useTheme } from '@/theme';
 import { getTVScaleMultiplier, isTablet } from '@/theme/tokens/tvScale';
-import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
-import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
 import { Ionicons } from '@expo/vector-icons';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
+import { findNodeHandle, Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
@@ -70,42 +52,34 @@ import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
   withTiming,
-  withRepeat,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
 
 // Import extracted modules
 import { BulkWatchModal } from './details/bulk-watch-modal';
-import { ManualSelection, useManualHealthChecks, type ManualTrackOverrides } from './details/manual-selection';
+import { ManualSelection, useManualHealthChecks } from './details/manual-selection';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
-import {
-  buildExternalPlayerTargets,
-  getHealthFailureReason,
-  getTimeoutMessage,
-  initiatePlayback,
-  isHealthFailureError,
-  isTimeoutError,
-} from './details/playback';
 import { ResumePlaybackModal } from './details/resume-modal';
 import { SeriesEpisodes } from './details/series-episodes';
 import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
-import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, getSeasonLabel, isEpisodeUnreleased, isMovieUnreleased, padNumber, toStringParam } from './details/utils';
+import { formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, isMovieUnreleased, toStringParam } from './details/utils';
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
 import MoreLikeThisSection from '@/components/MoreLikeThisSection';
 
-const SELECTION_TOAST_ID = 'details-nzb-status';
+// Import extracted hooks
+import { useDetailsData } from './details/hooks/useDetailsData';
+import { useTrailers } from './details/hooks/useTrailers';
+import { usePlayback } from './details/hooks/usePlayback';
+import { useEpisodeManager } from './details/hooks/useEpisodeManager';
+import { useWatchActions } from './details/hooks/useWatchActions';
+import { useManualSelectFlow } from './details/hooks/useManualSelectFlow';
 
-interface EpisodeSearchContext {
-  query: string;
-  friendlyLabel: string;
-  selectionMessage: string;
-  episodeCode: string;
-}
+const SELECTION_TOAST_ID = 'details-nzb-status';
 
 interface LocalParams extends Record<string, any> {
   title?: string;
@@ -335,48 +309,13 @@ const CertificationBadge = ({
   );
 };
 
-// Debug: Generate unique instance ID for tracking component instances
-let detailsInstanceCounter = 0;
-
 export default function DetailsScreen() {
-  console.log(`[NAV TIMING] DetailsScreen function body executing, +${msSinceNavStart()}ms since nav start`);
-
   const params = useLocalSearchParams<LocalParams>();
   const router = useRouter();
   const pathname = usePathname();
 
-  // Debug: Create a stable instance ID to track this component instance
-  const instanceIdRef = useRef<string | null>(null);
-  if (instanceIdRef.current === null) {
-    instanceIdRef.current = `details-${++detailsInstanceCounter}-${Date.now()}`;
-  }
-  const instanceId = instanceIdRef.current;
-
-  // Debug: Track the titleId this instance was created with
-  const initialTitleIdRef = useRef<string | null>(null);
-  if (initialTitleIdRef.current === null) {
-    initialTitleIdRef.current = params.titleId ?? null;
-  }
-
-  // Debug: Track titleId changes within the same instance
-  const prevTitleIdRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (prevTitleIdRef.current !== undefined && prevTitleIdRef.current !== params.titleId) {
-      console.log(`[Details DEBUG ${instanceId}] *** titleId CHANGED within same instance: ${prevTitleIdRef.current} -> ${params.titleId}`);
-    }
-    prevTitleIdRef.current = params.titleId;
-  }, [params.titleId, instanceId]);
-
-  // NAV TIMING: Track when component effects first fire (React commit phase)
-  useEffect(() => {
-    console.log(`[NAV TIMING] DetailsScreen useEffect[] mount, +${msSinceNavStart()}ms since nav start`);
-  }, []);
-
   const theme = useTheme();
   const styles = useMemo(() => createDetailsStyles(theme), [theme]);
-  const spatialNavigator = useSpatialNavigator();
-  const spatialNavigatorRef = useRef(spatialNavigator);
-  spatialNavigatorRef.current = spatialNavigator;
   const isWeb = Platform.OS === 'web';
   const isTV = Platform.isTV;
   const isMobile = !isWeb && !isTV;
@@ -393,11 +332,7 @@ export default function DetailsScreen() {
     : isTV
       ? [0, 0.8, 1]
       : [0, 0.45, 1];
-  const _isFadeMaskSupported = Platform.OS !== 'web';
-  const _contentMaskColors = useMemo(() => ['transparent', '#000', '#000'], []);
-  const _contentMaskLocations = useMemo(() => [0, 0.12, 1], []);
   const isCompactBreakpoint = theme.breakpoint === 'compact';
-  const _isIos = Platform.OS === 'ios';
   const isIosWeb = useMemo(() => {
     if (!isWeb || typeof navigator === 'undefined') {
       return false;
@@ -457,13 +392,6 @@ export default function DetailsScreen() {
   const posterUrlParam = toStringParam(params.posterUrl) || headerImageParam;
   const backdropUrlParam = toStringParam(params.backdropUrl) || headerImageParam;
 
-  // State to hold fetched details for backdrop updates and episodes
-  const [seriesDetailsData, setSeriesDetailsData] = useState<SeriesDetails | null>(null);
-  const [movieDetails, setMovieDetails] = useState<Title | null>(null);
-
-  // Derive the title from series details for poster/backdrop
-  const seriesDetailsForBackdrop = seriesDetailsData?.title ?? null;
-
   const tmdbId = toStringParam(params.tmdbId);
   const imdbId = toStringParam(params.imdbId);
   const tvdbId = toStringParam(params.tvdbId);
@@ -474,34 +402,147 @@ export default function DetailsScreen() {
 
   // When navigating from "More Like This", temporarily block select actions to prevent
   // the enter key that triggered navigation from also triggering play on the new page.
-  // We keep auto-focus enabled so spatial navigation works correctly.
   const [isSelectBlocked, setIsSelectBlocked] = useState(!!fromSimilarParam);
   useEffect(() => {
     if (fromSimilarParam) {
-      console.log(`[Details DEBUG ${instanceId}] Blocking select actions (fromSimilar navigation)`);
       const timer = setTimeout(() => {
-        console.log(`[Details DEBUG ${instanceId}] Unblocking select actions after delay`);
         setIsSelectBlocked(false);
       }, 300); // 300ms delay to let the enter key event fully propagate
       return () => clearTimeout(timer);
     }
-  }, [fromSimilarParam, instanceId]);
+  }, [fromSimilarParam]);
+
+  const seriesIdentifier = useMemo(() => {
+    const trimmedTitle = title.trim();
+    if (titleId) {
+      // Strip episode information (e.g., :S01E02) from titleId to get the series ID
+      return titleId.replace(/:S\d{2}E\d{2}$/i, '');
+    }
+    if (tvdbId) {
+      return `tvdb:${tvdbId}`;
+    }
+    if (tmdbId) {
+      return `tmdb:${tmdbId}`;
+    }
+    if (trimmedTitle) {
+      return `title:${trimmedTitle}`;
+    }
+    return '';
+  }, [title, titleId, tmdbId, tvdbId]);
+
+  const yearNumber = useMemo(() => {
+    const parsed = Number(yearParam);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+  }, [yearParam]);
+
+  const tmdbIdNumber = useMemo(() => {
+    const parsed = Number(tmdbId);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+  }, [tmdbId]);
+
+  const tvdbIdNumber = useMemo(() => {
+    const parsed = Number(tvdbId);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+  }, [tvdbId]);
+
+  // ===== Context Hooks =====
+  const { settings, userSettings } = useBackendSettings();
+  const { addToWatchlist, removeFromWatchlist, getItem } = useWatchlist();
+  const {
+    isWatched: isItemWatched,
+    toggleWatchStatus,
+    bulkUpdateWatchStatus,
+    refresh: refreshWatchStatus,
+  } = useWatchStatus();
+  const { showToast, hideToast } = useToast();
+  const { recordEpisodeWatch } = useContinueWatching();
+  const { activeUserId, activeUser } = useUserProfiles();
+  const { showLoadingScreen, hideLoadingScreen, setOnCancel } = useLoadingScreen();
+
+  // Kids profiles have restricted navigation - disable cast/crew and similar content links
+  const isKidsProfile = activeUser?.isKidsProfile ?? false;
+
+  // ===== Lifted Episode State (shared between usePlayback and useEpisodeManager) =====
+  const [activeEpisode, setActiveEpisode] = useState<SeriesEpisode | null>(null);
+  const [nextUpEpisode, setNextUpEpisode] = useState<SeriesEpisode | null>(null);
+  const [isShuffleMode, setIsShuffleMode] = useState(false);
+  const [progressRefreshKey, setProgressRefreshKey] = useState(0);
+
+  // State for next episode from player navigation
+  const [nextEpisodeFromPlayback, setNextEpisodeFromPlayback] = useState<{
+    seasonNumber: number;
+    episodeNumber: number;
+    autoPlay?: boolean;
+  } | null>(null);
+
+  const isDetailsPageActive = pathname === '/details';
+  const autoPlayTrailersTV = Platform.isTV && settings?.playback?.autoPlayTrailersTV;
+
+  // Modal state
+  const [trailerModalVisible, setTrailerModalVisible] = useState(false);
+  const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
+  const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
+  const [episodeSelectorVisible, setEpisodeSelectorVisible] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [collapsedHeight, setCollapsedHeight] = useState(0);
+  const [expandedHeight, setExpandedHeight] = useState(0);
+  const descriptionHeight = useSharedValue(0);
+
+  // ===== Hook 1: useDetailsData =====
+  const detailsData = useDetailsData({
+    titleId,
+    title,
+    isSeries,
+    mediaType,
+    seriesIdentifier,
+    yearNumber,
+    tmdbIdNumber,
+    tvdbIdNumber,
+    imdbId,
+    activeUserId,
+    selectedSeasonNumber: undefined, // Will be updated when selectedSeason changes
+  });
+
+  const {
+    seriesDetailsData,
+    movieDetails,
+    detailsBundle,
+    bundleReady,
+    similarContent,
+    similarLoading,
+    trailers,
+    primaryTrailer,
+    trailersLoading,
+    contentPreference,
+    episodeProgressMap: detailsEpisodeProgressMap,
+    displayProgress: detailsDisplayProgress,
+    movieDetailsLoading,
+    movieDetailsError,
+    seriesDetailsLoading,
+    credits: detailsCredits,
+    ratings: detailsRatings,
+    genres: detailsGenres,
+    certification: detailsCertification,
+    isMetadataLoadingForSkeleton,
+    hydratedFromBundle,
+    bundleTrailerSeasonRef,
+  } = detailsData;
+
+  // Derive the title from series details for poster/backdrop
+  const seriesDetailsForBackdrop = seriesDetailsData?.title ?? null;
 
   // Compute final poster URL - prefer fetched metadata for textless posters
   const posterUrl = useMemo(() => {
-    // Prefer fetched details (may have textless poster)
     if (!isSeries && movieDetails?.poster?.url) {
       return movieDetails.poster.url;
     }
     if (isSeries && seriesDetailsForBackdrop?.poster?.url) {
       return seriesDetailsForBackdrop.poster.url;
     }
-    // Fall back to params
     return posterUrlParam;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop, posterUrlParam]);
 
   const backdropUrl = useMemo(() => {
-    // Backdrop can update from fetched data since it's less prominent
     if (!isSeries && movieDetails?.backdrop?.url) {
       return movieDetails.backdrop.url;
     }
@@ -533,128 +574,77 @@ export default function DetailsScreen() {
   const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     if (!logoUrl) {
-      console.log(`[NAV TIMING] Logo getSize: no URL, +${msSinceNavStart()}ms`);
       setLogoDimensions(null);
       return;
     }
-    const _logoStart = Date.now();
-    console.log(`[NAV TIMING] Logo getSize starting, +${msSinceNavStart()}ms, url=${logoUrl.substring(0, 80)}...`);
     RNImage.getSize(
       logoUrl,
       (width, height) => {
-        console.log(`[NAV TIMING] Logo getSize completed in ${Date.now() - _logoStart}ms, +${msSinceNavStart()}ms, ${width}x${height}`);
         setLogoDimensions({ width, height });
       },
       () => {
-        console.log(`[NAV TIMING] Logo getSize failed in ${Date.now() - _logoStart}ms, +${msSinceNavStart()}ms`);
         setLogoDimensions(null);
       }
     );
   }, [logoUrl]);
 
   // Preload poster/backdrop image so it's ready when page displays
-  // Once first poster is preloaded, URL changes silently background-prefetch without resetting isPosterPreloaded
   const [isPosterPreloaded, setIsPosterPreloaded] = useState(false);
   const posterPreloadedOnceRef = useRef(false);
   const posterToPreload = posterUrl || backdropUrl;
   useEffect(() => {
     if (!posterToPreload) {
-      console.log(`[NAV TIMING] Poster preload: no URL, marking ready immediately, +${msSinceNavStart()}ms`);
       setIsPosterPreloaded(true);
       posterPreloadedOnceRef.current = true;
       return;
     }
-    // After first successful preload, URL changes (e.g. textless poster from bundle)
-    // silently background-prefetch without resetting isPosterPreloaded — prevents re-gating
     if (posterPreloadedOnceRef.current) {
-      console.log(`[NAV TIMING] Poster URL changed after initial preload, background prefetch, +${msSinceNavStart()}ms`);
       RNImage.prefetch(posterToPreload).catch(() => {});
       return;
     }
     setIsPosterPreloaded(false);
-    const _prefetchStart = Date.now();
-    console.log(`[NAV TIMING] Poster prefetch starting, +${msSinceNavStart()}ms, url=${posterToPreload.substring(0, 80)}...`);
     RNImage.prefetch(posterToPreload)
       .then(() => {
-        console.log(`[NAV TIMING] Poster prefetch completed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
         setIsPosterPreloaded(true);
         posterPreloadedOnceRef.current = true;
       })
       .catch(() => {
-        console.log(`[NAV TIMING] Poster prefetch failed in ${Date.now() - _prefetchStart}ms, +${msSinceNavStart()}ms`);
         setIsPosterPreloaded(true);
         posterPreloadedOnceRef.current = true;
       }); // Still show page on error
   }, [posterToPreload]);
 
   // Calculate logo style to maintain constant area across different aspect ratios
-  // All logos will have the same width * height regardless of their shape
   const logoStyle = useMemo(() => {
     if (!logoDimensions) return styles.titleLogo;
 
     const { width: imgWidth, height: imgHeight } = logoDimensions;
     const aspectRatio = imgWidth / imgHeight;
 
-    // Fixed target area in square pixels - all logos will have this exact area
-    // TV: 1.8x larger than original, Mobile: reduced by 30% from original
+    // Fixed target area in square pixels
     const baseTargetArea = isTV ? (tvScale * 120) * (tvScale * 120) * 3.4 : 80 * 80 * 2.1;
 
-    // Perceptual boost for squarish logos - wide logos look bigger than their area suggests
-    // Boost area for logos with aspect ratio below reference so they have similar visual presence
+    // Perceptual boost for squarish logos
     const referenceAspectRatio = 5;
     const perceptualBoost = aspectRatio < referenceAspectRatio
       ? Math.pow(referenceAspectRatio / aspectRatio, 0.25)
       : 1;
     const targetArea = baseTargetArea * perceptualBoost;
 
-    // Calculate dimensions that give targetArea while preserving aspect ratio
-    // area = width * height, aspectRatio = width / height
-    // Solving: width = sqrt(area * aspectRatio), height = sqrt(area / aspectRatio)
     let finalWidth = Math.sqrt(targetArea * aspectRatio);
     let finalHeight = Math.sqrt(targetArea / aspectRatio);
 
-    const preScaleWidth = finalWidth;
-    const preScaleHeight = finalHeight;
-    const preScaleArea = finalWidth * finalHeight;
-    let wasScaled = false;
-    let scaleApplied = 1;
-
-    // Bounding box constraints - scale down if needed to fit on screen
-    // maxHeight needs to be generous enough for square-ish logos to achieve target area
-    // TV: 1.8x larger to match the 1.8x logo size increase
+    // Bounding box constraints
     const maxWidth = windowWidth * (isTV ? 0.3 : 0.8);
     const maxHeight = isTV ? tvScale * 216 : 120;
 
     if (finalWidth > maxWidth || finalHeight > maxHeight) {
       const scaleX = finalWidth > maxWidth ? maxWidth / finalWidth : 1;
       const scaleY = finalHeight > maxHeight ? maxHeight / finalHeight : 1;
-      scaleApplied = Math.min(scaleX, scaleY);
+      const scaleApplied = Math.min(scaleX, scaleY);
       finalWidth *= scaleApplied;
       finalHeight *= scaleApplied;
-      wasScaled = true;
     }
-
-    const finalArea = finalWidth * finalHeight;
-
-    console.log('[LOGO DEBUG]', {
-      imgDimensions: { width: imgWidth, height: imgHeight },
-      aspectRatio: aspectRatio.toFixed(2),
-      perceptualBoost: perceptualBoost.toFixed(2),
-      targetArea: Math.round(targetArea),
-      preScale: {
-        width: Math.round(preScaleWidth),
-        height: Math.round(preScaleHeight),
-        area: Math.round(preScaleArea),
-      },
-      bounds: { maxWidth: Math.round(maxWidth), maxHeight: Math.round(maxHeight) },
-      wasScaled,
-      scaleApplied: scaleApplied.toFixed(3),
-      final: {
-        width: Math.round(finalWidth),
-        height: Math.round(finalHeight),
-        area: Math.round(finalArea),
-      },
-    });
 
     return {
       width: finalWidth,
@@ -662,7 +652,7 @@ export default function DetailsScreen() {
     };
   }, [logoDimensions, windowWidth, isTV, tvScale, styles.titleLogo]);
 
-  // Shadow/glow style for logo wrapper (iOS only — traces content alpha channel)
+  // Shadow/glow style for logo wrapper (iOS only)
   const logoGlowStyle = Platform.OS === 'ios' || Platform.OS === 'macos' ? {
     shadowColor: 'rgba(255, 255, 255, 0.2)',
     shadowOffset: { width: 0, height: 0 },
@@ -672,109 +662,30 @@ export default function DetailsScreen() {
 
   // Compute final description/overview, preferring params but falling back to fetched metadata
   const displayDescription = useMemo(() => {
-    // If we have a description from params, use it
     if (description) {
       return description;
     }
-    // For series, fall back to fetched series details
     if (isSeries && seriesDetailsForBackdrop?.overview) {
       return seriesDetailsForBackdrop.overview;
     }
-    // For movies, fall back to fetched movie details
     if (!isSeries && movieDetails?.overview) {
       return movieDetails.overview;
     }
     return '';
   }, [description, isSeries, seriesDetailsForBackdrop, movieDetails]);
 
+  // Reset description height measurements when displayDescription changes
+  useEffect(() => {
+    setCollapsedHeight(0);
+    setExpandedHeight(0);
+    descriptionHeight.value = 0;
+    setIsDescriptionExpanded(false);
+  }, [displayDescription]);
+
   // On mobile, prefer portrait poster for background; on desktop/TV, prefer landscape backdrop
   const headerImage = useMemo(() => {
-    const result = shouldUseAdaptiveHeroSizing ? posterUrl || backdropUrl : backdropUrl || posterUrl;
-    console.log('[Details] headerImage computed:', {
-      shouldUseAdaptiveHeroSizing,
-      posterUrl,
-      backdropUrl,
-      result,
-      isTV: Platform.isTV,
-    });
-    return result;
+    return shouldUseAdaptiveHeroSizing ? posterUrl || backdropUrl : backdropUrl || posterUrl;
   }, [shouldUseAdaptiveHeroSizing, posterUrl, backdropUrl]);
-
-  const seriesIdentifier = useMemo(() => {
-    const trimmedTitle = title.trim();
-    if (titleId) {
-      // Strip episode information (e.g., :S01E02) from titleId to get the series ID
-      // This prevents infinite loops when navigating from Continue Watching
-      return titleId.replace(/:S\d{2}E\d{2}$/i, '');
-    }
-    if (tvdbId) {
-      return `tvdb:${tvdbId}`;
-    }
-    if (tmdbId) {
-      return `tmdb:${tmdbId}`;
-    }
-    if (trimmedTitle) {
-      return `title:${trimmedTitle}`;
-    }
-    return '';
-  }, [title, titleId, tmdbId, tvdbId]);
-
-  const yearNumber = useMemo(() => {
-    const parsed = Number(yearParam);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
-  }, [yearParam]);
-
-  const tmdbIdNumber = useMemo(() => {
-    const parsed = Number(tmdbId);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
-  }, [tmdbId]);
-
-  const tvdbIdNumber = useMemo(() => {
-    const parsed = Number(tvdbId);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
-  }, [tvdbId]);
-
-  const movieDetailsQuery = useMemo(() => {
-    if (isSeries) {
-      return null;
-    }
-    const trimmedTitleId = titleId?.trim();
-    const trimmedTitleName = title?.trim();
-    const trimmedImdbId = imdbId?.trim();
-    const query: {
-      tmdbId?: number;
-      tvdbId?: number;
-      titleId?: string;
-      name?: string;
-      year?: number;
-      imdbId?: string;
-    } = {};
-
-    if (tmdbIdNumber) {
-      query.tmdbId = tmdbIdNumber;
-    }
-    if (tvdbIdNumber) {
-      query.tvdbId = tvdbIdNumber;
-    }
-    if (trimmedTitleId) {
-      query.titleId = trimmedTitleId;
-    }
-    if (trimmedTitleName) {
-      query.name = trimmedTitleName;
-    }
-    if (typeof yearNumber === 'number') {
-      query.year = yearNumber;
-    }
-    if (trimmedImdbId) {
-      query.imdbId = trimmedImdbId;
-    }
-
-    if (Object.keys(query).length === 0) {
-      return null;
-    }
-
-    return query;
-  }, [imdbId, isSeries, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber]);
 
   useEffect(() => {
     let cancelled = false;
@@ -789,22 +700,15 @@ export default function DetailsScreen() {
     RNImage.getSize(
       headerImage,
       (width, height) => {
-        if (cancelled) {
-          return;
-        }
-
+        if (cancelled) return;
         if (!width || !height) {
           setHeaderImageDimensions(null);
           return;
         }
-
         setHeaderImageDimensions({ width, height });
       },
       (error) => {
-        if (cancelled) {
-          return;
-        }
-
+        if (cancelled) return;
         console.warn('[Details] Unable to measure header image size', error);
         setHeaderImageDimensions(null);
       },
@@ -836,39 +740,25 @@ export default function DetailsScreen() {
       return styles.backgroundImageFill;
     }
 
-    const isPortraitArtwork = height >= width;
+    const isPortraitArt = height >= width;
 
-    if (isPortraitArtwork) {
+    if (isPortraitArt) {
       const desiredHeight = viewportHeight;
       const computedWidth = desiredHeight * aspectRatio;
       if (computedWidth <= viewportWidth) {
-        return {
-          height: desiredHeight,
-          width: computedWidth,
-        };
+        return { height: desiredHeight, width: computedWidth };
       }
-
       const scaledHeight = viewportWidth / aspectRatio;
-      return {
-        width: viewportWidth,
-        height: scaledHeight,
-      };
+      return { width: viewportWidth, height: scaledHeight };
     }
 
     const desiredWidth = viewportWidth;
     const computedHeight = desiredWidth / aspectRatio;
     if (computedHeight <= viewportHeight) {
-      return {
-        width: desiredWidth,
-        height: computedHeight,
-      };
+      return { width: desiredWidth, height: computedHeight };
     }
-
     const scaledWidth = viewportHeight * aspectRatio;
-    return {
-      width: scaledWidth,
-      height: viewportHeight,
-    };
+    return { width: scaledWidth, height: viewportHeight };
   }, [headerImageDimensions, shouldUseAdaptiveHeroSizing, styles.backgroundImageFill, windowHeight, windowWidth]);
 
   const isPortraitArtwork = useMemo(() => {
@@ -879,7 +769,6 @@ export default function DetailsScreen() {
   }, [headerImageDimensions]);
 
   const backgroundImageResizeMode = useMemo<ImageResizeMode>(() => {
-    // On tvOS, avoid zooming portrait posters in the hero by using 'contain'
     if (Platform.isTV && isPortraitArtwork === true) {
       return 'contain';
     }
@@ -888,75 +777,211 @@ export default function DetailsScreen() {
 
   const shouldShowBlurredFill = useMemo(() => Platform.isTV && isPortraitArtwork === true, [isPortraitArtwork]);
 
-  // State to hold next episode info from playback
-  const [nextEpisodeFromPlayback, setNextEpisodeFromPlayback] = useState<{
-    seasonNumber: number;
-    episodeNumber: number;
-    autoPlay: boolean;
-  } | null>(null);
-  const allEpisodesRef = useRef<SeriesEpisode[]>([]);
-  const handleEpisodeSelectRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
-  const handlePlayEpisodeRef = useRef<((episode: SeriesEpisode) => void) | null>(null);
-  // Ref to pass shuffle mode synchronously to playback (state updates are async)
-  const pendingShuffleModeRef = useRef<boolean>(false);
+  // ===== Hook 2: useTrailers (called before usePlayback; prequeueId bridged via effect) =====
+  const trailersHook = useTrailers({
+    primaryTrailer,
+    autoPlayTrailersTV: autoPlayTrailersTV ?? false,
+    isDetailsPageActive,
+    prequeueId: null, // Bridged via effect below
+  });
 
-  // Check for next episode when screen comes into focus
+  // ===== Hook 3: usePlayback =====
+  const playbackPreference = useMemo<PlaybackPreference>(() => {
+    const userPref = userSettings?.playback?.preferredPlayer;
+    const globalPref = settings?.playback?.preferredPlayer;
+    const value = userPref || globalPref;
+    if (value === 'outplayer' || value === 'infuse') {
+      if (value === 'infuse' && Platform.OS === 'android') {
+        return 'native';
+      }
+      return value;
+    }
+    return 'native';
+  }, [userSettings?.playback?.preferredPlayer, settings?.playback?.preferredPlayer]);
+
+  const playback = usePlayback({
+    titleId,
+    title,
+    mediaType,
+    isSeries,
+    activeUserId,
+    imdbId,
+    tvdbId,
+    tmdbId,
+    yearNumber,
+    seriesIdentifier,
+    headerImage: headerImage || '',
+    isIosWeb,
+    isSelectBlocked,
+    instanceId: '',
+    router,
+    settings,
+    userSettings,
+    playbackPreference,
+    activeEpisode,
+    nextUpEpisode,
+    isShuffleMode,
+    detailsBundle,
+    bundleReady,
+    activeUser: activeUser ?? null,
+    showToast,
+    hideToast,
+    showLoadingScreen,
+    hideLoadingScreen,
+    setOnCancel,
+    dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
+    isDetailsPageActive,
+    progressRefreshKey,
+    setProgressRefreshKey,
+  });
+
+  // Bridge: stop trailer when content prequeue starts
+  useEffect(() => {
+    if (playback.prequeueId && trailersHook.isBackdropTrailerPlaying) {
+      trailersHook.setIsBackdropTrailerPlaying(false);
+      trailersHook.setIsTrailerImmersiveMode(false);
+    }
+  }, [playback.prequeueId]);
+
+  // Bridge: don't auto-start trailer when content prequeue is active
+  useEffect(() => {
+    if (
+      autoPlayTrailersTV &&
+      trailersHook.trailerPrequeueStatus === 'ready' &&
+      trailersHook.trailerStreamUrl &&
+      !trailersHook.trailerAutoPlayDismissed &&
+      playback.prequeueId
+    ) {
+      // Content prequeue is active, don't auto-start trailer
+      return;
+    }
+  }, [autoPlayTrailersTV, trailersHook.trailerPrequeueStatus, trailersHook.trailerStreamUrl, trailersHook.trailerAutoPlayDismissed, playback.prequeueId]);
+
+  // ===== Hook 4: useEpisodeManager =====
+  const episodeManager = useEpisodeManager({
+    isSeries,
+    seriesIdentifier,
+    title,
+    activeUserId,
+    detailsBundle,
+    bundleReady,
+    resolveAndPlayRef: playback.resolveAndPlayRef,
+    dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
+    showLoadingScreenIfEnabled: playback.showLoadingScreenIfEnabled,
+    pendingShuffleModeRef: playback.pendingShuffleModeRef,
+    nextEpisodeFromPlayback,
+    setNextEpisodeFromPlayback,
+    setCurrentProgress: playback.setCurrentProgress,
+    setPendingPlaybackAction: playback.setPendingPlaybackAction,
+    setResumeModalVisible: playback.setResumeModalVisible,
+    pendingStartOffsetRef: playback.pendingStartOffsetRef,
+    setSelectionError: playback.setSelectionError,
+    setSelectionInfo: playback.setSelectionInfo,
+    imdbId,
+    tmdbId,
+    tvdbId,
+    activeEpisode,
+    setActiveEpisode,
+    nextUpEpisode,
+    setNextUpEpisode,
+    isShuffleMode,
+    setIsShuffleMode,
+  });
+
+  // ===== Hook 5: useWatchActions =====
+  const externalIds = useMemo(() => {
+    const ids: Record<string, string> = {};
+    if (tmdbId) ids.tmdb = tmdbId;
+    if (imdbId) ids.imdb = imdbId;
+    if (tvdbId) ids.tvdb = tvdbId;
+    return Object.keys(ids).length ? ids : undefined;
+  }, [imdbId, tmdbId, tvdbId]);
+
+  const watchActions = useWatchActions({
+    titleId,
+    title,
+    description,
+    mediaType,
+    isSeries,
+    seriesIdentifier,
+    yearNumber,
+    posterUrl: posterUrl || '',
+    backdropUrl: backdropUrl || '',
+    externalIds,
+    activeUserId,
+    addToWatchlist,
+    removeFromWatchlist,
+    getItem,
+    isItemWatched,
+    toggleWatchStatus,
+    bulkUpdateWatchStatus,
+    refreshWatchStatus,
+    recordEpisodeWatch,
+    allEpisodes: episodeManager.allEpisodes,
+    activeEpisode,
+    nextUpEpisode,
+    findFirstEpisode: episodeManager.findFirstEpisode,
+    findFirstEpisodeOfNextSeason: episodeManager.findFirstEpisodeOfNextSeason,
+    findNextEpisode: episodeManager.findNextEpisode,
+    handleEpisodeSelect: episodeManager.handleEpisodeSelect,
+    toEpisodeReference: episodeManager.toEpisodeReference,
+    dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
+  });
+
+  // ===== Hook 6: useManualSelectFlow =====
+  const manualSelect = useManualSelectFlow({
+    title,
+    activeEpisode,
+    nextUpEpisode,
+    fetchIndexerResults: playback.fetchIndexerResults,
+    getEpisodeSearchContext: playback.getEpisodeSearchContext,
+    handleInitiatePlayback: playback.handleInitiatePlayback,
+    checkAndShowResumeModal: playback.checkAndShowResumeModal,
+    showLoadingScreenIfEnabled: playback.showLoadingScreenIfEnabled,
+    hideLoadingScreen,
+    setSelectionInfo: playback.setSelectionInfo,
+    setSelectionError: playback.setSelectionError,
+    setIsResolving: playback.setIsResolving,
+    setShowBlackOverlay: playback.setShowBlackOverlay,
+    dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
+    abortControllerRef: playback.abortControllerRef,
+  });
+
+  // ===== Focus effect: consume next episode from playback navigation =====
   useFocusEffect(
     useCallback(() => {
       if (titleId) {
         const nextEp = playbackNavigation.consumeNextEpisode(titleId);
         if (nextEp) {
-          console.log('[Details] Found next episode from playback:', nextEp, {
-            hasPrequeueId: !!nextEp.prequeueId,
-            hasPrequeueStatus: !!nextEp.prequeueStatus,
-            prequeueStatusReady: nextEp.prequeueStatus
-              ? apiService.isPrequeueReady(nextEp.prequeueStatus.status)
-              : false,
-          });
           setNextEpisodeFromPlayback(nextEp);
-          // Restore shuffle mode from playback navigation (set both state and ref for synchronous access)
           setIsShuffleMode(nextEp.shuffleMode);
-          pendingShuffleModeRef.current = nextEp.shuffleMode;
+          playback.pendingShuffleModeRef.current = nextEp.shuffleMode;
 
           // Store prequeue data from navigation if present
           if (nextEp.prequeueId) {
-            setPrequeueId(nextEp.prequeueId);
-            setPrequeueTargetEpisode({
-              seasonNumber: nextEp.seasonNumber,
-              episodeNumber: nextEp.episodeNumber,
-            });
-            // ALWAYS cache the prequeue ID in ref (even if not ready yet) to avoid React state timing issues
-            // This ensures resolveAndPlay can access it immediately without waiting for state update
-            navigationPrequeueIdRef.current = {
+            playback.navigationPrequeueIdRef.current = {
               prequeueId: nextEp.prequeueId,
               targetEpisode: {
                 seasonNumber: nextEp.seasonNumber,
                 episodeNumber: nextEp.episodeNumber,
               },
             };
-            console.log('[Details] Cached navigation prequeue ID:', nextEp.prequeueId);
-            // Cache the ready status so resolveAndPlay can use it directly
             if (nextEp.prequeueStatus && apiService.isPrequeueReady(nextEp.prequeueStatus.status)) {
-              navigationPrequeueStatusRef.current = nextEp.prequeueStatus;
-              setPrequeueReady(true);
-              console.log('[Details] Cached navigation prequeue status (ready)');
+              playback.navigationPrequeueStatusRef.current = nextEp.prequeueStatus;
             }
           }
 
-          // Try to select/play the episode immediately if we have the episodes loaded
-          if (allEpisodesRef.current.length > 0) {
-            const matchingEpisode = allEpisodesRef.current.find(
+          // Try to select/play the episode immediately if episodes are loaded
+          if (episodeManager.allEpisodesRef.current.length > 0) {
+            const matchingEpisode = episodeManager.allEpisodesRef.current.find(
               (ep) => ep.seasonNumber === nextEp.seasonNumber && ep.episodeNumber === nextEp.episodeNumber,
             );
             if (matchingEpisode) {
-              if (nextEp.autoPlay && handlePlayEpisodeRef.current) {
-                console.log('[Details] Auto-playing next episode:', matchingEpisode);
-                handlePlayEpisodeRef.current(matchingEpisode);
-                // Clear the state since we're handling it now
+              if (nextEp.autoPlay && episodeManager.handlePlayEpisodeRef.current) {
+                episodeManager.handlePlayEpisodeRef.current(matchingEpisode);
                 setNextEpisodeFromPlayback(null);
-              } else if (handleEpisodeSelectRef.current) {
-                console.log('[Details] Selecting next episode:', matchingEpisode);
-                handleEpisodeSelectRef.current(matchingEpisode);
+              } else if (episodeManager.handleEpisodeSelectRef.current) {
+                episodeManager.handleEpisodeSelectRef.current(matchingEpisode);
               }
             }
           }
@@ -966,1599 +991,111 @@ export default function DetailsScreen() {
   );
 
   const initialSeasonNumber = useMemo(() => {
-    // If we have a next episode from playback, use that
     if (nextEpisodeFromPlayback) {
       return nextEpisodeFromPlayback.seasonNumber;
     }
-
-    // Empty string should be treated as null, not 0
     if (!initialSeasonParam || initialSeasonParam.trim() === '') {
-      console.log('[Details] Initial season: empty param, returning null');
       return null;
     }
     const parsed = Number(initialSeasonParam);
-    const result = Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-    console.log('[Details] Initial season:', { initialSeasonParam, parsed, result });
-    return result;
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
   }, [initialSeasonParam, nextEpisodeFromPlayback]);
 
   const initialEpisodeNumber = useMemo(() => {
-    // If we have a next episode from playback, use that
     if (nextEpisodeFromPlayback) {
       return nextEpisodeFromPlayback.episodeNumber;
     }
-
-    // Empty string should be treated as null, not 0
     if (!initialEpisodeParam || initialEpisodeParam.trim() === '') {
-      console.log('[Details] Initial episode: empty param, returning null');
       return null;
     }
     const parsed = Number(initialEpisodeParam);
-    const result = Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-    console.log('[Details] Initial episode:', { initialEpisodeParam, parsed, result });
-    return result;
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
   }, [initialEpisodeParam, nextEpisodeFromPlayback]);
 
-  const { settings, userSettings } = useBackendSettings();
-  const { addToWatchlist, removeFromWatchlist, getItem } = useWatchlist();
-  const {
-    isWatched: isItemWatched,
-    toggleWatchStatus,
-    bulkUpdateWatchStatus,
-    refresh: refreshWatchStatus,
-    items: watchStatusItems,
-  } = useWatchStatus();
-  const { showToast, hideToast } = useToast();
-  const { recordEpisodeWatch } = useContinueWatching();
-  const { activeUserId, activeUser } = useUserProfiles();
-  const { showLoadingScreen, hideLoadingScreen, setOnCancel } = useLoadingScreen();
-
-  // Kids profiles have restricted navigation - disable cast/crew and similar content links
-  const isKidsProfile = activeUser?.isKidsProfile ?? false;
-
-  const [isResolving, setIsResolving] = useState(false);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
-  const [showBlackOverlay, setShowBlackOverlay] = useState(false);
-
-  // Clear black overlay, loading screen, and refresh progress when returning to details page
-  const isInitialFocus = useRef(true);
-  useFocusEffect(
-    useCallback(() => {
-      setShowBlackOverlay(false);
-      hideLoadingScreen();
-      // Trigger progress refresh when returning from playback (skip initial mount)
-      if (isInitialFocus.current) {
-        isInitialFocus.current = false;
-      } else {
-        setProgressRefreshKey((k) => k + 1);
-      }
-    }, [hideLoadingScreen]),
-  );
-
-  // Prevent screen timeout during playback resolution (auto-play and manual selection)
-  useEffect(() => {
-    if (isResolving) {
-      activateKeepAwakeAsync().catch(() => {
-        // Ignore errors - keep-awake may not be available on all platforms
-      });
-    } else {
-      deactivateKeepAwake();
-    }
-
-    return () => {
-      deactivateKeepAwake();
-    };
-  }, [isResolving]);
-
-  const [manualVisible, setManualVisible] = useState(false);
-  const [manualLoading, setManualLoading] = useState(false);
-  const [manualError, setManualError] = useState<string | null>(null);
-  // Start loading states as true so page waits for metadata before showing (on TV/mobile)
-  const [movieDetailsLoading, setMovieDetailsLoading] = useState(true);
-  const [movieDetailsError, setMovieDetailsError] = useState<string | null>(null);
-  const [seriesDetailsLoading, setSeriesDetailsLoading] = useState(true);
-  const [manualResults, setManualResults] = useState<NZBResult[]>([]);
-  const [selectionInfo, setSelectionInfo] = useState<string | null>(null);
-  const [, setHasSeriesFocusTarget] = useState(false);
-  const [watchlistBusy, setWatchlistBusy] = useState(false);
-  const [watchlistError, setWatchlistError] = useState<string | null>(null);
-  const [activeEpisode, setActiveEpisode] = useState<SeriesEpisode | null>(null);
-  const [trailers, setTrailers] = useState<Trailer[]>([]);
-  const [primaryTrailer, setPrimaryTrailer] = useState<Trailer | null>(null);
-  const [trailersLoading, setTrailersLoading] = useState(false);
-  const [trailersError, setTrailersError] = useState<string | null>(null);
-  const [trailerModalVisible, setTrailerModalVisible] = useState(false);
-  const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
-  // Pre-loaded trailer stream URL (served from backend prequeue for YouTube trailers)
-  const [trailerStreamUrl, setTrailerStreamUrl] = useState<string | null>(null);
-  // Trailer prequeue state for 1080p YouTube trailers
-  const [trailerPrequeueId, setTrailerPrequeueId] = useState<string | null>(null);
-  const [trailerPrequeueStatus, setTrailerPrequeueStatus] = useState<TrailerPrequeueStatus | null>(null);
-
-  // TV auto-play trailer state
-  const [isBackdropTrailerPlaying, setIsBackdropTrailerPlaying] = useState(false);
-  const [isTrailerImmersiveMode, setIsTrailerImmersiveMode] = useState(false);
-  const [trailerAutoPlayDismissed, setTrailerAutoPlayDismissed] = useState(false); // True after user takes any action
-  const autoPlayTrailersTV = Platform.isTV && settings?.playback?.autoPlayTrailersTV;
-
-  // Dismiss trailer auto-play when user takes any action (play, watchlist, etc.)
-  const dismissTrailerAutoPlay = useCallback(() => {
-    if (autoPlayTrailersTV) {
-      setTrailerAutoPlayDismissed(true);
-      setIsBackdropTrailerPlaying(false);
-    }
-  }, [autoPlayTrailersTV]);
-
-  // Similar content ("More Like This") state
-  const [similarContent, setSimilarContent] = useState<Title[]>([]);
-  const [similarLoading, setSimilarLoading] = useState(true);
-
-  const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
-  const [resumeModalVisible, setResumeModalVisible] = useState(false);
-  const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
-  const [episodeSelectorVisible, setEpisodeSelectorVisible] = useState(false);
-  const [currentProgress, setCurrentProgress] = useState<{
-    position: number;
-    duration: number;
-    percentWatched: number;
-  } | null>(null);
-  const [displayProgress, setDisplayProgress] = useState<number | null>(null);
-  const [progressRefreshKey, setProgressRefreshKey] = useState(0);
-  const [contentPreference, setContentPreference] = useState<ContentPreference | null>(null);
-  const [episodeProgressMap, setEpisodeProgressMap] = useState<Map<string, number>>(new Map());
-
-  // Details bundle: single-request hydration for all details-page data
-  const [detailsBundle, setDetailsBundle] = useState<DetailsBundleData | null>(null);
-  const [bundleReady, setBundleReady] = useState(false);
-  const hydratedFromBundle = useRef({
-    seriesDetails: false,
-    movieDetails: false,
-    similar: false,
-    trailers: false,
-    contentPreference: false,
-    watchState: false,
-    playbackProgress: false,
-  });
-  const bundleTrailerSeasonRef = useRef<number | undefined>(undefined);
-
-  const _overlayOpen =
-    manualVisible ||
-    trailerModalVisible ||
-    bulkWatchModalVisible ||
-    resumeModalVisible ||
-    seasonSelectorVisible ||
-    episodeSelectorVisible;
-  const [pendingPlaybackAction, setPendingPlaybackAction] = useState<((startOffset?: number) => Promise<void>) | null>(
-    null,
-  );
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
-  const [collapsedHeight, setCollapsedHeight] = useState(0);
-  const [expandedHeight, setExpandedHeight] = useState(0);
-  const descriptionHeight = useSharedValue(0);
-  // TV: Track topContent height for dynamic spacer sizing via shared value
-  // so the spacer updates on the UI thread in the same frame as the layout measurement.
-  // Default to 300 (typical height) to minimize any initial frame shift.
-  const tvTopContentHeightSV = useSharedValue(300);
-
-  // Reset description height measurements when displayDescription changes
-  // This ensures the container re-measures when overview loads asynchronously
-  useEffect(() => {
-    setCollapsedHeight(0);
-    setExpandedHeight(0);
-    descriptionHeight.value = 0;
-    setIsDescriptionExpanded(false);
-  }, [displayDescription]);
-
-  const [nextUpEpisode, setNextUpEpisode] = useState<SeriesEpisode | null>(null);
-  const [allEpisodes, setAllEpisodes] = useState<SeriesEpisode[]>([]);
-  const [isShuffleMode, setIsShuffleMode] = useState(false);
-  // Keep pendingShuffleModeRef in sync with state for subsequent playbacks
-  useEffect(() => {
-    pendingShuffleModeRef.current = isShuffleMode;
-  }, [isShuffleMode]);
-  const [isEpisodeStripFocused, setIsEpisodeStripFocused] = useState(false);
-  const [seasons, setSeasons] = useState<SeriesSeason[]>([]);
-  const [selectedSeason, setSelectedSeason] = useState<SeriesSeason | null>(null);
-  const [hasWatchedEpisodes, setHasWatchedEpisodes] = useState(false);
-  const [episodesLoading, setEpisodesLoading] = useState(true);
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Debug logging for navigation
-  useEffect(() => {
-    if (Platform.isTV) {
-      console.log('[Details NAV DEBUG] Component state:', {
-        isTV: Platform.isTV,
-        hasActiveEpisode: !!activeEpisode,
-        activeEpisodeNum: activeEpisode?.episodeNumber,
-        isEpisodeStripFocused,
-        isSeries,
-        episodesLoading,
-      });
-    }
-  }, [activeEpisode, isEpisodeStripFocused, isSeries, episodesLoading]);
-
-  // === Details Bundle: single-request hydration ===
-  useEffect(() => {
-    if (!activeUserId) return;
-    // Need at least one identifier to be useful
-    if (!titleId && !title) return;
-
-    let cancelled = false;
-
-    const bundleType = isSeries ? 'series' : 'movie';
-    const _bundleStart = Date.now();
-    console.log(`[NAV TIMING] Details bundle fetch starting, +${msSinceNavStart()}ms, type=${bundleType}, titleId=${titleId}`);
-
-    apiService
-      .getDetailsBundleData(activeUserId, {
-        type: bundleType,
-        titleId: titleId || undefined,
-        name: title || undefined,
-        year: yearNumber || undefined,
-        tvdbId: tvdbIdNumber || undefined,
-        tmdbId: tmdbIdNumber || undefined,
-        imdbId: imdbId || undefined,
-      })
-      .then((data) => {
-        if (cancelled) return;
-        console.log(`[NAV TIMING] Details bundle fetch completed in ${Date.now() - _bundleStart}ms, +${msSinceNavStart()}ms`);
-        setDetailsBundle(data);
-        setBundleReady(true);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.log(`[NAV TIMING] Details bundle fetch failed in ${Date.now() - _bundleStart}ms, +${msSinceNavStart()}ms`);
-        console.log('[details-bundle] fetch failed, falling back to individual requests:', error);
-        setDetailsBundle(null);
-        setBundleReady(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeUserId, titleId, title, isSeries, yearNumber, tvdbIdNumber, tmdbIdNumber, imdbId]);
-
-  // === Consolidated bundle hydration: one batch of state updates when bundle arrives ===
-  // This replaces the scattered hydration blocks in individual effects.
-  // All state updates happen in a single synchronous batch (React 18 auto-batches in effects),
-  // preventing cascading re-renders that would cause the visibility gate to re-close.
-  useEffect(() => {
-    if (!detailsBundle) return;
-
-    console.log(`[NAV TIMING] Hydrating from bundle (single batch), +${msSinceNavStart()}ms`);
-
-    // movieDetails
-    if (detailsBundle.movieDetails && !hydratedFromBundle.current.movieDetails) {
-      hydratedFromBundle.current.movieDetails = true;
-      setMovieDetails(detailsBundle.movieDetails);
-      console.log(`[NAV TIMING] movieDetailsLoading=false (from bundle batch), +${msSinceNavStart()}ms`);
-      setMovieDetailsLoading(false);
-    }
-
-    // seriesDetails
-    if (detailsBundle.seriesDetails && !hydratedFromBundle.current.seriesDetails) {
-      hydratedFromBundle.current.seriesDetails = true;
-      setSeriesDetailsData(detailsBundle.seriesDetails);
-      console.log(`[NAV TIMING] seriesDetailsLoading=false (from bundle batch), +${msSinceNavStart()}ms`);
-      setSeriesDetailsLoading(false);
-    }
-
-    // similar
-    if (!hydratedFromBundle.current.similar) {
-      hydratedFromBundle.current.similar = true;
-      setSimilarContent(detailsBundle.similar);
-      setSimilarLoading(false);
-    }
-
-    // trailers
-    if (detailsBundle.trailers && !hydratedFromBundle.current.trailers) {
-      hydratedFromBundle.current.trailers = true;
-      bundleTrailerSeasonRef.current = undefined; // initial load — no season selected yet
-      const nextTrailers = detailsBundle.trailers.trailers ?? [];
-      setTrailers(nextTrailers);
-      setPrimaryTrailer(detailsBundle.trailers.primaryTrailer ?? (nextTrailers.length ? nextTrailers[0] : null));
-      setTrailersLoading(false);
-    }
-
-    // contentPreference
-    if (!hydratedFromBundle.current.contentPreference) {
-      hydratedFromBundle.current.contentPreference = true;
-      setContentPreference(detailsBundle.contentPreference);
-    }
-
-    // episodeProgressMap (series only)
-    if (isSeries && seriesIdentifier && !hydratedFromBundle.current.playbackProgress) {
-      hydratedFromBundle.current.playbackProgress = true;
-      const progressMap = new Map<string, number>();
-      const itemIdPrefix = `${seriesIdentifier}:`;
-      for (const progress of detailsBundle.playbackProgress) {
-        if (progress.mediaType !== 'episode') continue;
-        const matchesSeriesId = progress.seriesId === seriesIdentifier;
-        const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
-        if (matchesSeriesId || matchesItemIdPrefix) {
-          let seasonNum = progress.seasonNumber;
-          let episodeNum = progress.episodeNumber;
-          if ((!seasonNum || !episodeNum) && progress.itemId) {
-            const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
-            if (match) {
-              seasonNum = parseInt(match[1], 10);
-              episodeNum = parseInt(match[2], 10);
-            }
-          }
-          if (seasonNum && episodeNum) {
-            const key = `${seasonNum}-${episodeNum}`;
-            if (progress.percentWatched > 5 && progress.percentWatched < 95) {
-              progressMap.set(key, Math.round(progress.percentWatched));
-            }
-          }
-        }
-      }
-      setEpisodeProgressMap(progressMap);
-    }
-
-    // watchState is NOT hydrated here — it depends on allEpisodes which may not be ready yet
-  }, [detailsBundle, isSeries, seriesIdentifier]);
-
-  // Prequeue state for pre-loading playback
-  const [prequeueId, setPrequeueId] = useState<string | null>(null);
-  const [prequeueReady, setPrequeueReady] = useState(false);
-  const [prequeueDisplayInfo, setPrequeueDisplayInfo] = useState<PrequeueStatusResponse | null>(null);
-  const [prequeueTargetEpisode, setPrequeueTargetEpisode] = useState<{
-    seasonNumber: number;
-    episodeNumber: number;
-  } | null>(null);
-  // Track pending prequeue request so play button can wait for it
-  // Returns both ID and target episode so we don't have to wait for state updates
-  const prequeuePromiseRef = useRef<Promise<{
-    id: string;
-    targetEpisode: { seasonNumber: number; episodeNumber: number } | null;
-  } | null> | null>(null);
-  // Cache prequeue status from navigation (player already resolved it)
-  const navigationPrequeueStatusRef = useRef<PrequeueStatusResponse | null>(null);
-  // Cache navigation prequeue ID even when not ready yet (to avoid React state timing issues)
-  const navigationPrequeueIdRef = useRef<{
-    prequeueId: string;
-    targetEpisode: { seasonNumber: number; episodeNumber: number };
-  } | null>(null);
-
-  // Track override state - user's manual selection that differs from prequeue
-  const [trackOverrideAudio, setTrackOverrideAudio] = useState<number | null>(null);
-  const [trackOverrideSubtitle, setTrackOverrideSubtitle] = useState<number | null>(null);
-
-  // Modal visibility for track selection
-  const [showAudioTrackModal, setShowAudioTrackModal] = useState(false);
-  const [showSubtitleTrackModal, setShowSubtitleTrackModal] = useState(false);
-
-  // Pulse animation for prequeue loading state
-  const prequeuePulseOpacity = useSharedValue(1);
-  // Fade-in animation for when prequeue content first appears
-  const prequeueFadeIn = useSharedValue(0);
-  const prequeuePulseStyle = useAnimatedStyle(() => {
-    return {
-      opacity: prequeuePulseOpacity.value * prequeueFadeIn.value,
-    };
-  });
-
-  // Handle fade-in when prequeue info first appears
-  useEffect(() => {
-    if (prequeueDisplayInfo) {
-      // Fade in the content
-      prequeueFadeIn.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.ease) });
-    } else {
-      // Reset fade for next appearance
-      prequeueFadeIn.value = 0;
-    }
-  }, [!!prequeueDisplayInfo]);
-
-  // Start/stop pulse animation based on prequeue status
-  useEffect(() => {
-    const isLoading = prequeueDisplayInfo && !prequeueReady && prequeueDisplayInfo.status !== 'failed';
-    if (isLoading) {
-      // Start pulsing - animate between 0.4 and 1
-      prequeuePulseOpacity.value = 0.4;
-      prequeuePulseOpacity.value = withRepeat(
-        withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-        -1,
-        true
-      );
-    } else {
-      // Stop pulsing, set to full opacity
-      cancelAnimation(prequeuePulseOpacity);
-      prequeuePulseOpacity.value = 1;
-    }
-  }, [prequeueDisplayInfo?.status, prequeueReady]);
-
-  // Build audio track options for selection modal
-  const buildPrequeueAudioOptions = useCallback(() => {
-    if (!prequeueDisplayInfo?.audioTracks) return [];
-    return prequeueDisplayInfo.audioTracks.map((track) => ({
-      id: String(track.index),
-      label: `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`,
-      description: track.codec?.toUpperCase(),
-    }));
-  }, [prequeueDisplayInfo?.audioTracks]);
-
-  // Build subtitle track options for selection modal
-  const buildPrequeueSubtitleOptions = useCallback(() => {
-    if (!prequeueDisplayInfo?.subtitleTracks) return [];
-    const options = [{ id: '-1', label: 'Off' }];
-    options.push(
-      ...prequeueDisplayInfo.subtitleTracks.map((track) => ({
-        id: String(track.index),
-        label: `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`,
-        description: track.forced ? 'FORCED' : undefined,
-      })),
-    );
-    return options;
-  }, [prequeueDisplayInfo?.subtitleTracks]);
-
-  // Computed current audio track ID (accounting for overrides)
-  const currentAudioTrackId = useMemo(() => {
-    if (trackOverrideAudio !== null) return String(trackOverrideAudio);
-    const selected = prequeueDisplayInfo?.selectedAudioTrack;
-    return selected !== undefined && selected >= 0
-      ? String(selected)
-      : prequeueDisplayInfo?.audioTracks?.[0]?.index !== undefined
-        ? String(prequeueDisplayInfo.audioTracks[0].index)
-        : null;
-  }, [trackOverrideAudio, prequeueDisplayInfo?.selectedAudioTrack, prequeueDisplayInfo?.audioTracks]);
-
-  // Computed current subtitle track ID (accounting for overrides)
-  const currentSubtitleTrackId = useMemo(() => {
-    if (trackOverrideSubtitle !== null) return String(trackOverrideSubtitle);
-    const selected = prequeueDisplayInfo?.selectedSubtitleTrack;
-    return selected !== undefined && selected >= 0 ? String(selected) : '-1';
-  }, [trackOverrideSubtitle, prequeueDisplayInfo?.selectedSubtitleTrack]);
-
-  // Debug: Track resume modal visibility changes
-  useEffect(() => {
-    console.log('🎬 resumeModalVisible changed to:', resumeModalVisible);
-    console.log('🎬 currentProgress:', currentProgress);
-  }, [resumeModalVisible, currentProgress]);
-
-  // Reset episodes loading state when titleId changes or when it's not a series
-  useEffect(() => {
+  // ===== Derived display values =====
+  const credits = useMemo(() => {
     if (isSeries) {
-      setEpisodesLoading(true);
-    } else {
-      setEpisodesLoading(false);
+      return seriesDetailsData?.title?.credits ?? null;
     }
-  }, [titleId, isSeries]);
+    return movieDetails?.credits ?? null;
+  }, [isSeries, seriesDetailsData, movieDetails]);
 
-  // Clean up black overlay on unmount
-  useEffect(() => {
-    return () => {
-      setShowBlackOverlay(false);
-    };
+  const ratings = useMemo(() => {
+    const rawRatings = isSeries ? (seriesDetailsForBackdrop?.ratings ?? []) : (movieDetails?.ratings ?? []);
+    return [...rawRatings].sort((a, b) => {
+      const orderA = RATING_ORDER[a.source] ?? 99;
+      const orderB = RATING_ORDER[b.source] ?? 99;
+      return orderA - orderB;
+    });
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
+  const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
+
+  const genres = useMemo(() => {
+    const rawGenres = isSeries ? (seriesDetailsForBackdrop?.genres ?? []) : (movieDetails?.genres ?? []);
+    return rawGenres.slice(0, 3);
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
+  const certification = useMemo(() => {
+    return isSeries ? seriesDetailsForBackdrop?.certification : movieDetails?.certification;
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
+  const describeRelease = useCallback((release?: Title['homeRelease']) => {
+    if (!release?.date) return '';
+    const dateLabel = formatPublishDate(release.date) || release.date;
+    const parts = [dateLabel];
+    if (release.country) {
+      parts.push(release.country.toUpperCase());
+    }
+    return parts.filter(Boolean).join(' . ');
   }, []);
 
-  // Set up cancel handler for loading screen
-  useEffect(() => {
-    setOnCancel(() => {
-      console.log('🚫 Loading screen cancelled by user');
-      // Cancel any pending playback
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-      // Clear the black overlay
-      setShowBlackOverlay(false);
-      // Clear resolving state
-      setIsResolving(false);
-    });
-
-    return () => {
-      setOnCancel(null);
-    };
-  }, [setOnCancel]);
-
-  // Only activate spatial navigation when we're on the details page (not on player or other pages)
-  const isDetailsPageActive = pathname === '/details';
-
-  // Debug: Log component lifecycle and planned requests
-  useEffect(() => {
-    console.log(`[Details] Mounted`, {
-      titleId,
-      isSeries,
-      mediaType,
-      seriesIdentifier,
-      activeUserId,
-      plannedRequests: [
-        isSeries ? 'seriesDetails' : 'movieDetails',
-        'similar',
-        'trailers',
-        isSeries ? 'listPlaybackProgress (episode map + display)' : 'getPlaybackProgress (display)',
-        'seriesWatchState',
-        'prequeue',
-      ].filter(Boolean),
-    });
-    return () => {
-      console.log(`[Details] Unmounting - titleId: ${titleId}`);
-    };
-  }, [instanceId, titleId, isSeries, mediaType, seriesIdentifier, activeUserId]);
-
-  useEffect(() => {
-    if (Platform.isTV) {
-      const isActive = isDetailsPageActive &&
-          !manualVisible &&
-          !trailerModalVisible &&
-          !bulkWatchModalVisible &&
-          !resumeModalVisible &&
-          !seasonSelectorVisible &&
-          !episodeSelectorVisible;
-      console.log(
-        `[Details DEBUG ${instanceId}] Spatial navigation active: ${isActive}`,
-        {
-          titleId,
-          pathname,
-          isDetailsPageActive,
-          manualVisible,
-          trailerModalVisible,
-          bulkWatchModalVisible,
-          resumeModalVisible,
-          seasonSelectorVisible,
-          episodeSelectorVisible,
-        },
-      );
+  const getHomeReleaseIcon = useCallback((release?: Title['homeRelease']): keyof typeof Ionicons.glyphMap => {
+    const type = release?.type?.toLowerCase();
+    switch (type) {
+      case 'digital': return 'cloud-outline';
+      case 'physical': return 'disc-outline';
+      case 'tv': return 'tv-outline';
+      default: return 'home-outline';
     }
-  }, [
-    isDetailsPageActive,
-    manualVisible,
-    trailerModalVisible,
-    bulkWatchModalVisible,
-    resumeModalVisible,
-    seasonSelectorVisible,
-    episodeSelectorVisible,
-    pathname,
-    instanceId,
-    titleId,
-  ]);
-
-  // Cleanup: cancel pending playback on unmount or navigation away
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        console.log('🚫 Cancelling pending playback due to navigation away');
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-    };
   }, []);
 
-  // Fetch watch state to determine next episode
-  useEffect(() => {
-    if (!isSeries || !seriesIdentifier || !activeUserId || allEpisodes.length === 0) {
-      setNextUpEpisode(null);
-      setHasWatchedEpisodes(false);
-      return;
+  const releaseRows = useMemo(() => {
+    if (isSeries || !movieDetails) return [];
+    const rows: { key: string; icon: keyof typeof Ionicons.glyphMap; value: string }[] = [];
+    if (movieDetails.theatricalRelease) {
+      const value = describeRelease(movieDetails.theatricalRelease);
+      if (value) rows.push({ key: 'theatrical', icon: 'film-outline', value });
     }
-
-    // Process watch state from any source (bundle or individual fetch)
-    const processWatchState = (watchState: import('@/services/api').SeriesWatchState | null) => {
-      const watchedEpisodesCount = watchState?.watchedEpisodes ? Object.keys(watchState.watchedEpisodes).length : 0;
-      setHasWatchedEpisodes(watchedEpisodesCount > 0);
-
-      if (!watchState?.nextEpisode) {
-        return;
-      }
-
-      const matchingEpisode = allEpisodes.find(
-        (ep) =>
-          ep.seasonNumber === watchState.nextEpisode!.seasonNumber &&
-          ep.episodeNumber === watchState.nextEpisode!.episodeNumber,
-      );
-
-      if (matchingEpisode) {
-        console.log('📺 Found next up episode:', matchingEpisode);
-        setNextUpEpisode(matchingEpisode);
-      }
-    };
-
-    // Hydrate from bundle if available
-    if (detailsBundle && !hydratedFromBundle.current.watchState) {
-      hydratedFromBundle.current.watchState = true;
-      processWatchState(detailsBundle.watchState);
-      return;
+    if (movieDetails.homeRelease) {
+      const value = describeRelease(movieDetails.homeRelease);
+      if (value) rows.push({ key: 'home', icon: getHomeReleaseIcon(movieDetails.homeRelease), value });
     }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady) return;
-
-    // Already hydrated from bundle — no need to fetch individually
-    if (hydratedFromBundle.current.watchState) return;
-
-    let cancelled = false;
-
-    apiService
-      .getSeriesWatchState(activeUserId, seriesIdentifier)
-      .then((watchState) => {
-        if (cancelled) return;
-        processWatchState(watchState);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.log('Unable to fetch watch state (may not exist yet):', error);
-          setHasWatchedEpisodes(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isSeries, seriesIdentifier, activeUserId, allEpisodes, detailsBundle, bundleReady]);
-
-  // Fetch content preference for language override indicator
-  useEffect(() => {
-    // Use series identifier for series, or titleId for movies
-    const contentId = isSeries ? seriesIdentifier : titleId;
-    if (!activeUserId || !contentId) {
-      setContentPreference(null);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady) return;
-
-    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
-    if (hydratedFromBundle.current.contentPreference) return;
-
-    let cancelled = false;
-
-    apiService
-      .getContentPreference(activeUserId, contentId)
-      .then((pref) => {
-        if (!cancelled) {
-          setContentPreference(pref);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.log('Unable to fetch content preference:', error);
-          setContentPreference(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeUserId, isSeries, seriesIdentifier, titleId, bundleReady]);
-
-  // Prequeue playback when details page loads — deferred until bundle is ready
-  // to avoid heavy POST requests competing with the initial render
-  useEffect(() => {
-    // Don't start prequeue until the details bundle has settled — the POST
-    // requests are heavy (2+ seconds) and block the JS thread if they fire
-    // before the page is visible
-    if (!bundleReady) return;
-
-    console.log('[prequeue] useEffect triggered', {
-      activeUserId: activeUserId ?? 'null',
-      titleId: titleId ?? 'null',
-      title: title ? title.substring(0, 30) : 'null',
-      isSeries,
-    });
-
-    // For series, determine which episode to prequeue
-    // Priority: activeEpisode (user-selected) > nextUpEpisode (from watch history)
-    const targetEpisode = isSeries ? activeEpisode || nextUpEpisode : null;
-
-    // Check if we already have a navigation prequeue for this episode (from player's on-demand prequeue)
-    // If so, skip creating a new prequeue - it would cancel the one we're about to use
-    const navPrequeue = navigationPrequeueIdRef.current;
-    if (navPrequeue && targetEpisode) {
-      const navTarget = navPrequeue.targetEpisode;
-      if (
-        navTarget.seasonNumber === targetEpisode.seasonNumber &&
-        navTarget.episodeNumber === targetEpisode.episodeNumber
-      ) {
-        console.log('[prequeue] Skipping new prequeue - using navigation prequeue:', navPrequeue.prequeueId);
-        // Set the prequeue state to match the navigation prequeue so polling can start
-        setPrequeueId(navPrequeue.prequeueId);
-        setPrequeueTargetEpisode({
-          seasonNumber: navTarget.seasonNumber,
-          episodeNumber: navTarget.episodeNumber,
-        });
-        setPrequeueReady(false); // Will be set to true by the polling effect
-        prequeuePromiseRef.current = null;
-        return;
-      }
-    }
-
-    // Clear existing prequeue state immediately when episode changes
-    // This ensures we wait for the new prequeue instead of using stale data
-    setPrequeueId(null);
-    setPrequeueTargetEpisode(null);
-    setPrequeueReady(false);
-    // Reset track overrides when prequeue changes
-    setTrackOverrideAudio(null);
-    setTrackOverrideSubtitle(null);
-
-    if (!activeUserId || !titleId || !title) {
-      console.log('[prequeue] Skipping prequeue - missing:', {
-        activeUserId: !activeUserId,
-        titleId: !titleId,
-        title: !title,
-      });
-      prequeuePromiseRef.current = null;
-      return;
-    }
-
-    // For series, wait until we have episode info before prequeuing
-    // This prevents prequeuing the wrong episode
-    if (isSeries && !targetEpisode) {
-      console.log('[prequeue] Waiting for episode info before prequeuing series');
-      return;
-    }
-
-    let cancelled = false;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const initiatePrequeue = async (): Promise<{
-      id: string;
-      targetEpisode: { seasonNumber: number; episodeNumber: number } | null;
-    } | null> => {
-      try {
-        const episodeInfo = targetEpisode
-          ? `S${String(targetEpisode.seasonNumber).padStart(2, '0')}E${String(targetEpisode.episodeNumber).padStart(2, '0')}`
-          : '';
-        console.log(
-          '[prequeue] Initiating prequeue for titleId:',
-          titleId,
-          'title:',
-          title,
-          'mediaType:',
-          mediaType,
-          episodeInfo ? `episode: ${episodeInfo}` : '',
-        );
-        const response = await apiService.prequeuePlayback({
-          titleId,
-          titleName: title,
-          mediaType: isSeries ? 'series' : 'movie',
-          userId: activeUserId,
-          imdbId: imdbId || undefined,
-          year: yearNumber || undefined,
-          seasonNumber: targetEpisode?.seasonNumber,
-          episodeNumber: targetEpisode?.episodeNumber,
-          absoluteEpisodeNumber: targetEpisode?.absoluteEpisodeNumber,
-        });
-
-        if (cancelled) {
-          return null;
-        }
-
-        console.log('[prequeue] Prequeue initiated:', response.prequeueId, 'targetEpisode:', response.targetEpisode);
-        setPrequeueId(response.prequeueId);
-        const respTargetEpisode = response.targetEpisode
-          ? {
-              seasonNumber: response.targetEpisode.seasonNumber,
-              episodeNumber: response.targetEpisode.episodeNumber,
-            }
-          : null;
-        if (respTargetEpisode) {
-          setPrequeueTargetEpisode(respTargetEpisode);
-        }
-        return { id: response.prequeueId, targetEpisode: respTargetEpisode };
-      } catch (error) {
-        // Silently fail - prequeue is an optimization, not required
-        if (!cancelled) {
-          console.log('[prequeue] Prequeue failed (non-fatal):', error);
-          setPrequeueId(null);
-          setPrequeueTargetEpisode(null);
-        }
-        return null;
-      }
-    };
-
-    // Debounce prequeue for series to avoid rapid requests when user navigates between episodes
-    // Movies start immediately since there's no episode navigation
-    const prequeueDelay = isSeries && targetEpisode ? 500 : 0;
-
-    if (prequeueDelay > 0) {
-      console.log('[prequeue] Debouncing prequeue for', prequeueDelay, 'ms');
-      debounceTimer = setTimeout(() => {
-        if (!cancelled) {
-          prequeuePromiseRef.current = initiatePrequeue();
-        }
-      }, prequeueDelay);
-    } else {
-      // Store the promise so play button can wait for it
-      prequeuePromiseRef.current = initiatePrequeue();
-    }
-
-    return () => {
-      cancelled = true;
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
-      prequeuePromiseRef.current = null;
-    };
-  }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode, bundleReady]);
-
-  // Poll prequeue status until ready
-  useEffect(() => {
-    if (!prequeueId) {
-      setPrequeueReady(false);
-      setPrequeueDisplayInfo(null);
-      return;
-    }
-
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
-    let lastStatus = '';
-
-    const pollStatus = async () => {
-      try {
-        const response = await apiService.getPrequeueStatus(prequeueId);
-        if (cancelled) return;
-
-        // Only update state when status actually changes (avoids re-renders while polling)
-        const statusChanged = response.status !== lastStatus;
-        lastStatus = response.status;
-
-        if (response.status === 'ready') {
-          // When ready, compute expected subtitle track based on user preferences for display
-          let displayResponse = response;
-          if (response.subtitleTracks && response.subtitleTracks.length > 0) {
-            if (response.selectedSubtitleTrack === undefined || response.selectedSubtitleTrack < 0) {
-              const playbackSettings = userSettings?.playback ?? settings?.playback;
-              const subLang = playbackSettings?.preferredSubtitleLanguage ?? 'eng';
-              const subModeRaw = playbackSettings?.preferredSubtitleMode ?? 'off';
-              const subMode = subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
-
-              const subtitleStreams = response.subtitleTracks.map((t) => ({
-                index: t.index,
-                language: t.language || '',
-                title: t.title,
-                isForced: t.forced,
-                disposition: t.forced ? { forced: 1 } : undefined,
-              }));
-
-              const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode);
-              if (computedSubtitleTrack !== null) {
-                displayResponse = { ...response, selectedSubtitleTrack: computedSubtitleTrack };
-              }
-            }
-          }
-
-          console.log('[prequeue] Prequeue is ready:', prequeueId);
-          setPrequeueDisplayInfo(displayResponse);
-          setPrequeueReady(true);
-        } else if (apiService.isPrequeueInProgress(response.status)) {
-          // Only update display info when status changes to avoid re-renders
-          if (statusChanged) {
-            setPrequeueDisplayInfo(response);
-          }
-          timeoutId = setTimeout(pollStatus, 1000);
-        } else {
-          // Failed or expired
-          console.log('[prequeue] Prequeue failed/expired:', prequeueId, response.status);
-          setPrequeueDisplayInfo(response);
-          setPrequeueReady(false);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.log('[prequeue] Status poll failed:', error);
-          setPrequeueReady(false);
-          setPrequeueDisplayInfo(null);
-        }
-      }
-    };
-
-    pollStatus();
-
-    return () => {
-      cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [prequeueId]);
-
-  // Display progress indicator for the current item
-  // For series: derived from episodeProgressMap (already fetched for progress bars — no extra API call)
-  // For movies: derived from bundle or fetched individually
-  useEffect(() => {
-    if (!activeUserId) {
-      setDisplayProgress(null);
-      return;
-    }
-
-    // For series, derive from episodeProgressMap to avoid a separate HTTP request
-    if (isSeries) {
-      const episodeToShow = activeEpisode || nextUpEpisode;
-      if (!episodeToShow) {
-        setDisplayProgress(null);
-        return;
-      }
-      const key = `${episodeToShow.seasonNumber}-${episodeToShow.episodeNumber}`;
-      const percent = episodeProgressMap.get(key);
-      setDisplayProgress(percent ?? null);
-      return;
-    }
-
-    // For movies, try bundle first
-    const itemId = seriesIdentifier || titleId;
-    if (!itemId) {
-      setDisplayProgress(null);
-      return;
-    }
-
-    // Derive from bundle's playback progress if available (initial load only)
-    if (detailsBundle && progressRefreshKey === 0) {
-      const bundleProgress = detailsBundle.playbackProgress.find(
-        (p) => p.mediaType === 'movie' && p.itemId === itemId,
-      );
-      if (bundleProgress && bundleProgress.percentWatched > 5 && bundleProgress.percentWatched < 95) {
-        setDisplayProgress(Math.round(bundleProgress.percentWatched));
-      } else {
-        setDisplayProgress(null);
-      }
-      return;
-    }
-
-    // Wait for bundle on initial load
-    if (!bundleReady && progressRefreshKey === 0) return;
-
-    // Fallback: fetch individually
-    console.log('[Details:Progress] Display progress falling through to individual fetch', { bundleReady, progressRefreshKey, hasBundle: !!detailsBundle, itemId });
-    let cancelled = false;
-
-    const fetchProgress = async () => {
-      try {
-        console.log('[Details:Progress] Fetching display progress', { mediaType: 'movie', itemId, source: 'displayProgress' });
-        const progress = await apiService.getPlaybackProgress(activeUserId, 'movie', itemId);
-
-        if (cancelled) return;
-
-        if (progress && progress.percentWatched > 5 && progress.percentWatched < 95) {
-          setDisplayProgress(Math.round(progress.percentWatched));
-        } else {
-          setDisplayProgress(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.log('Unable to fetch progress for display:', error);
-          setDisplayProgress(null);
-        }
-      }
-    };
-
-    void fetchProgress();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeUserId, isSeries, activeEpisode, nextUpEpisode, episodeProgressMap, seriesIdentifier, titleId, progressRefreshKey, detailsBundle, bundleReady]);
-
-  // Fetch progress for all episodes when series loads
-  useEffect(() => {
-    if (!activeUserId || !isSeries || !seriesIdentifier) {
-      setEpisodeProgressMap(new Map());
-      return;
-    }
-
-    // Helper to build episode progress map from a progress list
-    const buildProgressMap = (progressList: import('@/services/api').PlaybackProgress[]) => {
-      const progressMap = new Map<string, number>();
-      const itemIdPrefix = `${seriesIdentifier}:`;
-      for (const progress of progressList) {
-        if (progress.mediaType !== 'episode') continue;
-
-        const matchesSeriesId = progress.seriesId === seriesIdentifier;
-        const matchesItemIdPrefix = progress.itemId?.startsWith(itemIdPrefix);
-
-        if (matchesSeriesId || matchesItemIdPrefix) {
-          let seasonNum = progress.seasonNumber;
-          let episodeNum = progress.episodeNumber;
-
-          if ((!seasonNum || !episodeNum) && progress.itemId) {
-            const match = progress.itemId.match(/:S(\d+)E(\d+)$/i);
-            if (match) {
-              seasonNum = parseInt(match[1], 10);
-              episodeNum = parseInt(match[2], 10);
-            }
-          }
-
-          if (seasonNum && episodeNum) {
-            const key = `${seasonNum}-${episodeNum}`;
-            if (progress.percentWatched > 5 && progress.percentWatched < 95) {
-              progressMap.set(key, Math.round(progress.percentWatched));
-            }
-          }
-        }
-      }
-      return progressMap;
-    };
-
-    // Wait for bundle attempt before falling back (only on initial load)
-    if (!bundleReady && progressRefreshKey === 0) return;
-
-    // Already hydrated from bundle (via consolidated effect) on initial load — skip redundant fetch
-    if (hydratedFromBundle.current.playbackProgress && progressRefreshKey === 0) return;
-
-    let cancelled = false;
-
-    console.log('[Details:Progress] Episode progress falling through to individual fetch', { bundleReady, progressRefreshKey, hasBundle: !!detailsBundle, hydrated: hydratedFromBundle.current.playbackProgress, seriesIdentifier });
-    const fetchAllProgress = async () => {
-      try {
-        console.log('[Details:Progress] Fetching ALL progress for episode map', { seriesIdentifier, source: 'episodeProgressMap' });
-        const progressList = await apiService.listPlaybackProgress(activeUserId);
-        if (cancelled) return;
-        setEpisodeProgressMap(buildProgressMap(progressList));
-      } catch (error) {
-        if (!cancelled) {
-          console.log('Unable to fetch episode progress:', error);
-        }
-      }
-    };
-
-    void fetchAllProgress();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeUserId, isSeries, seriesIdentifier, progressRefreshKey, bundleReady]);
-
-  useEffect(() => {
-    if (!selectionError) {
-      return;
-    }
-    showToast(selectionError, {
-      tone: 'danger',
-      id: SELECTION_TOAST_ID,
-      duration: 7000,
-    });
-  }, [selectionError, showToast]);
-
-  useEffect(() => {
-    if (selectionError) {
-      return;
-    }
-    if (selectionInfo) {
-      showToast(selectionInfo, {
-        tone: 'info',
-        id: SELECTION_TOAST_ID,
-        duration: 4000,
-      });
-    } else {
-      hideToast(SELECTION_TOAST_ID);
-    }
-  }, [selectionError, selectionInfo, showToast, hideToast]);
-
-  useEffect(() => {
-    if (!movieDetailsQuery) {
-      console.log('[Details] No movie details query, skipping fetch');
-      console.log(`[NAV TIMING] movieDetailsLoading=false (no query), +${msSinceNavStart()}ms`);
-      setMovieDetails(null);
-      setMovieDetailsLoading(false);
-      setMovieDetailsError(null);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady) return;
-
-    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
-    if (hydratedFromBundle.current.movieDetails) return;
-
-    console.log('[Details] Fetching movie details with query:', movieDetailsQuery);
-    let cancelled = false;
-    setMovieDetailsLoading(true);
-    setMovieDetailsError(null);
-
-    apiService
-      .getMovieDetails(movieDetailsQuery)
-      .then((details) => {
-        if (cancelled) {
-          return;
-        }
-        console.log('[Details] Movie details fetched:', {
-          name: details.name,
-          hasPoster: !!details.poster?.url,
-          hasBackdrop: !!details.backdrop?.url,
-          posterUrl: details.poster?.url,
-          backdropUrl: details.backdrop?.url,
-        });
-        setMovieDetails(details);
-        console.log(`[NAV TIMING] movieDetailsLoading=false (individual fetch), +${msSinceNavStart()}ms`);
-        setMovieDetailsLoading(false);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        console.warn('[details] movie metadata fetch failed', error);
-        setMovieDetails(null);
-        console.log(`[NAV TIMING] movieDetailsLoading=false (individual fetch error), +${msSinceNavStart()}ms`);
-        setMovieDetailsLoading(false);
-        setMovieDetailsError(error instanceof Error ? error.message : 'Unable to load movie metadata.');
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [movieDetailsQuery, bundleReady]);
-
-  // Fetch similar content ("More Like This") when TMDB ID is available
-  useEffect(() => {
-    if (!tmdbIdNumber) {
-      setSimilarContent([]);
-      setSimilarLoading(false);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady) return;
-
-    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
-    if (hydratedFromBundle.current.similar) return;
-
-    let cancelled = false;
-    setSimilarLoading(true);
-
-    const fetchMediaType = isSeries ? 'series' : 'movie';
-    apiService
-      .getSimilarContent(fetchMediaType, tmdbIdNumber)
-      .then((titles) => {
-        if (cancelled) return;
-        setSimilarContent(titles);
-        setSimilarLoading(false);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn('[details] similar content fetch failed', error);
-        setSimilarContent([]);
-        setSimilarLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tmdbIdNumber, isSeries, bundleReady]);
-
-  // Fetch series details for backdrop updates AND episodes (shared with SeriesEpisodes)
-  useEffect(() => {
-    if (!isSeries) {
-      setSeriesDetailsData(null);
-      console.log(`[NAV TIMING] seriesDetailsLoading=false (not series), +${msSinceNavStart()}ms`);
-      setSeriesDetailsLoading(false);
-      return;
-    }
-
-    const normalizedTitle = title?.trim();
-    if (!normalizedTitle && !tvdbIdNumber && !titleId) {
-      setSeriesDetailsData(null);
-      console.log(`[NAV TIMING] seriesDetailsLoading=false (no identifiers), +${msSinceNavStart()}ms`);
-      setSeriesDetailsLoading(false);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady) return;
-
-    // Already hydrated from bundle (via consolidated effect) — no need to fetch individually
-    if (hydratedFromBundle.current.seriesDetails) return;
-
-    let cancelled = false;
-    setSeriesDetailsLoading(true);
-
-    apiService
-      .getSeriesDetails({
-        tvdbId: tvdbIdNumber || undefined,
-        titleId: titleId || undefined,
-        name: normalizedTitle || undefined,
-        year: yearNumber,
-        tmdbId: tmdbIdNumber,
-      })
-      .then((details) => {
-        if (cancelled) {
-          return;
-        }
-        // Store full SeriesDetails for sharing with SeriesEpisodes
-        setSeriesDetailsData(details);
-        console.log(`[NAV TIMING] seriesDetailsLoading=false (individual fetch), +${msSinceNavStart()}ms`);
-        setSeriesDetailsLoading(false);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        console.warn('[details] series metadata fetch failed', error);
-        setSeriesDetailsData(null);
-        console.log(`[NAV TIMING] seriesDetailsLoading=false (individual fetch error), +${msSinceNavStart()}ms`);
-        setSeriesDetailsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isSeries, title, titleId, tvdbIdNumber, tmdbIdNumber, yearNumber, bundleReady]);
-
-  useEffect(() => {
-    const shouldAttempt = Boolean(tmdbIdNumber || tvdbIdNumber || titleId || title);
-    if (!shouldAttempt) {
-      setTrailers([]);
-      setPrimaryTrailer(null);
-      setTrailersError(null);
-      setTrailersLoading(false);
-      return;
-    }
-
-    // Wait for bundle attempt before falling back
-    if (!bundleReady && !hydratedFromBundle.current.trailers) return;
-
-    // Already hydrated from bundle — only re-fetch if season changed
-    if (hydratedFromBundle.current.trailers) {
-      const currentSeason = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
-      if (currentSeason === bundleTrailerSeasonRef.current) return;
-      bundleTrailerSeasonRef.current = currentSeason;
-    }
-
-    // For series, wait until the child component reports the initial season selection
-    // to avoid a duplicate fetch (once with season=undefined, again with season=N)
-    // This guard only applies to individual re-fetches — initial hydration from bundle is already done
-    if (isSeries && !selectedSeason) {
-      return;
-    }
-
-    let cancelled = false;
-    setTrailersLoading(true);
-    setTrailersError(null);
-
-    // For series, pass the selected season number to get season-specific trailers
-    const seasonNumber = isSeries && selectedSeason?.number ? selectedSeason.number : undefined;
-
-    apiService
-      .getTrailers({
-        mediaType,
-        titleId: titleId || undefined,
-        name: title || undefined,
-        year: yearNumber,
-        tmdbId: tmdbIdNumber,
-        tvdbId: tvdbIdNumber,
-        imdbId: imdbId || undefined,
-        season: seasonNumber,
-      })
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        const nextTrailers = response?.trailers ?? [];
-        setTrailers(nextTrailers);
-        setPrimaryTrailer(response?.primaryTrailer ?? (nextTrailers.length ? nextTrailers[0] : null));
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Unable to load trailers.';
-        setTrailersError(message);
-        setTrailers([]);
-        setPrimaryTrailer(null);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setTrailersLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [imdbId, isSeries, mediaType, selectedSeason?.number, title, titleId, tmdbIdNumber, tvdbIdNumber, yearNumber, bundleReady]);
-
-  // Prequeue YouTube trailers for 1080p playback on mobile
-  useEffect(() => {
-    // Only needed on mobile platforms
-    if (Platform.OS === 'web') {
-      setTrailerStreamUrl(null);
-      setTrailerPrequeueId(null);
-      setTrailerPrequeueStatus(null);
-      return;
-    }
-
-    const trailerUrl = primaryTrailer?.url;
-    if (!trailerUrl) {
-      setTrailerStreamUrl(null);
-      setTrailerPrequeueId(null);
-      setTrailerPrequeueStatus(null);
-      return;
-    }
-
-    // Only prequeue YouTube URLs (direct media URLs can be played directly)
-    const isYouTube = trailerUrl.includes('youtube.com') || trailerUrl.includes('youtu.be');
-    if (!isYouTube) {
-      // Use direct URL for non-YouTube trailers
-      setTrailerStreamUrl(trailerUrl);
-      setTrailerPrequeueId(null);
-      setTrailerPrequeueStatus(null);
-      return;
-    }
-
-    // Start prequeue download for YouTube trailer (1080p merged video+audio)
-    let cancelled = false;
-    setTrailerPrequeueStatus('pending');
-    setTrailerStreamUrl(null);
-
-    apiService
-      .prequeueTrailer(trailerUrl)
-      .then((response) => {
-        if (cancelled) return;
-        setTrailerPrequeueId(response.id);
-        setTrailerPrequeueStatus(response.status);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.warn('[trailer-prequeue] failed to start prequeue:', err);
-        setTrailerPrequeueStatus('failed');
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [primaryTrailer?.url]);
-
-  // Poll for prequeue status until ready or failed
-  useEffect(() => {
-    if (!trailerPrequeueId || trailerPrequeueStatus === 'ready' || trailerPrequeueStatus === 'failed') {
-      return;
-    }
-
-    let cancelled = false;
-    let lastStatus = trailerPrequeueStatus;
-    const pollInterval = setInterval(async () => {
-      if (cancelled) return;
-
-      try {
-        const status = await apiService.getTrailerPrequeueStatus(trailerPrequeueId);
-        if (cancelled) return;
-
-        if (status.status === 'ready') {
-          // Trailer is ready - set the serve URL
-          setTrailerPrequeueStatus('ready');
-          const serveUrl = apiService.getTrailerPrequeueServeUrl(trailerPrequeueId);
-          setTrailerStreamUrl(serveUrl);
-          clearInterval(pollInterval);
-        } else if (status.status === 'failed') {
-          setTrailerPrequeueStatus('failed');
-          console.warn('[trailer-prequeue] download failed:', status.error);
-          clearInterval(pollInterval);
-        } else if (status.status !== lastStatus) {
-          // Only update state when status actually changes (avoids re-renders while pending)
-          lastStatus = status.status;
-          setTrailerPrequeueStatus(status.status);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        console.warn('[trailer-prequeue] status check failed:', err);
-      }
-    }, 1000); // Poll every second
-
-    return () => {
-      cancelled = true;
-      clearInterval(pollInterval);
-    };
-  }, [trailerPrequeueId, trailerPrequeueStatus]);
-
-  // Auto-start backdrop trailer when setting enabled and trailer is ready
-  // Don't auto-start if user has already taken an action (dismissed auto-play)
-  // Don't auto-start if content prequeue is active (user initiated playback)
-  useEffect(() => {
-    if (autoPlayTrailersTV && trailerPrequeueStatus === 'ready' && trailerStreamUrl && !trailerAutoPlayDismissed && !prequeueId) {
-      setIsBackdropTrailerPlaying(true);
-    }
-  }, [autoPlayTrailersTV, trailerPrequeueStatus, trailerStreamUrl, trailerAutoPlayDismissed, prequeueId]);
-
-  // Immersive mode timer - fade out UI after 3 seconds when trailer is playing
-  // Re-enters immersive mode after 3 seconds of no input
-  const immersiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const resetImmersiveTimer = useCallback(() => {
-    // Exit immersive mode immediately (navigation re-enables via isActive prop)
-    setIsTrailerImmersiveMode(false);
-    // Clear existing timer
-    if (immersiveTimerRef.current) {
-      clearTimeout(immersiveTimerRef.current);
-      immersiveTimerRef.current = null;
-    }
-    // Start new timer to re-enter immersive mode
-    if (isBackdropTrailerPlaying) {
-      immersiveTimerRef.current = setTimeout(() => setIsTrailerImmersiveMode(true), 3000);
-    }
-  }, [isBackdropTrailerPlaying]);
-
-  useEffect(() => {
-    if (!isBackdropTrailerPlaying) {
-      setIsTrailerImmersiveMode(false);
-      if (immersiveTimerRef.current) {
-        clearTimeout(immersiveTimerRef.current);
-        immersiveTimerRef.current = null;
-      }
-      return;
-    }
-    // Start initial timer
-    immersiveTimerRef.current = setTimeout(() => setIsTrailerImmersiveMode(true), 3000);
-    return () => {
-      if (immersiveTimerRef.current) {
-        clearTimeout(immersiveTimerRef.current);
-        immersiveTimerRef.current = null;
-      }
-    };
-  }, [isBackdropTrailerPlaying]);
-
-  // Listen for remote input when trailer auto-play is active AND details page is focused
-  // - In immersive mode: Enter/PlayPause toggles play/pause, any key exits immersive
-  // - PlayPause button always toggles play state (dedicated media key)
-  useEffect(() => {
-    if (!Platform.isTV || !autoPlayTrailersTV || !trailerStreamUrl || !isDetailsPageActive) return;
-
-    const removeListener = RemoteControlManager.addKeydownListener((key) => {
-      // PlayPause media key always toggles play state
-      if (key === SupportedKeys.PlayPause) {
-        setIsBackdropTrailerPlaying((prev) => !prev);
-        if (isTrailerImmersiveMode) {
-          resetImmersiveTimer();
-        }
-        return;
-      }
-
-      // In immersive mode: Enter toggles play/pause, any key exits immersive
-      if (isTrailerImmersiveMode) {
-        if (key === SupportedKeys.Enter) {
-          setIsBackdropTrailerPlaying((prev) => !prev);
-        }
-        resetImmersiveTimer();
-      }
-    });
-
-    return () => {
-      removeListener();
-    };
-  }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, resetImmersiveTimer, isDetailsPageActive]);
-
-  // Stop trailer when navigating away from details page or when content prequeue starts
-  // This prevents the trailer from playing in the background behind the main content
-  useEffect(() => {
-    if ((!isDetailsPageActive || prequeueId) && isBackdropTrailerPlaying) {
-      setIsBackdropTrailerPlaying(false);
-      setIsTrailerImmersiveMode(false);
-    }
-  }, [isDetailsPageActive, isBackdropTrailerPlaying, prequeueId]);
-
-  const findPreviousEpisode = useCallback(
-    (episode: SeriesEpisode): SeriesEpisode | null => {
-      if (allEpisodes.length === 0) {
-        return null;
-      }
-
-      // Find the current episode index
-      const currentIndex = allEpisodes.findIndex(
-        (ep) => ep.seasonNumber === episode.seasonNumber && ep.episodeNumber === episode.episodeNumber,
-      );
-
-      // If not found or it's the first episode, return null
-      if (currentIndex === -1 || currentIndex === 0) {
-        return null;
-      }
-
-      // Return the previous episode
-      return allEpisodes[currentIndex - 1];
-    },
-    [allEpisodes],
-  );
-
-  const findNextEpisode = useCallback(
-    (episode: SeriesEpisode): SeriesEpisode | null => {
-      if (allEpisodes.length === 0) {
-        return null;
-      }
-
-      // Find the current episode index
-      const currentIndex = allEpisodes.findIndex(
-        (ep) => ep.seasonNumber === episode.seasonNumber && ep.episodeNumber === episode.episodeNumber,
-      );
-
-      // If not found or it's the last episode, return null
-      if (currentIndex === -1 || currentIndex === allEpisodes.length - 1) {
-        return null;
-      }
-
-      // Return the next episode
-      return allEpisodes[currentIndex + 1];
-    },
-    [allEpisodes],
-  );
-
-  const findFirstEpisodeOfNextSeason = useCallback(
-    (seasonNumber: number): SeriesEpisode | null => {
-      if (allEpisodes.length === 0) {
-        return null;
-      }
-
-      // Find the first episode of the next season
-      return allEpisodes.find((ep) => ep.seasonNumber === seasonNumber + 1) || null;
-    },
-    [allEpisodes],
-  );
-
-  const findFirstEpisode = useCallback((): SeriesEpisode | null => {
-    if (allEpisodes.length === 0) {
-      return null;
-    }
-
-    // Return the first episode (episodes should be sorted)
-    return allEpisodes[0];
-  }, [allEpisodes]);
-
-  const toEpisodeReference = useCallback(
-    (episode: SeriesEpisode): EpisodeWatchPayload['episode'] => ({
-      seasonNumber: episode.seasonNumber,
-      episodeNumber: episode.episodeNumber,
-      episodeId: episode.id,
-      tvdbId: episode.tvdbId ? String(episode.tvdbId) : undefined,
-      title: episode.name,
-      overview: episode.overview,
-      runtimeMinutes: episode.runtimeMinutes,
-      airDate: episode.airedDate,
-    }),
-    [],
-  );
-
-  const externalIds = useMemo(() => {
-    const ids: Record<string, string> = {};
-    if (tmdbId) {
-      ids.tmdb = tmdbId;
-    }
-    if (imdbId) {
-      ids.imdb = imdbId;
-    }
-    if (tvdbId) {
-      ids.tvdb = tvdbId;
-    }
-    return Object.keys(ids).length ? ids : undefined;
-  }, [imdbId, tmdbId, tvdbId]);
-
-  const watchlistItem = useMemo(() => {
-    if (!titleId) {
-      return undefined;
-    }
-    return getItem(mediaType, titleId);
-  }, [getItem, mediaType, titleId]);
-
-  const isWatchlisted = Boolean(watchlistItem);
-  // For series, check the current episode's watched status; for movies, check the title
-  const currentEpisodeForWatchState = activeEpisode || nextUpEpisode;
-  const isWatched = useMemo(() => {
-    if (!titleId) {
-      return false;
-    }
-    // For series with a current episode, check the episode's watched status
-    if (isSeries && currentEpisodeForWatchState && seriesIdentifier) {
-      const episodeId = `${seriesIdentifier}:s${String(currentEpisodeForWatchState.seasonNumber).padStart(2, '0')}e${String(currentEpisodeForWatchState.episodeNumber).padStart(2, '0')}`;
-      return isItemWatched('episode', episodeId);
-    }
-    // For movies or series without a current episode, check the title-level status
-    return isItemWatched(mediaType, titleId);
-  }, [isItemWatched, mediaType, titleId, isSeries, currentEpisodeForWatchState, seriesIdentifier]);
-  const canToggleWatchlist = Boolean(titleId && mediaType);
-
-  const watchlistButtonLabel = isWatchlisted ? 'Remove' : 'Watchlist';
-  const watchStateButtonLabel = isSeries ? 'Watch State' : isWatched ? 'Mark as not watched' : 'Mark as watched';
-  // Compute episode code for the episode that will be played (for TV series)
-  const episodeToPlayCode = useMemo(() => {
-    const episode = activeEpisode || nextUpEpisode;
-    if (!isSeries || !episode) return null;
-    const seasonStr = String(episode.seasonNumber).padStart(2, '0');
-    const episodeStr = String(episode.episodeNumber).padStart(2, '0');
-    return `S${seasonStr}E${episodeStr}`;
-  }, [isSeries, activeEpisode, nextUpEpisode]);
+    return rows;
+  }, [describeRelease, getHomeReleaseIcon, isSeries, movieDetails]);
+
+  const shouldShowReleaseSkeleton = !isSeries && movieDetailsLoading && releaseRows.length === 0;
+  const releaseErrorMessage =
+    !isSeries && movieDetailsError && !movieDetailsLoading && releaseRows.length === 0 ? movieDetailsError : null;
+
+  const releaseSkeletonRows = useMemo(() => {
+    if (isSeries || !shouldShowReleaseSkeleton) return [];
+    return [
+      { key: 'theatrical-skeleton', icon: 'film-outline' as keyof typeof Ionicons.glyphMap, value: '\u2014' },
+      { key: 'home-skeleton', icon: 'home-outline' as keyof typeof Ionicons.glyphMap, value: '\u2014' },
+    ];
+  }, [isSeries, shouldShowReleaseSkeleton]);
+
+  const episodeToPlayCode = episodeManager.episodeToPlayCode;
   const watchNowLabel = Platform.isTV
     ? isSeries && episodeToPlayCode
-      ? `${!hasWatchedEpisodes ? 'Play' : 'Up Next'} ${episodeToPlayCode}`
-      : !isSeries || !hasWatchedEpisodes
+      ? `${!episodeManager.hasWatchedEpisodes ? 'Play' : 'Up Next'} ${episodeToPlayCode}`
+      : !isSeries || !episodeManager.hasWatchedEpisodes
         ? 'Play'
         : 'Up Next'
-    : isResolving
-      ? 'Resolving…'
-      : !isSeries || !hasWatchedEpisodes
+    : playback.isResolving
+      ? 'Resolving\u2026'
+      : !isSeries || !episodeManager.hasWatchedEpisodes
         ? 'Play'
         : 'Up Next';
   const manualSelectLabel = 'Search';
@@ -2577,2227 +1114,29 @@ export default function DetailsScreen() {
     [primaryTrailer, trailers],
   );
 
-  const trailerButtonLabel = useMemo(() => (trailersLoading ? 'Loading trailer…' : 'Watch trailer'), [trailersLoading]);
-
+  const trailerButtonLabel = useMemo(() => (trailersLoading ? 'Loading trailer\u2026' : 'Watch trailer'), [trailersLoading]);
   const trailerButtonDisabled = trailersLoading || !hasAvailableTrailer;
 
-  const playbackPreference = useMemo<PlaybackPreference>(() => {
-    // Prefer user settings, fall back to global settings
-    const userPref = userSettings?.playback?.preferredPlayer;
-    const globalPref = settings?.playback?.preferredPlayer;
-    const value = userPref || globalPref; // Use || to also fallback for empty string
-    console.log('[playbackPreference]', { userPref, globalPref, resolved: value, platform: Platform.OS });
-    if (value === 'outplayer' || value === 'infuse') {
-      // Infuse is only available on iOS/macOS, fallback to native on Android
-      if (value === 'infuse' && Platform.OS === 'android') {
-        console.log('[playbackPreference] Infuse not available on Android, using native');
-        return 'native';
-      }
-      return value;
-    }
-    return 'native';
-  }, [userSettings?.playback?.preferredPlayer, settings?.playback?.preferredPlayer]);
+  const displayProgress = playback.displayProgress;
+  const episodeProgressMap = playback.episodeProgressMap;
 
-  const fetchIndexerResults = useCallback(
-    async ({ query, limit = 5, categories = [] }: { query?: string; limit?: number; categories?: string[] }) => {
-      const searchQuery = (query ?? title ?? '').toString().trim();
-      if (!searchQuery) {
-        throw new Error('Missing title to search for results.');
-      }
-      const imdbIdToUse = imdbId;
-      console.log('[details] fetchIndexerResults', {
-        searchQuery,
-        imdbId,
-        seriesDetailsImdbId: undefined,
-        imdbIdToUse,
-        mediaType,
-        year: yearNumber,
-        userId: activeUserId,
-      });
-      return apiService.searchIndexer(
-        searchQuery,
-        limit,
-        categories,
-        imdbIdToUse,
-        mediaType,
-        yearNumber,
-        activeUserId ?? undefined,
-      );
-    },
-    [title, imdbId, mediaType, yearNumber, activeUserId],
-  );
-
-  const getEpisodeSearchContext = useCallback(
-    (episode: SeriesEpisode): EpisodeSearchContext | null => {
-      const trimmedTitle = title.trim();
-      const baseTitle = trimmedTitle || title;
-      const query = buildEpisodeQuery(baseTitle, episode.seasonNumber, episode.episodeNumber);
-      if (!query) {
-        return null;
-      }
-
-      const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
-      const labelSuffix = episode.name ? ` – "${episode.name}"` : '';
-      const friendlyLabel = baseTitle ? `${baseTitle} ${episodeCode}${labelSuffix}` : `${episodeCode}${labelSuffix}`;
-      const selectionMessage = baseTitle ? `${baseTitle} • ${episodeCode}` : episodeCode;
-
-      return {
-        query,
-        friendlyLabel,
-        selectionMessage,
-        episodeCode,
-      };
-    },
-    [title],
-  );
-
-  const initiatePlaybackRef = useRef<
-    ((result: NZBResult, signal?: AbortSignal, overrides?: { useDebugPlayer?: boolean }) => Promise<void>) | null
-  >(null);
-  const pendingStartOffsetRef = useRef<number | null>(null);
-
-  const describeRelease = useCallback((release?: Title['homeRelease']) => {
-    if (!release?.date) {
-      return '';
-    }
-    const dateLabel = formatPublishDate(release.date) || release.date;
-    const parts = [dateLabel];
-    if (release.country) {
-      parts.push(release.country.toUpperCase());
-    }
-    return parts.filter(Boolean).join(' • ');
-  }, []);
-
-  const getHomeReleaseIcon = useCallback((release?: Title['homeRelease']): keyof typeof Ionicons.glyphMap => {
-    const type = release?.type?.toLowerCase();
-    switch (type) {
-      case 'digital':
-        return 'cloud-outline';
-      case 'physical':
-        return 'disc-outline';
-      case 'tv':
-        return 'tv-outline';
-      default:
-        return 'home-outline';
-    }
-  }, []);
-
-  const releaseRows = useMemo(() => {
-    if (isSeries || !movieDetails) {
-      return [];
-    }
-    const rows: { key: string; icon: keyof typeof Ionicons.glyphMap; value: string }[] = [];
-    if (movieDetails.theatricalRelease) {
-      const value = describeRelease(movieDetails.theatricalRelease);
-      if (value) {
-        rows.push({
-          key: 'theatrical',
-          icon: 'film-outline',
-          value,
-        });
-      }
-    }
-    if (movieDetails.homeRelease) {
-      const value = describeRelease(movieDetails.homeRelease);
-      if (value) {
-        rows.push({
-          key: 'home',
-          icon: getHomeReleaseIcon(movieDetails.homeRelease),
-          value,
-        });
-      }
-    }
-    return rows;
-  }, [describeRelease, getHomeReleaseIcon, isSeries, movieDetails]);
-
-  const shouldShowReleaseSkeleton = !isSeries && movieDetailsLoading && releaseRows.length === 0;
-  const releaseErrorMessage =
-    !isSeries && movieDetailsError && !movieDetailsLoading && releaseRows.length === 0 ? movieDetailsError : null;
-
-  // Get ratings from movie or series details, sorted by RATING_ORDER
-  const ratings = useMemo(() => {
-    const rawRatings = isSeries ? (seriesDetailsForBackdrop?.ratings ?? []) : (movieDetails?.ratings ?? []);
-    return [...rawRatings].sort((a, b) => {
-      const orderA = RATING_ORDER[a.source] ?? 99;
-      const orderB = RATING_ORDER[b.source] ?? 99;
-      return orderA - orderB;
-    });
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
-
-  // Show ratings skeleton while loading to prevent layout shift
-  const isMetadataLoadingForSkeleton = isSeries ? seriesDetailsLoading : movieDetailsLoading;
-  const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
-
-  // Get top 3 genres from movie or series details
-  const genres = useMemo(() => {
-    const rawGenres = isSeries ? (seriesDetailsForBackdrop?.genres ?? []) : (movieDetails?.genres ?? []);
-    return rawGenres.slice(0, 3);
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
-
-  // Get certification (content rating) from movie or series details
-  const certification = useMemo(() => {
-    return isSeries ? seriesDetailsForBackdrop?.certification : movieDetails?.certification;
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
-
-  // Placeholder release rows while loading (movies only)
-  const releaseSkeletonRows = useMemo(() => {
-    if (isSeries || !shouldShowReleaseSkeleton) return [];
-    return [
-      { key: 'theatrical-skeleton', icon: 'film-outline' as keyof typeof Ionicons.glyphMap, value: '—' },
-      { key: 'home-skeleton', icon: 'home-outline' as keyof typeof Ionicons.glyphMap, value: '—' },
-    ];
-  }, [isSeries, shouldShowReleaseSkeleton]);
-
-  const handleInitiatePlayback = useCallback(
-    async (
-      result: NZBResult,
-      signal?: AbortSignal,
-      overrides?: { useDebugPlayer?: boolean; trackOverrides?: ManualTrackOverrides },
-    ) => {
-      // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
-      // so users see it immediately when they click play, not after the stream resolves
-
-      // Build title with episode code for series episodes
-      let displayTitle = title;
-      if (activeEpisode?.seasonNumber && activeEpisode?.episodeNumber) {
-        const seasonStr = activeEpisode.seasonNumber.toString().padStart(2, '0');
-        const episodeStr = activeEpisode.episodeNumber.toString().padStart(2, '0');
-        displayTitle = `${title} - S${seasonStr}E${episodeStr}`;
-      }
-
-      await initiatePlayback(
-        result,
-        playbackPreference,
-        settings,
-        headerImage,
-        displayTitle,
-        router,
-        isIosWeb,
-        setSelectionInfo,
-        setSelectionError,
-        {
-          // Use 'episode' if activeEpisode exists OR if we're on a series page (isSeries)
-          // This prevents defaulting to 'movie' for TV show episodes
-          mediaType: activeEpisode || isSeries ? 'episode' : 'movie',
-          // Pass clean series title (without episode code) for metadata lookups
-          seriesTitle: activeEpisode || isSeries ? title : undefined,
-          year: yearNumber,
-          seasonNumber: activeEpisode?.seasonNumber,
-          episodeNumber: activeEpisode?.episodeNumber,
-          episodeName: activeEpisode?.name,
-          signal,
-          titleId,
-          imdbId,
-          tvdbId,
-          // Pass startOffset if we have pendingStartOffset (from resume) or currentProgress
-          ...(() => {
-            const offset = pendingStartOffsetRef.current;
-            if (offset !== null) {
-              // Clear after consuming so it doesn't persist to future playbacks
-              pendingStartOffsetRef.current = null;
-              return { startOffset: offset };
-            }
-            if (currentProgress) {
-              return { startOffset: currentProgress.position };
-            }
-            return {};
-          })(),
-          ...(overrides?.useDebugPlayer ? { debugPlayer: true } : {}),
-          // Hide loading screen when launching external player
-          onExternalPlayerLaunch: hideLoadingScreen,
-          // Per-user settings override for track selection
-          userSettings,
-          // Profile info for stream tracking
-          profileId: activeUserId ?? undefined,
-          profileName: activeUser?.name,
-          // Shuffle mode for random episode playback (use ref for synchronous access)
-          shuffleMode: pendingShuffleModeRef.current || isShuffleMode,
-          // Manual track selection override from manual selection modal
-          trackOverrides: overrides?.trackOverrides,
-        },
-      );
-    },
-    [
-      hideLoadingScreen,
-      initiatePlayback,
-      playbackPreference,
-      settings,
-      userSettings,
-      activeUserId,
-      activeUser,
-      isShuffleMode,
-      headerImage,
-      title,
-      router,
-      isIosWeb,
-      isSeries,
-      yearNumber,
-      activeEpisode,
-      titleId,
-      imdbId,
-      tvdbId,
-      currentProgress,
-    ],
-  );
-
-  useEffect(() => {
-    initiatePlaybackRef.current = handleInitiatePlayback;
-  }, [handleInitiatePlayback]);
-
-  // Helper to extract episode info from a query string (e.g., "Show Name S01E02")
-  const extractEpisodeFromQuery = useCallback(
-    (query: string): { seasonNumber: number; episodeNumber: number } | null => {
-      const match = query.match(/S(\d{1,2})E(\d{1,2})/i);
-      if (match && match[1] && match[2]) {
-        return {
-          seasonNumber: parseInt(match[1], 10),
-          episodeNumber: parseInt(match[2], 10),
-        };
-      }
-      return null;
-    },
-    [],
-  );
-
-  // Helper to check if prequeue target matches the requested playback
-  // Accepts optional pqId and targetEp to use instead of state (for when state hasn't updated yet)
-  const doesPrequeueMatch = useCallback(
-    (
-      query: string,
-      pqId?: string | null,
-      targetEp?: { seasonNumber: number; episodeNumber: number } | null,
-    ): boolean => {
-      const effectivePrequeueId = pqId !== undefined ? pqId : prequeueId;
-      const effectiveTargetEpisode = targetEp !== undefined ? targetEp : prequeueTargetEpisode;
-
-      if (!effectivePrequeueId) {
-        return false;
-      }
-
-      // For movies, any prequeue for this title matches
-      if (!isSeries) {
-        return true;
-      }
-
-      // For series, check if episode matches
-      const requestedEpisode = extractEpisodeFromQuery(query);
-      if (!requestedEpisode || !effectiveTargetEpisode) {
-        return false;
-      }
-
-      return (
-        requestedEpisode.seasonNumber === effectiveTargetEpisode.seasonNumber &&
-        requestedEpisode.episodeNumber === effectiveTargetEpisode.episodeNumber
-      );
-    },
-    [prequeueId, isSeries, prequeueTargetEpisode, extractEpisodeFromQuery],
-  );
-
-  // Helper to launch playback from prequeue data
-  const launchFromPrequeue = useCallback(
-    async (prequeueStatus: PrequeueStatusResponse) => {
-      if (!prequeueStatus.streamPath) {
-        throw new Error('Prequeue is missing stream path');
-      }
-
-      // Get start offset from pending ref (for resume playback) - get it early as we may use it for HLS session
-      const startOffset = pendingStartOffsetRef.current;
-      pendingStartOffsetRef.current = null;
-
-      console.log('[prequeue] launchFromPrequeue called', {
-        prequeueId: prequeueStatus.prequeueId,
-        streamPath: prequeueStatus.streamPath ? 'set' : 'null',
-        hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
-        hasDolbyVision: prequeueStatus.hasDolbyVision,
-        hasHdr10: prequeueStatus.hasHdr10,
-        startOffset: startOffset ?? 'null',
-        playbackPreference,
-      });
-
-      // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
-      // so users see it immediately when they click play, not after the prequeue resolves
-
-      // Check for external player FIRST - they handle HDR natively and don't need HLS
-      const isExternalPlayer = playbackPreference === 'infuse' || playbackPreference === 'outplayer';
-      if (isExternalPlayer) {
-        console.log('[prequeue] External player selected, skipping HLS creation');
-        const label = playbackPreference === 'outplayer' ? 'Outplayer' : 'Infuse';
-
-        // Build backend proxy URL for external player (handles IP-locked debrid URLs)
-        // Use manual encoding to ensure semicolons and other special chars are properly encoded
-        // URLSearchParams doesn't encode semicolons which breaks some parsers
-        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const authToken = apiService.getAuthToken();
-        const queryParts: string[] = [];
-        queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
-        queryParts.push('transmux=0'); // No transmuxing needed for external players
-        if (authToken) {
-          queryParts.push(`token=${encodeURIComponent(authToken)}`);
-        }
-        // Add profile info for stream tracking
-        if (activeUserId) {
-          queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
-        }
-        if (activeUser?.name) {
-          queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
-        }
-        const directUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
-        console.log('[prequeue] Using backend proxy URL for external player:', directUrl);
-
-        const externalTargets = buildExternalPlayerTargets(playbackPreference, directUrl, isIosWeb);
-        console.log('[prequeue] External player targets:', externalTargets);
-
-        if (externalTargets.length > 0) {
-          const { Linking } = require('react-native');
-
-          for (const externalUrl of externalTargets) {
-            try {
-              const supported = await Linking.canOpenURL(externalUrl);
-              if (supported) {
-                console.log(`[prequeue] Launching ${label} with URL:`, externalUrl);
-                hideLoadingScreen();
-                await Linking.openURL(externalUrl);
-                return;
-              }
-            } catch (err) {
-              console.error(`[prequeue] Failed to launch ${label}:`, err);
-            }
-          }
-
-          // External player not available, fall through to native
-          console.log(`[prequeue] ${label} not available, falling back to native player`);
-          setSelectionError(`${label} is not installed. Using native player.`);
-        }
-        // Fall through to native player if external player targets not available
-      }
-
-      // Native platforms use NativePlayer (KSPlayer/MPV) which handles HDR/tracks/seeking natively
-      // No HLS needed - NativePlayer uses direct streaming via /video/stream endpoint
-      const isNativePlatform = Platform.OS !== 'web';
-      const needsHLS = false; // Native platforms use direct streaming, web uses HLS for HDR/TrueHD
-
-      // Build stream URL
-      let streamUrl: string;
-      let hlsDuration: number | undefined;
-      let hlsActualStartOffset: number | undefined;
-
-      // Log the decision factors for HLS path
-      const audioOverrideDiffersFromPrequeue =
-        trackOverrideAudio !== null && trackOverrideAudio !== prequeueStatus.selectedAudioTrack;
-      console.log('[prequeue] HLS decision factors:', {
-        hasDolbyVision: prequeueStatus.hasDolbyVision,
-        hasHdr10: prequeueStatus.hasHdr10,
-        needsAudioTranscode: prequeueStatus.needsAudioTranscode ?? false,
-        needsHLS,
-        hlsPlaylistUrl: prequeueStatus.hlsPlaylistUrl ?? 'null',
-        hasStartOffset: typeof startOffset === 'number',
-        startOffset,
-        platformOS: Platform.OS,
-        trackOverrideAudio,
-        prequeueSelectedAudio: prequeueStatus.selectedAudioTrack,
-        audioOverrideDiffersFromPrequeue,
-        willUsePrequeueHLS:
-          needsHLS &&
-          prequeueStatus.hlsPlaylistUrl &&
-          typeof startOffset !== 'number' &&
-          !audioOverrideDiffersFromPrequeue,
-        willCreateNewHLS:
-          needsHLS &&
-          (!prequeueStatus.hlsPlaylistUrl || typeof startOffset === 'number' || audioOverrideDiffersFromPrequeue),
-      });
-
-      // Check if we can use the pre-created HLS session
-      // Skip if: no HLS URL, need resume offset, prequeue userId doesn't match current user,
-      // or user has overridden the audio track to something different than what's baked into the HLS session
-      const prequeueUserIdMatches = !prequeueStatus.userId || prequeueStatus.userId === activeUserId;
-      const audioTrackMatchesPrequeue =
-        trackOverrideAudio === null ||
-        trackOverrideAudio === prequeueStatus.selectedAudioTrack;
-      const canUsePreCreatedHLS =
-        needsHLS &&
-        prequeueStatus.hlsPlaylistUrl &&
-        typeof startOffset !== 'number' &&
-        prequeueUserIdMatches &&
-        audioTrackMatchesPrequeue;
-
-      // Track selected audio/subtitle tracks for passing to player (declared here so accessible in router.push)
-      let selectedAudioTrack: number | undefined;
-      let selectedSubtitleTrack: number | undefined;
-
-      if (!prequeueUserIdMatches && prequeueStatus.hlsPlaylistUrl) {
-        console.log('[prequeue] ⚠️ Pre-created HLS userId mismatch, will create new session', {
-          prequeueUserId: prequeueStatus.userId,
-          activeUserId,
-        });
-      }
-
-      if (!audioTrackMatchesPrequeue && prequeueStatus.hlsPlaylistUrl) {
-        console.log('[prequeue] ⚠️ Audio track override differs from prequeue, will create new HLS session', {
-          trackOverrideAudio,
-          prequeueSelectedAudio: prequeueStatus.selectedAudioTrack,
-        });
-      }
-
-      if (canUsePreCreatedHLS) {
-        // HDR/TrueHD content with HLS session already created by backend (no resume position)
-        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const authToken = apiService.getAuthToken();
-        streamUrl = `${baseUrl}${prequeueStatus.hlsPlaylistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
-        // Use duration from prequeue (extracted via ffprobe during prequeue processing)
-        if (typeof prequeueStatus.duration === 'number' && prequeueStatus.duration > 0) {
-          hlsDuration = prequeueStatus.duration;
-          console.log('[prequeue] Using duration from prequeue:', hlsDuration);
-        }
-        // Extract prequeue-selected tracks so player knows what's baked into the HLS session
-        // Use user override if set, otherwise fall back to prequeue-selected tracks
-        selectedAudioTrack =
-          trackOverrideAudio !== null
-            ? trackOverrideAudio
-            : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-              ? prequeueStatus.selectedAudioTrack
-              : undefined;
-        selectedSubtitleTrack =
-          trackOverrideSubtitle !== null
-            ? trackOverrideSubtitle
-            : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-              ? prequeueStatus.selectedSubtitleTrack
-              : undefined;
-        console.log('[prequeue] ✅ Using PRE-CREATED HLS stream URL:', streamUrl, {
-          selectedAudioTrack,
-          selectedSubtitleTrack,
-          trackOverrideAudio,
-          trackOverrideSubtitle,
-        });
-      } else if (needsHLS && Platform.OS !== 'web') {
-        // HDR/TrueHD content - create HLS session with start offset
-        // This happens when: (a) backend didn't create session, or (b) we have a resume position
-        // and need to recreate with the correct start offset
-        console.log('[prequeue] ⚠️ Creating NEW HLS session (not using prequeue HLS)');
-        const reason = typeof startOffset === 'number' ? `resuming at ${startOffset}s` : 'no HLS URL from backend';
-        const contentType = prequeueStatus.needsAudioTranscode
-          ? 'TrueHD/DTS audio'
-          : prequeueStatus.hasDolbyVision
-            ? 'Dolby Vision'
-            : prequeueStatus.hasHdr10
-              ? 'HDR10'
-              : 'SDR (testing)';
-        console.log(`[prequeue] ${contentType} detected, creating HLS session (${reason})...`);
-        setSelectionInfo(`Creating HLS session for ${contentType}...`);
-
-        try {
-          // Use user override if set, otherwise fall back to prequeue-selected tracks
-          selectedAudioTrack =
-            trackOverrideAudio !== null
-              ? trackOverrideAudio
-              : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-                ? prequeueStatus.selectedAudioTrack
-                : undefined;
-          selectedSubtitleTrack =
-            trackOverrideSubtitle !== null
-              ? trackOverrideSubtitle
-              : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-                ? prequeueStatus.selectedSubtitleTrack
-                : undefined;
-
-          // Log if using override or prequeue-selected tracks
-          if (selectedAudioTrack !== undefined || selectedSubtitleTrack !== undefined) {
-            console.log(
-              `[prequeue] Using tracks: audio=${selectedAudioTrack}, subtitle=${selectedSubtitleTrack}`,
-              { trackOverrideAudio, trackOverrideSubtitle },
-            );
-          }
-
-          // Fetch metadata if either track still needs selection based on user preferences
-          if (
-            (selectedAudioTrack === undefined || selectedSubtitleTrack === undefined) &&
-            (settings?.playback || userSettings?.playback)
-          ) {
-            try {
-              // Compute audio language preference for metadata fetch
-              const audioLang =
-                userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage ?? 'eng';
-              const metadata = await apiService.getVideoMetadata(prequeueStatus.streamPath, { audioLang });
-              if (metadata) {
-                const subLang =
-                  userSettings?.playback?.preferredSubtitleLanguage ??
-                  settings?.playback?.preferredSubtitleLanguage ??
-                  'eng';
-                const subModeRaw =
-                  userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode ?? 'off';
-                const subMode =
-                  subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
-
-                // Only select audio if not already set by prequeue
-                if (selectedAudioTrack === undefined && metadata.audioStreams) {
-                  const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
-                  if (match !== null) {
-                    selectedAudioTrack = match;
-                    console.log(`[prequeue] Selected audio track ${match} for language ${audioLang}`);
-                  }
-                }
-
-                // Only select subtitle if not already set by prequeue
-                if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
-                  const match = findSubtitleTrackByPreference(
-                    metadata.subtitleStreams,
-                    subLang,
-                    subMode as 'off' | 'on' | 'forced-only',
-                  );
-                  if (match !== null) {
-                    selectedSubtitleTrack = match;
-                    console.log(
-                      `[prequeue] Selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`,
-                    );
-                  }
-                }
-              }
-            } catch (metadataError) {
-              console.warn('[prequeue] Failed to fetch metadata for track selection:', metadataError);
-            }
-          }
-
-          const hlsResponse = await apiService.createHlsSession({
-            path: prequeueStatus.streamPath,
-            dv: prequeueStatus.hasDolbyVision,
-            dvProfile: prequeueStatus.dolbyVisionProfile,
-            hdr: prequeueStatus.hasHdr10,
-            forceAAC: prequeueStatus.needsAudioTranscode,
-            start: typeof startOffset === 'number' ? startOffset : undefined,
-            audioTrack: selectedAudioTrack,
-            subtitleTrack: selectedSubtitleTrack,
-            profileId: activeUserId ?? undefined,
-            profileName: activeUser?.name,
-          });
-
-          const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-          const authToken = apiService.getAuthToken();
-          streamUrl = `${baseUrl}${hlsResponse.playlistUrl}${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
-          hlsDuration = hlsResponse.duration;
-          hlsActualStartOffset = hlsResponse.actualStartOffset;
-          console.log(
-            '[prequeue] Created HLS session, using URL:',
-            streamUrl,
-            'actualStartOffset:',
-            hlsActualStartOffset,
-          );
-        } catch (hlsError) {
-          console.error('[prequeue] Failed to create HLS session:', hlsError);
-          throw new Error(`Failed to create HLS session for ${contentType} content: ${hlsError}`);
-        }
-      } else {
-        // Native platforms use direct stream URL (NativePlayer handles HDR/tracks/seeking)
-        // Web fallback for SDR content also uses direct streaming
-        console.log('[prequeue] Building direct stream URL for native player');
-
-        // Set preselected tracks for native player (same logic as HLS path)
-        // Use user override if set, otherwise fall back to prequeue-selected tracks
-        selectedAudioTrack =
-          trackOverrideAudio !== null
-            ? trackOverrideAudio
-            : prequeueStatus.selectedAudioTrack !== undefined && prequeueStatus.selectedAudioTrack >= 0
-              ? prequeueStatus.selectedAudioTrack
-              : undefined;
-        selectedSubtitleTrack =
-          trackOverrideSubtitle !== null
-            ? trackOverrideSubtitle
-            : prequeueStatus.selectedSubtitleTrack !== undefined && prequeueStatus.selectedSubtitleTrack >= 0
-              ? prequeueStatus.selectedSubtitleTrack
-              : undefined;
-
-        // Fetch metadata if either track still needs selection based on user preferences
-        // This matches the HLS path behavior: override > prequeue > user preferences > off
-        if (
-          (selectedAudioTrack === undefined || selectedSubtitleTrack === undefined) &&
-          (settings?.playback || userSettings?.playback)
-        ) {
-          try {
-            // Compute audio language preference for metadata fetch
-            const audioLang =
-              userSettings?.playback?.preferredAudioLanguage ?? settings?.playback?.preferredAudioLanguage ?? 'eng';
-            const metadata = await apiService.getVideoMetadata(prequeueStatus.streamPath, { audioLang });
-            if (metadata) {
-              const subLang =
-                userSettings?.playback?.preferredSubtitleLanguage ??
-                settings?.playback?.preferredSubtitleLanguage ??
-                'eng';
-              const subModeRaw =
-                userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode ?? 'off';
-              const subMode =
-                subModeRaw === 'on' || subModeRaw === 'off' || subModeRaw === 'forced-only' ? subModeRaw : 'off';
-
-              // Only select audio if not already set by override or prequeue
-              if (selectedAudioTrack === undefined && metadata.audioStreams) {
-                const match = findAudioTrackByLanguage(metadata.audioStreams, audioLang);
-                if (match !== null) {
-                  selectedAudioTrack = match;
-                  console.log(`[prequeue] Native player: selected audio track ${match} for language ${audioLang}`);
-                }
-              }
-
-              // Only select subtitle if not already set by override or prequeue
-              if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
-                const match = findSubtitleTrackByPreference(
-                  metadata.subtitleStreams,
-                  subLang,
-                  subMode as 'off' | 'on' | 'forced-only',
-                );
-                if (match !== null) {
-                  selectedSubtitleTrack = match;
-                  console.log(
-                    `[prequeue] Native player: selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`,
-                  );
-                }
-              }
-            }
-          } catch (metadataError) {
-            console.warn('[prequeue] Native player: failed to fetch metadata for track selection:', metadataError);
-          }
-        }
-
-        console.log('[prequeue] Native player preselected tracks:', {
-          audio: selectedAudioTrack,
-          subtitle: selectedSubtitleTrack,
-          trackOverrideAudio,
-          trackOverrideSubtitle,
-          prequeueAudio: prequeueStatus.selectedAudioTrack,
-          prequeueSubtitle: prequeueStatus.selectedSubtitleTrack,
-        });
-
-        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-        const authToken = apiService.getAuthToken();
-        // Build URL manually to ensure proper encoding of special chars like semicolons
-        // URLSearchParams doesn't encode semicolons which breaks some parsers
-        const queryParts: string[] = [];
-        queryParts.push(`path=${encodeURIComponent(prequeueStatus.streamPath)}`);
-        if (authToken) {
-          queryParts.push(`token=${encodeURIComponent(authToken)}`);
-        }
-        // Disable server-side transmux - KSPlayer handles everything natively (DV, HDR, TrueHD, MKV, etc.)
-        queryParts.push('transmux=0');
-        // Add profile info for stream tracking
-        if (activeUserId) {
-          queryParts.push(`profileId=${encodeURIComponent(activeUserId)}`);
-        }
-        if (activeUser?.name) {
-          queryParts.push(`profileName=${encodeURIComponent(activeUser.name)}`);
-        }
-        streamUrl = `${baseUrl}/video/stream?${queryParts.join('&')}`;
-        // Use duration from prequeue (extracted via ffprobe during prequeue processing)
-        if (typeof prequeueStatus.duration === 'number' && prequeueStatus.duration > 0) {
-          hlsDuration = prequeueStatus.duration;
-          console.log('[prequeue] Using duration from prequeue:', hlsDuration);
-        }
-        console.log('[prequeue] Using direct stream URL:', streamUrl);
-
-        // SDR path: Start subtitle extraction with correct offset (lazy extraction)
-        // This is called now that we know the user's resume position
-        if (prequeueStatus.prequeueId) {
-          try {
-            const subtitleResult = await apiService.startPrequeueSubtitles(prequeueStatus.prequeueId, startOffset ?? 0);
-            if (subtitleResult.subtitleSessions && Object.keys(subtitleResult.subtitleSessions).length > 0) {
-              // Update prequeueStatus with the new subtitle sessions
-              prequeueStatus.subtitleSessions = subtitleResult.subtitleSessions;
-              console.log(
-                '[prequeue] Started subtitle extraction for',
-                Object.keys(subtitleResult.subtitleSessions).length,
-                'tracks at offset',
-                startOffset ?? 0,
-              );
-            }
-          } catch (subtitleError) {
-            // Non-fatal - subtitles will just not be available
-            console.warn('[prequeue] Failed to start subtitle extraction:', subtitleError);
-          }
-        }
-      }
-
-      // Build display title
-      let displayTitle = title;
-      if (prequeueStatus.targetEpisode) {
-        const seasonStr = String(prequeueStatus.targetEpisode.seasonNumber).padStart(2, '0');
-        const episodeStr = String(prequeueStatus.targetEpisode.episodeNumber).padStart(2, '0');
-        displayTitle = `${title} - S${seasonStr}E${episodeStr}`;
-      }
-
-      // Launch native player (external players would have returned early above)
-      console.log('[details] ===== LAUNCHING PLAYER =====', {
-        isNativePlatform,
-        selectedAudioTrack,
-        selectedSubtitleTrack,
-        audioTracksFromPrequeue: prequeueStatus.audioTracks?.map((t, i) => ({
-          arrayIndex: i,
-          streamIndex: t.index,
-          language: t.language,
-          title: t.title,
-        })),
-        subtitleTracksFromPrequeue: prequeueStatus.subtitleTracks?.map((t, i) => ({
-          arrayIndex: i,
-          streamIndex: t.index,
-          language: t.language,
-          title: t.title,
-        })),
-        streamUrl: streamUrl.substring(0, 100) + '...',
-      });
-
-      // Android TV: launch standalone native PlayerActivity (saves ~150-200MB RAM vs RN player)
-      if (Platform.isTV && Platform.OS === 'android') {
-        try {
-          const { launchPlayer } = require('mpv-player') as typeof import('mpv-player');
-          // Compute native track indices (same conversion as below)
-          const nativeAudioTrack = (() => {
-            if (selectedAudioTrack === undefined || selectedAudioTrack < 0) return -1;
-            const hasTrackArray = prequeueStatus.audioTracks && prequeueStatus.audioTracks.length > 0;
-            return hasTrackArray
-              ? prequeueStatus.audioTracks!.findIndex((t) => t.index === selectedAudioTrack)
-              : selectedAudioTrack;
-          })();
-          const nativeSubtitleTrack = (() => {
-            if (selectedSubtitleTrack === undefined || selectedSubtitleTrack < 0) return -1;
-            const hasTrackArray = prequeueStatus.subtitleTracks && prequeueStatus.subtitleTracks.length > 0;
-            return hasTrackArray
-              ? prequeueStatus.subtitleTracks!.findIndex((t) => t.index === selectedSubtitleTrack)
-              : selectedSubtitleTrack;
-          })();
-          const result = await launchPlayer({
-            streamUrl,
-            title: displayTitle,
-            authToken: apiService.getAuthToken() || '',
-            userId: activeUserId || '',
-            mediaType: isSeries ? 'episode' : 'movie',
-            itemId: titleId || '',
-            backendUrl: apiService.getBaseUrl(),
-            ...(typeof startOffset === 'number' ? { startOffset } : {}),
-            ...(typeof hlsDuration === 'number' ? { durationHint: hlsDuration } : {}),
-            ...(nativeAudioTrack >= 0 ? { preselectedAudioTrack: nativeAudioTrack } : {}),
-            ...(nativeSubtitleTrack >= 0 ? { preselectedSubtitleTrack: nativeSubtitleTrack } : {}),
-            ...(prequeueStatus.targetEpisode
-              ? {
-                  seasonNumber: prequeueStatus.targetEpisode.seasonNumber,
-                  episodeNumber: prequeueStatus.targetEpisode.episodeNumber,
-                }
-              : {}),
-            ...(titleId ? { seriesId: titleId, titleId } : {}),
-            ...(isSeries ? { seriesName: title } : {}),
-            ...(imdbId ? { imdbId } : {}),
-            ...(tvdbId ? { tvdbId } : {}),
-          });
-          console.log('[prequeue] Android TV native player result:', result);
-          return;
-        } catch (e) {
-          console.error('[prequeue] Android TV native player failed, falling back to RN player:', e);
-        }
-      }
-
-      router.push({
-        pathname: '/player',
-        params: {
-          movie: streamUrl,
-          headerImage,
-          title: displayTitle,
-          ...(isSeries ? { seriesTitle: title } : {}),
-          ...(isSeries ? { mediaType: 'episode' } : { mediaType: 'movie' }),
-          ...(yearNumber ? { year: String(yearNumber) } : {}),
-          ...(prequeueStatus.targetEpisode ? { seasonNumber: String(prequeueStatus.targetEpisode.seasonNumber) } : {}),
-          ...(prequeueStatus.targetEpisode
-            ? { episodeNumber: String(prequeueStatus.targetEpisode.episodeNumber) }
-            : {}),
-          sourcePath: encodeURIComponent(prequeueStatus.streamPath),
-          ...(prequeueStatus.displayName ? { displayName: prequeueStatus.displayName } : {}),
-          ...(prequeueStatus.hasDolbyVision ? { dv: '1' } : {}),
-          ...(prequeueStatus.hasHdr10 ? { hdr10: '1' } : {}),
-          ...(prequeueStatus.dolbyVisionProfile ? { dvProfile: prequeueStatus.dolbyVisionProfile } : {}),
-          ...(prequeueStatus.needsAudioTranscode ? { forceAAC: '1' } : {}),
-          ...(typeof startOffset === 'number' ? { startOffset: String(startOffset) } : {}),
-          ...(typeof hlsActualStartOffset === 'number' ? { actualStartOffset: String(hlsActualStartOffset) } : {}),
-          ...(typeof hlsDuration === 'number' ? { durationHint: String(hlsDuration) } : {}),
-          ...(titleId ? { titleId } : {}),
-          ...(imdbId ? { imdbId } : {}),
-          ...(tvdbId ? { tvdbId } : {}),
-          // Pass pre-extracted subtitle sessions for SDR content (VLC path)
-          ...(prequeueStatus.subtitleSessions && Object.keys(prequeueStatus.subtitleSessions).length > 0
-            ? { preExtractedSubtitles: JSON.stringify(Object.values(prequeueStatus.subtitleSessions)) }
-            : {}),
-          // Shuffle mode for random episode playback (use ref for synchronous access)
-          ...(pendingShuffleModeRef.current || isShuffleMode ? { shuffleMode: '1' } : {}),
-          // Pass prequeue-selected tracks so player knows what's baked into the HLS session
-          // For native player (KSPlayer), convert stream index to relative index (position in track array)
-          // KSPlayer uses array indices (0, 1, 2) not ffprobe stream indices (1, 2, 4, etc.)
-          ...((() => {
-            if (selectedAudioTrack === undefined || selectedAudioTrack < 0) return {};
-            const hasTrackArray = isNativePlatform && prequeueStatus.audioTracks && prequeueStatus.audioTracks.length > 0;
-            const relativeIndex = hasTrackArray
-              ? prequeueStatus.audioTracks!.findIndex((t) => t.index === selectedAudioTrack)
-              : selectedAudioTrack;
-            console.log('[prequeue] Audio track conversion:', {
-              isNativePlatform,
-              selectedAudioTrack,
-              hasTrackArray,
-              audioTracksLength: prequeueStatus.audioTracks?.length,
-              relativeIndex,
-            });
-            return { preselectedAudioTrack: String(relativeIndex) };
-          })()),
-          ...((() => {
-            if (selectedSubtitleTrack === undefined || selectedSubtitleTrack < 0) return {};
-            // For native player (KSPlayer), convert stream index to relative index (position in track array)
-            // KSPlayer uses array indices (0, 1, 2) not ffprobe stream indices (7, 8, 9, etc.)
-            // Same logic as audio track conversion
-            const hasTrackArray = isNativePlatform && prequeueStatus.subtitleTracks && prequeueStatus.subtitleTracks.length > 0;
-            const relativeIndex = hasTrackArray
-              ? prequeueStatus.subtitleTracks!.findIndex((t) => t.index === selectedSubtitleTrack)
-              : selectedSubtitleTrack;
-            console.log('[prequeue] Subtitle track conversion:', {
-              isNativePlatform,
-              selectedSubtitleTrack,
-              hasTrackArray,
-              subtitleTracksLength: prequeueStatus.subtitleTracks?.length,
-              relativeIndex,
-            });
-            return { preselectedSubtitleTrack: String(relativeIndex) };
-          })()),
-          // AIOStreams passthrough format data for info modal
-          ...(prequeueStatus.passthroughName ? { passthroughName: prequeueStatus.passthroughName } : {}),
-          ...(prequeueStatus.passthroughDescription
-            ? { passthroughDescription: prequeueStatus.passthroughDescription }
-            : {}),
-          // Native player flags for direct streaming (bypasses HLS)
-          ...(isNativePlatform ? { useNativePlayer: '1' } : {}),
-        },
-      });
-    },
-    [
-      title,
-      headerImage,
-      router,
-      isSeries,
-      yearNumber,
-      titleId,
-      imdbId,
-      tvdbId,
-      setSelectionInfo,
-      settings,
-      userSettings,
-      playbackPreference,
-      isIosWeb,
-      hideLoadingScreen,
-      setSelectionError,
-      isShuffleMode,
-      trackOverrideAudio,
-      trackOverrideSubtitle,
-      activeUserId,
-      activeUser,
-    ],
-  );
-
-  // Helper to poll prequeue until ready
-  const pollPrequeueUntilReady = useCallback(
-    async (pqId: string, signal?: AbortSignal): Promise<PrequeueStatusResponse | null> => {
-      const maxWaitMs = 60000; // 60 second timeout
-      const pollIntervalMs = 1000;
-      const startTime = Date.now();
-
-      while (Date.now() - startTime < maxWaitMs) {
-        if (signal?.aborted) {
-          return null;
-        }
-
-        try {
-          const status = await apiService.getPrequeueStatus(pqId);
-
-          if (apiService.isPrequeueReady(status.status)) {
-            return status;
-          }
-
-          if (!apiService.isPrequeueInProgress(status.status)) {
-            // Failed or expired
-            console.log('[prequeue] Prequeue no longer in progress:', status.status);
-            return null;
-          }
-
-          // Update status message
-          const statusLabel =
-            status.status === 'searching'
-              ? 'Searching...'
-              : status.status === 'resolving'
-                ? 'Preparing stream...'
-                : status.status === 'probing'
-                  ? 'Detecting video format...'
-                  : 'Loading...';
-          setSelectionInfo(statusLabel);
-
-          // Wait before next poll
-          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-        } catch (error) {
-          console.log('[prequeue] Poll error:', error);
-          return null;
-        }
-      }
-
-      console.log('[prequeue] Prequeue poll timeout');
-      return null;
-    },
-    [],
-  );
-
-  const resolveAndPlay = useCallback(
-    async ({
-      query,
-      friendlyLabel,
-      limit = 5,
-      selectionMessage,
-      useDebugPlayer = false,
-      targetEpisode,
-    }: {
-      query: string;
-      friendlyLabel: string;
-      limit?: number;
-      selectionMessage?: string | null;
-      useDebugPlayer?: boolean;
-      targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string };
-    }) => {
-      if (isResolving) {
-        return;
-      }
-
-      console.log('[prequeue] resolveAndPlay called', {
-        query,
-        prequeueIdState: prequeueId ?? 'null',
-        prequeuePromiseExists: !!prequeuePromiseRef.current,
-        prequeueTargetEpisode,
-        targetEpisode,
-      });
-
-      // Check for navigation prequeue first (passed from player's next episode prequeue)
-      // This takes priority over any pending prequeue promise from the page's own useEffect
-      const navPrequeue = navigationPrequeueStatusRef.current;
-      if (navPrequeue && targetEpisode && apiService.isPrequeueReady(navPrequeue.status)) {
-        const navTarget = navPrequeue.targetEpisode;
-        if (
-          navTarget &&
-          navTarget.seasonNumber === targetEpisode.seasonNumber &&
-          navTarget.episodeNumber === targetEpisode.episodeNumber
-        ) {
-          console.log('[prequeue] Using navigation prequeue from player:', navPrequeue.prequeueId);
-          navigationPrequeueStatusRef.current = null; // Clear after use
-          navigationPrequeueIdRef.current = null; // Clear ID ref too
-          setSelectionInfo(null);
-          await launchFromPrequeue(navPrequeue);
-          return;
-        }
-      }
-
-      // Check for navigation prequeue ID (may not be ready yet, but we should wait for it)
-      // This handles the case where the player passed a prequeue ID but it wasn't ready yet
-      // We use a ref here to avoid React state timing issues (state may not be updated yet)
-      const navPrequeueId = navigationPrequeueIdRef.current;
-      if (navPrequeueId && targetEpisode) {
-        const navTarget = navPrequeueId.targetEpisode;
-        if (
-          navTarget.seasonNumber === targetEpisode.seasonNumber &&
-          navTarget.episodeNumber === targetEpisode.episodeNumber
-        ) {
-          console.log('[prequeue] Found navigation prequeue ID (may not be ready yet):', navPrequeueId.prequeueId);
-          // Use this prequeue ID and wait for it (don't fall back to normal flow)
-          const abortController = new AbortController();
-          abortControllerRef.current = abortController;
-          setSelectionError(null);
-          setSelectionInfo('Waiting for pre-loaded stream...');
-          setIsResolving(true);
-
-          try {
-            const readyStatus = await pollPrequeueUntilReady(navPrequeueId.prequeueId, abortController.signal);
-            if (abortController.signal.aborted) {
-              return;
-            }
-            if (readyStatus) {
-              console.log('[prequeue] Navigation prequeue became ready:', navPrequeueId.prequeueId);
-              navigationPrequeueIdRef.current = null; // Clear after use
-              navigationPrequeueStatusRef.current = null;
-              setSelectionInfo(null);
-              await launchFromPrequeue(readyStatus);
-              return;
-            }
-            // Prequeue failed - show error but don't fall back to normal flow
-            console.error('[prequeue] Navigation prequeue failed to become ready:', navPrequeueId.prequeueId);
-            setSelectionError('Failed to prepare next episode. Please try again.');
-            navigationPrequeueIdRef.current = null;
-            return;
-          } catch (error) {
-            console.error('[prequeue] Navigation prequeue polling failed:', error);
-            setSelectionError('Failed to prepare next episode. Please try again.');
-            navigationPrequeueIdRef.current = null;
-            return;
-          } finally {
-            setIsResolving(false);
-            abortControllerRef.current = null;
-          }
-        }
-      }
-
-      // Wait for any pending prequeue request to complete first
-      let currentPrequeueId = prequeueId;
-      let currentTargetEpisode = prequeueTargetEpisode;
-      if (!currentPrequeueId && prequeuePromiseRef.current) {
-        console.log('[prequeue] Waiting for pending prequeue request...');
-        setSelectionInfo('Preparing stream...');
-        setIsResolving(true);
-        try {
-          const result = await prequeuePromiseRef.current;
-          if (result) {
-            currentPrequeueId = result.id;
-            currentTargetEpisode = result.targetEpisode;
-          }
-          console.log(
-            '[prequeue] Pending prequeue completed, id:',
-            currentPrequeueId,
-            'targetEpisode:',
-            currentTargetEpisode,
-          );
-        } catch (error) {
-          console.log('[prequeue] Pending prequeue failed:', error);
-        } finally {
-          setIsResolving(false);
-        }
-      }
-
-      // Check if we can use prequeue
-      const prequeueMatches = currentPrequeueId
-        ? doesPrequeueMatch(query, currentPrequeueId, currentTargetEpisode)
-        : false;
-      console.log('[prequeue] Prequeue check', {
-        currentPrequeueId: currentPrequeueId ?? 'null',
-        prequeueMatches,
-        isSeries,
-      });
-
-      if (currentPrequeueId && prequeueMatches) {
-        console.log('[prequeue] Checking prequeue status for:', currentPrequeueId);
-
-        // Create abort controller for prequeue flow
-        const abortController = new AbortController();
-        abortControllerRef.current = abortController;
-
-        setSelectionError(null);
-        setSelectionInfo('Checking pre-loaded stream...');
-        setIsResolving(true);
-
-        try {
-          // Check if we have a cached ready status from navigation
-          let status: PrequeueStatusResponse;
-          if (
-            navigationPrequeueStatusRef.current &&
-            navigationPrequeueStatusRef.current.prequeueId === currentPrequeueId &&
-            apiService.isPrequeueReady(navigationPrequeueStatusRef.current.status)
-          ) {
-            console.log('[prequeue] Using cached navigation prequeue status');
-            status = navigationPrequeueStatusRef.current;
-            navigationPrequeueStatusRef.current = null; // Clear after use
-          } else {
-            status = await apiService.getPrequeueStatus(currentPrequeueId);
-          }
-          console.log('[prequeue] Got prequeue status:', {
-            status: status.status,
-            streamPath: status.streamPath ? 'set' : 'null',
-            hlsPlaylistUrl: status.hlsPlaylistUrl ?? 'null',
-            hlsSessionId: status.hlsSessionId ?? 'null',
-            hasDolbyVision: status.hasDolbyVision,
-            hasHdr10: status.hasHdr10,
-          });
-
-          if (abortController.signal.aborted) {
-            return;
-          }
-
-          if (apiService.isPrequeueReady(status.status)) {
-            // Ready to play!
-            console.log('[prequeue] Using ready prequeue:', currentPrequeueId);
-            // Clear toast before launching player to prevent overlay
-            setSelectionInfo(null);
-            await launchFromPrequeue(status);
-            return;
-          }
-
-          if (apiService.isPrequeueInProgress(status.status)) {
-            // Still loading, poll until ready
-            console.log('[prequeue] Prequeue still loading, polling...');
-            const readyStatus = await pollPrequeueUntilReady(currentPrequeueId, abortController.signal);
-
-            if (abortController.signal.aborted) {
-              return;
-            }
-
-            if (readyStatus) {
-              console.log('[prequeue] Prequeue became ready');
-              // Clear toast before launching player to prevent overlay
-              setSelectionInfo(null);
-              await launchFromPrequeue(readyStatus);
-              return;
-            }
-            // Prequeue failed - show error instead of falling back to normal flow
-            console.error('[prequeue] Prequeue did not become ready:', currentPrequeueId);
-            setSelectionError('Failed to prepare stream. Please try again.');
-            setPrequeueId(null);
-            setPrequeueTargetEpisode(null);
-            return;
-          } else {
-            // Prequeue failed/expired - show error instead of falling back
-            console.error('[prequeue] Prequeue not usable (status:', status.status, '):', currentPrequeueId);
-            setSelectionError('Stream preparation failed. Please try again.');
-            setPrequeueId(null);
-            setPrequeueTargetEpisode(null);
-            return;
-          }
-        } catch (error) {
-          // Prequeue check failed - show error instead of falling back
-          console.error('[prequeue] Prequeue check failed:', error);
-          setSelectionError('Failed to check stream status. Please try again.');
-          setPrequeueId(null);
-          setPrequeueTargetEpisode(null);
-          return;
-        } finally {
-          setIsResolving(false);
-          abortControllerRef.current = null;
-        }
-      } else {
-        // Log why we're not using prequeue
-        console.log('[prequeue] ⚠️ Skipping prequeue path:', {
-          hasPrequeueId: !!currentPrequeueId,
-          prequeueMatches,
-          reason: !currentPrequeueId ? 'no prequeueId' : 'prequeue does not match query',
-        });
-      }
-
-      console.log('[prequeue] 📥 Using NORMAL playback flow (not prequeue)');
-
-      // Cancel any pending playback
-      if (abortControllerRef.current) {
-        console.log('🚫 Cancelling previous playback request');
-        abortControllerRef.current.abort();
-      }
-
-      // Create new abort controller for this request
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
-      const trimmedQuery = query.trim();
-      if (!trimmedQuery) {
-        setSelectionError(`Missing search query for ${friendlyLabel}.`);
-        abortControllerRef.current = null;
-        return;
-      }
-
-      console.log('🔍 PLAYBACK REQUEST:', {
-        query: trimmedQuery,
-        friendlyLabel,
-        limit,
-        titleId,
-        title,
-      });
-
-      if (selectionMessage !== undefined) {
-        setSelectionInfo(selectionMessage);
-      } else {
-        setSelectionInfo(null);
-      }
-      setSelectionError(null);
-      setIsResolving(true);
-
-      try {
-        // Check if aborted before starting
-        if (abortController.signal.aborted) {
-          console.log('🚫 Playback was cancelled before starting');
-          return;
-        }
-        const results = await fetchIndexerResults({ query: trimmedQuery, limit });
-        if (!results || results.length === 0) {
-          // Check if episode hasn't aired yet and show a friendlier message
-          if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
-            setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
-          } else {
-            setSelectionError(`No results returned for ${friendlyLabel}.`);
-          }
-          return;
-        }
-
-        console.log(
-          '🔍 RAW RESULTS from search:',
-          results.map((r, idx) => ({
-            index: idx,
-            title: r.title,
-            serviceType: r.serviceType,
-            indexer: r.indexer,
-            titleId: r.attributes?.titleId,
-            titleName: r.attributes?.titleName,
-          })),
-        );
-
-        // Filter results to match the current show by titleId or title name
-        const filteredResults = (() => {
-          // If we have a titleId (series identifier), filter by it
-          // Only filter OUT results that have a titleId but it doesn't match
-          // Keep results without titleId (e.g., usenet results)
-          if (titleId || imdbId) {
-            const seriesIdWithoutEpisode = titleId ? titleId.replace(/:S\d{2}E\d{2}$/i, '') : '';
-            console.log(`🔍 Filtering by IDs: titleId="${seriesIdWithoutEpisode}", imdbId="${imdbId || 'none'}"`);
-            const matchingResults = results.filter((result) => {
-              const resultTitleId = result.attributes?.titleId;
-              // If no titleId attribute, keep the result (usenet results don't have this)
-              if (!resultTitleId) {
-                return true;
-              }
-              // Compare titleId without episode suffix
-              const resultIdWithoutEpisode = resultTitleId.replace(/:S\d{2}E\d{2}$/i, '');
-
-              // Check if it matches our titleId (e.g., TVDB format)
-              if (seriesIdWithoutEpisode && resultIdWithoutEpisode === seriesIdWithoutEpisode) {
-                return true;
-              }
-
-              // Also check if it matches our imdbId (for debrid results that use IMDB IDs)
-              if (imdbId && resultIdWithoutEpisode === imdbId) {
-                return true;
-              }
-
-              return false;
-            });
-
-            // If we actually filtered something out, use the filtered results
-            if (matchingResults.length > 0 && matchingResults.length < results.length) {
-              console.log(`✅ Filtered ${results.length} results to ${matchingResults.length} by titleId/imdbId match`);
-              return matchingResults;
-            }
-          }
-
-          // Fallback: filter by title name similarity
-          // Only filter OUT results that have a titleName but it doesn't match
-          // Keep results without titleName (e.g., usenet results)
-          const searchTitle = title.trim().toLowerCase();
-          if (searchTitle) {
-            const matchingResults = results.filter((result) => {
-              const resultTitleName = result.attributes?.titleName;
-              // If no titleName attribute, keep the result (usenet results don't have this)
-              if (!resultTitleName) {
-                return true;
-              }
-              const resultNameLower = resultTitleName.trim().toLowerCase();
-              // Only keep if the title matches
-              return (
-                resultNameLower === searchTitle ||
-                resultNameLower.includes(searchTitle) ||
-                searchTitle.includes(resultNameLower)
-              );
-            });
-
-            if (matchingResults.length > 0 && matchingResults.length < results.length) {
-              console.log(`✅ Filtered ${results.length} results to ${matchingResults.length} by title name match`);
-              return matchingResults;
-            }
-          }
-
-          // If no filtering worked, log warning and return all results
-          console.warn(`⚠️ Could not filter results by titleId or title name, using all ${results.length} results`);
-          return results;
-        })();
-
-        if (filteredResults.length === 0) {
-          setSelectionError(`No matching results found for ${friendlyLabel}.`);
-          return;
-        }
-
-        console.log(
-          '🔍 FILTERED RESULTS (after titleId/titleName filtering):',
-          filteredResults.map((r, idx) => ({
-            index: idx,
-            title: r.title,
-            serviceType: r.serviceType,
-            indexer: r.indexer,
-            titleId: r.attributes?.titleId,
-            titleName: r.attributes?.titleName,
-          })),
-        );
-
-        // Filter out releases that have been marked as unplayable
-        // Uses exact matching on release filename (without extension)
-        const unplayableReleases = await getUnplayableReleases();
-        const playableResults = filteredResults.filter((result) => {
-          if (!result.title) return true;
-          // Normalize: lowercase, trim, remove file extension
-          const normalizedTitle = result.title
-            .toLowerCase()
-            .trim()
-            .replace(/\.(mkv|mp4|avi|m4v|webm|ts)$/i, '');
-          const isUnplayable = unplayableReleases.some((u) => {
-            if (!u.title) return false;
-            // Normalize stored title the same way
-            const storedTitle = u.title
-              .toLowerCase()
-              .trim()
-              .replace(/\.(mkv|mp4|avi|m4v|webm|ts)$/i, '');
-            // Exact match only - release filenames are specific enough
-            return normalizedTitle === storedTitle;
-          });
-          if (isUnplayable) {
-            console.log(`🚫 Skipping unplayable release: "${result.title}"`);
-          }
-          return !isUnplayable;
-        });
-
-        if (playableResults.length === 0 && filteredResults.length > 0) {
-          setSelectionError(`All matching releases for ${friendlyLabel} have been marked as unplayable.`);
-          return;
-        }
-
-        // Use filtered results in their original order (as returned from the backend)
-        // to match the order shown in manual selection
-        const prioritizedResults = playableResults;
-
-        console.log(
-          '🎯 ATTEMPTING PLAYBACK with these results in order:',
-          prioritizedResults.map((r, idx) => ({
-            index: idx,
-            title: r.title,
-            serviceType: r.serviceType,
-            indexer: r.indexer,
-          })),
-        );
-        const playbackHandler = initiatePlaybackRef.current;
-        if (!playbackHandler) {
-          console.error('⚠️ Playback handler unavailable when attempting to resolve search result.');
-          setSelectionError(`Unable to start playback for ${friendlyLabel}.`);
-          return;
-        }
-
-        let lastHealthFailure = false;
-        let lastHealthFailureReason: string | null = null;
-        for (let index = 0; index < prioritizedResults.length; index += 1) {
-          // Check if aborted during iteration
-          if (abortController.signal.aborted) {
-            console.log('🚫 Playback was cancelled during resolution');
-            return;
-          }
-
-          const candidate = prioritizedResults[index];
-          console.log(
-            `🎬 [${index + 1}/${prioritizedResults.length}] Trying: "${candidate.title}" (${candidate.serviceType}) from ${candidate.indexer}`,
-          );
-          try {
-            await playbackHandler(candidate, abortController.signal, { useDebugPlayer });
-
-            // Check if aborted after successful playback initiation
-            if (abortController.signal.aborted) {
-              console.log('🚫 Playback was cancelled after initiation');
-              return;
-            }
-
-            console.log(
-              `✅ [${index + 1}/${prioritizedResults.length}] SUCCESS! Playback initiated for "${candidate.title}"`,
-            );
-            // Clear the abort controller since playback was successful
-            if (abortControllerRef.current === abortController) {
-              abortControllerRef.current = null;
-            }
-            return;
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const healthFailure = isHealthFailureError(err);
-            const healthReason = healthFailure ? getHealthFailureReason(err) : null;
-
-            console.log(
-              `❌ [${index + 1}/${prioritizedResults.length}] FAILED: "${candidate.title}" - Error: ${message} - IsHealthFailure: ${healthFailure} - Reason: ${healthReason || 'none'}`,
-            );
-
-            if (healthFailure) {
-              lastHealthFailure = true;
-              if (healthReason) {
-                lastHealthFailureReason = healthReason;
-              }
-              const nextIndex = index + 1;
-              const moreCandidatesRemain = nextIndex < prioritizedResults.length;
-              const candidateLabel = candidate.title?.trim() || candidate.guid || 'selected release';
-              const indexerLabel = candidate.indexer?.trim() || 'the indexer';
-
-              console.warn('⚠️ Health check failed for auto-selected release; evaluating fallback.', {
-                candidateLabel,
-                indexer: candidate.indexer,
-                error: message,
-              });
-
-              if (moreCandidatesRemain) {
-                console.log(
-                  `⏭️ Health failure, continuing to next candidate (${prioritizedResults.length - nextIndex} remaining)`,
-                );
-                const failurePrefix = healthReason ? `Health check reported ${healthReason}` : 'Health check failed';
-                setSelectionInfo(
-                  `${failurePrefix} for "${candidateLabel}" from ${indexerLabel}. Trying another release…`,
-                );
-                setSelectionError(null);
-                continue;
-              }
-
-              console.log(`🛑 All ${prioritizedResults.length} candidates failed health checks. Stopping.`);
-              // Check if episode hasn't aired yet and show a friendlier message
-              if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
-                setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
-              } else {
-                const failureSummary = lastHealthFailureReason
-                  ? `All automatic releases failed health checks (last issue: ${lastHealthFailureReason}). Try manual selection or pick another release.`
-                  : 'All automatic releases failed health checks. Try manual selection or pick another release.';
-                setSelectionError(failureSummary);
-              }
-              setSelectionInfo(null);
-              return;
-            }
-
-            console.log(`🛑 Non-health failure error, stopping attempts.`);
-            setSelectionInfo(null);
-            setSelectionError(message || `Unable to start playback for ${friendlyLabel}.`);
-            return;
-          }
-        }
-
-        // Check if episode hasn't aired yet and show a friendlier message
-        if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
-          setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
-        } else if (lastHealthFailure) {
-          const failureSummary = lastHealthFailureReason
-            ? `All automatic releases failed health checks (last issue: ${lastHealthFailureReason}). Try manual selection or pick another release.`
-            : 'All automatic releases failed health checks. Try manual selection or pick another release.';
-          setSelectionError(failureSummary);
-        } else {
-          setSelectionError(`Unable to start playback for ${friendlyLabel}.`);
-        }
-        setSelectionInfo(null);
-      } catch (err) {
-        // Don't show error if the operation was aborted
-        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
-        if (isAbortError) {
-          console.log('🚫 Playback resolution was aborted');
-          setSelectionInfo(null);
-          setSelectionError(null);
-          return;
-        }
-
-        // Check for timeout errors and show a helpful message
-        if (isTimeoutError(err)) {
-          console.error(`⚠️ Search timed out for ${friendlyLabel}:`, err);
-          setSelectionError(getTimeoutMessage(err));
-          setSelectionInfo(null);
-          return;
-        }
-
-        const message = err instanceof Error ? err.message : `Failed to resolve search result for ${friendlyLabel}.`;
-        console.error(`⚠️ Search result resolve failed for ${friendlyLabel}:`, err);
-        setSelectionError(message);
-        setSelectionInfo(null);
-      } finally {
-        // Only clear isResolving if this controller is still the active one
-        if (abortControllerRef.current === abortController || !abortController.signal.aborted) {
-          setIsResolving(false);
-        }
-        // Clean up the abort controller reference
-        if (abortControllerRef.current === abortController) {
-          abortControllerRef.current = null;
-        }
-      }
-    },
-    [fetchIndexerResults, isResolving, title, titleId, imdbId, launchFromPrequeue],
-  );
-
-  const handlePlaySeason = useCallback(
-    async (season: SeriesSeason) => {
-      const baseTitle = title.trim() || title;
-      const query = buildSeasonQuery(baseTitle, season.number);
-      if (!query) {
-        setSelectionError('Unable to build a season search query.');
-        return;
-      }
-
-      const friendlyLabel = `${baseTitle} ${getSeasonLabel(season.number, season.name)}`;
-      const selectionMessage = `${baseTitle} • ${getSeasonLabel(season.number, season.name)}`;
-      await resolveAndPlay({ query, friendlyLabel, limit: 50, selectionMessage });
-    },
-    [resolveAndPlay, title],
-  );
-
-  const handleSeasonSelect = useCallback(
-    (season: SeriesSeason, shouldAutoplay: boolean) => {
-      setSelectedSeason(season);
-      if (shouldAutoplay) {
-        void handlePlaySeason(season);
-      }
-    },
-    [handlePlaySeason],
-  );
-
-  const recordEpisodePlayback = useCallback(
-    (episode: SeriesEpisode) => {
-      if (!isSeries || !seriesIdentifier) {
-        return;
-      }
-
-      const nextEpisode = findNextEpisode(episode);
-
-      // Build external IDs map
-      const externalIds: Record<string, string> = {};
-      if (imdbId) externalIds.imdb = imdbId;
-      if (tmdbId) externalIds.tmdb = tmdbId;
-      if (tvdbId) externalIds.tvdb = tvdbId;
-
-      const payload: EpisodeWatchPayload = {
-        seriesId: seriesIdentifier,
-        seriesTitle: title,
-        posterUrl: posterUrl || undefined,
-        backdropUrl: backdropUrl || undefined,
-        year: yearNumber,
-        externalIds: Object.keys(externalIds).length > 0 ? externalIds : undefined,
-        episode: toEpisodeReference(episode),
-        nextEpisode: nextEpisode ? toEpisodeReference(nextEpisode) : undefined,
-      };
-
-      recordEpisodeWatch(payload).catch((err) => {
-        console.warn('⚠️ Unable to record watch history:', err);
-      });
-    },
-    [
-      backdropUrl,
-      findNextEpisode,
-      imdbId,
-      isSeries,
-      posterUrl,
-      recordEpisodeWatch,
-      seriesIdentifier,
-      title,
-      tmdbId,
-      toEpisodeReference,
-      tvdbId,
-      yearNumber,
-    ],
-  );
-
-  const handleEpisodeFocus = useCallback((episode: SeriesEpisode) => {
-    setActiveEpisode(episode);
-  }, []);
-
-  const handleRequestFocusShift = useCallback(() => {
-    const navigator = spatialNavigatorRef.current;
-    if (!isTouchSeasonLayout && navigator && typeof navigator.grabFocus === 'function') {
-      try {
-        navigator.grabFocus('watch-now');
-      } catch (error) {
-        console.debug('Unable to shift focus to watch-now button:', error);
-      }
-    }
-  }, [isTouchSeasonLayout]);
-
-  const handleEpisodeSelect = useCallback(
-    (episode: SeriesEpisode) => {
-      setActiveEpisode(episode);
-      setSelectionError(null);
-      setSelectionInfo(null);
-      // Clear any resume position from previous episode
-      setCurrentProgress(null);
-      // Update selected season if episode is from a different season
-      setSelectedSeason((currentSeason) => {
-        if (currentSeason?.number !== episode.seasonNumber) {
-          const matchingSeason = seasons.find((s) => s.number === episode.seasonNumber);
-          return matchingSeason ?? currentSeason;
-        }
-        return currentSeason;
-      });
-    },
-    [seasons],
-  );
-
-  const handlePreviousEpisode = useCallback(() => {
-    if (!activeEpisode) return;
-    const previousEp = findPreviousEpisode(activeEpisode);
-    if (previousEp) {
-      handleEpisodeSelect(previousEp);
-    }
-  }, [activeEpisode, findPreviousEpisode, handleEpisodeSelect]);
-
-  const handleNextEpisode = useCallback(() => {
-    if (!activeEpisode) return;
-    const nextEp = findNextEpisode(activeEpisode);
-    if (nextEp) {
-      handleEpisodeSelect(nextEp);
-    }
-  }, [activeEpisode, findNextEpisode, handleEpisodeSelect]);
-
-  const handleEpisodeStripFocus = useCallback(() => {
-    console.log('[Details NAV DEBUG] Episode strip FOCUSED');
-    setIsEpisodeStripFocused(true);
-  }, []);
-
-  const handleEpisodeStripBlur = useCallback(() => {
-    console.log('[Details NAV DEBUG] Episode strip BLURRED');
-    setIsEpisodeStripFocused(false);
-  }, []);
-
-  const onDirectionHandledWithoutMovement = useCallback(
-    (direction: string) => {
-      console.log(
-        '[Details NAV DEBUG] Direction without movement:',
-        direction,
-        'isEpisodeStripFocused:',
-        isEpisodeStripFocused,
-      );
-
-      if (isEpisodeStripFocused && activeEpisode) {
-        if (direction === 'right') {
-          const nextEp = findNextEpisode(activeEpisode);
-          if (nextEp) {
-            handleEpisodeSelect(nextEp);
-          }
-        } else if (direction === 'left') {
-          const previousEp = findPreviousEpisode(activeEpisode);
-          if (previousEp) {
-            handleEpisodeSelect(previousEp);
-          }
-        }
-      }
-    },
-    [isEpisodeStripFocused, activeEpisode, findNextEpisode, findPreviousEpisode, handleEpisodeSelect],
-  );
-
-  // Keep the ref in sync with the callback
-  useEffect(() => {
-    handleEpisodeSelectRef.current = handleEpisodeSelect;
-  }, [handleEpisodeSelect]);
-
-  // Select/play next episode when episodes are loaded and we have a next episode to show
-  useEffect(() => {
-    if (nextEpisodeFromPlayback && allEpisodes.length > 0) {
-      const matchingEpisode = allEpisodes.find(
-        (ep) =>
-          ep.seasonNumber === nextEpisodeFromPlayback.seasonNumber &&
-          ep.episodeNumber === nextEpisodeFromPlayback.episodeNumber,
-      );
-      if (matchingEpisode) {
-        if (nextEpisodeFromPlayback.autoPlay && handlePlayEpisodeRef.current) {
-          console.log('[Details] Auto-playing next episode after episodes loaded:', matchingEpisode);
-          handlePlayEpisodeRef.current(matchingEpisode);
-        } else {
-          console.log('[Details] Auto-selecting next episode after episodes loaded:', matchingEpisode);
-          handleEpisodeSelect(matchingEpisode);
-        }
-        // Clear the next episode state after applying it
-        setNextEpisodeFromPlayback(null);
-      }
-    }
-  }, [nextEpisodeFromPlayback, allEpisodes, handleEpisodeSelect]);
-
-  // Helper to show loading screen immediately when playback starts
-  const showLoadingScreenIfEnabled = useCallback(async () => {
-    const isLoadingScreenEnabled =
-      userSettings?.playback?.useLoadingScreen ?? settings?.playback?.useLoadingScreen ?? false;
-    if (isLoadingScreenEnabled) {
-      setShowBlackOverlay(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      showLoadingScreen();
-    }
-  }, [userSettings?.playback?.useLoadingScreen, settings?.playback?.useLoadingScreen, showLoadingScreen]);
-
-  const handlePlayEpisode = useCallback(
-    async (episode: SeriesEpisode) => {
-      setActiveEpisode(episode);
-
-      const playAction = async () => {
-        const baseTitle = title.trim() || title;
-        const query = buildEpisodeQuery(baseTitle, episode.seasonNumber, episode.episodeNumber);
-        if (!query) {
-          setSelectionError('Unable to build an episode search query.');
-          return;
-        }
-
-        const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
-        const friendlyLabel = `${baseTitle} ${episodeCode}${episode.name ? ` – "${episode.name}"` : ''}`;
-        const selectionMessage = `${baseTitle} • ${episodeCode}`;
-        await resolveAndPlay({
-          query,
-          friendlyLabel,
-          limit: 50,
-          selectionMessage,
-          targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber, airedDate: episode.airedDate },
-        });
-      };
-
-      // Skip resume check for shuffle mode - always start from beginning
-      const isShuffling = pendingShuffleModeRef.current;
-
-      // Check for resume progress directly using the episode's itemId
-      if (!isShuffling && activeUserId && seriesIdentifier) {
-        const episodeItemId = `${seriesIdentifier}:S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`;
-        try {
-          const progress = await apiService.getPlaybackProgress(activeUserId, 'episode', episodeItemId);
-          if (progress && progress.percentWatched > 5 && progress.percentWatched < 95) {
-            // Show resume modal
-            setCurrentProgress(progress);
-            setPendingPlaybackAction(() => async (startOffset?: number) => {
-              if (startOffset !== undefined) {
-                pendingStartOffsetRef.current = startOffset;
-              }
-              await playAction();
-            });
-            setResumeModalVisible(true);
-            return;
-          }
-        } catch (error) {
-          console.warn('Failed to check playback progress:', error);
-        }
-      }
-
-      // No resume needed (or shuffle mode), play directly
-      await showLoadingScreenIfEnabled();
-      await playAction();
-    },
-    [resolveAndPlay, title, activeUserId, seriesIdentifier, showLoadingScreenIfEnabled],
-  );
-
-  // Keep the play episode ref in sync with the callback
-  useEffect(() => {
-    handlePlayEpisodeRef.current = handlePlayEpisode;
-  }, [handlePlayEpisode]);
-
-  // Shuffle play - pick a random episode and play it (excludes season 0/specials)
-  const handleShufflePlay = useCallback(() => {
-    dismissTrailerAutoPlay();
-    // Filter out season 0 (specials) from shuffle
-    const shuffleableEpisodes = allEpisodes.filter((ep) => ep.seasonNumber !== 0);
-    if (shuffleableEpisodes.length === 0) return;
-    const randomIndex = Math.floor(Math.random() * shuffleableEpisodes.length);
-    const randomEpisode = shuffleableEpisodes[randomIndex];
-    // Set both state (for persistence) and ref (for synchronous access)
-    setIsShuffleMode(true);
-    pendingShuffleModeRef.current = true;
-    // Select the season containing the random episode
-    const matchingSeason = seasons.find((s) => s.number === randomEpisode.seasonNumber);
-    if (matchingSeason) {
-      setSelectedSeason(matchingSeason);
-    }
-    setActiveEpisode(randomEpisode);
-    handlePlayEpisode(randomEpisode);
-  }, [dismissTrailerAutoPlay, allEpisodes, seasons, handlePlayEpisode]);
-
-  // Shuffle play current season only - pick a random episode from selected season
-  const handleShuffleSeasonPlay = useCallback(() => {
-    dismissTrailerAutoPlay();
-    const seasonEpisodes = selectedSeason?.episodes ?? [];
-    if (seasonEpisodes.length === 0) return;
-    const randomIndex = Math.floor(Math.random() * seasonEpisodes.length);
-    const randomEpisode = seasonEpisodes[randomIndex];
-    // Set both state (for persistence) and ref (for synchronous access)
-    setIsShuffleMode(true);
-    pendingShuffleModeRef.current = true;
-    setActiveEpisode(randomEpisode);
-    handlePlayEpisode(randomEpisode);
-  }, [dismissTrailerAutoPlay, selectedSeason?.episodes, handlePlayEpisode]);
-
-  const getItemIdForProgress = useCallback((): string | null => {
-    // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
-    const episodeToCheck = activeEpisode || nextUpEpisode;
-
-    if (episodeToCheck && seriesIdentifier) {
-      // For episodes, construct the itemId
-      return `${seriesIdentifier}:S${String(episodeToCheck.seasonNumber).padStart(2, '0')}E${String(episodeToCheck.episodeNumber).padStart(2, '0')}`;
-    }
-
-    if (!isSeries && titleId) {
-      // For movies, use the titleId
-      return titleId;
-    }
-
-    return null;
-  }, [nextUpEpisode, activeEpisode, seriesIdentifier, isSeries, titleId]);
-
-  const checkAndShowResumeModal = useCallback(
-    async (action: () => Promise<void>) => {
-      console.log('🔍 checkAndShowResumeModal called', { activeUserId });
-
-      if (!activeUserId) {
-        // No user, just play - show loading screen immediately
-        console.log('🔍 No active user, playing immediately');
-        await showLoadingScreenIfEnabled();
-        await action();
-        return;
-      }
-
-      const itemId = getItemIdForProgress();
-      console.log('🔍 Item ID for progress:', itemId);
-
-      if (!itemId) {
-        // No item ID, just play - show loading screen immediately
-        console.log('🔍 No item ID, playing immediately');
-        await showLoadingScreenIfEnabled();
-        await action();
-        return;
-      }
-
-      try {
-        const mediaType = isSeries || activeEpisode || nextUpEpisode ? 'episode' : 'movie';
-        console.log('🔍 Fetching progress for:', { mediaType, itemId });
-        const progress = await apiService.getPlaybackProgress(activeUserId, mediaType, itemId);
-        console.log('🔍 Progress result:', progress);
-
-        if (progress && progress.percentWatched > 5 && progress.percentWatched < 95) {
-          // Show resume modal - loading screen will be shown after user makes choice
-          console.log('🎬 Showing resume modal with progress:', progress.percentWatched);
-          setCurrentProgress(progress);
-          // Wrap action to accept startOffset parameter for resume
-          setPendingPlaybackAction(() => async (startOffset?: number) => {
-            // Store the startOffset in a ref that handleInitiatePlayback can access
-            // Note: Don't clear it here - handleInitiatePlayback will consume and clear it
-            // This allows manual selection flow to preserve the resume position
-            if (startOffset !== undefined) {
-              pendingStartOffsetRef.current = startOffset;
-            }
-            await action();
-          });
-          setResumeModalVisible(true);
-        } else {
-          // No meaningful progress, just play - show loading screen immediately
-          console.log('🔍 No meaningful progress, playing immediately. Progress:', progress?.percentWatched);
-          await showLoadingScreenIfEnabled();
-          await action();
-        }
-      } catch (error) {
-        console.warn('Failed to check playback progress:', error);
-        // On error, just play - show loading screen immediately
-        await showLoadingScreenIfEnabled();
-        await action();
-      }
-    },
-    [activeUserId, getItemIdForProgress, isSeries, activeEpisode, nextUpEpisode, showLoadingScreenIfEnabled],
-  );
-
-  const handleResumePlayback = useCallback(async () => {
-    if (!pendingPlaybackAction || !currentProgress) {
-      return;
-    }
-
-    // Close the modal immediately
-    setResumeModalVisible(false);
-
-    // Show loading screen immediately after user confirms resume
-    await showLoadingScreenIfEnabled();
-
-    // Pass the startOffset from currentProgress to the pending action
-    await pendingPlaybackAction(currentProgress.position);
-
-    // Clear state after playback starts
-    setPendingPlaybackAction(null);
-    setCurrentProgress(null);
-  }, [pendingPlaybackAction, currentProgress, showLoadingScreenIfEnabled]);
-
-  const handlePlayFromBeginning = useCallback(async () => {
-    if (!pendingPlaybackAction) {
-      return;
-    }
-
-    // Close the modal immediately
-    setResumeModalVisible(false);
-
-    // Show loading screen immediately after user confirms play from beginning
-    await showLoadingScreenIfEnabled();
-
-    // Clear the progress flag so we start from beginning
-    setCurrentProgress(null);
-    await pendingPlaybackAction();
-
-    // Clear state after playback starts
-    setPendingPlaybackAction(null);
-  }, [pendingPlaybackAction, showLoadingScreenIfEnabled]);
-
-  const handleWatchNow = useCallback(async () => {
-    // Block select actions briefly after navigating from "More Like This" to prevent
-    // the enter key that triggered navigation from also triggering play
-    if (isSelectBlocked) {
-      console.log(`[Details DEBUG ${instanceId}] handleWatchNow BLOCKED (fromSimilar navigation debounce)`);
-      return;
-    }
-    dismissTrailerAutoPlay();
-    console.log(`[Details DEBUG ${instanceId}] handleWatchNow called - titleId: ${titleId}, title: ${title}`);
-    const playAction = async () => {
-      console.log(`[Details DEBUG ${instanceId}] playAction executing - titleId: ${titleId}`);
-      // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
-      // This matches the prequeue priority order
-      const episodeToPlay = activeEpisode || nextUpEpisode;
-
-      if (episodeToPlay) {
-        const context = getEpisodeSearchContext(episodeToPlay);
-        if (!context) {
-          setSelectionError('Unable to build an episode search query.');
-          return;
-        }
-
-        console.log('⚡ Auto-select: resolving first viable result for episode', context.episodeCode);
-        await resolveAndPlay({
-          query: context.query,
-          friendlyLabel: context.friendlyLabel,
-          limit: 50,
-          selectionMessage: context.selectionMessage,
-          targetEpisode: { seasonNumber: episodeToPlay.seasonNumber, episodeNumber: episodeToPlay.episodeNumber, airedDate: episodeToPlay.airedDate },
-        });
-        // Don't automatically record episode playback - let progress tracking handle it
-        // recordEpisodePlayback(episodeToPlay);
-        return;
-      }
-
-      const baseTitle = title.trim();
-      console.log('⚡ Auto-select: resolving first viable result', baseTitle ? `for ${baseTitle}` : '');
-      await resolveAndPlay({
-        query: baseTitle || title,
-        friendlyLabel: baseTitle ? `"${baseTitle}"` : 'this title',
-        limit: 50,
-        selectionMessage: null,
-      });
-    };
-
-    await checkAndShowResumeModal(playAction);
-  }, [
-    activeEpisode,
-    nextUpEpisode,
-    getEpisodeSearchContext,
-    recordEpisodePlayback,
-    resolveAndPlay,
-    title,
-    checkAndShowResumeModal,
-    instanceId,
-    titleId,
-    isSelectBlocked,
-    dismissTrailerAutoPlay,
-  ]);
-
-  const handleLaunchDebugPlayer = useCallback(async () => {
-    dismissTrailerAutoPlay();
-    const playAction = async () => {
-      // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
-      // This matches the prequeue priority order
-      const episodeToPlay = activeEpisode || nextUpEpisode;
-
-      if (episodeToPlay) {
-        const context = getEpisodeSearchContext(episodeToPlay);
-        if (!context) {
-          setSelectionError('Unable to build an episode search query.');
-          return;
-        }
-
-        console.log('🛠️ Debug Player: resolving first viable result for episode', context.episodeCode);
-        await resolveAndPlay({
-          query: context.query,
-          friendlyLabel: context.friendlyLabel,
-          limit: 50,
-          selectionMessage: context.selectionMessage,
-          useDebugPlayer: true,
-          targetEpisode: { seasonNumber: episodeToPlay.seasonNumber, episodeNumber: episodeToPlay.episodeNumber, airedDate: episodeToPlay.airedDate },
-        });
-        return;
-      }
-
-      const baseTitle = title.trim();
-      console.log('🛠️ Debug Player: resolving first viable result', baseTitle ? `for ${baseTitle}` : '');
-      await resolveAndPlay({
-        query: baseTitle || title,
-        friendlyLabel: baseTitle ? `"${baseTitle}"` : 'this title',
-        limit: 50,
-        selectionMessage: null,
-        useDebugPlayer: true,
-      });
-    };
-
-    await checkAndShowResumeModal(playAction);
-  }, [dismissTrailerAutoPlay, activeEpisode, nextUpEpisode, getEpisodeSearchContext, resolveAndPlay, title, checkAndShowResumeModal]);
-
-  const closeManualPicker = useCallback(() => {
-    setManualVisible(false);
-    setManualError(null);
-    setManualLoading(false);
-  }, []);
-
-  const handleManualSelection = useCallback(
-    async (result: NZBResult, trackOverrides?: ManualTrackOverrides) => {
-      if (!result) {
-        return;
-      }
-
-      // Cancel any pending playback
-      if (abortControllerRef.current) {
-        console.log('🚫 Cancelling previous playback for manual selection');
-        abortControllerRef.current.abort();
-      }
-
-      // Create new abort controller for manual selection
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
-      setManualVisible(false);
-      setManualError(null);
-      setSelectionError(null);
-      setIsResolving(true);
-
-      // Log track overrides if provided
-      if (trackOverrides) {
-        console.log('[manual] Using track overrides:', trackOverrides);
-      }
-
-      // Define the playback action to be wrapped in resume check
-      const playAction = async () => {
-        // Show loading screen now that user has confirmed playback
-        await showLoadingScreenIfEnabled();
-
-        try {
-          await handleInitiatePlayback(result, abortController.signal, { trackOverrides });
-
-          // Check if aborted after playback
-          if (abortController.signal.aborted) {
-            console.log('🚫 Manual playback was cancelled');
-            return;
-          }
-
-          // Clear the abort controller since playback was successful
-          if (abortControllerRef.current === abortController) {
-            abortControllerRef.current = null;
-          }
-        } catch (err) {
-          // Don't show error if the operation was aborted
-          const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
-          if (isAbortError) {
-            console.log('🚫 Manual playback was aborted');
-            setSelectionInfo(null);
-            setSelectionError(null);
-            return;
-          }
-
-          // Handle playback errors
-          console.error('⚠️ Manual playback failed:', err);
-          const message = err instanceof Error ? err.message : 'Playback failed';
-          setSelectionError(message);
-          setSelectionInfo(null);
-          // Clear loading screen and black overlay on error
-          hideLoadingScreen();
-          setShowBlackOverlay(false);
-        } finally {
-          setIsResolving(false);
-        }
-      };
-
-      // Check for resume progress before initiating playback
-      await checkAndShowResumeModal(playAction);
-    },
-    [checkAndShowResumeModal, handleInitiatePlayback, hideLoadingScreen, showLoadingScreenIfEnabled],
-  );
-
-  const handleToggleWatchlist = useCallback(async () => {
-    if (!canToggleWatchlist || watchlistBusy) {
-      return;
-    }
-    dismissTrailerAutoPlay();
-    setWatchlistError(null);
-    setWatchlistBusy(true);
-    try {
-      if (isWatchlisted) {
-        await removeFromWatchlist(mediaType, titleId);
-      } else {
-        await addToWatchlist({
-          id: titleId,
-          mediaType,
-          name: title,
-          overview: description,
-          year: yearNumber,
-          posterUrl,
-          backdropUrl,
-          externalIds,
-        });
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to update watchlist.';
-      setWatchlistError(message);
-      console.error('⚠️ Watchlist update failed:', err);
-    } finally {
-      setWatchlistBusy(false);
-    }
-  }, [
-    dismissTrailerAutoPlay,
-    addToWatchlist,
-    backdropUrl,
-    canToggleWatchlist,
-    description,
-    externalIds,
-    isWatchlisted,
-    mediaType,
-    posterUrl,
-    removeFromWatchlist,
-    title,
-    titleId,
-    watchlistBusy,
-    yearNumber,
-  ]);
-
-  const handleToggleWatched = useCallback(async () => {
-    if (!canToggleWatchlist || watchlistBusy) {
-      return;
-    }
-    dismissTrailerAutoPlay();
-
-    // For series, show bulk watch options modal
-    if (isSeries) {
-      setBulkWatchModalVisible(true);
-      return;
-    }
-
-    // For movies, toggle directly
-    setWatchlistError(null);
-    setWatchlistBusy(true);
-    try {
-      await toggleWatchStatus(mediaType, titleId, {
-        name: title,
-        year: yearNumber,
-        externalIds: externalIds,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to update watched state.';
-      setWatchlistError(message);
-      console.error('⚠️ Unable to update watched state:', err);
-    } finally {
-      setWatchlistBusy(false);
-    }
-  }, [
-    dismissTrailerAutoPlay,
-    canToggleWatchlist,
-    externalIds,
-    isSeries,
-    mediaType,
-    title,
-    titleId,
-    toggleWatchStatus,
-    watchlistBusy,
-    yearNumber,
-  ]);
-
+  // ===== Handlers =====
   const handleWatchTrailer = useCallback(() => {
-    // When auto-play is active on TV, toggle play/pause instead of opening modal
-    if (autoPlayTrailersTV && trailerStreamUrl) {
-      setIsBackdropTrailerPlaying((prev) => !prev);
-      // Exit immersive mode on any interaction
-      setIsTrailerImmersiveMode(false);
+    if (autoPlayTrailersTV && trailersHook.trailerStreamUrl) {
+      trailersHook.setIsBackdropTrailerPlaying((prev) => !prev);
+      trailersHook.setIsTrailerImmersiveMode(false);
       return;
     }
-
-    dismissTrailerAutoPlay();
+    trailersHook.dismissTrailerAutoPlay();
     const nextTrailer = primaryTrailer ?? trailers[0];
-    if (!nextTrailer) {
-      if (!trailersLoading) {
-        setTrailersError((prev) => prev ?? 'Trailer not available yet.');
-      }
-      return;
-    }
+    if (!nextTrailer) return;
     setActiveTrailer(nextTrailer);
     setTrailerModalVisible(true);
-  }, [autoPlayTrailersTV, trailerStreamUrl, dismissTrailerAutoPlay, primaryTrailer, trailers, trailersLoading]);
+  }, [autoPlayTrailersTV, trailersHook, primaryTrailer, trailers]);
 
   const handleViewCollection = useCallback(() => {
     if (!movieDetails?.collection) return;
-    dismissTrailerAutoPlay();
+    trailersHook.dismissTrailerAutoPlay();
     router.push({
       pathname: '/watchlist',
       params: {
@@ -4805,13 +1144,10 @@ export default function DetailsScreen() {
         collectionName: encodeURIComponent(movieDetails.collection.name),
       },
     });
-  }, [movieDetails?.collection, dismissTrailerAutoPlay, router]);
+  }, [movieDetails?.collection, trailersHook, router]);
 
   const handleSimilarTitlePress = useCallback(
     (item: Title) => {
-      console.log(`[Details DEBUG ${instanceId}] handleSimilarTitlePress called - current titleId: ${titleId}, navigating to: ${item.id} (${item.name})`);
-      // Use replace instead of push to avoid stacking multiple details pages
-      // This prevents the old page's event handlers from remaining active
       router.replace({
         pathname: '/details',
         params: {
@@ -4824,13 +1160,11 @@ export default function DetailsScreen() {
           backdropUrl: item.backdrop?.url ?? '',
           tmdbId: item.tmdbId ? String(item.tmdbId) : '',
           year: item.year ? String(item.year) : '',
-          // Signal that we came from "More Like This" - delays auto-focus to prevent
-          // the enter key that triggered navigation from also triggering play
           fromSimilar: '1',
         },
       });
     },
-    [router, instanceId, titleId],
+    [router],
   );
 
   const handleCastMemberPress = useCallback(
@@ -4851,451 +1185,16 @@ export default function DetailsScreen() {
     setActiveTrailer(null);
   }, []);
 
-  const handleCloseResumeModal = useCallback(() => {
-    setResumeModalVisible(false);
-    // Clear resume state when modal is closed without action
-    setCurrentProgress(null);
-    setPendingPlaybackAction(null);
-  }, []);
-
-  const handleManualSelect = useCallback(async () => {
-    if (manualLoading) {
-      return;
-    }
-    dismissTrailerAutoPlay();
-
-    // Use activeEpisode (user-selected) if available, otherwise fall back to nextUpEpisode
-    const episodeToSelect = activeEpisode || nextUpEpisode;
-    const context = episodeToSelect ? getEpisodeSearchContext(episodeToSelect) : null;
-    console.log('🛠️ Manual selection: fetching indexer results', context ? `for ${context.episodeCode}` : '');
-    // Don't show loading overlay here - it should appear after user selects a release
-    setManualVisible(true);
-    setManualError(null);
-    setManualResults([]);
-    setSelectionInfo(context?.selectionMessage ?? null);
-    setSelectionError(null);
-    setManualLoading(true);
-    try {
-      const results = await fetchIndexerResults({ limit: 50, query: context?.query });
-      setManualResults(results);
-      if (!results || results.length === 0) {
-        // Check if episode hasn't aired yet and show a friendlier message
-        if (episodeToSelect && isEpisodeUnreleased(episodeToSelect.airedDate)) {
-          const baseTitle = title.trim() || title;
-          const episodeCode = `S${padNumber(episodeToSelect.seasonNumber)}E${padNumber(episodeToSelect.episodeNumber)}`;
-          const episodeLabel = `${baseTitle} ${episodeCode}`;
-          setManualError(formatUnreleasedMessage(episodeLabel, episodeToSelect.airedDate));
-        } else {
-          setManualError('No results available yet for manual selection.');
-        }
-      }
-    } catch (err) {
-      // Check for timeout errors and show a helpful message
-      if (isTimeoutError(err)) {
-        console.error('⚠️ Manual fetch timed out:', err);
-        setManualError(getTimeoutMessage(err));
-      } else {
-        const message = err instanceof Error ? err.message : 'Failed to load results.';
-        console.error('⚠️ Manual fetch failed:', err);
-        setManualError(message);
-      }
-    } finally {
-      setManualLoading(false);
-    }
-  }, [dismissTrailerAutoPlay, activeEpisode, nextUpEpisode, fetchIndexerResults, getEpisodeSearchContext, manualLoading, title]);
-
-  const handleEpisodeLongPress = useCallback(
-    async (episode: SeriesEpisode) => {
-      // Set the episode as active first
-      setActiveEpisode(episode);
-      setSelectionError(null);
-      setSelectionInfo(null);
-
-      // Then trigger manual selection with a slight delay to ensure state updates
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      if (manualLoading) {
-        return;
-      }
-
-      const context = getEpisodeSearchContext(episode);
-      if (!context) {
-        setSelectionError('Unable to build an episode search query.');
-        return;
-      }
-
-      console.log('🛠️ Manual selection: fetching indexer results for', context.episodeCode);
-      setManualVisible(true);
-      setManualError(null);
-      setManualResults([]);
-      setSelectionInfo(context.selectionMessage);
-      setSelectionError(null);
-      setManualLoading(true);
-      try {
-        const results = await fetchIndexerResults({ limit: 50, query: context.query });
-        setManualResults(results);
-        if (!results || results.length === 0) {
-          // Check if episode hasn't aired yet and show a friendlier message
-          if (isEpisodeUnreleased(episode.airedDate)) {
-            const baseTitle = title.trim() || title;
-            const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
-            const episodeLabel = `${baseTitle} ${episodeCode}`;
-            setManualError(formatUnreleasedMessage(episodeLabel, episode.airedDate));
-          } else {
-            setManualError('No results available yet for manual selection.');
-          }
-        }
-      } catch (err) {
-        // Check for timeout errors and show a helpful message
-        if (isTimeoutError(err)) {
-          console.error('⚠️ Manual fetch timed out:', err);
-          setManualError(getTimeoutMessage(err));
-        } else {
-          const message = err instanceof Error ? err.message : 'Failed to load results.';
-          console.error('⚠️ Manual fetch failed:', err);
-          setManualError(message);
-        }
-      } finally {
-        setManualLoading(false);
-      }
-    },
-    [fetchIndexerResults, getEpisodeSearchContext, manualLoading, title],
-  );
-
-  const { healthChecks: manualHealthChecks, checkHealth: checkManualHealth } = useManualHealthChecks(manualResults);
-  const seriesFocusHandlerRef = useRef<(() => boolean) | null>(null);
-  const _handleSeriesBlockFocus = useCallback(() => {
-    seriesFocusHandlerRef.current?.();
-  }, []);
-
-  const handleRegisterSeasonFocusHandler = useCallback((handler: (() => boolean) | null) => {
-    seriesFocusHandlerRef.current = handler;
-    setHasSeriesFocusTarget(Boolean(handler));
-  }, []);
-
-  const handleEpisodesLoaded = useCallback((episodes: SeriesEpisode[]) => {
-    setAllEpisodes(episodes);
-    allEpisodesRef.current = episodes;
-    setEpisodesLoading(false);
-  }, []);
-
-  const handleSeasonsLoaded = useCallback((loadedSeasons: SeriesSeason[]) => {
-    setSeasons(loadedSeasons);
-  }, []);
-
-  const handleMarkAllWatched = useCallback(async () => {
-    if (!seriesIdentifier || allEpisodes.length === 0) {
-      return;
-    }
-
-    setWatchlistBusy(true);
-    setWatchlistError(null);
-
-    try {
-      const updates = allEpisodes.map((episode) => ({
-        mediaType: 'episode',
-        itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-        name: episode.name,
-        watched: true,
-        seasonNumber: episode.seasonNumber,
-        episodeNumber: episode.episodeNumber,
-        seriesId: seriesIdentifier,
-        seriesName: title,
-      }));
-
-      await bulkUpdateWatchStatus(updates);
-      await refreshWatchStatus();
-
-      // Auto-select the first episode of the show
-      const firstEp = findFirstEpisode();
-      if (firstEp) {
-        console.log('[Details] Auto-selecting first episode after marking all as watched:', firstEp);
-        handleEpisodeSelect(firstEp);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to mark all episodes as watched.';
-      setWatchlistError(message);
-      console.error('⚠️ Unable to mark all episodes as watched:', err);
-    } finally {
-      setWatchlistBusy(false);
-    }
-  }, [
-    seriesIdentifier,
-    allEpisodes,
-    title,
-    bulkUpdateWatchStatus,
-    refreshWatchStatus,
-    findFirstEpisode,
-    handleEpisodeSelect,
-  ]);
-
-  const handleMarkAllUnwatched = useCallback(async () => {
-    if (!seriesIdentifier || allEpisodes.length === 0) {
-      return;
-    }
-
-    setWatchlistBusy(true);
-    setWatchlistError(null);
-
-    try {
-      const updates = allEpisodes.map((episode) => ({
-        mediaType: 'episode',
-        itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-        name: episode.name,
-        watched: false,
-        seasonNumber: episode.seasonNumber,
-        episodeNumber: episode.episodeNumber,
-        seriesId: seriesIdentifier,
-        seriesName: title,
-      }));
-
-      await bulkUpdateWatchStatus(updates);
-      await refreshWatchStatus();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to mark all episodes as unwatched.';
-      setWatchlistError(message);
-      console.error('⚠️ Unable to mark all episodes as unwatched:', err);
-    } finally {
-      setWatchlistBusy(false);
-    }
-  }, [seriesIdentifier, allEpisodes, title, bulkUpdateWatchStatus, refreshWatchStatus]);
-
-  const handleMarkSeasonWatched = useCallback(
-    async (season: SeriesSeason) => {
-      if (!seriesIdentifier) {
-        return;
-      }
-
-      setWatchlistBusy(true);
-      setWatchlistError(null);
-
-      try {
-        const updates = season.episodes.map((episode) => ({
-          mediaType: 'episode',
-          itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-          name: episode.name,
-          watched: true,
-          seasonNumber: episode.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-          seriesId: seriesIdentifier,
-          seriesName: title,
-        }));
-
-        await bulkUpdateWatchStatus(updates);
-        await refreshWatchStatus();
-
-        // Auto-select the first episode of the next season if available
-        const firstEpisodeOfNextSeason = findFirstEpisodeOfNextSeason(season.number);
-        if (firstEpisodeOfNextSeason) {
-          console.log(
-            '[Details] Auto-selecting first episode of next season after marking season as watched:',
-            firstEpisodeOfNextSeason,
-          );
-          handleEpisodeSelect(firstEpisodeOfNextSeason);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to mark season as watched.';
-        setWatchlistError(message);
-        console.error('⚠️ Unable to mark season as watched:', err);
-      } finally {
-        setWatchlistBusy(false);
-      }
-    },
-    [
-      seriesIdentifier,
-      title,
-      bulkUpdateWatchStatus,
-      refreshWatchStatus,
-      findFirstEpisodeOfNextSeason,
-      handleEpisodeSelect,
-    ],
-  );
-
-  const handleMarkSeasonUnwatched = useCallback(
-    async (season: SeriesSeason) => {
-      if (!seriesIdentifier) {
-        return;
-      }
-
-      setWatchlistBusy(true);
-      setWatchlistError(null);
-
-      try {
-        const updates = season.episodes.map((episode) => ({
-          mediaType: 'episode',
-          itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-          name: episode.name,
-          watched: false,
-          seasonNumber: episode.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-          seriesId: seriesIdentifier,
-          seriesName: title,
-        }));
-
-        await bulkUpdateWatchStatus(updates);
-        await refreshWatchStatus();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to mark season as unwatched.';
-        setWatchlistError(message);
-        console.error('⚠️ Unable to mark season as unwatched:', err);
-      } finally {
-        setWatchlistBusy(false);
-      }
-    },
-    [seriesIdentifier, title, bulkUpdateWatchStatus, refreshWatchStatus],
-  );
-
-  const handleToggleEpisodeWatched = useCallback(
-    async (episode: SeriesEpisode) => {
-      if (!seriesIdentifier) {
-        return;
-      }
-
-      try {
-        const episodeId = `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`;
-
-        // Build external IDs for the episode
-        const episodeExternalIds: Record<string, string> = {};
-        if (imdbId) episodeExternalIds.imdb = imdbId;
-        if (tmdbId) episodeExternalIds.tmdb = tmdbId;
-        if (tvdbId) episodeExternalIds.tvdb = tvdbId;
-        if (titleId) episodeExternalIds.titleId = titleId;
-
-        await toggleWatchStatus('episode', episodeId, {
-          name: episode.name,
-          year: yearNumber,
-          externalIds: Object.keys(episodeExternalIds).length ? episodeExternalIds : undefined,
-          seasonNumber: episode.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-          seriesId: seriesIdentifier,
-          seriesName: title,
-        });
-      } catch (err) {
-        console.error('⚠️ Unable to toggle episode watch status:', err);
-      }
-    },
-    [seriesIdentifier, toggleWatchStatus, yearNumber, imdbId, tmdbId, tvdbId, titleId, title],
-  );
-
-  const isEpisodeWatched = useCallback(
-    (episode: SeriesEpisode): boolean => {
-      if (!seriesIdentifier) {
-        return false;
-      }
-      const episodeId = `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`;
-      return isItemWatched('episode', episodeId);
-    },
-    [seriesIdentifier, isItemWatched],
-  );
-
-  const handleMarkEpisodeWatched = useCallback(
-    async (episode: SeriesEpisode) => {
-      if (!seriesIdentifier) {
-        return;
-      }
-
-      setWatchlistBusy(true);
-      setWatchlistError(null);
-
-      try {
-        const updates = [
-          {
-            mediaType: 'episode' as const,
-            itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-            name: episode.name,
-            watched: true,
-            seasonNumber: episode.seasonNumber,
-            episodeNumber: episode.episodeNumber,
-            seriesId: seriesIdentifier,
-            seriesName: title,
-          },
-        ];
-
-        await bulkUpdateWatchStatus(updates);
-        await refreshWatchStatus();
-
-        // Record this episode watch for continue watching tracking
-        recordEpisodePlayback(episode);
-
-        // If we just marked the active episode as watched, auto-select the next episode
-        if (
-          activeEpisode &&
-          episode.seasonNumber === activeEpisode.seasonNumber &&
-          episode.episodeNumber === activeEpisode.episodeNumber
-        ) {
-          const nextEp = findNextEpisode(episode);
-          if (nextEp) {
-            console.log('[Details] Auto-selecting next episode after marking current as watched:', nextEp);
-            handleEpisodeSelect(nextEp);
-          }
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to mark episode as watched.';
-        setWatchlistError(message);
-        console.error('⚠️ Unable to mark episode as watched:', err);
-      } finally {
-        setWatchlistBusy(false);
-      }
-    },
-    [
-      seriesIdentifier,
-      title,
-      bulkUpdateWatchStatus,
-      refreshWatchStatus,
-      recordEpisodePlayback,
-      activeEpisode,
-      findNextEpisode,
-      handleEpisodeSelect,
-    ],
-  );
-
-  const handleMarkEpisodeUnwatched = useCallback(
-    async (episode: SeriesEpisode) => {
-      if (!seriesIdentifier) {
-        return;
-      }
-
-      setWatchlistBusy(true);
-      setWatchlistError(null);
-
-      try {
-        const updates = [
-          {
-            mediaType: 'episode' as const,
-            itemId: `${seriesIdentifier}:s${String(episode.seasonNumber).padStart(2, '0')}e${String(episode.episodeNumber).padStart(2, '0')}`,
-            name: episode.name,
-            watched: false,
-            seasonNumber: episode.seasonNumber,
-            episodeNumber: episode.episodeNumber,
-            seriesId: seriesIdentifier,
-            seriesName: title,
-          },
-        ];
-
-        await bulkUpdateWatchStatus(updates);
-        await refreshWatchStatus();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to mark episode as unwatched.';
-        setWatchlistError(message);
-        console.error('⚠️ Unable to mark episode as unwatched:', err);
-      } finally {
-        setWatchlistBusy(false);
-      }
-    },
-    [seriesIdentifier, title, bulkUpdateWatchStatus, refreshWatchStatus],
-  );
-
   const handleSeasonSelectorSelect = useCallback((season: SeriesSeason) => {
-    setSelectedSeason(season);
+    episodeManager.setSelectedSeason(season);
     setSeasonSelectorVisible(false);
     setEpisodeSelectorVisible(true);
-  }, []);
+  }, [episodeManager]);
 
-  // Mobile-specific season select: just update the season without opening episode modal
   const handleMobileSeasonSelect = useCallback((season: SeriesSeason) => {
-    setSelectedSeason(season);
+    episodeManager.setSelectedSeason(season);
     setSeasonSelectorVisible(false);
-  }, []);
+  }, [episodeManager]);
 
   const handleEpisodeSelectorSelect = useCallback((episode: SeriesEpisode) => {
     setActiveEpisode(episode);
@@ -5307,21 +1206,149 @@ export default function DetailsScreen() {
     setSeasonSelectorVisible(true);
   }, []);
 
+  const handleRegisterSeasonFocusHandler = useCallback((_handler: (() => boolean) | null) => {
+    // No-op: spatial navigation removed
+  }, []);
+
+  const handleRequestFocusShift = useCallback(() => {
+    // No-op: spatial navigation removed
+  }, []);
+
+  const { healthChecks: manualHealthChecks, checkHealth: checkManualHealth } = useManualHealthChecks(manualSelect.manualResults);
+
+  // ===== TV scroll and animation =====
+  const tvScrollViewRef = useRef<Animated.ScrollView>(null);
+  const currentTVFocusAreaRef = useRef<string | null>(Platform.isTV ? 'actions' : null);
+  const actionRowRef = useRef<View>(null);
+  const watchNowRef = useRef<View>(null);
+  const [watchNowTag, setWatchNowTag] = useState<number | undefined>();
+  const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
+  const tvScrollY = useSharedValue(0);
+  const tvInitialScrollDone = useRef(false);
+  const TV_ACTION_ROW_BOTTOM_OFFSET = 30;
+
+  // Set initial scroll position as soon as the action row is laid out
+  const handleActionRowLayout = useCallback(() => {
+    if (!Platform.isTV || tvInitialScrollDone.current) return;
+    tvInitialScrollDone.current = true;
+    // Defer to ensure layout is committed before measuring
+    requestAnimationFrame(() => {
+      actionRowRef.current?.measureInWindow((_x, y, _width, height) => {
+        if (height <= 0) return;
+        const targetScreenY = windowHeight - TV_ACTION_ROW_BOTTOM_OFFSET - height;
+        const scrollDelta = y - targetScreenY;
+        if (Math.abs(scrollDelta) > 5) {
+          tvScrollViewRef.current?.scrollTo({
+            y: Math.max(0, scrollDelta),
+            animated: false,
+          });
+        }
+      });
+    });
+  }, [windowHeight]);
+
+  const handleTVFocusAreaChange = useCallback(
+    (area: 'seasons' | 'episodes' | 'actions' | 'cast' | 'similar') => {
+      if (!Platform.isTV || !tvScrollViewRef.current) return;
+      if (currentTVFocusAreaRef.current === area) return;
+      // Stop trailer playback when focus leaves the action row
+      if (currentTVFocusAreaRef.current === 'actions' && area !== 'actions') {
+        trailersHook.dismissTrailerAutoPlay();
+      }
+      currentTVFocusAreaRef.current = area;
+
+      if (area === 'actions') {
+        // Measure actual screen position and scroll to place action row near bottom
+        actionRowRef.current?.measureInWindow((_x, y, _width, height) => {
+          if (height <= 0) return;
+          const currentScroll = tvScrollY.value;
+          const targetScreenY = windowHeight - TV_ACTION_ROW_BOTTOM_OFFSET - height;
+          const scrollDelta = y - targetScreenY;
+          if (Math.abs(scrollDelta) > 5) {
+            tvScrollViewRef.current?.scrollTo({
+              y: Math.max(0, currentScroll + scrollDelta),
+              animated: true,
+            });
+          }
+        });
+        return;
+      }
+
+      const scrollPositions = {
+        seasons: Math.round(windowHeight * 0.25),
+        episodes: Math.round(windowHeight * 0.5),
+        cast: Math.round(windowHeight * 1.0),
+        similar: Math.round(windowHeight * 2),
+      };
+      const targetY = scrollPositions[area];
+      tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
+    },
+    [windowHeight, trailersHook.dismissTrailerAutoPlay],
+  );
+
+  // ===== Visibility gate =====
+  const hasBeenDisplayedRef = useRef(false);
+  const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
+  const isLogoReady = !logoUrl || logoDimensions !== null;
+  const isPosterReady = isPosterPreloaded;
+  const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current && (isMetadataLoading || !isLogoReady || !isPosterReady);
+  if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
+    hasBeenDisplayedRef.current = true;
+  }
+
+  const shouldAnimateBackground = isTV || isMobile;
+
+  // Fade in background when metadata is ready
+  const backgroundOpacity = useSharedValue(shouldAnimateBackground ? 0 : 1);
+  const backgroundAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: backgroundOpacity.value,
+    ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 }] } : {}),
+  }));
+  const tvScrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      tvScrollY.value = event.contentOffset.y;
+    },
+  });
+
+  // TV spacer — fixed height
+  const tvSpacerHeight = useMemo(() => {
+    if (!Platform.isTV) return 0;
+    return Math.round(windowHeight * 0.7);
+  }, [windowHeight]);
+
+  // Track if we've already triggered the fade-in
+  const hasTriggeredFadeIn = useRef(false);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (!shouldHideUntilMetadataReady && shouldAnimateBackground && !hasTriggeredFadeIn.current) {
+      hasTriggeredFadeIn.current = true;
+      cancelAnimation(backgroundOpacity);
+      backgroundOpacity.value = 0;
+      timer = setTimeout(() => {
+        backgroundOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
+      }, 16);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
+
+  // On Android TV (low-RAM devices), unmount heavy content when the player is active
+  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
+  if (isAndroidTV && !isDetailsPageActive) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={{ flex: 1, backgroundColor: '#0b0b0f' }} />
+      </>
+    );
+  }
+
+  // ===== Render helpers =====
   const renderDetailsContent = () => (
     <>
-      <View
-        style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}
-        onLayout={
-          isTV
-            ? (e) => {
-                const height = e.nativeEvent.layout.height;
-                console.log(`[LAYOUT SHIFT] topContent height=${Math.round(height)}, +${msSinceNavStart()}ms`);
-                if (height > 0) {
-                  tvTopContentHeightSV.value = height;
-                }
-              }
-            : undefined
-        }>
+      <View style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}>
         <View style={[styles.titleRow, { overflow: 'visible' }]}>
           {logoUrl && logoDimensions ? (
             <View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle]}>
@@ -5353,7 +1380,7 @@ export default function DetailsScreen() {
                 );
               })
             ) : (
-              <Text style={styles.ratingValue}>—</Text>
+              <Text style={styles.ratingValue}>{'\u2014'}</Text>
             )}
           </View>
         )}
@@ -5394,12 +1421,7 @@ export default function DetailsScreen() {
                   paddingVertical: 4 * tvScale,
                   borderRadius: 4 * tvScale,
                 }}>
-                <Ionicons
-                  name="volume-high"
-                  size={14 * tvScale}
-                  color={theme.colors.text.secondary}
-                  style={{ marginRight: 4 * tvScale }}
-                />
+                <Ionicons name="volume-high" size={14 * tvScale} color={theme.colors.text.secondary} style={{ marginRight: 4 * tvScale }} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>
                   {contentPreference.audioLanguage.toUpperCase()}
                 </Text>
@@ -5415,12 +1437,7 @@ export default function DetailsScreen() {
                   paddingVertical: 4 * tvScale,
                   borderRadius: 4 * tvScale,
                 }}>
-                <Ionicons
-                  name="text"
-                  size={14 * tvScale}
-                  color={theme.colors.text.secondary}
-                  style={{ marginRight: 4 * tvScale }}
-                />
+                <Ionicons name="text" size={14 * tvScale} color={theme.colors.text.secondary} style={{ marginRight: 4 * tvScale }} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>
                   {contentPreference.subtitleLanguage.toUpperCase()}
                 </Text>
@@ -5436,12 +1453,7 @@ export default function DetailsScreen() {
                   paddingVertical: 4 * tvScale,
                   borderRadius: 4 * tvScale,
                 }}>
-                <Ionicons
-                  name="text"
-                  size={14 * tvScale}
-                  color={theme.colors.text.secondary}
-                  style={{ marginRight: 4 * tvScale }}
-                />
+                <Ionicons name="text" size={14 * tvScale} color={theme.colors.text.secondary} style={{ marginRight: 4 * tvScale }} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 12 * tvScale }}>OFF</Text>
               </View>
             )}
@@ -5477,14 +1489,12 @@ export default function DetailsScreen() {
               setIsDescriptionExpanded((prev) => !prev);
             }}>
             <View>
-              {/* Hidden text to measure collapsed (4-line) height */}
               <Text
                 style={[styles.description, styles.descriptionHidden]}
                 numberOfLines={4}
                 onLayout={(e) => {
                   const height = e.nativeEvent.layout.height;
                   if (height > 0 && collapsedHeight === 0) {
-                    // Add small buffer to prevent line clipping
                     const bufferedHeight = height + 4;
                     setCollapsedHeight(bufferedHeight);
                     descriptionHeight.value = bufferedHeight;
@@ -5492,19 +1502,16 @@ export default function DetailsScreen() {
                 }}>
                 {displayDescription}
               </Text>
-              {/* Hidden text to measure full height */}
               <Text
                 style={[styles.description, styles.descriptionHidden]}
                 onLayout={(e) => {
                   const height = e.nativeEvent.layout.height;
                   if (height > 0 && expandedHeight === 0) {
-                    // Add small buffer to prevent line clipping
                     setExpandedHeight(height + 4);
                   }
                 }}>
                 {displayDescription}
               </Text>
-              {/* Visible animated container */}
               <Animated.View
                 style={[{ overflow: 'hidden' }, collapsedHeight > 0 ? { height: descriptionHeight } : undefined]}>
                 <Text
@@ -5521,439 +1528,236 @@ export default function DetailsScreen() {
         ) : (
           <Text
             style={[styles.description, !displayDescription && isMetadataLoadingForSkeleton && { minHeight: tvScale * 60 }]}
-            onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] description height=${Math.round(e.nativeEvent.layout.height)}, text=${displayDescription ? displayDescription.length : 0}chars, +${msSinceNavStart()}ms`) : undefined}
           >{displayDescription}</Text>
         )}
       </View>
-      <SpatialNavigationNode
-        orientation="vertical"
-        focusKey="details-content-column"
-        onActive={() => console.log('[Details NAV DEBUG] details-content-column ACTIVE')}
-        onInactive={() => console.log('[Details NAV DEBUG] details-content-column INACTIVE')}>
-        <View
-          style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}
-          onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] bottomContent height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
-          {/* Action Row - moved above episode carousel for TV */}
-          <SpatialNavigationNode
-            orientation="horizontal"
-            focusKey="details-action-row"
-            onActive={() => {
-              console.log('[Details NAV DEBUG] details-action-row ACTIVE');
-              handleTVFocusAreaChange('actions');
-            }}
-            onInactive={() => console.log('[Details NAV DEBUG] details-action-row INACTIVE')}>
-            <View
-              style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}
-              onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] actionRow height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
-              {Platform.isTV && TVActionButton ? (
-                <TVActionButton
-                  text={watchNowLabel}
-                  icon="play"
-                  onSelect={handleWatchNow}
-                  onFocus={() => {
-                    console.log(`[Details DEBUG ${instanceId}] Play button focused - titleId: ${titleId}`);
-                    handleTVFocusAreaChange('actions');
-                  }}
-                  disabled={isResolving || (isSeries && episodesLoading)}
-                  loading={isResolving || (isSeries && episodesLoading)}
-                  showReadyPip={prequeueReady}
-                  badge={(() => {
-                    if (isSeries) {
-                      return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
-                    }
-                    return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-                  })()}
-                  autoFocus
-                />
-              ) : (
-                <FocusablePressable
-                  focusKey="watch-now"
-                  text={!useCompactActionLayout ? watchNowLabel : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
-                  accessibilityLabel={watchNowLabel}
-                  onSelect={handleWatchNow}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  disabled={isResolving || (isSeries && episodesLoading)}
-                  loading={isResolving || (isSeries && episodesLoading)}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
-                  showReadyPip={prequeueReady}
-                  badge={(() => {
-                    if (isSeries) {
-                      return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
-                    }
-                    return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-                  })()}
-                  autoFocus={Platform.isTV}
-                />
-              )}
-              {Platform.isTV && TVActionButton ? (
-                <TVActionButton
-                  text={manualSelectLabel}
-                  icon="search"
-                  onSelect={handleManualSelect}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  disabled={isSeries && episodesLoading}
-                />
-              ) : (
-                <FocusablePressable
-                  focusKey="manual-select"
-                  text={!useCompactActionLayout ? manualSelectLabel : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
-                  accessibilityLabel={manualSelectLabel}
-                  onSelect={handleManualSelect}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  disabled={isSeries && episodesLoading}
-                  style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                />
-              )}
-              {shouldShowDebugPlayerButton &&
-                (Platform.isTV && TVActionButton ? (
-                  <TVActionButton
-                    text="Debug Player"
-                    icon="bug"
-                    onSelect={handleLaunchDebugPlayer}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    disabled={isResolving || (isSeries && episodesLoading)}
-                  />
-                ) : (
-                  <FocusablePressable
-                    focusKey="debug-player"
-                    text={!useCompactActionLayout ? 'Debug Player' : undefined}
-                    icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
-                    accessibilityLabel="Launch debug player overlay"
-                    onSelect={handleLaunchDebugPlayer}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    disabled={isResolving || (isSeries && episodesLoading)}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
-                  />
-                ))}
-              {isSeries &&
-                (Platform.isTV && TVActionButton ? (
-                  <TVActionButton
-                    text="Select"
-                    icon="list"
-                    onSelect={() => {
-                      dismissTrailerAutoPlay();
-                      setSeasonSelectorVisible(true);
-                    }}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                  />
-                ) : (
-                  <FocusablePressable
-                    focusKey="select-episode"
-                    text={!useCompactActionLayout ? 'Select' : undefined}
-                    icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
-                    accessibilityLabel="Select Episode"
-                    onSelect={() => {
-                      dismissTrailerAutoPlay();
-                      setSeasonSelectorVisible(true);
-                    }}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                  />
-                ))}
-              {isSeries &&
-                (Platform.isTV && TVActionButton ? (
-                  <TVActionButton
-                    text="Shuffle"
-                    icon="shuffle"
-                    onSelect={handleShufflePlay}
-                    onLongSelect={handleShuffleSeasonPlay}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    disabled={episodesLoading || allEpisodes.length === 0}
-                  />
-                ) : (
-                  <FocusablePressable
-                    focusKey="shuffle-play"
-                    text={!useCompactActionLayout ? 'Shuffle' : undefined}
-                    icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
-                    accessibilityLabel="Shuffle play random episode"
-                    onSelect={handleShufflePlay}
-                    onLongPress={handleShuffleSeasonPlay}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-                    disabled={episodesLoading || allEpisodes.length === 0}
-                  />
-                ))}
-              {Platform.isTV && TVActionButton ? (
-                <TVActionButton
-                  text={watchlistBusy ? 'Saving...' : watchlistButtonLabel}
-                  icon={isWatchlisted ? 'bookmark' : 'bookmark-outline'}
-                  onSelect={handleToggleWatchlist}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  loading={watchlistBusy}
-                  disabled={!canToggleWatchlist || watchlistBusy}
-                />
-              ) : (
-                <FocusablePressable
-                  focusKey="toggle-watchlist"
-                  text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchlistButtonLabel) : undefined}
-                  icon={
-                    useCompactActionLayout || Platform.isTV
-                      ? isWatchlisted
-                        ? 'bookmark'
-                        : 'bookmark-outline'
-                      : undefined
-                  }
-                  accessibilityLabel={watchlistBusy ? 'Saving watchlist change' : watchlistButtonLabel}
-                  onSelect={handleToggleWatchlist}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  loading={watchlistBusy}
-                  style={[
-                    useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
-                    isWatchlisted && styles.watchlistActionButtonActive,
-                  ]}
-                  disabled={!canToggleWatchlist || watchlistBusy}
-                />
-              )}
-              {Platform.isTV && TVActionButton ? (
-                <TVActionButton
-                  text={watchlistBusy ? 'Saving...' : watchStateButtonLabel}
-                  icon={isWatched ? 'eye' : 'eye-outline'}
-                  onSelect={handleToggleWatched}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  loading={watchlistBusy}
-                  disabled={watchlistBusy}
-                />
-              ) : (
-                <FocusablePressable
-                  focusKey="toggle-watched"
-                  text={!useCompactActionLayout ? (watchlistBusy ? 'Saving...' : watchStateButtonLabel) : undefined}
-                  icon={useCompactActionLayout || Platform.isTV ? (isWatched ? 'eye' : 'eye-outline') : undefined}
-                  accessibilityLabel={watchlistBusy ? 'Saving watched state' : watchStateButtonLabel}
-                  onSelect={handleToggleWatched}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
-                  loading={watchlistBusy}
-                  style={[
-                    useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
-                    isWatched && styles.watchStateButtonActive,
-                  ]}
-                  disabled={watchlistBusy}
-                />
-              )}
-              {/* Trailer button */}
-              {(trailersLoading || hasAvailableTrailer) &&
-                (Platform.isTV && TVActionButton ? (
-                  <TVActionButton
-                    text={autoPlayTrailersTV && trailerStreamUrl ? (isBackdropTrailerPlaying ? 'Pause' : 'Play') : trailerButtonLabel}
-                    icon={autoPlayTrailersTV && trailerStreamUrl ? (isBackdropTrailerPlaying ? 'pause' : 'play') : 'videocam'}
-                    onSelect={handleWatchTrailer}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    loading={trailersLoading}
-                    disabled={trailerButtonDisabled}
-                  />
-                ) : (
-                  <FocusablePressable
-                    focusKey="watch-trailer"
-                    text={!useCompactActionLayout ? trailerButtonLabel : undefined}
-                    icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
-                    accessibilityLabel={trailerButtonLabel}
-                    onSelect={handleWatchTrailer}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    loading={trailersLoading}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-                    disabled={trailerButtonDisabled}
-                  />
-                ))}
-              {/* Collection button - show only for movies that are part of a collection */}
-              {!isSeries && movieDetails?.collection &&
-                (Platform.isTV && TVActionButton ? (
-                  <TVActionButton
-                    text={movieDetails.collection.name}
-                    icon="albums"
-                    onSelect={handleViewCollection}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                  />
-                ) : (
-                  <FocusablePressable
-                    focusKey="view-collection"
-                    text={!useCompactActionLayout ? movieDetails.collection.name : undefined}
-                    icon={useCompactActionLayout || Platform.isTV ? 'albums' : undefined}
-                    accessibilityLabel={`View ${movieDetails.collection.name}`}
-                    onSelect={handleViewCollection}
-                    onFocus={() => handleTVFocusAreaChange('actions')}
-                    style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-                  />
-                ))}
-              {/* Show progress badge in action row only for movies (no episode card) */}
-              {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
-                <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
-                  <Text
-                    style={[
-                      styles.progressIndicatorText,
-                      useCompactActionLayout && styles.progressIndicatorTextCompact,
-                    ]}>
-                    {`${displayProgress}%`}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </SpatialNavigationNode>
-          {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
-          {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
-          {/* Prequeue stream info display - always render container to reserve space */}
-          <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, prequeuePulseStyle]}>
-            {prequeueDisplayInfo && (
-              <>
-                {/* Status message for early stages */}
-                {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
-                  <Text style={styles.prequeueFilename}>
-                    {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
-                    {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
-                  </Text>
-                )}
-                {/* Failed status */}
-                {prequeueDisplayInfo.status === 'failed' && (
-                  <Text style={styles.prequeueFilename}>
-                    {(() => {
-                      const error = prequeueDisplayInfo.error || 'Unknown error';
-                      const targetEp = activeEpisode || nextUpEpisode;
-                      // Check if this is specifically a "no usable results" error (not scraper failures) for an unreleased episode
-                      const errorLower = error.toLowerCase();
-                      const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
-                      if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
-                        const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
-                        return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
-                      }
-                      return `Failed: ${error}`;
-                    })()}
-                  </Text>
-                )}
-                {/* Show filename once available (resolving, probing, or ready) */}
-                {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
-                  <>
-                    <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
-                      {prequeueDisplayInfo.displayName ||
-                        prequeueDisplayInfo.passthroughName ||
-                        (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
-                        (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
-                    </Text>
-                    {/* Show loading state for tracks during probing */}
-                    {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
-                     !prequeueDisplayInfo.audioTracks?.length && (
-                      <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
-                    )}
-                    {/* Audio & Subtitle tracks - non-TV uses Pressable, TV renders in separate SpatialNavigationNode below */}
-                    {!Platform.isTV && (prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
-                      <View style={styles.prequeueTrackRow}>
-                        {/* Audio track - tappable when multiple tracks available */}
-                        {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                          <Pressable
-                            onPress={() => setShowAudioTrackModal(true)}
-                            disabled={prequeueDisplayInfo.audioTracks.length <= 1}
-                            style={styles.prequeueTrackPressable}
-                          >
-                            <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
-                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
-                              {(() => {
-                                const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
-                                const track = selectedIdx !== undefined && selectedIdx >= 0
-                                  ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                                  : prequeueDisplayInfo.audioTracks?.[0];
-                                if (!track) return 'Default';
-                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                              })()}
-                            </Text>
-                            {(() => {
-                              const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
-                              const track = selectedIdx !== undefined && selectedIdx >= 0
-                                ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                                : prequeueDisplayInfo.audioTracks?.[0];
-                              if (track?.codec) {
-                                return (
-                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                                    {track.codec.toUpperCase()}
-                                  </Text>
-                                );
-                              }
-                              return null;
-                            })()}
-                            {prequeueDisplayInfo.audioTracks.length > 1 && (
-                              <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
-                            )}
-                          </Pressable>
-                        )}
-                        {/* Separator */}
-                        {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
-                          <Text style={styles.prequeueTrackSeparator}>•</Text>
-                        )}
-                        {/* Subtitle track - tappable when subtitles available */}
-                        {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                          <Pressable
-                            onPress={() => setShowSubtitleTrackModal(true)}
-                            style={styles.prequeueTrackPressable}
-                          >
-                            <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
-                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
-                              {(() => {
-                                const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
-                                if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                                const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                                if (!track) return 'Off';
-                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                              })()}
-                            </Text>
-                            {(() => {
-                              const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
-                              if (selectedIdx === undefined || selectedIdx < 0) return null;
-                              const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                              if (!track) return null;
-                              if (track.forced) {
-                                return (
-                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
-                                    FORCED
-                                  </Text>
-                                );
-                              }
-                              if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
-                                return (
-                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
-                                    SDH
-                                  </Text>
-                                );
-                              }
-                              return null;
-                            })()}
-                            <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
-                          </Pressable>
-                        )}
-                      </View>
-                    ) : null}
-                </>
-              )}
-            </>
+      <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
+        {/* Action Row */}
+        <View ref={actionRowRef} onLayout={handleActionRowLayout} style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
+          <FocusablePressable
+            focusKey="watch-now"
+            text={!useCompactActionLayout ? watchNowLabel : undefined}
+            icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
+            accessibilityLabel={watchNowLabel}
+            onSelect={playback.handleWatchNow}
+            onFocus={() => handleTVFocusAreaChange('actions')}
+            disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+            loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+            style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
+            showReadyPip={playback.prequeueReady}
+
+            badge={(() => {
+              if (isSeries) {
+                return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+              }
+              return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+            })()}
+            autoFocus={Platform.isTV}
+          />
+          <FocusablePressable
+            focusKey="manual-select"
+            text={!useCompactActionLayout ? manualSelectLabel : undefined}
+            icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
+            accessibilityLabel={manualSelectLabel}
+            onSelect={manualSelect.handleManualSelect}
+            onFocus={() => handleTVFocusAreaChange('actions')}
+
+            disabled={isSeries && episodeManager.episodesLoading}
+            style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+          />
+          {shouldShowDebugPlayerButton && (
+            <FocusablePressable
+              focusKey="debug-player"
+              text={!useCompactActionLayout ? 'Debug Player' : undefined}
+              icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
+              accessibilityLabel="Launch debug player overlay"
+              onSelect={playback.handleLaunchDebugPlayer}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+  
+              disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+              style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
+            />
           )}
-          </Animated.View>
-          {/* TV Track Selection - always render wrapper node to maintain navigation order
-              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
-          {Platform.isTV && (
-            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] trackSelection height=${Math.round(e.nativeEvent.layout.height)}, hasInfo=${!!prequeueDisplayInfo}, +${msSinceNavStart()}ms`)}>
-            <SpatialNavigationNode orientation="horizontal" focusKey="details-track-selection">
-              {prequeueDisplayInfo && (prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
-                <View style={[styles.prequeueTrackRow, styles.tvTrackSelectionContainer]} onLayout={isTV ? (e: any) => console.log(`[LAYOUT SHIFT] trackRow inner height=${Math.round(e.nativeEvent.layout.height)}, +${msSinceNavStart()}ms`) : undefined}>
-                  {/* Audio track */}
-                  {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                    <SpatialNavigationFocusableView
-                      onSelect={() => prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && setShowAudioTrackModal(true)}
-                    >
-                      {({ isFocused }: { isFocused: boolean }) => (
-                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                          <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+          {isSeries && (
+            <FocusablePressable
+              focusKey="select-episode"
+              text={!useCompactActionLayout ? 'Select' : undefined}
+              icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
+              accessibilityLabel="Select Episode"
+              onSelect={() => {
+                trailersHook.dismissTrailerAutoPlay();
+                setSeasonSelectorVisible(true);
+              }}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+  
+              style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+            />
+          )}
+          {isSeries && (
+            <FocusablePressable
+              focusKey="shuffle-play"
+              text={!useCompactActionLayout ? 'Shuffle' : undefined}
+              icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
+              accessibilityLabel="Shuffle play random episode"
+              onSelect={episodeManager.handleShufflePlay}
+              onLongPress={episodeManager.handleShuffleSeasonPlay}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+  
+              style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+              disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
+            />
+          )}
+          <FocusablePressable
+            focusKey="toggle-watchlist"
+            text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchlistButtonLabel) : undefined}
+            icon={
+              useCompactActionLayout || Platform.isTV
+                ? watchActions.isWatchlisted
+                  ? 'bookmark'
+                  : 'bookmark-outline'
+                : undefined
+            }
+            accessibilityLabel={watchActions.watchlistBusy ? 'Saving watchlist change' : watchActions.watchlistButtonLabel}
+            onSelect={watchActions.handleToggleWatchlist}
+            onFocus={() => handleTVFocusAreaChange('actions')}
+
+            loading={watchActions.watchlistBusy}
+            style={[
+              useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
+              watchActions.isWatchlisted && styles.watchlistActionButtonActive,
+            ]}
+            disabled={!watchActions.canToggleWatchlist || watchActions.watchlistBusy}
+          />
+          <FocusablePressable
+            focusKey="toggle-watched"
+            text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchStateButtonLabel) : undefined}
+            icon={useCompactActionLayout || Platform.isTV ? (watchActions.isWatched ? 'eye' : 'eye-outline') : undefined}
+            accessibilityLabel={watchActions.watchlistBusy ? 'Saving watched state' : watchActions.watchStateButtonLabel}
+            onSelect={watchActions.handleToggleWatched}
+            onFocus={() => handleTVFocusAreaChange('actions')}
+
+            loading={watchActions.watchlistBusy}
+            style={[
+              useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
+              watchActions.isWatched && styles.watchStateButtonActive,
+            ]}
+            disabled={watchActions.watchlistBusy}
+          />
+          {/* Trailer button */}
+          {(trailersLoading || hasAvailableTrailer) && (
+            <FocusablePressable
+              focusKey="watch-trailer"
+              text={!useCompactActionLayout ? trailerButtonLabel : undefined}
+              icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
+              accessibilityLabel={trailerButtonLabel}
+              onSelect={handleWatchTrailer}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+  
+              loading={trailersLoading}
+              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+              disabled={trailerButtonDisabled}
+            />
+          )}
+          {/* Collection button */}
+          {!isSeries && movieDetails?.collection && (
+            <FocusablePressable
+              focusKey="view-collection"
+              text={!useCompactActionLayout ? movieDetails.collection.name : undefined}
+              icon={useCompactActionLayout || Platform.isTV ? 'albums' : undefined}
+              accessibilityLabel={`View ${movieDetails.collection.name}`}
+              onSelect={handleViewCollection}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+  
+              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+            />
+          )}
+          {/* Fullscreen trailer button */}
+          {showTrailerFullscreen && (
+            <FocusablePressable
+              focusKey="trailer-fullscreen"
+              icon="expand"
+              accessibilityLabel="Watch trailer fullscreen"
+              onSelect={() => trailersHook.setIsTrailerImmersiveMode(true)}
+              onFocus={() => handleTVFocusAreaChange('actions')}
+              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+            />
+          )}
+          {/* Progress badge for movies */}
+          {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
+            <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
+              <Text
+                style={[
+                  styles.progressIndicatorText,
+                  useCompactActionLayout && styles.progressIndicatorTextCompact,
+                ]}>
+                {`${displayProgress}%`}
+              </Text>
+            </View>
+          )}
+        </View>
+        {watchActions.watchlistError && <Text style={styles.watchlistError}>{watchActions.watchlistError}</Text>}
+        {/* Prequeue stream info display */}
+        <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, playback.prequeuePulseStyle]}>
+          {playback.prequeueDisplayInfo && (
+            <>
+              {(playback.prequeueDisplayInfo.status === 'queued' || playback.prequeueDisplayInfo.status === 'searching') && (
+                <Text style={styles.prequeueFilename}>
+                  {playback.prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+                  {playback.prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
+                </Text>
+              )}
+              {playback.prequeueDisplayInfo.status === 'failed' && (
+                <Text style={styles.prequeueFilename}>
+                  {(() => {
+                    const error = playback.prequeueDisplayInfo.error || 'Unknown error';
+                    const targetEp = activeEpisode || nextUpEpisode;
+                    const errorLower = error.toLowerCase();
+                    const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
+                    if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
+                      const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
+                      return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
+                    }
+                    return `Failed: ${error}`;
+                  })()}
+                </Text>
+              )}
+              {(playback.prequeueDisplayInfo.status === 'resolving' || playback.prequeueDisplayInfo.status === 'probing' || playback.prequeueDisplayInfo.status === 'ready') && (
+                <>
+                  <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
+                    {playback.prequeueDisplayInfo.displayName ||
+                      playback.prequeueDisplayInfo.passthroughName ||
+                      (playback.prequeueDisplayInfo.streamPath?.split('/').pop()) ||
+                      (playback.prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+                  </Text>
+                  {(playback.prequeueDisplayInfo.status === 'probing' || playback.prequeueDisplayInfo.status === 'resolving') &&
+                   !playback.prequeueDisplayInfo.audioTracks?.length && (
+                    <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
+                  )}
+                  {(playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
+                    <View style={styles.prequeueTrackRow}>
+                      {playback.prequeueDisplayInfo.audioTracks && playback.prequeueDisplayInfo.audioTracks.length > 0 && (
+                        <Pressable
+                          onPress={() => playback.setShowAudioTrackModal(true)}
+                          onFocus={() => trailersHook.dismissTrailerAutoPlay()}
+                          disabled={playback.prequeueDisplayInfo.audioTracks.length <= 1}
+                          style={styles.prequeueTrackPressable}
+                        >
+                          <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
+                          <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                             {(() => {
-                              const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
+                              const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
                               const track = selectedIdx !== undefined && selectedIdx >= 0
-                                ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                                : prequeueDisplayInfo.audioTracks?.[0];
+                                ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                                : playback.prequeueDisplayInfo?.audioTracks?.[0];
                               if (!track) return 'Default';
                               return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
                             })()}
                           </Text>
                           {(() => {
-                            const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
+                            const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
                             const track = selectedIdx !== undefined && selectedIdx >= 0
-                              ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                              : prequeueDisplayInfo.audioTracks?.[0];
+                              ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                              : playback.prequeueDisplayInfo?.audioTracks?.[0];
                             if (track?.codec) {
                               return (
                                 <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
@@ -5963,224 +1767,165 @@ export default function DetailsScreen() {
                             }
                             return null;
                           })()}
-                          {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 1 && (
-                            <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                          {playback.prequeueDisplayInfo.audioTracks.length > 1 && (
+                            <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
                           )}
-                        </View>
+                        </Pressable>
                       )}
-                    </SpatialNavigationFocusableView>
-                  )}
-                  {/* Separator */}
-                  {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
-                    <Text style={styles.prequeueTrackSeparator}>•</Text>
-                  )}
-                  {/* Subtitle track */}
-                  {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                    <SpatialNavigationFocusableView
-                      onSelect={() => setShowSubtitleTrackModal(true)}
-                    >
-                      {({ isFocused }: { isFocused: boolean }) => (
-                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                          <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                      {(playback.prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
+                        <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>
+                      )}
+                      {playback.prequeueDisplayInfo.subtitleTracks && playback.prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                        <Pressable
+                          onPress={() => playback.setShowSubtitleTrackModal(true)}
+                          onFocus={() => trailersHook.dismissTrailerAutoPlay()}
+                          style={styles.prequeueTrackPressable}
+                        >
+                          <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
+                          <Text style={styles.prequeueTrackValue} numberOfLines={1}>
                             {(() => {
-                              const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
+                              const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
                               if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                              const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                              const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
                               if (!track) return 'Off';
                               return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
                             })()}
                           </Text>
-                          {(() => {
-                            const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
-                            if (selectedIdx === undefined || selectedIdx < 0) return null;
-                            const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                            if (!track) return null;
-                            if (track.forced) {
-                              return (
-                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
-                                  FORCED
-                                </Text>
-                              );
-                            }
-                            if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
-                              return (
-                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
-                                  SDH
-                                </Text>
-                              );
-                            }
-                            return null;
-                          })()}
-                          <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
-                        </View>
+                          <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
+                        </Pressable>
                       )}
-                    </SpatialNavigationFocusableView>
-                  )}
-                </View>
-              ) : prequeueDisplayInfo ? (
-                <View style={styles.tvTrackSelectionContainer} />
-              ) : (
-                <View />
+                    </View>
+                  ) : null}
+                </>
               )}
-            </SpatialNavigationNode>
-            </View>
+            </>
           )}
-          {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
-              (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
-          {Platform.isTV && isSeries && (
-            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] episodeSection height=${Math.round(e.nativeEvent.layout.height)}, seasons=${seasons.length}, deferred=${tvEpisodesDeferred}, hasActiveEp=${!!activeEpisode}, +${msSinceNavStart()}ms`)}>
-            <SpatialNavigationNode
-              orientation="vertical"
-              focusKey="episode-section-wrapper"
-              onActive={() => console.log('[Details NAV DEBUG] episode-section-wrapper ACTIVE')}
-              onInactive={() => console.log('[Details NAV DEBUG] episode-section-wrapper INACTIVE')}>
-              {seasons.length > 0 && TVEpisodeCarousel && !tvEpisodesDeferred ? (
-                <TVEpisodeCarousel
-                  seasons={seasons}
-                  selectedSeason={selectedSeason}
-                  episodes={selectedSeason?.episodes ?? []}
-                  activeEpisode={activeEpisode}
-                  onSeasonSelect={(season: SeriesSeason) => handleSeasonSelect(season, false)}
-                  onEpisodeSelect={handleEpisodeSelect}
-                  onEpisodePlay={handlePlayEpisode}
-                  isEpisodeWatched={isEpisodeWatched}
-                  getEpisodeProgress={(episode: SeriesEpisode) => {
-                    const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
-                    return episodeProgressMap.get(key) ?? 0;
-                  }}
-                  onFocusRowChange={handleTVFocusAreaChange}
-                />
-              ) : activeEpisode ? (
-                <TVEpisodeStrip
-                  activeEpisode={activeEpisode}
-                  allEpisodes={allEpisodes}
-                  selectedSeason={selectedSeason}
-                  percentWatched={displayProgress}
-                  onSelect={handleWatchNow}
-                  onFocus={handleEpisodeStripFocus}
-                  onBlur={handleEpisodeStripBlur}
-                />
-              ) : (
-                <View style={{ minHeight: tvScale * 500 }} />
-              )}
-            </SpatialNavigationNode>
-            </View>
-          )}
-          {/* TV Cast Section - always render wrapper node to maintain navigation order
-              (nodes register in DOM order, so late-loading content would otherwise end up at wrong position)
-              Navigation disabled for kids profiles */}
-          {Platform.isTV && TVCastSection && (
-            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] castSection height=${Math.round(e.nativeEvent.layout.height)}, hasCredits=${!!credits}, isLoading=${isMetadataLoadingForSkeleton}, +${msSinceNavStart()}ms`)}>
-            <SpatialNavigationNode orientation="horizontal" focusKey="details-cast-section">
-              <TVCastSection
-                credits={credits}
-                isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-                maxCast={10}
-                onFocus={() => handleTVFocusAreaChange('cast')}
-                compactMargin
-                onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
-              />
-            </SpatialNavigationNode>
-            </View>
-          )}
-          {/* TV More Like This Section - always render wrapper node to maintain navigation order
-              Navigation disabled for kids profiles */}
-          {Platform.isTV && TVMoreLikeThisSection && (
-            <View onLayout={(e: any) => console.log(`[LAYOUT SHIFT] similarSection height=${Math.round(e.nativeEvent.layout.height)}, count=${similarContent?.length ?? 0}, isLoading=${similarLoading}, +${msSinceNavStart()}ms`)}>
-            <SpatialNavigationNode orientation="horizontal" focusKey="details-similar-section">
-              <TVMoreLikeThisSection
-                titles={similarContent}
-                isLoading={similarLoading}
-                maxTitles={20}
-                onFocus={() => handleTVFocusAreaChange('similar')}
-                onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
-              />
-            </SpatialNavigationNode>
-            </View>
-          )}
-          {!Platform.isTV && activeEpisode && (
-            <View style={styles.episodeCardContainer}>
-              <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />
-            </View>
-          )}
-          {!Platform.isTV && activeEpisode && (
-            <View style={styles.mobileEpisodeNavRow}>
-              <FocusablePressable
-                focusKey="previous-episode-mobile"
-                icon="chevron-back"
-                accessibilityLabel="Previous Episode"
-                onSelect={handlePreviousEpisode}
-                disabled={!findPreviousEpisode(activeEpisode)}
-                style={styles.mobileEpisodeNavButton}
-              />
-              <Text style={styles.mobileEpisodeNavLabel}>
-                S{activeEpisode.seasonNumber} E{activeEpisode.episodeNumber}
-              </Text>
-              <FocusablePressable
-                focusKey="next-episode-mobile"
-                icon="chevron-forward"
-                accessibilityLabel="Next Episode"
-                onSelect={handleNextEpisode}
-                disabled={!findNextEpisode(activeEpisode)}
-                style={styles.mobileEpisodeNavButton}
-              />
-            </View>
-          )}
-          {/* Hidden SeriesEpisodes component to load data.
-              On TV, this is pre-mounted outside the visibility gate to avoid
-              blocking the initial paint. Only render here for non-TV. */}
-          {isSeries && !isTV ? (
-            <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
-              <SeriesEpisodes
-                isSeries={isSeries}
-                title={title}
-                tvdbId={tvdbId}
-                titleId={titleId}
-                yearNumber={yearNumber}
-                seriesDetails={seriesDetailsData}
-                seriesDetailsLoading={seriesDetailsLoading}
-                initialSeasonNumber={initialSeasonNumber}
-                initialEpisodeNumber={initialEpisodeNumber}
-                isTouchSeasonLayout={isTouchSeasonLayout}
-                shouldUseSeasonModal={shouldUseSeasonModal}
-                shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
-                onSeasonSelect={handleSeasonSelect}
-                onEpisodeSelect={handleEpisodeSelect}
-                onEpisodeFocus={handleEpisodeFocus}
-                onPlaySeason={handlePlaySeason}
-                onPlayEpisode={handlePlayEpisode}
-                onEpisodeLongPress={handleToggleEpisodeWatched}
-                onToggleEpisodeWatched={handleToggleEpisodeWatched}
-                isEpisodeWatched={isEpisodeWatched}
-                renderContent={!Platform.isTV}
+        </Animated.View>
+        {/* TV Episode Carousel */}
+        {Platform.isTV && isSeries && (
+          <View style={{ minHeight: Math.round(tvScale * 416) }}>
+            {episodeManager.seasons.length > 0 && TVEpisodeCarousel ? (
+              <TVEpisodeCarousel
+                seasons={episodeManager.seasons}
+                selectedSeason={episodeManager.selectedSeason}
+                episodes={episodeManager.selectedSeason?.episodes ?? []}
                 activeEpisode={activeEpisode}
-                isResolving={isResolving}
-                theme={theme}
-                onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
-                onRequestFocusShift={handleRequestFocusShift}
-                onEpisodesLoaded={handleEpisodesLoaded}
-                onSeasonsLoaded={handleSeasonsLoaded}
+                onSeasonSelect={(season: SeriesSeason) => episodeManager.handleSeasonSelect(season, false)}
+                onEpisodeSelect={episodeManager.handleEpisodeSelect}
+                onEpisodePlay={episodeManager.handlePlayEpisode}
+                isEpisodeWatched={watchActions.isEpisodeWatched}
+                getEpisodeProgress={(episode: SeriesEpisode) => {
+                  const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
+                  return episodeProgressMap.get(key) ?? 0;
+                }}
+                onFocusRowChange={handleTVFocusAreaChange}
               />
-            </View>
-          ) : null}
-        </View>
-      </SpatialNavigationNode>
+            ) : activeEpisode ? (
+              <TVEpisodeStrip
+                activeEpisode={activeEpisode}
+                allEpisodes={episodeManager.allEpisodes}
+                selectedSeason={episodeManager.selectedSeason}
+                percentWatched={displayProgress}
+                onSelect={playback.handleWatchNow}
+                onFocus={episodeManager.handleEpisodeStripFocus}
+                onBlur={episodeManager.handleEpisodeStripBlur}
+              />
+            ) : (
+              <View style={{ minHeight: Math.round(tvScale * 416) }} />
+            )}
+          </View>
+        )}
+        {/* TV Cast Section */}
+        {Platform.isTV && TVCastSection && (
+          <TVCastSection
+            credits={credits}
+            isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+            maxCast={10}
+            onFocus={() => handleTVFocusAreaChange('cast')}
+            compactMargin
+            onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
+          />
+        )}
+        {/* TV More Like This Section */}
+        {Platform.isTV && TVMoreLikeThisSection && (
+          <TVMoreLikeThisSection
+            titles={similarContent}
+            isLoading={similarLoading}
+            maxTitles={20}
+            onFocus={() => handleTVFocusAreaChange('similar')}
+            onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
+          />
+        )}
+        {!Platform.isTV && activeEpisode && (
+          <View style={styles.episodeCardContainer}>
+            <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />
+          </View>
+        )}
+        {!Platform.isTV && activeEpisode && (
+          <View style={styles.mobileEpisodeNavRow}>
+            <FocusablePressable
+              focusKey="previous-episode-mobile"
+              icon="chevron-back"
+              accessibilityLabel="Previous Episode"
+              onSelect={episodeManager.handlePreviousEpisode}
+              disabled={!episodeManager.findPreviousEpisode(activeEpisode)}
+              style={styles.mobileEpisodeNavButton}
+            />
+            <Text style={styles.mobileEpisodeNavLabel}>
+              S{activeEpisode.seasonNumber} E{activeEpisode.episodeNumber}
+            </Text>
+            <FocusablePressable
+              focusKey="next-episode-mobile"
+              icon="chevron-forward"
+              accessibilityLabel="Next Episode"
+              onSelect={episodeManager.handleNextEpisode}
+              disabled={!episodeManager.findNextEpisode(activeEpisode)}
+              style={styles.mobileEpisodeNavButton}
+            />
+          </View>
+        )}
+        {/* Hidden SeriesEpisodes component to load data (non-TV) */}
+        {isSeries && !isTV ? (
+          <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
+            <SeriesEpisodes
+              isSeries={isSeries}
+              title={title}
+              tvdbId={tvdbId}
+              titleId={titleId}
+              yearNumber={yearNumber}
+              seriesDetails={seriesDetailsData}
+              seriesDetailsLoading={seriesDetailsLoading}
+              initialSeasonNumber={initialSeasonNumber}
+              initialEpisodeNumber={initialEpisodeNumber}
+              isTouchSeasonLayout={isTouchSeasonLayout}
+              shouldUseSeasonModal={shouldUseSeasonModal}
+              shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
+              onSeasonSelect={episodeManager.handleSeasonSelect}
+              onEpisodeSelect={episodeManager.handleEpisodeSelect}
+              onEpisodeFocus={episodeManager.handleEpisodeFocus}
+              onPlaySeason={episodeManager.handlePlaySeason}
+              onPlayEpisode={episodeManager.handlePlayEpisode}
+              onEpisodeLongPress={watchActions.handleToggleEpisodeWatched}
+              onToggleEpisodeWatched={watchActions.handleToggleEpisodeWatched}
+              isEpisodeWatched={watchActions.isEpisodeWatched}
+              renderContent={!Platform.isTV}
+              activeEpisode={activeEpisode}
+              isResolving={playback.isResolving}
+              theme={theme}
+              onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
+              onRequestFocusShift={handleRequestFocusShift}
+              onEpisodesLoaded={episodeManager.handleEpisodesLoaded}
+              onSeasonsLoaded={episodeManager.handleSeasonsLoaded}
+            />
+          </View>
+        ) : null}
+      </View>
     </>
   );
 
-  // Get credits for cast section
-  const credits = useMemo(() => {
-    if (isSeries) {
-      return seriesDetailsData?.title?.credits ?? null;
-    }
-    return movieDetails?.credits ?? null;
-  }, [isSeries, seriesDetailsData, movieDetails]);
-
-  // Mobile content rendering with parallax and new components
+  // Mobile content rendering with parallax
   const renderMobileContent = () => (
     <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme}>
-      {/* Title and metadata section */}
       <View style={[styles.topContent, { overflow: 'visible' }]}>
         <View style={[styles.titleRow, { overflow: 'visible', marginLeft: -12 }]}>
           {logoUrl && logoDimensions ? (
@@ -6203,17 +1948,11 @@ export default function DetailsScreen() {
                 const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
                 const iconSize = 14;
                 return (
-                  <RatingBadge
-                    key={rating.source}
-                    rating={rating}
-                    config={config}
-                    iconSize={iconSize}
-                    styles={styles}
-                  />
+                  <RatingBadge key={rating.source} rating={rating} config={config} iconSize={iconSize} styles={styles} />
                 );
               })
             ) : (
-              <Text style={styles.ratingValue}>—</Text>
+              <Text style={styles.ratingValue}>{'\u2014'}</Text>
             )}
           </View>
         )}
@@ -6237,35 +1976,15 @@ export default function DetailsScreen() {
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
             {contentPreference.audioLanguage && (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: theme.colors.background.elevated,
-                  paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  borderRadius: 4,
-                }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4 }}>
                 <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
-                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
-                  {contentPreference.audioLanguage.toUpperCase()}
-                </Text>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>{contentPreference.audioLanguage.toUpperCase()}</Text>
               </View>
             )}
             {contentPreference.subtitleLanguage && (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: theme.colors.background.elevated,
-                  paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  borderRadius: 4,
-                }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4 }}>
                 <Ionicons name="text" size={14} color={theme.colors.text.secondary} style={{ marginRight: 4 }} />
-                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
-                  {contentPreference.subtitleLanguage.toUpperCase()}
-                </Text>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>{contentPreference.subtitleLanguage.toUpperCase()}</Text>
               </View>
             )}
           </View>
@@ -6287,112 +2006,36 @@ export default function DetailsScreen() {
             {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
           </View>
         )}
-        <Text style={[styles.description, { maxWidth: '100%' }]}>
-          {displayDescription}
-        </Text>
+        <Text style={[styles.description, { maxWidth: '100%' }]}>{displayDescription}</Text>
       </View>
 
-      {/* Action buttons - icon only for mobile */}
+      {/* Mobile action buttons */}
       <View style={[styles.actionRow, styles.compactActionRow, { marginTop: theme.spacing.lg }]}>
-        <FocusablePressable
-          focusKey="watch-now-mobile"
-          icon="play"
-          onSelect={handleWatchNow}
-          style={styles.iconActionButton}
-          loading={isResolving || (isSeries && episodesLoading)}
-          disabled={isResolving || (isSeries && episodesLoading)}
-          showReadyPip={prequeueReady}
-          badge={(() => {
-            if (isSeries) {
-              return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
-            }
-            return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-          })()}
-        />
-        <FocusablePressable
-          focusKey="manual-selection-mobile"
-          icon="search"
-          onSelect={handleManualSelect}
-          style={styles.iconActionButton}
-          disabled={isResolving || (isSeries && episodesLoading)}
-        />
-        {isSeries && (
-          <FocusablePressable
-            focusKey="watch-management-mobile"
-            icon="checkmark-done"
-            onSelect={() => setBulkWatchModalVisible(true)}
-            style={styles.iconActionButton}
-          />
-        )}
-        {isSeries && (
-          <FocusablePressable
-            focusKey="shuffle-play-mobile"
-            icon="shuffle"
-            accessibilityLabel="Shuffle play random episode"
-            onSelect={handleShufflePlay}
-            onLongPress={handleShuffleSeasonPlay}
-            style={styles.iconActionButton}
-            disabled={episodesLoading || allEpisodes.length === 0}
-          />
-        )}
-        <FocusablePressable
-          focusKey="watchlist-toggle-mobile"
-          icon={isWatchlisted ? 'bookmark' : 'bookmark-outline'}
-          onSelect={handleToggleWatchlist}
-          loading={watchlistBusy}
-          style={[styles.iconActionButton, isWatchlisted && styles.watchlistActionButtonActive]}
-        />
-        {!isSeries && (
-          <FocusablePressable
-            focusKey="watch-state-toggle-mobile"
-            icon={isWatched ? 'eye' : 'eye-outline'}
-            accessibilityLabel={watchStateButtonLabel}
-            onSelect={handleToggleWatched}
-            loading={watchlistBusy}
-            style={[styles.iconActionButton, isWatched && styles.watchStateButtonActive]}
-            disabled={watchlistBusy}
-          />
-        )}
-        {(trailersLoading || hasAvailableTrailer) && (
-          <FocusablePressable
-            focusKey="watch-trailer-mobile"
-            icon="videocam"
-            accessibilityLabel={trailerButtonLabel}
-            onSelect={handleWatchTrailer}
-            loading={trailersLoading}
-            style={styles.iconActionButton}
-            disabled={trailerButtonDisabled}
-          />
-        )}
-        {!isSeries && movieDetails?.collection && (
-          <FocusablePressable
-            focusKey="view-collection-mobile"
-            icon="albums"
-            accessibilityLabel={`View ${movieDetails.collection.name}`}
-            onSelect={handleViewCollection}
-            style={styles.iconActionButton}
-          />
-        )}
+        <FocusablePressable focusKey="watch-now-mobile" icon="play" onSelect={playback.handleWatchNow} style={styles.iconActionButton} loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} showReadyPip={playback.prequeueReady} badge={(() => { if (isSeries) return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined; return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined; })()} />
+        <FocusablePressable focusKey="manual-selection-mobile" icon="search" onSelect={manualSelect.handleManualSelect} style={styles.iconActionButton} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} />
+        {isSeries && <FocusablePressable focusKey="watch-management-mobile" icon="checkmark-done" onSelect={() => watchActions.setBulkWatchModalVisible(true)} style={styles.iconActionButton} />}
+        {isSeries && <FocusablePressable focusKey="shuffle-play-mobile" icon="shuffle" accessibilityLabel="Shuffle play random episode" onSelect={episodeManager.handleShufflePlay} onLongPress={episodeManager.handleShuffleSeasonPlay} style={styles.iconActionButton} disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0} />}
+        <FocusablePressable focusKey="watchlist-toggle-mobile" icon={watchActions.isWatchlisted ? 'bookmark' : 'bookmark-outline'} onSelect={watchActions.handleToggleWatchlist} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatchlisted && styles.watchlistActionButtonActive]} />
+        {!isSeries && <FocusablePressable focusKey="watch-state-toggle-mobile" icon={watchActions.isWatched ? 'eye' : 'eye-outline'} accessibilityLabel={watchActions.watchStateButtonLabel} onSelect={watchActions.handleToggleWatched} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatched && styles.watchStateButtonActive]} disabled={watchActions.watchlistBusy} />}
+        {(trailersLoading || hasAvailableTrailer) && <FocusablePressable focusKey="watch-trailer-mobile" icon="videocam" accessibilityLabel={trailerButtonLabel} onSelect={handleWatchTrailer} loading={trailersLoading} style={styles.iconActionButton} disabled={trailerButtonDisabled} />}
+        {!isSeries && movieDetails?.collection && <FocusablePressable focusKey="view-collection-mobile" icon="albums" accessibilityLabel={`View ${movieDetails.collection.name}`} onSelect={handleViewCollection} style={styles.iconActionButton} />}
       </View>
 
-      {/* Prequeue stream info display (mobile) - always render container to reserve space */}
-      <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, prequeuePulseStyle]}>
-        {prequeueDisplayInfo && (
+      {/* Mobile prequeue info */}
+      <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, playback.prequeuePulseStyle]}>
+        {playback.prequeueDisplayInfo && (
           <>
-            {/* Status message for early stages */}
-            {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
+            {(playback.prequeueDisplayInfo.status === 'queued' || playback.prequeueDisplayInfo.status === 'searching') && (
               <Text style={styles.prequeueFilename}>
-                {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
-                {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
+                {playback.prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+                {playback.prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
               </Text>
             )}
-            {/* Failed status */}
-            {prequeueDisplayInfo.status === 'failed' && (
+            {playback.prequeueDisplayInfo.status === 'failed' && (
               <Text style={styles.prequeueFilename}>
                 {(() => {
-                  const error = prequeueDisplayInfo.error || 'Unknown error';
+                  const error = playback.prequeueDisplayInfo.error || 'Unknown error';
                   const targetEp = activeEpisode || nextUpEpisode;
-                  // Check if this is specifically a "no usable results" error (not scraper failures) for an unreleased episode
                   const errorLower = error.toLowerCase();
                   const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
                   if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
@@ -6403,101 +2046,32 @@ export default function DetailsScreen() {
                 })()}
               </Text>
             )}
-            {/* Show filename once available (resolving, probing, or ready) */}
-            {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
+            {(playback.prequeueDisplayInfo.status === 'resolving' || playback.prequeueDisplayInfo.status === 'probing' || playback.prequeueDisplayInfo.status === 'ready') && (
               <>
                 <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
-                  {prequeueDisplayInfo.displayName ||
-                    prequeueDisplayInfo.passthroughName ||
-                    (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
-                    (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+                  {playback.prequeueDisplayInfo.displayName || playback.prequeueDisplayInfo.passthroughName || (playback.prequeueDisplayInfo.streamPath?.split('/').pop()) || (playback.prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
                 </Text>
-                {/* Show loading state for tracks during probing */}
-                {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
-                 !prequeueDisplayInfo.audioTracks?.length && (
+                {(playback.prequeueDisplayInfo.status === 'probing' || playback.prequeueDisplayInfo.status === 'resolving') && !playback.prequeueDisplayInfo.audioTracks?.length && (
                   <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
                 )}
-                {/* Audio & Subtitle tracks on one line */}
-                {(prequeueDisplayInfo.audioTracks?.length || prequeueDisplayInfo.subtitleTracks?.length) ? (
+                {(playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
                   <View style={styles.prequeueTrackRow}>
-                    {/* Audio track - tappable when multiple tracks available */}
-                    {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
-                      <Pressable
-                        onPress={() => setShowAudioTrackModal(true)}
-                        disabled={prequeueDisplayInfo.audioTracks.length <= 1}
-                        style={styles.prequeueTrackPressable}
-                      >
+                    {playback.prequeueDisplayInfo.audioTracks && playback.prequeueDisplayInfo.audioTracks.length > 0 && (
+                      <Pressable onPress={() => playback.setShowAudioTrackModal(true)} disabled={playback.prequeueDisplayInfo.audioTracks.length <= 1} style={styles.prequeueTrackPressable}>
                         <Ionicons name="volume-high" size={14} color={theme.colors.text.secondary} />
                         <Text style={styles.prequeueTrackValue} numberOfLines={1}>
-                          {(() => {
-                            const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
-                            const track = selectedIdx !== undefined && selectedIdx >= 0
-                              ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                              : prequeueDisplayInfo.audioTracks?.[0];
-                            if (!track) return 'Default';
-                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                          })()}
+                          {(() => { const idx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack; const t = idx !== undefined && idx >= 0 ? playback.prequeueDisplayInfo?.audioTracks?.find((x) => x.index === idx) : playback.prequeueDisplayInfo?.audioTracks?.[0]; if (!t) return 'Default'; return `${formatLanguage(t.language)}${t.title ? ` - ${t.title}` : ''}`; })()}
                         </Text>
-                        {(() => {
-                          const selectedIdx = trackOverrideAudio ?? prequeueDisplayInfo.selectedAudioTrack;
-                          const track = selectedIdx !== undefined && selectedIdx >= 0
-                            ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
-                            : prequeueDisplayInfo.audioTracks?.[0];
-                          if (track?.codec) {
-                            return (
-                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                                {track.codec.toUpperCase()}
-                              </Text>
-                            );
-                          }
-                          return null;
-                        })()}
-                        {prequeueDisplayInfo.audioTracks.length > 1 && (
-                          <Ionicons name="chevron-forward" size={10} color={theme.colors.text.muted} />
-                        )}
+                        {playback.prequeueDisplayInfo.audioTracks.length > 1 && <Ionicons name="chevron-forward" size={10} color={theme.colors.text.muted} />}
                       </Pressable>
                     )}
-                    {/* Separator */}
-                    {(prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
-                      <Text style={styles.prequeueTrackSeparator}>•</Text>
-                    )}
-                    {/* Subtitle track - tappable when subtitles available */}
-                    {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                      <Pressable
-                        onPress={() => setShowSubtitleTrackModal(true)}
-                        style={styles.prequeueTrackPressable}
-                      >
+                    {(playback.prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>}
+                    {playback.prequeueDisplayInfo.subtitleTracks && playback.prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                      <Pressable onPress={() => playback.setShowSubtitleTrackModal(true)} style={styles.prequeueTrackPressable}>
                         <Ionicons name="text" size={14} color={theme.colors.text.secondary} />
                         <Text style={styles.prequeueTrackValue} numberOfLines={1}>
-                          {(() => {
-                            const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
-                            if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                            const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                            if (!track) return 'Off';
-                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                          })()}
+                          {(() => { const idx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack; if (idx === undefined || idx < 0) return 'Off'; const t = playback.prequeueDisplayInfo?.subtitleTracks?.find((x) => x.index === idx); if (!t) return 'Off'; return `${formatLanguage(t.language)}${t.title ? ` - ${t.title}` : ''}`; })()}
                         </Text>
-                        {(() => {
-                          const selectedIdx = trackOverrideSubtitle ?? prequeueDisplayInfo.selectedSubtitleTrack;
-                          if (selectedIdx === undefined || selectedIdx < 0) return null;
-                          const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
-                          if (!track) return null;
-                          if (track.forced) {
-                            return (
-                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
-                                FORCED
-                              </Text>
-                            );
-                          }
-                          if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
-                            return (
-                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
-                                SDH
-                              </Text>
-                            );
-                          }
-                          return null;
-                        })()}
                         <Ionicons name="chevron-forward" size={10} color={theme.colors.text.muted} />
                       </Pressable>
                     )}
@@ -6510,18 +2084,18 @@ export default function DetailsScreen() {
       </Animated.View>
 
       {/* Episode carousel for series */}
-      {isSeries && seasons.length > 0 && (
+      {isSeries && episodeManager.seasons.length > 0 && (
         <MobileEpisodeCarousel
-          seasons={seasons}
-          selectedSeason={selectedSeason}
-          episodes={selectedSeason?.episodes ?? []}
+          seasons={episodeManager.seasons}
+          selectedSeason={episodeManager.selectedSeason}
+          episodes={episodeManager.selectedSeason?.episodes ?? []}
           activeEpisode={activeEpisode}
           isLoading={seriesDetailsLoading}
-          onSeasonSelect={(season) => handleSeasonSelect(season, false)}
-          onEpisodeSelect={handleEpisodeSelect}
-          onEpisodePlay={handlePlayEpisode}
-          onEpisodeLongPress={handleToggleEpisodeWatched}
-          isEpisodeWatched={isEpisodeWatched}
+          onSeasonSelect={(season) => episodeManager.handleSeasonSelect(season, false)}
+          onEpisodeSelect={episodeManager.handleEpisodeSelect}
+          onEpisodePlay={episodeManager.handlePlayEpisode}
+          onEpisodeLongPress={watchActions.handleToggleEpisodeWatched}
+          isEpisodeWatched={watchActions.isEpisodeWatched}
           getEpisodeProgress={(episode) => {
             const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
             return episodeProgressMap.get(key) ?? 0;
@@ -6537,31 +2111,24 @@ export default function DetailsScreen() {
             {`S${activeEpisode.seasonNumber}:E${activeEpisode.episodeNumber} - ${activeEpisode.name || `Episode ${activeEpisode.episodeNumber}`}`}
           </Text>
           {activeEpisode.overview ? (
-            <Text style={[styles.episodeOverviewText, { color: theme.colors.text.secondary }]}>
-              {activeEpisode.overview}
-            </Text>
+            <Text style={[styles.episodeOverviewText, { color: theme.colors.text.secondary }]}>{activeEpisode.overview}</Text>
           ) : null}
           {activeEpisode.airedDate && (
             <Text style={[styles.episodeOverviewMeta, { color: theme.colors.text.muted }]}>
               {formatPublishDate(activeEpisode.airedDate)}
-              {activeEpisode.runtimeMinutes ? ` • ${activeEpisode.runtimeMinutes} minutes` : ''}
+              {activeEpisode.runtimeMinutes ? ` \u2022 ${activeEpisode.runtimeMinutes} minutes` : ''}
             </Text>
           )}
         </View>
       )}
 
-      {/* Cast section - disable navigation for kids profiles */}
+      {/* Cast section */}
       <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress} />
 
-      {/* More Like This section - disable navigation for kids profiles */}
-      <MoreLikeThisSection
-        titles={similarContent}
-        isLoading={similarLoading}
-        theme={theme}
-        onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
-      />
+      {/* More Like This section */}
+      <MoreLikeThisSection titles={similarContent} isLoading={similarLoading} theme={theme} onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress} />
 
-      {/* Hidden SeriesEpisodes component to load data (same as in renderDetailsContent) */}
+      {/* Hidden SeriesEpisodes component to load data */}
       {isSeries && (
         <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
           <SeriesEpisodes
@@ -6577,22 +2144,22 @@ export default function DetailsScreen() {
             isTouchSeasonLayout={isTouchSeasonLayout}
             shouldUseSeasonModal={shouldUseSeasonModal}
             shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
-            onSeasonSelect={handleSeasonSelect}
-            onEpisodeSelect={handleEpisodeSelect}
-            onEpisodeFocus={handleEpisodeFocus}
-            onPlaySeason={handlePlaySeason}
-            onPlayEpisode={handlePlayEpisode}
-            onEpisodeLongPress={handleToggleEpisodeWatched}
-            onToggleEpisodeWatched={handleToggleEpisodeWatched}
-            isEpisodeWatched={isEpisodeWatched}
+            onSeasonSelect={episodeManager.handleSeasonSelect}
+            onEpisodeSelect={episodeManager.handleEpisodeSelect}
+            onEpisodeFocus={episodeManager.handleEpisodeFocus}
+            onPlaySeason={episodeManager.handlePlaySeason}
+            onPlayEpisode={episodeManager.handlePlayEpisode}
+            onEpisodeLongPress={watchActions.handleToggleEpisodeWatched}
+            onToggleEpisodeWatched={watchActions.handleToggleEpisodeWatched}
+            isEpisodeWatched={watchActions.isEpisodeWatched}
             renderContent={false}
             activeEpisode={activeEpisode}
-            isResolving={isResolving}
+            isResolving={playback.isResolving}
             theme={theme}
             onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
             onRequestFocusShift={handleRequestFocusShift}
-            onEpisodesLoaded={handleEpisodesLoaded}
-            onSeasonsLoaded={handleSeasonsLoaded}
+            onEpisodesLoaded={episodeManager.handleEpisodesLoaded}
+            onSeasonsLoaded={episodeManager.handleSeasonsLoaded}
           />
         </View>
       )}
@@ -6602,362 +2169,206 @@ export default function DetailsScreen() {
   const SafeAreaWrapper = isTV ? View : FixedSafeAreaView;
   const safeAreaProps = isTV ? {} : { edges: ['top'] as ('top' | 'bottom' | 'left' | 'right')[] };
 
-  // On TV/mobile, wait for metadata, logo, and poster to load before showing the page to prevent pop-in
-  // Once the gate opens, it never re-closes — prevents re-hiding from cascading state updates
-  const hasBeenDisplayedRef = useRef(false);
-  const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
-  const isLogoReady = !logoUrl || logoDimensions !== null;
-  const isPosterReady = isPosterPreloaded;
-  const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current && (isMetadataLoading || !isLogoReady || !isPosterReady);
-  if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
-    hasBeenDisplayedRef.current = true;
-  }
-
-  // Defer episode carousel render on TV so the initial paint (metadata, poster,
-  // logo, play buttons) isn't blocked by spatial navigation tree registration.
-  // The carousel renders on the next frame after the page becomes visible.
-  const [tvEpisodesDeferred, setTvEpisodesDeferred] = useState(isTV && isSeries);
-  useEffect(() => {
-    if (isTV && isSeries && !shouldHideUntilMetadataReady && tvEpisodesDeferred) {
-      requestAnimationFrame(() => setTvEpisodesDeferred(false));
-    }
-  }, [shouldHideUntilMetadataReady, tvEpisodesDeferred, isTV, isSeries]);
-
-  // Log at render time (not useEffect) to get accurate timing of when React first renders content
-  if (!shouldHideUntilMetadataReady) {
-    console.log(`[NAV TIMING] Content rendering in JSX (render phase), +${msSinceNavStart()}ms`);
-  }
-  if (isTV && !shouldHideUntilMetadataReady) {
-    console.log(`[LAYOUT SHIFT] render state: metaLoading=${isMetadataLoadingForSkeleton}, similarLoading=${similarLoading}, similarCount=${similarContent?.length ?? 0}, hasCredits=${!!credits}, seasons=${seasons.length}, deferred=${tvEpisodesDeferred}, hasActiveEp=${!!activeEpisode}, hasPrequeue=${!!prequeueDisplayInfo}, desc=${displayDescription ? displayDescription.length : 0}chars, +${msSinceNavStart()}ms`);
-  }
-  const shouldAnimateBackground = isTV || isMobile;
-
-  // Fade in background when metadata is ready
-  const backgroundOpacity = useSharedValue(shouldAnimateBackground ? 0 : 1);
-  // TV parallax scroll - background moves at 0.4x rate of content
-  const tvScrollY = useSharedValue(0);
-  const backgroundAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: backgroundOpacity.value,
-    ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 }] } : {}),
-  }));
-  const tvScrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      tvScrollY.value = event.contentOffset.y;
-    },
-  });
-  // TV spacer height — driven by shared value so it updates on the UI thread
-  // in the same frame as the topContent onLayout measurement (no visible shift).
-  const minSpacer = windowHeight * 0.35;
-  const baseSpacer = windowHeight * 0.65;
-  const baselineHeight = 200 * tvScale;
-  const tvSpacerStyle = useAnimatedStyle(() => ({
-    height: Math.round(
-      Math.max(minSpacer, baseSpacer - Math.max(0, tvTopContentHeightSV.value - baselineHeight))
-    ),
-  }));
-
-  // Immersive mode opacity animation for trailer auto-play
-  const immersiveContentOpacity = useSharedValue(1);
-  useEffect(() => {
-    immersiveContentOpacity.value = withTiming(isTrailerImmersiveMode ? 0 : 1, { duration: 400 });
-  }, [isTrailerImmersiveMode]);
-  const immersiveContentStyle = useAnimatedStyle(() => ({
-    opacity: immersiveContentOpacity.value,
-  }));
-
-  // Ref for TV scroll view to programmatically scroll
-  const tvScrollViewRef = useRef<Animated.ScrollView>(null);
-
-  // Handle focus area change - scroll to appropriate position for each focus area
-  const handleTVFocusAreaChange = useCallback(
-    (area: 'seasons' | 'episodes' | 'actions' | 'cast' | 'similar') => {
-      if (!Platform.isTV || !tvScrollViewRef.current) return;
-
-      // Scroll positions based on focus area:
-      // Layout order (top to bottom): artwork -> action row -> seasons -> episodes -> cast -> similar
-      // Higher value = more scroll = content raised higher in viewport
-      const scrollPositions = {
-        actions: Math.round(windowHeight * 0.15), // Show artwork with action row visible
-        seasons: Math.round(windowHeight * 0.25), // Show action row + season selector
-        episodes: Math.round(windowHeight * 0.5), // Show seasons + episode carousel (raised higher)
-        cast: Math.round(windowHeight * 1.0), // Show cast section fully visible
-        similar: Math.round(windowHeight * 2), // Large value to scroll to bottom (clamped by ScrollView)
-      };
-      const targetY = scrollPositions[area];
-      tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
-    },
-    [windowHeight],
-  );
-
-  // Track if we've already triggered the fade-in
-  const hasTriggeredFadeIn = useRef(false);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    if (!shouldHideUntilMetadataReady && shouldAnimateBackground && !hasTriggeredFadeIn.current) {
-      console.log('[Details] Triggering background fade-in animation');
-      hasTriggeredFadeIn.current = true;
-      // Cancel any existing animation and force opacity to 0
-      cancelAnimation(backgroundOpacity);
-      backgroundOpacity.value = 0;
-      // Small timeout to ensure the 0 opacity frame is rendered before animating
-      timer = setTimeout(() => {
-        backgroundOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
-      }, 16); // ~1 frame at 60fps
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
-
-  useEffect(() => {
-    console.log(`[NAV TIMING] Visibility gate, +${msSinceNavStart()}ms:`, {
-      shouldHideUntilMetadataReady,
-      isMetadataLoading,
-      isLogoReady,
-      isPosterReady,
-      logoUrl: !!logoUrl,
-      logoDimensions: !!logoDimensions,
-      posterToPreload: !!posterToPreload,
-    });
-    if (!shouldHideUntilMetadataReady) {
-      console.log(`[NAV TIMING] === DETAILS PAGE VISIBLE === +${msSinceNavStart()}ms since nav start`);
-    }
-  }, [shouldHideUntilMetadataReady, isMetadataLoading, isLogoReady, isPosterReady, logoUrl, logoDimensions, posterToPreload]);
-
-  // On Android TV (low-RAM devices like Fire Stick), unmount heavy content when the player is
-  // active. This frees all image bitmaps, view hierarchy, and list memory (~50-100MB) while
-  // the player is consuming memory for video decode. Content re-renders when user navigates back.
-  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
-  if (isAndroidTV && !isDetailsPageActive) {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <View style={{ flex: 1, backgroundColor: '#0b0b0f' }} />
-      </>
-    );
-  }
-
   return (
     <>
-      <SpatialNavigationRoot
-        isActive={
-          isDetailsPageActive &&
-          !manualVisible &&
-          !trailerModalVisible &&
-          !bulkWatchModalVisible &&
-          !resumeModalVisible &&
-          !seasonSelectorVisible &&
-          !episodeSelectorVisible &&
-          !showAudioTrackModal &&
-          !showSubtitleTrackModal &&
-          !isTrailerImmersiveMode
-        }
-        onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
-        <Stack.Screen options={{ headerShown: false }} />
-        <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
-          <View style={styles.container}>
-            {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate so episode
-                data processing happens while we wait for logo dimensions. This moves
-                ~2s of data processing off the critical render path. */}
-            {isTV && isSeries && (
-              <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
-                <SeriesEpisodes
-                  isSeries={isSeries}
-                  title={title}
-                  tvdbId={tvdbId}
-                  titleId={titleId}
-                  yearNumber={yearNumber}
-                  seriesDetails={seriesDetailsData}
-                  seriesDetailsLoading={seriesDetailsLoading}
-                  initialSeasonNumber={initialSeasonNumber}
-                  initialEpisodeNumber={initialEpisodeNumber}
-                  isTouchSeasonLayout={isTouchSeasonLayout}
-                  shouldUseSeasonModal={shouldUseSeasonModal}
-                  shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
-                  onSeasonSelect={handleSeasonSelect}
-                  onEpisodeSelect={handleEpisodeSelect}
-                  onEpisodeFocus={handleEpisodeFocus}
-                  onPlaySeason={handlePlaySeason}
-                  onPlayEpisode={handlePlayEpisode}
-                  onEpisodeLongPress={handleToggleEpisodeWatched}
-                  onToggleEpisodeWatched={handleToggleEpisodeWatched}
-                  isEpisodeWatched={isEpisodeWatched}
-                  renderContent={false}
-                  activeEpisode={activeEpisode}
-                  isResolving={isResolving}
-                  theme={theme}
-                  onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
-                  onRequestFocusShift={handleRequestFocusShift}
-                  onEpisodesLoaded={handleEpisodesLoaded}
-                  onSeasonsLoaded={handleSeasonsLoaded}
-                />
-              </View>
-            )}
-            {/* Hide all content until metadata (and logo) is ready to prevent progressive loading */}
-            {shouldHideUntilMetadataReady ? null : (
-              <>
-                {/* Mobile uses the new parallax scrollable container */}
-                {isMobile ? (
-                  renderMobileContent()
-                ) : (
-                  <>
-                    {headerImage ? (
-                  autoPlayTrailersTV && TVTrailerBackdrop ? (
-                    // TV with auto-play trailers enabled - use video backdrop
-                    <TVTrailerBackdrop
-                      backdropUrl={headerImage}
-                      trailerStreamUrl={trailerStreamUrl}
-                      isPlaying={isBackdropTrailerPlaying}
-                      isImmersive={isTrailerImmersiveMode}
-                      onEnd={() => {
-                        setIsBackdropTrailerPlaying(false);
-                        setIsTrailerImmersiveMode(false);
-                      }}
-                      onError={() => {
-                        setIsBackdropTrailerPlaying(false);
-                        setIsTrailerImmersiveMode(false);
-                      }}
-                    />
-                  ) : (
-                  <Animated.View
-                    style={[
-                      styles.backgroundImageContainer,
-                      shouldAnchorHeroToTop && styles.backgroundImageContainerTop,
-                      isTV && backgroundAnimatedStyle,
-                    ]}
-                    pointerEvents="none">
-                    {shouldShowBlurredFill && (
-                      <RNImage
-                        source={{ uri: headerImage }}
-                        style={styles.backgroundImageBackdrop}
-                        resizeMode="cover"
-                        blurRadius={20}
+      <Stack.Screen options={{ headerShown: false }} />
+      <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
+        <View style={styles.container}>
+          {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) */}
+          {isTV && isSeries && (
+            <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
+              <SeriesEpisodes
+                isSeries={isSeries}
+                title={title}
+                tvdbId={tvdbId}
+                titleId={titleId}
+                yearNumber={yearNumber}
+                seriesDetails={seriesDetailsData}
+                seriesDetailsLoading={seriesDetailsLoading}
+                initialSeasonNumber={initialSeasonNumber}
+                initialEpisodeNumber={initialEpisodeNumber}
+                isTouchSeasonLayout={isTouchSeasonLayout}
+                shouldUseSeasonModal={shouldUseSeasonModal}
+                shouldAutoPlaySeasonSelection={shouldAutoPlaySeasonSelection}
+                onSeasonSelect={episodeManager.handleSeasonSelect}
+                onEpisodeSelect={episodeManager.handleEpisodeSelect}
+                onEpisodeFocus={episodeManager.handleEpisodeFocus}
+                onPlaySeason={episodeManager.handlePlaySeason}
+                onPlayEpisode={episodeManager.handlePlayEpisode}
+                onEpisodeLongPress={watchActions.handleToggleEpisodeWatched}
+                onToggleEpisodeWatched={watchActions.handleToggleEpisodeWatched}
+                isEpisodeWatched={watchActions.isEpisodeWatched}
+                renderContent={false}
+                activeEpisode={activeEpisode}
+                isResolving={playback.isResolving}
+                theme={theme}
+                onRegisterSeasonFocusHandler={handleRegisterSeasonFocusHandler}
+                onRequestFocusShift={handleRequestFocusShift}
+                onEpisodesLoaded={episodeManager.handleEpisodesLoaded}
+                onSeasonsLoaded={episodeManager.handleSeasonsLoaded}
+              />
+            </View>
+          )}
+          {/* Hide all content until metadata (and logo) is ready */}
+          {shouldHideUntilMetadataReady ? null : (
+            <>
+              {/* Mobile uses the new parallax scrollable container */}
+              {isMobile ? (
+                renderMobileContent()
+              ) : (
+                <>
+                  {headerImage ? (
+                    autoPlayTrailersTV && TVTrailerBackdrop ? (
+                      <TVTrailerBackdrop
+                        backdropUrl={headerImage}
+                        trailerStreamUrl={trailersHook.trailerStreamUrl}
+                        isPlaying={trailersHook.isBackdropTrailerPlaying}
+                        isImmersive={trailersHook.isTrailerImmersiveMode}
+                        onEnd={() => {
+                          trailersHook.setIsBackdropTrailerPlaying(false);
+                          trailersHook.setIsTrailerImmersiveMode(false);
+                        }}
+                        onError={() => {
+                          trailersHook.setIsBackdropTrailerPlaying(false);
+                          trailersHook.setIsTrailerImmersiveMode(false);
+                        }}
                       />
-                    )}
-                    <RNImage
-                      source={{ uri: headerImage }}
-                      style={[
-                        styles.backgroundImage,
-                        shouldUseAdaptiveHeroSizing && styles.backgroundImageSharp,
-                        backgroundImageSizingStyle,
-                      ]}
-                      resizeMode={backgroundImageResizeMode}
-                    />
+                    ) : (
+                      <Animated.View
+                        style={[
+                          styles.backgroundImageContainer,
+                          shouldAnchorHeroToTop && styles.backgroundImageContainerTop,
+                          isTV && backgroundAnimatedStyle,
+                        ]}
+                        pointerEvents="none">
+                        {shouldShowBlurredFill && (
+                          <RNImage
+                            source={{ uri: headerImage }}
+                            style={styles.backgroundImageBackdrop}
+                            resizeMode="cover"
+                            blurRadius={20}
+                          />
+                        )}
+                        <RNImage
+                          source={{ uri: headerImage }}
+                          style={[
+                            styles.backgroundImage,
+                            shouldUseAdaptiveHeroSizing && styles.backgroundImageSharp,
+                            backgroundImageSizingStyle,
+                          ]}
+                          resizeMode={backgroundImageResizeMode}
+                        />
+                        <LinearGradient
+                          pointerEvents="none"
+                          colors={
+                            Platform.isTV
+                              ? ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.9)']
+                              : ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.8)', '#000']
+                          }
+                          locations={Platform.isTV ? [0, 0.5, 1] : [0, 0.7, 1]}
+                          start={{ x: 0.5, y: 0 }}
+                          end={{ x: 0.5, y: 1 }}
+                          style={styles.heroFadeOverlay}
+                        />
+                      </Animated.View>
+                    )
+                  ) : null}
+                  {/* Hide overlay gradient when TVTrailerBackdrop is active */}
+                  {!(autoPlayTrailersTV && TVTrailerBackdrop) && (
                     <LinearGradient
                       pointerEvents="none"
-                      colors={
-                        Platform.isTV
-                          ? ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.9)']
-                          : ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.8)', '#000']
-                      }
-                      locations={Platform.isTV ? [0, 0.5, 1] : [0, 0.7, 1]}
+                      colors={overlayGradientColors}
+                      locations={overlayGradientLocations}
                       start={{ x: 0.5, y: 0 }}
                       end={{ x: 0.5, y: 1 }}
-                      style={styles.heroFadeOverlay}
+                      style={styles.gradientOverlay}
                     />
-                  </Animated.View>
-                  )
-                ) : null}
-                {/* Hide overlay gradient when TVTrailerBackdrop is active (it has its own gradient) */}
-                {!(autoPlayTrailersTV && TVTrailerBackdrop) && (
-                  <LinearGradient
-                    pointerEvents="none"
-                    colors={overlayGradientColors}
-                    locations={overlayGradientLocations}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 1 }}
-                    style={styles.gradientOverlay}
-                  />
-                )}
-                {Platform.isTV ? (
-                  <Animated.ScrollView
-                    ref={tvScrollViewRef}
-                    style={styles.tvScrollContainer}
-                    contentContainerStyle={styles.tvScrollContent}
-                    showsVerticalScrollIndicator={false}
-                    onScroll={tvScrollHandler}
-                    scrollEventThrottle={16}
-                    // Disable native scroll-to-focus - we control scroll programmatically
-                    scrollEnabled={false}>
-                    {/* Transparent spacer - shrinks when topContent is taller to keep action row at consistent position.
-                        Uses Reanimated shared value so height updates on the UI thread in the same frame as
-                        the topContent onLayout measurement, eliminating the visible shift. */}
-                    <Animated.View style={tvSpacerStyle} />
-                    {/* Content area with gradient background - starts higher with softer transition */}
-                    <Animated.View style={autoPlayTrailersTV && immersiveContentStyle}>
-                      <LinearGradient
-                        colors={[
-                          'transparent',
-                          'rgba(0, 0, 0, 0.6)',
-                          'rgba(0, 0, 0, 0.85)',
-                          theme.colors.background.base,
-                        ]}
-                        locations={[0, 0.1, 0.25, 0.45]}
-                        style={styles.tvContentGradient}>
-                        <View style={styles.tvContentInner}>
-                          {renderDetailsContent()}
+                  )}
+                  {Platform.isTV ? (
+                    <>
+                      <Animated.ScrollView
+                        ref={tvScrollViewRef}
+                        style={styles.tvScrollContainer}
+                        contentContainerStyle={styles.tvScrollContent}
+                        showsVerticalScrollIndicator={false}
+                        onScroll={tvScrollHandler}
+                        scrollEventThrottle={16}
+                        scrollEnabled={true}>
+                        {/* Fixed height spacer */}
+                        <View style={{ height: tvSpacerHeight }} />
+                        {/* Content area with gradient background */}
+                        <Animated.View style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}>
+                          <LinearGradient
+                            colors={[
+                              'transparent',
+                              'rgba(0, 0, 0, 0.6)',
+                              'rgba(0, 0, 0, 0.85)',
+                              theme.colors.background.base,
+                            ]}
+                            locations={[0, 0.1, 0.25, 0.45]}
+                            style={styles.tvContentGradient}>
+                            <View style={styles.tvContentInner}>
+                              {renderDetailsContent()}
+                            </View>
+                          </LinearGradient>
+                        </Animated.View>
+                      </Animated.ScrollView>
+                    </>
+                  ) : (
+                    <View style={styles.contentOverlay}>
+                      <View style={[styles.contentBox, contentBoxStyle]}>
+                        <View style={styles.contentBoxInner}>
+                          <View style={styles.contentContainer}>{renderDetailsContent()}</View>
                         </View>
-                      </LinearGradient>
-                    </Animated.View>
-                  </Animated.ScrollView>
-                ) : (
-                  <View style={styles.contentOverlay}>
-                    <View style={[styles.contentBox, contentBoxStyle]}>
-                      <View style={styles.contentBoxInner}>
-                        <View style={styles.contentContainer}>{renderDetailsContent()}</View>
                       </View>
                     </View>
-                  </View>
-                )}
+                  )}
                 </>
               )}
             </>
           )}
-          {/* Corner poster removed - was covering backdrop art. Plex style shows full backdrop instead */}
-          </View>
-        </SafeAreaWrapper>
-        <MobileTabBar />
-      </SpatialNavigationRoot>
+        </View>
+      </SafeAreaWrapper>
+      <MobileTabBar />
       <TrailerModal
         visible={trailerModalVisible}
         trailer={activeTrailer}
         onClose={handleCloseTrailer}
         theme={theme}
-        preloadedStreamUrl={trailerStreamUrl}
-        isDownloading={trailerPrequeueStatus === 'pending' || trailerPrequeueStatus === 'downloading'}
+        preloadedStreamUrl={trailersHook.trailerStreamUrl}
+        isDownloading={trailersHook.trailerPrequeueStatus === 'pending' || trailersHook.trailerPrequeueStatus === 'downloading'}
       />
       <ResumePlaybackModal
-        visible={resumeModalVisible}
-        onClose={handleCloseResumeModal}
-        onResume={handleResumePlayback}
-        onPlayFromBeginning={handlePlayFromBeginning}
+        visible={playback.resumeModalVisible}
+        onClose={playback.handleCloseResumeModal}
+        onResume={playback.handleResumePlayback}
+        onPlayFromBeginning={playback.handlePlayFromBeginning}
         theme={theme}
-        percentWatched={currentProgress?.percentWatched ?? 0}
+        percentWatched={playback.currentProgress?.percentWatched ?? 0}
       />
       <BulkWatchModal
-        visible={bulkWatchModalVisible}
-        onClose={() => setBulkWatchModalVisible(false)}
+        visible={watchActions.bulkWatchModalVisible}
+        onClose={() => watchActions.setBulkWatchModalVisible(false)}
         theme={theme}
-        seasons={seasons}
-        allEpisodes={allEpisodes}
+        seasons={episodeManager.seasons}
+        allEpisodes={episodeManager.allEpisodes}
         currentEpisode={activeEpisode}
-        onMarkAllWatched={handleMarkAllWatched}
-        onMarkAllUnwatched={handleMarkAllUnwatched}
-        onMarkSeasonWatched={handleMarkSeasonWatched}
-        onMarkSeasonUnwatched={handleMarkSeasonUnwatched}
-        onMarkEpisodeWatched={handleMarkEpisodeWatched}
-        onMarkEpisodeUnwatched={handleMarkEpisodeUnwatched}
-        isEpisodeWatched={isEpisodeWatched}
+        onMarkAllWatched={watchActions.handleMarkAllWatched}
+        onMarkAllUnwatched={watchActions.handleMarkAllUnwatched}
+        onMarkSeasonWatched={watchActions.handleMarkSeasonWatched}
+        onMarkSeasonUnwatched={watchActions.handleMarkSeasonUnwatched}
+        onMarkEpisodeWatched={watchActions.handleToggleEpisodeWatched}
+        onMarkEpisodeUnwatched={watchActions.handleToggleEpisodeWatched}
+        isEpisodeWatched={watchActions.isEpisodeWatched}
       />
       <ManualSelection
-        visible={manualVisible}
-        loading={manualLoading}
-        error={manualError}
-        results={manualResults}
+        visible={manualSelect.manualVisible}
+        loading={manualSelect.manualLoading}
+        error={manualSelect.manualError}
+        results={manualSelect.manualResults}
         healthChecks={manualHealthChecks}
-        onClose={closeManualPicker}
-        onSelect={handleManualSelection}
+        onClose={manualSelect.closeManualPicker}
+        onSelect={manualSelect.handleManualSelection}
         onCheckHealth={checkManualHealth}
         theme={theme}
         isWebTouch={isWebTouch}
@@ -6970,7 +2381,7 @@ export default function DetailsScreen() {
       <SeasonSelector
         visible={seasonSelectorVisible}
         onClose={() => setSeasonSelectorVisible(false)}
-        seasons={seasons}
+        seasons={episodeManager.seasons}
         onSeasonSelect={isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect}
         theme={theme}
       />
@@ -6978,37 +2389,37 @@ export default function DetailsScreen() {
         visible={episodeSelectorVisible}
         onClose={() => setEpisodeSelectorVisible(false)}
         onBack={handleEpisodeSelectorBack}
-        season={selectedSeason}
+        season={episodeManager.selectedSeason}
         onEpisodeSelect={handleEpisodeSelectorSelect}
-        isEpisodeWatched={isEpisodeWatched}
+        isEpisodeWatched={watchActions.isEpisodeWatched}
         theme={theme}
       />
-      {/* Audio Track Selection Modal for prequeue override */}
+      {/* Audio Track Selection Modal */}
       <TrackSelectionModal
-        visible={showAudioTrackModal}
+        visible={playback.showAudioTrackModal}
         title="Audio Track"
-        options={buildPrequeueAudioOptions()}
-        selectedId={currentAudioTrackId}
+        options={playback.buildPrequeueAudioOptions()}
+        selectedId={playback.currentAudioTrackId}
         onSelect={(id) => {
-          setTrackOverrideAudio(parseInt(id, 10));
-          setShowAudioTrackModal(false);
+          playback.setTrackOverrideAudio(parseInt(id, 10));
+          playback.setShowAudioTrackModal(false);
         }}
-        onClose={() => setShowAudioTrackModal(false)}
+        onClose={() => playback.setShowAudioTrackModal(false)}
       />
-      {/* Subtitle Track Selection Modal for prequeue override */}
+      {/* Subtitle Track Selection Modal */}
       <TrackSelectionModal
-        visible={showSubtitleTrackModal}
+        visible={playback.showSubtitleTrackModal}
         title="Subtitles"
-        options={buildPrequeueSubtitleOptions()}
-        selectedId={currentSubtitleTrackId}
+        options={playback.buildPrequeueSubtitleOptions()}
+        selectedId={playback.currentSubtitleTrackId}
         onSelect={(id) => {
-          setTrackOverrideSubtitle(parseInt(id, 10));
-          setShowSubtitleTrackModal(false);
+          playback.setTrackOverrideSubtitle(parseInt(id, 10));
+          playback.setShowSubtitleTrackModal(false);
         }}
-        onClose={() => setShowSubtitleTrackModal(false)}
+        onClose={() => playback.setShowSubtitleTrackModal(false)}
       />
       {/* Black overlay for smooth transition to player */}
-      {showBlackOverlay && (
+      {playback.showBlackOverlay && (
         <View
           style={{
             position: 'absolute',
