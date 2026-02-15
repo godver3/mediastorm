@@ -324,6 +324,7 @@ type FilterSettings struct {
 	PrioritizeHdr                    bool        `json:"prioritizeHdr"`                    // Prioritize HDR/DV content in search results
 	FilterOutTerms                   []string    `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
 	PreferredTerms                   []string    `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
+	NonPreferredTerms                []string    `json:"nonPreferredTerms"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
 }
 
@@ -562,8 +563,9 @@ type RankingCriterionID string
 
 const (
 	RankingServicePriority RankingCriterionID = "service-priority"
-	RankingPreferredTerms  RankingCriterionID = "preferred-terms"
-	RankingResolution      RankingCriterionID = "resolution"
+	RankingPreferredTerms     RankingCriterionID = "preferred-terms"
+	RankingNonPreferredTerms  RankingCriterionID = "non-preferred-terms"
+	RankingResolution         RankingCriterionID = "resolution"
 	RankingHDR             RankingCriterionID = "hdr"
 	RankingLanguage        RankingCriterionID = "language"
 	RankingSize            RankingCriterionID = "size"
@@ -587,10 +589,11 @@ func DefaultRankingCriteria() []RankingCriterion {
 	return []RankingCriterion{
 		{ID: RankingServicePriority, Name: "Service Priority", Enabled: true, Order: 0},
 		{ID: RankingPreferredTerms, Name: "Preferred Terms", Enabled: true, Order: 1},
-		{ID: RankingResolution, Name: "Resolution", Enabled: true, Order: 2},
-		{ID: RankingHDR, Name: "HDR/Dolby Vision", Enabled: true, Order: 3},
-		{ID: RankingLanguage, Name: "Language", Enabled: true, Order: 4},
-		{ID: RankingSize, Name: "File Size", Enabled: true, Order: 5},
+		{ID: RankingNonPreferredTerms, Name: "Non-Preferred Terms", Enabled: true, Order: 2},
+		{ID: RankingResolution, Name: "Resolution", Enabled: true, Order: 3},
+		{ID: RankingHDR, Name: "HDR/Dolby Vision", Enabled: true, Order: 4},
+		{ID: RankingLanguage, Name: "Language", Enabled: true, Order: 5},
+		{ID: RankingSize, Name: "File Size", Enabled: true, Order: 6},
 	}
 }
 
@@ -1013,6 +1016,25 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults
+
+	// Backfill Ranking criteria: add any new criteria that were introduced after the user saved settings
+	if len(s.Ranking.Criteria) > 0 {
+		existing := make(map[RankingCriterionID]struct{}, len(s.Ranking.Criteria))
+		for _, c := range s.Ranking.Criteria {
+			existing[c.ID] = struct{}{}
+		}
+		for _, def := range DefaultRankingCriteria() {
+			if _, ok := existing[def.ID]; !ok {
+				// Insert at default order, shifting existing criteria down if needed
+				for i := range s.Ranking.Criteria {
+					if s.Ranking.Criteria[i].Order >= def.Order {
+						s.Ranking.Criteria[i].Order++
+					}
+				}
+				s.Ranking.Criteria = append(s.Ranking.Criteria, def)
+			}
+		}
+	}
 
 	// Backfill Display settings
 	if len(s.Display.BadgeVisibility) == 0 {

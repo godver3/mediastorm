@@ -137,7 +137,8 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
-		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
+		PreferredTerms:      globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms:   globalSettings.Filtering.NonPreferredTerms,
 	}
 
 	// Layer 2: Profile settings override global (field-by-field, only if set)
@@ -168,6 +169,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if profileFiltering.PreferredTerms != nil {
 				filterSettings.PreferredTerms = profileFiltering.PreferredTerms
+			}
+			if profileFiltering.NonPreferredTerms != nil {
+				filterSettings.NonPreferredTerms = profileFiltering.NonPreferredTerms
 			}
 			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
 				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
@@ -202,6 +206,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.PreferredTerms != nil {
 				filterSettings.PreferredTerms = *clientSettings.PreferredTerms
+			}
+			if clientSettings.NonPreferredTerms != nil {
+				filterSettings.NonPreferredTerms = *clientSettings.NonPreferredTerms
 			}
 		}
 	}
@@ -319,17 +326,32 @@ func compareServicePriority(i, j models.NZBResult, priority config.StreamingServ
 	return 0
 }
 
-func comparePreferredTerms(i, j models.NZBResult, terms []string) int {
+func comparePreferredTerms(i, j models.NZBResult, terms []filter.CompiledTerm) int {
 	if len(terms) == 0 {
 		return 0
 	}
-	iHas := containsPreferredTerm(i.Title, terms)
-	jHas := containsPreferredTerm(j.Title, terms)
+	iHas := filter.MatchesAnyTerm(i.Title, terms)
+	jHas := filter.MatchesAnyTerm(j.Title, terms)
 	if iHas && !jHas {
 		return -1
 	}
 	if !iHas && jHas {
 		return 1
+	}
+	return 0
+}
+
+func compareNonPreferredTerms(i, j models.NZBResult, terms []filter.CompiledTerm) int {
+	if len(terms) == 0 {
+		return 0
+	}
+	iHas := filter.MatchesAnyTerm(i.Title, terms)
+	jHas := filter.MatchesAnyTerm(j.Title, terms)
+	if iHas && !jHas {
+		return 1 // i has non-preferred term → sort lower
+	}
+	if !iHas && jHas {
+		return -1 // j has non-preferred term → i sorts higher
 	}
 	return 0
 }
@@ -555,7 +577,8 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 
 		// Cache settings needed for comparison functions
 		servicePriority := settings.Streaming.ServicePriority
-		preferredTerms := filterSettings.PreferredTerms
+		preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
+		nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
 		prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
 		preferredLang := settings.Metadata.Language
 
@@ -571,6 +594,8 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 					result = compareServicePriority(aggregated[i], aggregated[j], servicePriority)
 				case config.RankingPreferredTerms:
 					result = comparePreferredTerms(aggregated[i], aggregated[j], preferredTerms)
+				case config.RankingNonPreferredTerms:
+					result = compareNonPreferredTerms(aggregated[i], aggregated[j], nonPreferredTerms)
 				case config.RankingResolution:
 					result = compareResolution(aggregated[i], aggregated[j])
 				case config.RankingHDR:
@@ -653,7 +678,8 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	// Prepare ranking criteria and settings for sorting (same as main Search function)
 	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
 	servicePriority := settings.Streaming.ServicePriority
-	preferredTerms := filterSettings.PreferredTerms
+	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
+	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
 	prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
 	preferredLang := settings.Metadata.Language
 
@@ -691,6 +717,8 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 					result = compareServicePriority(results[i], results[j], servicePriority)
 				case config.RankingPreferredTerms:
 					result = comparePreferredTerms(results[i], results[j], preferredTerms)
+				case config.RankingNonPreferredTerms:
+					result = compareNonPreferredTerms(results[i], results[j], nonPreferredTerms)
 				case config.RankingResolution:
 					result = compareResolution(results[i], results[j])
 				case config.RankingHDR:
@@ -1577,14 +1605,3 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 	return aioEnabled && !otherEnabled
 }
 
-// containsPreferredTerm checks if a title contains any of the preferred terms (case-insensitive).
-func containsPreferredTerm(title string, preferredTerms []string) bool {
-	titleLower := strings.ToLower(title)
-	for _, term := range preferredTerms {
-		termLower := strings.ToLower(strings.TrimSpace(term))
-		if termLower != "" && strings.Contains(titleLower, termLower) {
-			return true
-		}
-	}
-	return false
-}
