@@ -68,6 +68,33 @@ export const isStreamSDH = (stream: SubtitleStreamMetadata): boolean => {
 };
 
 /**
+ * Checks if a subtitle stream is a "Signs and Songs" track.
+ * These only show foreign text inserts (signs, karaoke), not dialogue.
+ */
+const isSignsTrack = (stream: SubtitleStreamMetadata): boolean => {
+  const title = stream.title?.toLowerCase() || '';
+  return title.includes('sign') || title.includes('song');
+};
+
+/**
+ * Checks if a subtitle stream is a "Dubtitle" track.
+ * Dubtitles are dialogue captions matching the dub audio (same-language subs).
+ */
+const isDubtitleTrack = (stream: SubtitleStreamMetadata): boolean => {
+  const title = stream.title?.toLowerCase() || '';
+  return title.includes('dubtitle');
+};
+
+/**
+ * Checks if a subtitle stream is a "Full Subs" track.
+ * Full subs contain complete translated dialogue.
+ */
+const isFullSubsTrack = (stream: SubtitleStreamMetadata): boolean => {
+  const title = stream.title?.toLowerCase() || '';
+  return title.includes('full sub');
+};
+
+/**
  * Checks if a stream matches the preferred language (exact or partial).
  */
 const matchesLanguage = (stream: AudioStreamMetadata, normalizedPref: string): boolean => {
@@ -166,7 +193,9 @@ export const findAudioTrackByLanguage = (streams: AudioStreamMetadata[], preferr
  * Mode behavior:
  * - 'off': Returns null (subtitles disabled)
  * - 'forced-only': Only considers forced subtitle tracks
- * - 'on': Prefers SDH > plain (no title) > any non-forced, with language matching
+ * - 'on': Audio-aware selection — when audio language matches subtitle language (e.g. English
+ *   audio + English subs), prefers dubtitles. When languages differ (e.g. Japanese audio +
+ *   English subs), prefers full subs. Signs/Songs tracks are always lowest priority.
  *
  * Returns the track index or null if no suitable track found.
  */
@@ -174,6 +203,7 @@ export const findSubtitleTrackByPreference = (
   streams: SubtitleStreamMetadata[],
   preferredLanguage: string | undefined,
   mode: 'off' | 'on' | 'forced-only' | undefined,
+  audioLanguage?: string,
 ): number | null => {
   if (!streams?.length || mode === 'off') {
     return null;
@@ -204,25 +234,76 @@ export const findSubtitleTrackByPreference = (
     return null;
   }
 
-  // For 'on' mode: prefer SDH > no title/plain > anything else, exclude forced
+  // For 'on' mode: audio-aware priority ordering
   if (mode === 'on') {
     // Get all non-forced streams matching the language
     const nonForcedMatches = streams.filter((s) => !isStreamForced(s) && matchesLanguage(s));
 
     if (nonForcedMatches.length > 0) {
-      // Priority 1: SDH subtitles
-      const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s));
+      // Determine if audio and subtitle languages match (same-language subs)
+      const normalizedAudio = audioLanguage ? normalizeLanguageForMatching(audioLanguage) : null;
+      const isSameLanguage =
+        normalizedAudio &&
+        normalizedPref &&
+        (normalizedAudio === normalizedPref ||
+          normalizedAudio.includes(normalizedPref) ||
+          normalizedPref.includes(normalizedAudio));
+
+      // Priority 1: SDH subtitles (always top priority regardless of audio language)
+      const sdhMatch = nonForcedMatches.find((s) => isStreamSDH(s) && !isSignsTrack(s));
       if (sdhMatch) {
         return sdhMatch.index;
       }
 
-      // Priority 2: No title (plain/full subtitles)
-      const plainMatch = nonForcedMatches.find((s) => !s.title || s.title.trim() === '');
-      if (plainMatch) {
-        return plainMatch.index;
+      if (isSameLanguage) {
+        // Same-language subs (e.g. English audio + English subs)
+        // Prefer dubtitles > full subs > plain > other non-signs > signs
+
+        // Priority 2: Dubtitle tracks
+        const dubtitleMatch = nonForcedMatches.find((s) => isDubtitleTrack(s));
+        if (dubtitleMatch) {
+          return dubtitleMatch.index;
+        }
+
+        // Priority 3: Full subs or plain (no title)
+        const fullOrPlainMatch = nonForcedMatches.find(
+          (s) => isFullSubsTrack(s) || !s.title || s.title.trim() === '',
+        );
+        if (fullOrPlainMatch) {
+          return fullOrPlainMatch.index;
+        }
+
+        // Priority 4: Any non-signs, non-forced track
+        const nonSignsMatch = nonForcedMatches.find((s) => !isSignsTrack(s));
+        if (nonSignsMatch) {
+          return nonSignsMatch.index;
+        }
+      } else {
+        // Foreign-language subs (e.g. Japanese audio + English subs) or audio lang unknown
+        // Prefer full subs > plain > dubtitles > other non-signs > signs
+
+        // Priority 2: Full subs or plain (no title)
+        const fullOrPlainMatch = nonForcedMatches.find(
+          (s) => isFullSubsTrack(s) || (!s.title || s.title.trim() === ''),
+        );
+        if (fullOrPlainMatch) {
+          return fullOrPlainMatch.index;
+        }
+
+        // Priority 3: Dubtitle tracks
+        const dubtitleMatch = nonForcedMatches.find((s) => isDubtitleTrack(s));
+        if (dubtitleMatch) {
+          return dubtitleMatch.index;
+        }
+
+        // Priority 4: Any non-signs, non-forced track
+        const nonSignsMatch = nonForcedMatches.find((s) => !isSignsTrack(s));
+        if (nonSignsMatch) {
+          return nonSignsMatch.index;
+        }
       }
 
-      // Priority 3: Any non-forced match
+      // Priority 5: Signs/Songs (last resort for mode='on')
       return nonForcedMatches[0].index;
     }
 

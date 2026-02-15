@@ -202,11 +202,33 @@ func isForcedTrack(stream SubtitleStreamInfo) bool {
 	return strings.Contains(lower, "forced")
 }
 
+// isSignsTrack checks if a subtitle track is a "Signs and Songs" track.
+// These only show foreign text inserts (signs, karaoke), not dialogue.
+func isSignsTrack(title string) bool {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(lower, "sign") || strings.Contains(lower, "song")
+}
+
+// isDubtitleTrack checks if a subtitle track is a "Dubtitle" track.
+// Dubtitles are dialogue captions matching the dub audio (same-language subs).
+func isDubtitleTrack(title string) bool {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(lower, "dubtitle")
+}
+
+// isFullSubsTrack checks if a subtitle track is a "Full Subs" track.
+func isFullSubsTrack(title string) bool {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	return strings.Contains(lower, "full sub")
+}
+
 // FindSubtitleTrackByPreference finds a subtitle track matching the preferences.
 // mode can be "off", "forced-only", or "on".
-// When mode is "on", prefers SDH > regular > forced tracks.
+// audioLanguage is the language of the selected audio track (used for same-language vs foreign-language priority).
+// When mode is "on" with same-language audio, prefers SDH > dubtitles > full/plain > non-signs > signs.
+// When mode is "on" with foreign-language audio, prefers SDH > full/plain > dubtitles > non-signs > signs.
 // Returns -1 if no matching track is found or mode is "off".
-func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode string) int {
+func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode, audioLanguage string) int {
 	if len(streams) == 0 || mode == "off" {
 		return -1
 	}
@@ -234,25 +256,80 @@ func FindSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLangua
 		return -1
 	}
 
-	// Mode is "on" - prefer SDH > regular > forced
+	// Mode is "on" - audio-aware priority ordering
 	if normalizedPref != "" {
-		// Pass 1: SDH tracks matching language (non-forced)
+		// Collect non-forced streams matching the preferred language
+		var nonForcedMatches []SubtitleStreamInfo
 		for _, stream := range streams {
-			if !isForcedTrack(stream) && isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
-				log.Printf("[track] Selected SDH subtitle track %d for language %q", stream.Index, preferredLanguage)
-				return stream.Index
+			if !isForcedTrack(stream) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
+				nonForcedMatches = append(nonForcedMatches, stream)
 			}
 		}
 
-		// Pass 2: Regular non-forced, non-SDH tracks matching language
-		for _, stream := range streams {
-			if !isForcedTrack(stream) && !isSDHTrack(stream.Title) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
-				log.Printf("[track] Selected regular subtitle track %d for language %q", stream.Index, preferredLanguage)
-				return stream.Index
+		if len(nonForcedMatches) > 0 {
+			// Determine if audio and subtitle languages match
+			normalizedAudio := strings.ToLower(strings.TrimSpace(audioLanguage))
+			isSameLanguage := normalizedAudio != "" && normalizedPref != "" &&
+				(normalizedAudio == normalizedPref ||
+					strings.Contains(normalizedAudio, normalizedPref) ||
+					strings.Contains(normalizedPref, normalizedAudio))
+
+			// Priority 1: SDH subtitles (always top priority)
+			for _, stream := range nonForcedMatches {
+				if isSDHTrack(stream.Title) && !isSignsTrack(stream.Title) {
+					log.Printf("[track] Selected SDH subtitle track %d for language %q (audioLang: %q)", stream.Index, preferredLanguage, audioLanguage)
+					return stream.Index
+				}
 			}
+
+			if isSameLanguage {
+				// Same-language subs (e.g. English audio + English subs)
+				// Priority 2: Dubtitle tracks
+				for _, stream := range nonForcedMatches {
+					if isDubtitleTrack(stream.Title) {
+						log.Printf("[track] Selected dubtitle subtitle track %d for language %q (same-lang audio: %q)", stream.Index, preferredLanguage, audioLanguage)
+						return stream.Index
+					}
+				}
+				// Priority 3: Full subs or plain (no title)
+				for _, stream := range nonForcedMatches {
+					if isFullSubsTrack(stream.Title) || strings.TrimSpace(stream.Title) == "" {
+						log.Printf("[track] Selected full/plain subtitle track %d for language %q (same-lang audio: %q)", stream.Index, preferredLanguage, audioLanguage)
+						return stream.Index
+					}
+				}
+			} else {
+				// Foreign-language subs (e.g. Japanese audio + English subs)
+				// Priority 2: Full subs or plain (no title)
+				for _, stream := range nonForcedMatches {
+					if isFullSubsTrack(stream.Title) || strings.TrimSpace(stream.Title) == "" {
+						log.Printf("[track] Selected full/plain subtitle track %d for language %q (foreign audio: %q)", stream.Index, preferredLanguage, audioLanguage)
+						return stream.Index
+					}
+				}
+				// Priority 3: Dubtitle tracks
+				for _, stream := range nonForcedMatches {
+					if isDubtitleTrack(stream.Title) {
+						log.Printf("[track] Selected dubtitle subtitle track %d for language %q (foreign audio: %q)", stream.Index, preferredLanguage, audioLanguage)
+						return stream.Index
+					}
+				}
+			}
+
+			// Priority 4: Any non-signs, non-forced track
+			for _, stream := range nonForcedMatches {
+				if !isSignsTrack(stream.Title) {
+					log.Printf("[track] Selected non-signs subtitle track %d for language %q (audioLang: %q)", stream.Index, preferredLanguage, audioLanguage)
+					return stream.Index
+				}
+			}
+
+			// Priority 5: Signs/Songs (last resort)
+			log.Printf("[track] Selected signs/songs subtitle track %d for language %q (last resort, audioLang: %q)", nonForcedMatches[0].Index, preferredLanguage, audioLanguage)
+			return nonForcedMatches[0].Index
 		}
 
-		// Pass 3: Forced tracks matching language (last resort for "on" mode)
+		// Fallback: forced tracks matching language
 		for _, stream := range streams {
 			if isForcedTrack(stream) && matchesLanguage(stream.Language, stream.Title, normalizedPref) {
 				log.Printf("[track] Selected forced subtitle track %d for language %q (only option)", stream.Index, preferredLanguage)

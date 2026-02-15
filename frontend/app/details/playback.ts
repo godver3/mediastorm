@@ -578,6 +578,17 @@ export const launchNativePlayer = async (
     preselectedSubtitleTrack?: number; // 0-based native player track index
     useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
     userId?: string; // For native Android TV player progress reporting
+    // Video/audio stream metadata (for native Android TV player controls)
+    resolution?: string;
+    videoCodec?: string;
+    videoBitrate?: number;
+    frameRate?: string;
+    audioCodec?: string;
+    audioChannels?: string;
+    audioBitrate?: number;
+    colorTransfer?: string;
+    colorPrimaries?: string;
+    colorSpace?: string;
   } = {},
 ) => {
   const {
@@ -609,6 +620,16 @@ export const launchNativePlayer = async (
     preselectedSubtitleTrack,
     useNativePlayer,
     userId,
+    resolution,
+    videoCodec,
+    videoBitrate,
+    frameRate,
+    audioCodec,
+    audioChannels,
+    audioBitrate,
+    colorTransfer,
+    colorPrimaries,
+    colorSpace,
   } = options;
 
   // Android TV: launch standalone native PlayerActivity (saves ~150-200MB RAM vs RN player)
@@ -644,6 +665,21 @@ export const launchNativePlayer = async (
         ...(tvdbId ? { tvdbId } : {}),
         ...(isHDRContent ? { isHDR: true } : {}),
         ...(dv ? { isDolbyVision: true } : {}),
+        ...(sourcePath ? { sourcePath } : {}),
+        ...(passthroughName ? { passthroughName } : {}),
+        ...(passthroughDescription ? { passthroughDescription } : {}),
+        ...(year ? { year } : {}),
+        ...(resolution ? { resolution } : {}),
+        ...(dvProfile ? { dolbyVisionProfile: dvProfile } : {}),
+        ...(videoCodec ? { videoCodec } : {}),
+        ...(videoBitrate ? { videoBitrate } : {}),
+        ...(frameRate ? { frameRate } : {}),
+        ...(audioCodec ? { audioCodec } : {}),
+        ...(audioChannels ? { audioChannels } : {}),
+        ...(audioBitrate ? { audioBitrate } : {}),
+        ...(colorTransfer ? { colorTransfer } : {}),
+        ...(colorPrimaries ? { colorPrimaries } : {}),
+        ...(colorSpace ? { colorSpace } : {}),
       };
       // Write BEFORE launching — Android may kill the RN process while
       // the native player is in the foreground (low-memory devices).
@@ -904,6 +940,18 @@ export const initiatePlayback = async (
   let metadataAudioStreams: { index: number }[] | undefined;
   let metadataSubtitleStreams: { index: number }[] | undefined;
 
+  // Video/audio stream metadata for native player controls display
+  let streamResolution: string | undefined;
+  let streamVideoCodec: string | undefined;
+  let streamVideoBitrate: number | undefined;
+  let streamFrameRate: string | undefined;
+  let streamAudioCodec: string | undefined;
+  let streamAudioChannels: string | undefined;
+  let streamAudioBitrate: number | undefined;
+  let streamColorTransfer: string | undefined;
+  let streamColorPrimaries: string | undefined;
+  let streamColorSpace: string | undefined;
+
   const playbackSettings = options.userSettings?.playback ?? settings?.playback;
   const isNativePlatform = Platform.OS !== 'web';
 
@@ -921,6 +969,20 @@ export const initiatePlayback = async (
       // Save stream arrays for ffprobe-to-native index conversion later
       metadataAudioStreams = metadata.audioStreams;
       metadataSubtitleStreams = metadata.subtitleStreams;
+
+      // Extract video/audio stream metadata for native player controls
+      const primaryVideo = metadata.videoStreams?.[0];
+      if (primaryVideo) {
+        if (primaryVideo.width && primaryVideo.height) {
+          streamResolution = `${primaryVideo.width}x${primaryVideo.height}`;
+        }
+        streamVideoCodec = primaryVideo.codecName;
+        streamVideoBitrate = primaryVideo.bitRate;
+        streamFrameRate = primaryVideo.avgFrameRate;
+        streamColorTransfer = primaryVideo.colorTransfer;
+        streamColorPrimaries = primaryVideo.colorPrimaries;
+        streamColorSpace = primaryVideo.colorSpace;
+      }
 
       // Detect HDR
       hasDolbyVision = detectDolbyVision(metadata);
@@ -991,11 +1053,29 @@ export const initiatePlayback = async (
           // Fall back to preference-based selection
           const subLang = contentPreference?.subtitleLanguage || playbackSettings?.preferredSubtitleLanguage || 'eng';
           const subMode = contentPreference?.subtitleMode || playbackSettings?.preferredSubtitleMode || 'off';
-          const match = findSubtitleTrackByPreference(metadata.subtitleStreams, subLang, subMode);
+
+          // Get actual language of selected audio track for audio-aware subtitle selection
+          const audioLang = contentPreference?.audioLanguage || playbackSettings?.preferredAudioLanguage || 'eng';
+          const selectedAudioStream = metadata.audioStreams?.find(
+            (s: { index: number; language?: string }) => s.index === selectedAudioTrack,
+          );
+          const actualAudioLang = selectedAudioStream?.language || audioLang;
+
+          const match = findSubtitleTrackByPreference(metadata.subtitleStreams, subLang, subMode, actualAudioLang);
           if (match !== null) {
             selectedSubtitleTrack = match;
-            console.log(`🎬 Selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`);
+            console.log(`🎬 Selected subtitle track ${match} for language ${subLang} (mode: ${subMode}, audioLang: ${actualAudioLang})`);
           }
+        }
+
+        // Extract audio metadata from the selected (or first) audio stream
+        if (metadata.audioStreams && metadata.audioStreams.length > 0) {
+          const selectedAudio = typeof selectedAudioTrack === 'number'
+            ? metadata.audioStreams.find((s: { index: number }) => s.index === selectedAudioTrack) || metadata.audioStreams[0]
+            : metadata.audioStreams[0];
+          streamAudioCodec = (selectedAudio as any).codecName;
+          streamAudioChannels = (selectedAudio as any).channelLayout;
+          streamAudioBitrate = (selectedAudio as any).bitRate;
         }
       }
     } catch (error) {
@@ -1136,6 +1216,17 @@ export const initiatePlayback = async (
     ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
     ...(passthroughName ? { passthroughName } : {}),
     ...(passthroughDescription ? { passthroughDescription } : {}),
+    // Video/audio stream metadata for native player controls
+    ...(streamResolution ? { resolution: streamResolution } : {}),
+    ...(streamVideoCodec ? { videoCodec: streamVideoCodec } : {}),
+    ...(streamVideoBitrate ? { videoBitrate: streamVideoBitrate } : {}),
+    ...(streamFrameRate ? { frameRate: streamFrameRate } : {}),
+    ...(streamAudioCodec ? { audioCodec: streamAudioCodec } : {}),
+    ...(streamAudioChannels ? { audioChannels: streamAudioChannels } : {}),
+    ...(streamAudioBitrate ? { audioBitrate: streamAudioBitrate } : {}),
+    ...(streamColorTransfer ? { colorTransfer: streamColorTransfer } : {}),
+    ...(streamColorPrimaries ? { colorPrimaries: streamColorPrimaries } : {}),
+    ...(streamColorSpace ? { colorSpace: streamColorSpace } : {}),
     // Pass selected tracks as 0-based native player indices (converted from ffprobe stream indices above)
     ...(nativeAudioTrack !== undefined && nativeAudioTrack >= 0
       ? { preselectedAudioTrack: nativeAudioTrack }

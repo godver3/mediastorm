@@ -1038,9 +1038,19 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			subMode := userSettings.Playback.PreferredSubtitleMode
 			subLang := userSettings.Playback.PreferredSubtitleLanguage
 			if subMode != "off" && subMode != "" {
-				selectedSubtitleTrack = h.findSubtitleTrackByPreference(subtitleStreams, subLang, subMode)
+				// Get actual language of selected audio track for audio-aware subtitle selection
+				actualAudioLang := userSettings.Playback.PreferredAudioLanguage
+				if selectedAudioTrack >= 0 {
+					for _, s := range audioStreams {
+						if s.Index == selectedAudioTrack {
+							actualAudioLang = s.Language
+							break
+						}
+					}
+				}
+				selectedSubtitleTrack = h.findSubtitleTrackByPreference(subtitleStreams, subLang, subMode, actualAudioLang)
 				if selectedSubtitleTrack >= 0 {
-					log.Printf("[prequeue] Selected subtitle track %d for language %q (mode: %s)", selectedSubtitleTrack, subLang, subMode)
+					log.Printf("[prequeue] Selected subtitle track %d for language %q (mode: %s, audioLang: %s)", selectedSubtitleTrack, subLang, subMode, actualAudioLang)
 				}
 			}
 		}
@@ -1438,6 +1448,6 @@ func (h *PrequeueHandler) findAudioTrackByLanguage(streams []AudioStreamInfo, pr
 }
 
 // findSubtitleTrackByPreference wraps the helper function for backward compatibility
-func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode string) int {
-	return FindSubtitleTrackByPreference(streams, preferredLanguage, mode)
+func (h *PrequeueHandler) findSubtitleTrackByPreference(streams []SubtitleStreamInfo, preferredLanguage, mode, audioLanguage string) int {
+	return FindSubtitleTrackByPreference(streams, preferredLanguage, mode, audioLanguage)
 }

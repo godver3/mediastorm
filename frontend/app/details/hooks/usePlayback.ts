@@ -724,7 +724,14 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
                 disposition: t.forced ? { forced: 1 } : undefined,
               }));
 
-              const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode);
+              // Get actual audio language for audio-aware subtitle selection
+              const audioLang = playbackSettings?.preferredAudioLanguage ?? 'eng';
+              const selectedAudioStream = response.audioTracks?.find(
+                (t: { index: number; language?: string }) => t.index === response.selectedAudioTrack,
+              );
+              const actualAudioLang = selectedAudioStream?.language || audioLang;
+
+              const computedSubtitleTrack = findSubtitleTrackByPreference(subtitleStreams, subLang, subMode, actualAudioLang);
               if (computedSubtitleTrack !== null) {
                 displayResponse = { ...response, selectedSubtitleTrack: computedSubtitleTrack };
               }
@@ -1426,15 +1433,22 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
                 }
 
                 if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
+                  // Get actual audio language for audio-aware subtitle selection
+                  const selectedAudioStream = metadata.audioStreams?.find(
+                    (s: { index: number; language?: string }) => s.index === selectedAudioTrack,
+                  );
+                  const actualAudioLang = selectedAudioStream?.language || audioLang;
+
                   const match = findSubtitleTrackByPreference(
                     metadata.subtitleStreams,
                     subLang,
                     subMode as 'off' | 'on' | 'forced-only',
+                    actualAudioLang,
                   );
                   if (match !== null) {
                     selectedSubtitleTrack = match;
                     console.log(
-                      `[prequeue] Selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`,
+                      `[prequeue] Selected subtitle track ${match} for language ${subLang} (mode: ${subMode}, audioLang: ${actualAudioLang})`,
                     );
                   }
                 }
@@ -1518,15 +1532,22 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
               }
 
               if (selectedSubtitleTrack === undefined && metadata.subtitleStreams) {
+                // Get actual audio language for audio-aware subtitle selection
+                const selectedAudioStream = metadata.audioStreams?.find(
+                  (s: { index: number; language?: string }) => s.index === selectedAudioTrack,
+                );
+                const actualAudioLang = selectedAudioStream?.language || audioLang;
+
                 const match = findSubtitleTrackByPreference(
                   metadata.subtitleStreams,
                   subLang,
                   subMode as 'off' | 'on' | 'forced-only',
+                  actualAudioLang,
                 );
                 if (match !== null) {
                   selectedSubtitleTrack = match;
                   console.log(
-                    `[prequeue] Native player: selected subtitle track ${match} for language ${subLang} (mode: ${subMode})`,
+                    `[prequeue] Native player: selected subtitle track ${match} for language ${subLang} (mode: ${subMode}, audioLang: ${actualAudioLang})`,
                   );
                 }
               }
