@@ -741,12 +741,51 @@ public class KSPlayerView: UIView {
         debugLog("getAvailableTracks: player reports \(allVideo.count) video, \(allAudio.count) audio, \(allSubtitle.count) subtitle tracks")
 
         let audioTracks = allAudio.enumerated().map { (index, track) -> [String: Any] in
-            debugLog("  audio[\(index)]: name=\(track.name), lang=\(track.language ?? track.languageCode ?? "?"), codecType=\(track.codecType), trackID=\(track.trackID)")
+            let lang = track.language ?? ""
+            let langCode = track.languageCode ?? ""
+            let rawName = track.name
+            // Build descriptive label: language · channels · codec · title (if available)
+            var parts: [String] = []
+            if !lang.isEmpty {
+                parts.append(lang)
+            }
+            // Channel layout from formatDescription (public CoreMedia API)
+            if let asbd = track.formatDescription?.audioStreamBasicDescription {
+                let ch = asbd.mChannelsPerFrame
+                let channelStr: String
+                switch ch {
+                case 1: channelStr = "Mono"
+                case 2: channelStr = "Stereo"
+                case 6: channelStr = "5.1"
+                case 8: channelStr = "7.1"
+                default: channelStr = "\(ch)ch"
+                }
+                parts.append(channelStr)
+            }
+            if let ffTrack = track as? FFmpegAssetTrack {
+                // Use base codec name without profile suffix (e.g. "truehd" not "truehd (Dolby TrueHD + Dolby Atmos)")
+                var codec = ffTrack.codecName
+                if let parenRange = codec.range(of: " (") {
+                    codec = String(codec[codec.startIndex..<parenRange.lowerBound])
+                }
+                if !codec.isEmpty {
+                    parts.append(codec.uppercased())
+                }
+            }
+            // Append title if it's a real descriptive name (not a duplicate of language, langCode, or any part already added)
+            let rawNameLower = rawName.lowercased()
+            let isDuplicate = rawName.isEmpty || rawName == lang || rawName == langCode
+                || parts.contains(where: { $0.lowercased() == rawNameLower || rawNameLower == $0.lowercased() })
+            if !isDuplicate {
+                parts.append(rawName)
+            }
+            let displayTitle = parts.isEmpty ? rawName : parts.joined(separator: " · ")
+            debugLog("  audio[\(index)]: name=\(track.name), lang=\(lang), displayTitle=\(displayTitle), codecType=\(track.codecType), trackID=\(track.trackID)")
             return [
                 "id": index,
                 "type": "audio",
-                "title": track.name,
-                "language": track.language ?? "",
+                "title": displayTitle,
+                "language": lang,
                 "codec": String(track.codecType),
                 "selected": track.isEnabled
             ]
@@ -780,11 +819,23 @@ public class KSPlayerView: UIView {
                 debugLog("getAvailableTracks: using srtControl fallback (\(srtInfos.count) tracks)")
                 // Use srtControl infos — these include PGS/bitmap subtitle tracks
                 let subtitleTracks = srtInfos.enumerated().map { (index, info) -> [String: Any] in
+                    let lang = (info as? MediaPlayerTrack)?.language ?? ""
+                    let langCode = (info as? MediaPlayerTrack)?.languageCode ?? ""
+                    let rawName = info.name
+                    let hasRealTitle = !rawName.isEmpty && rawName != lang && rawName != langCode
+                    let displayTitle: String
+                    if hasRealTitle && !lang.isEmpty {
+                        displayTitle = "\(lang) · \(rawName)"
+                    } else if !lang.isEmpty {
+                        displayTitle = lang
+                    } else {
+                        displayTitle = rawName
+                    }
                     return [
                         "id": index,
                         "type": "subtitle",
-                        "title": info.name,
-                        "language": (info as? MediaPlayerTrack)?.language ?? "",
+                        "title": displayTitle,
+                        "language": lang,
                         "codec": "",
                         "selected": info.isEnabled
                     ]
@@ -797,11 +848,23 @@ public class KSPlayerView: UIView {
         }
 
         let subtitleTracks = subtitleTracksList.enumerated().map { (index, track) -> [String: Any] in
+            let lang = track.language ?? ""
+            let langCode = track.languageCode ?? ""
+            let rawName = track.name
+            let hasRealTitle = !rawName.isEmpty && rawName != lang && rawName != langCode
+            let displayTitle: String
+            if hasRealTitle && !lang.isEmpty {
+                displayTitle = "\(lang) · \(rawName)"
+            } else if !lang.isEmpty {
+                displayTitle = lang
+            } else {
+                displayTitle = rawName
+            }
             return [
                 "id": index,
                 "type": "subtitle",
-                "title": track.name,
-                "language": track.language ?? "",
+                "title": displayTitle,
+                "language": lang,
                 "codec": String(track.codecType),
                 "selected": track.isEnabled
             ]
