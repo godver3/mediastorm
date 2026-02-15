@@ -163,6 +163,7 @@ export const ProfileSelectorModal: React.FC = () => {
 
   // Focus trapping: track native handles for each profile card so directional
   // navigation can't escape the grid (same pattern as remove-from-CW modal).
+  const firstCardRef = useRef<View>(null);
   const cardRefs = useRef<(View | null)[]>([]);
   const [cardHandles, setCardHandles] = useState<(number | null)[]>([]);
 
@@ -304,7 +305,7 @@ export const ProfileSelectorModal: React.FC = () => {
         {/* Hide the profile grid while PIN modal is showing on top,
             but keep the blur overlay so there's no visual gap. */}
         {showGrid && (
-          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus>
+          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus destinations={[firstCardRef]}>
             <View style={styles.container} focusable={false}>
               <Text style={styles.title}>Who's watching?</Text>
               <View style={styles.grid} focusable={false}>
@@ -315,7 +316,7 @@ export const ProfileSelectorModal: React.FC = () => {
                   return (
                     <ProfileCard
                       key={user.id}
-                      ref={(ref) => { cardRefs.current[index] = ref; }}
+                      ref={(ref) => { cardRefs.current[index] = ref; if (index === 0) firstCardRef.current = ref; }}
                       user={user}
                       isActive={user.id === activeUserId}
                       styles={styles}
