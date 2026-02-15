@@ -122,6 +122,23 @@ class PlayerLauncherModule(private val reactContext: ReactApplicationContext) :
         if (params.hasKey("isHDR")) intent.putExtra("isHDR", params.getBoolean("isHDR"))
         if (params.hasKey("isDolbyVision")) intent.putExtra("isDolbyVision", params.getBoolean("isDolbyVision"))
 
+        // Video/audio metadata for controls display
+        intent.putExtra("resolution", params.getString("resolution") ?: "")
+        intent.putExtra("dolbyVisionProfile", params.getString("dolbyVisionProfile") ?: "")
+        intent.putExtra("videoCodec", params.getString("videoCodec") ?: "")
+        intent.putExtra("frameRate", params.getString("frameRate") ?: "")
+        intent.putExtra("audioCodec", params.getString("audioCodec") ?: "")
+        intent.putExtra("audioChannels", params.getString("audioChannels") ?: "")
+        intent.putExtra("sourcePath", params.getString("sourcePath") ?: "")
+        intent.putExtra("passthroughName", params.getString("passthroughName") ?: "")
+        intent.putExtra("passthroughDescription", params.getString("passthroughDescription") ?: "")
+        intent.putExtra("colorTransfer", params.getString("colorTransfer") ?: "")
+        intent.putExtra("colorPrimaries", params.getString("colorPrimaries") ?: "")
+        intent.putExtra("colorSpace", params.getString("colorSpace") ?: "")
+        if (params.hasKey("videoBitrate")) intent.putExtra("videoBitrate", params.getDouble("videoBitrate").toLong())
+        if (params.hasKey("audioBitrate")) intent.putExtra("audioBitrate", params.getDouble("audioBitrate").toLong())
+        if (params.hasKey("year")) intent.putExtra("year", params.getInt("year"))
+
         // onTrimMemory triggers component callbacks (e.g. expo-image clearing GL textures)
         // that must run on the main thread. startActivity should also be on the UI thread.
         // @ReactMethod runs on the NativeModules thread, so dispatch to main.

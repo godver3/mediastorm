@@ -58,6 +58,27 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
     private var isHDR = false
     private var isDolbyVision = false
 
+    // Video/audio metadata for controls display
+    private var resolution = ""
+    private var dolbyVisionProfile = ""
+    private var videoCodec = ""
+    private var videoBitrate = 0L
+    private var frameRate = ""
+    private var audioCodec = ""
+    private var audioChannels = ""
+    private var audioBitrate = 0L
+    private var sourcePath = ""
+    private var passthroughName = ""
+    private var passthroughDescription = ""
+    private var colorTransfer = ""
+    private var colorPrimaries = ""
+    private var colorSpace = ""
+    private var year = 0
+    private var seasonNumber = 0
+    private var episodeNumber = 0
+    private var seriesName = ""
+    private var episodeName = ""
+
     // HDR display state
     private var displaySupportsHDR = false
     private var hdrPassthroughActive = false
@@ -123,6 +144,27 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
             backendUrl = i.getStringExtra("backendUrl") ?: ""
             isHDR = i.getBooleanExtra("isHDR", false)
             isDolbyVision = i.getBooleanExtra("isDolbyVision", false)
+
+            // Video/audio metadata
+            resolution = i.getStringExtra("resolution") ?: ""
+            dolbyVisionProfile = i.getStringExtra("dolbyVisionProfile") ?: ""
+            videoCodec = i.getStringExtra("videoCodec") ?: ""
+            videoBitrate = i.getLongExtra("videoBitrate", 0L)
+            frameRate = i.getStringExtra("frameRate") ?: ""
+            audioCodec = i.getStringExtra("audioCodec") ?: ""
+            audioChannels = i.getStringExtra("audioChannels") ?: ""
+            audioBitrate = i.getLongExtra("audioBitrate", 0L)
+            sourcePath = i.getStringExtra("sourcePath") ?: ""
+            passthroughName = i.getStringExtra("passthroughName") ?: ""
+            passthroughDescription = i.getStringExtra("passthroughDescription") ?: ""
+            colorTransfer = i.getStringExtra("colorTransfer") ?: ""
+            colorPrimaries = i.getStringExtra("colorPrimaries") ?: ""
+            colorSpace = i.getStringExtra("colorSpace") ?: ""
+            year = i.getIntExtra("year", 0)
+            seasonNumber = i.getIntExtra("seasonNumber", 0)
+            episodeNumber = i.getIntExtra("episodeNumber", 0)
+            seriesName = i.getStringExtra("seriesName") ?: ""
+            episodeName = i.getStringExtra("episodeName") ?: ""
         }
 
         if (streamUrl.isEmpty()) {
@@ -153,6 +195,25 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
         if (durationHint > 0) {
             controlsView.setDuration(durationHint.toInt())
         }
+        controlsView.setMetadata(
+            resolution = resolution,
+            dvProfile = dolbyVisionProfile,
+            videoCodec = videoCodec,
+            videoBitrate = videoBitrate,
+            frameRate = frameRate,
+            audioCodec = audioCodec,
+            audioChannels = audioChannels,
+            audioBitrate = audioBitrate,
+            isHDR = isHDR,
+            isDV = isDolbyVision,
+            colorTransfer = colorTransfer,
+            colorPrimaries = colorPrimaries,
+            colorSpace = colorSpace,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            seriesName = seriesName,
+            episodeName = episodeName,
+        )
         root.addView(controlsView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
@@ -251,6 +312,7 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
             MPVLib.observeProperty("duration", MPV_FORMAT_DOUBLE)
             MPVLib.observeProperty("track-list/count", MPV_FORMAT_INT64)
             MPVLib.observeProperty("eof-reached", MPV_FORMAT_FLAG)
+            MPVLib.observeProperty("pause", MPV_FORMAT_FLAG)
 
             initialized = true
             Log.d(TAG, "MPV initialized (RAM=${totalMb}MB, lowRam=$isLowRam, cache=$demuxerMax/$demuxerBack, " +
@@ -380,6 +442,12 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
             "eof-reached" -> {
                 if (value) {
                     mainHandler.post { finishWithResult(completed = true) }
+                }
+            }
+            "pause" -> {
+                paused = value
+                mainHandler.post {
+                    controlsView.updatePlayPauseState(value)
                 }
             }
         }
@@ -624,6 +692,7 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
         Log.d(TAG, "togglePlayPause: paused=$paused")
         mpvSetProperty("pause", paused)
         controlsView.showPauseIndicator(paused)
+        controlsView.updatePlayPauseState(paused)
     }
 
     // ========== PlayerControlsView.Listener ==========
@@ -639,20 +708,82 @@ class PlayerActivity : Activity(), MPVLib.EventObserver, MPVLib.LogObserver,
 
     override fun onAudioTrackClicked() {
         refreshTrackSelections()
-        TrackPickerDialog.show(this, "Audio Track", audioTracks, false) { mpvId ->
+        val currentAudio = audioTracks.find { it.selected }
+        val subtitle = if (currentAudio != null) {
+            currentAudio.title.ifEmpty { currentAudio.language.ifEmpty { "Track ${currentAudio.mpvId}" } }
+        } else "None"
+        controlsView.hide()
+        TrackPickerDialog.show(this, "Audio Track", subtitle, audioTracks, false, { mpvId ->
             if (mpvId != null) {
                 Log.d(TAG, "Audio track selected: mpvId=$mpvId")
                 mpvSetProperty("aid", mpvId.toString())
             }
+        }) {
+            controlsView.show()
         }
     }
 
     override fun onSubtitleTrackClicked() {
         refreshTrackSelections()
-        TrackPickerDialog.show(this, "Subtitle Track", subtitleTracks, true) { mpvId ->
+        val currentSub = subtitleTracks.find { it.selected }
+        val subtitle = if (currentSub != null) {
+            currentSub.title.ifEmpty { currentSub.language.ifEmpty { "Track ${currentSub.mpvId}" } }
+        } else "None"
+        controlsView.hide()
+        TrackPickerDialog.show(this, "Subtitle Track", subtitle, subtitleTracks, true, { mpvId ->
             Log.d(TAG, "Subtitle track selected: mpvId=${mpvId ?: "off"}")
             mpvSetProperty("sid", mpvId?.toString() ?: "no")
+        }) {
+            controlsView.show()
         }
+    }
+
+    override fun onSkipBackward() {
+        val targetPos = (currentPosition - 10).coerceAtLeast(0.0)
+        Log.d(TAG, "skipBackward: seeking to ${targetPos}s")
+        mpvCommand("seek", targetPos.toString(), "absolute")
+        controlsView.showSeekIndicator("-10s")
+    }
+
+    override fun onSkipForward() {
+        val targetPos = (currentPosition + 30).coerceAtMost(currentDuration)
+        Log.d(TAG, "skipForward: seeking to ${targetPos}s")
+        mpvCommand("seek", targetPos.toString(), "absolute")
+        controlsView.showSeekIndicator("+30s")
+    }
+
+    override fun onInfoClicked() {
+        controlsView.hide()
+        val data = StreamInfoDialog.StreamInfoData(
+            title = title,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            seriesName = seriesName,
+            episodeName = episodeName,
+            resolution = resolution,
+            videoCodec = videoCodec,
+            videoBitrate = videoBitrate,
+            frameRate = frameRate,
+            audioCodec = audioCodec,
+            audioChannels = audioChannels,
+            audioBitrate = audioBitrate,
+            colorTransfer = colorTransfer,
+            colorPrimaries = colorPrimaries,
+            colorSpace = colorSpace,
+            isHDR = isHDR,
+            isDolbyVision = isDolbyVision,
+            dolbyVisionProfile = dolbyVisionProfile,
+            sourcePath = sourcePath,
+            passthroughName = passthroughName,
+            passthroughDescription = passthroughDescription,
+        )
+        StreamInfoDialog.show(this, data) {
+            controlsView.show()
+        }
+    }
+
+    override fun onExitClicked() {
+        finishWithResult()
     }
 
     private fun refreshTrackSelections() {

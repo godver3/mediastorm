@@ -288,6 +288,21 @@ export interface PlayerLaunchParams {
   tvdbId?: string;
   isHDR?: boolean;
   isDolbyVision?: boolean;
+  resolution?: string;
+  dolbyVisionProfile?: string;
+  videoCodec?: string;
+  videoBitrate?: number;
+  frameRate?: string;
+  audioCodec?: string;
+  audioChannels?: string;
+  audioBitrate?: number;
+  sourcePath?: string;
+  passthroughName?: string;
+  passthroughDescription?: string;
+  colorTransfer?: string;
+  colorPrimaries?: string;
+  colorSpace?: string;
+  year?: number;
 }
 
 export interface PlayerResult {
