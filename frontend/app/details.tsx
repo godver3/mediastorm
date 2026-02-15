@@ -1224,66 +1224,25 @@ export default function DetailsScreen() {
   const [watchNowTag, setWatchNowTag] = useState<number | undefined>();
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
-  const tvInitialScrollDone = useRef(false);
-  const TV_ACTION_ROW_BOTTOM_OFFSET = 30;
-
-  // Set initial scroll position as soon as the action row is laid out
-  const handleActionRowLayout = useCallback(() => {
-    if (!Platform.isTV || tvInitialScrollDone.current) return;
-    tvInitialScrollDone.current = true;
-    // Defer to ensure layout is committed before measuring
-    requestAnimationFrame(() => {
-      actionRowRef.current?.measureInWindow((_x, y, _width, height) => {
-        if (height <= 0) return;
-        const targetScreenY = windowHeight - TV_ACTION_ROW_BOTTOM_OFFSET - height;
-        const scrollDelta = y - targetScreenY;
-        if (Math.abs(scrollDelta) > 5) {
-          tvScrollViewRef.current?.scrollTo({
-            y: Math.max(0, scrollDelta),
-            animated: false,
-          });
-        }
-      });
-    });
-  }, [windowHeight]);
+  const tvActionsScrollY = useRef<number | null>(null);
 
   const handleTVFocusAreaChange = useCallback(
     (area: 'seasons' | 'episodes' | 'actions' | 'cast' | 'similar') => {
-      if (!Platform.isTV || !tvScrollViewRef.current) return;
+      if (!Platform.isTV) return;
       if (currentTVFocusAreaRef.current === area) return;
-      // Stop trailer playback when focus leaves the action row
+      // Capture the actions scroll position before leaving
       if (currentTVFocusAreaRef.current === 'actions' && area !== 'actions') {
+        tvActionsScrollY.current = tvScrollY.value;
         trailersHook.dismissTrailerAutoPlay();
       }
       currentTVFocusAreaRef.current = area;
-
-      if (area === 'actions') {
-        // Measure actual screen position and scroll to place action row near bottom
-        actionRowRef.current?.measureInWindow((_x, y, _width, height) => {
-          if (height <= 0) return;
-          const currentScroll = tvScrollY.value;
-          const targetScreenY = windowHeight - TV_ACTION_ROW_BOTTOM_OFFSET - height;
-          const scrollDelta = y - targetScreenY;
-          if (Math.abs(scrollDelta) > 5) {
-            tvScrollViewRef.current?.scrollTo({
-              y: Math.max(0, currentScroll + scrollDelta),
-              animated: true,
-            });
-          }
-        });
-        return;
+      // Restore actions scroll position to show the background
+      if (area === 'actions' && tvActionsScrollY.current != null) {
+        tvScrollViewRef.current?.scrollTo({ y: tvActionsScrollY.current, animated: true });
       }
-
-      const scrollPositions = {
-        seasons: Math.round(windowHeight * 0.25),
-        episodes: Math.round(windowHeight * 0.5),
-        cast: Math.round(windowHeight * 1.0),
-        similar: Math.round(windowHeight * 2),
-      };
-      const targetY = scrollPositions[area];
-      tvScrollViewRef.current.scrollTo({ y: targetY, animated: true });
+      // All other sections: native TV focus engine handles scrolling
     },
-    [windowHeight, trailersHook.dismissTrailerAutoPlay],
+    [trailersHook.dismissTrailerAutoPlay],
   );
 
   // ===== Visibility gate =====
@@ -1533,7 +1492,7 @@ export default function DetailsScreen() {
       </View>
       <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
         {/* Action Row */}
-        <View ref={actionRowRef} onLayout={handleActionRowLayout} style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
+        <View ref={actionRowRef} style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
           <FocusablePressable
             focusKey="watch-now"
             text={!useCompactActionLayout ? watchNowLabel : undefined}

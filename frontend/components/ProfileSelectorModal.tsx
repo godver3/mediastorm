@@ -166,6 +166,7 @@ export const ProfileSelectorModal: React.FC = () => {
   const firstCardRef = useRef<View>(null);
   const cardRefs = useRef<(View | null)[]>([]);
   const [cardHandles, setCardHandles] = useState<(number | null)[]>([]);
+  const [focusGeneration, setFocusGeneration] = useState(0);
 
   // Resolve native handles when the grid becomes visible
   const showGrid = visible && !isPinModalUp && !loading && hasMultipleUsers;
@@ -175,7 +176,12 @@ export const ProfileSelectorModal: React.FC = () => {
       const handles = cardRefs.current.map((ref) => (ref ? findNodeHandle(ref) : null));
       setCardHandles(handles);
     }, 50);
-    return () => clearTimeout(timer);
+    // Force remount of first card to re-trigger hasTVPreferredFocus
+    const focusTimer = setTimeout(() => {
+      console.log('[ProfileSelector] Forcing focus remount');
+      setFocusGeneration((g) => g + 1);
+    }, 400);
+    return () => { clearTimeout(timer); clearTimeout(focusTimer); };
   }, [showGrid, users]);
 
   // Register with context immediately so refresh() knows to skip auto-PIN.
@@ -305,7 +311,7 @@ export const ProfileSelectorModal: React.FC = () => {
         {/* Hide the profile grid while PIN modal is showing on top,
             but keep the blur overlay so there's no visual gap. */}
         {showGrid && (
-          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus destinations={[firstCardRef]}>
+          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus>
             <View style={styles.container} focusable={false}>
               <Text style={styles.title}>Who's watching?</Text>
               <View style={styles.grid} focusable={false}>
@@ -315,7 +321,7 @@ export const ProfileSelectorModal: React.FC = () => {
                   const rightHandle = index < users.length - 1 ? (cardHandles[index + 1] ?? undefined) : selfHandle;
                   return (
                     <ProfileCard
-                      key={user.id}
+                      key={index === 0 ? `${user.id}-${focusGeneration}` : user.id}
                       ref={(ref) => { cardRefs.current[index] = ref; if (index === 0) firstCardRef.current = ref; }}
                       user={user}
                       isActive={user.id === activeUserId}

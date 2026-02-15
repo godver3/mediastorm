@@ -54,6 +54,9 @@ interface CustomPressableProps extends PressableProps {
   nextFocusUp?: number;
   /** Native tag to focus when pressing Down (Android TV focus trapping) */
   nextFocusDown?: number;
+  /** Visual variant: 'primary' shows accent border unfocused / accent fill focused,
+   *  'secondary' (default) shows subtle background unfocused / accent fill focused */
+  variant?: 'primary' | 'secondary';
 }
 
 const FocusablePressable = forwardRef<View, CustomPressableProps>(
@@ -79,6 +82,7 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
       nextFocusRight,
       nextFocusLeft,
       nextFocusUp,
+      variant = 'secondary',
       nextFocusDown,
       ...props
     },
@@ -88,7 +92,7 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
     void _ignoredOnPress;
     void _focusKey;
     const theme = useTheme();
-    const styles = useMemo(() => createStyles(theme, !!icon || invisibleIcon), [theme, icon, invisibleIcon]);
+    const styles = useMemo(() => createStyles(theme, !!icon || invisibleIcon, variant), [theme, icon, invisibleIcon, variant]);
 
     // Scale icon size for TV platforms
     // Design for tvOS (1.375x), Android TV auto-derives via tvScale
@@ -205,23 +209,24 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
   },
 );
 
-const createStyles = (theme: NovaTheme, hasIcon: boolean) => {
+const createStyles = (theme: NovaTheme, hasIcon: boolean, variant: 'primary' | 'secondary' = 'secondary') => {
   // Unified TV scaling: tvOS buttons 1.375x larger, Android TV auto-scales from tvOS
   // tvOS: 1.375, Android TV: 1.375 * 0.55 ≈ 0.76, Mobile: 1
   const scale = isTV ? 1.375 * TV_SCALE : 1;
   const basePaddingVertical = hasIcon ? theme.spacing.sm : theme.spacing.md;
   const basePaddingHorizontal = hasIcon ? theme.spacing.sm : theme.spacing.lg;
+  const isPrimary = variant === 'primary';
 
   return StyleSheet.create({
     watchButton: {
-      backgroundColor: theme.colors.overlay.button,
+      backgroundColor: isPrimary ? 'transparent' : theme.colors.overlay.button,
       paddingVertical: basePaddingVertical * scale,
       paddingHorizontal: basePaddingHorizontal * scale,
       borderRadius: theme.radius.md * scale,
       alignItems: 'center',
       alignSelf: 'flex-start',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.subtle,
+      borderWidth: isPrimary ? 2 * (isTV ? scale : 1) : StyleSheet.hairlineWidth,
+      borderColor: isPrimary ? theme.colors.accent.primary : theme.colors.border.subtle,
     },
     watchButtonFocused: {
       backgroundColor: theme.colors.accent.primary,

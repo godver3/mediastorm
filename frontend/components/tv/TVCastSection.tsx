@@ -1,20 +1,16 @@
 /**
  * TV Cast Section - Horizontal scrollable cast gallery with D-pad focus support
- * Uses spatial navigation for proper integration with other rows
+ * Uses native React Native Pressable focus for proper TV navigation
  */
 
-import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
 import type { Credits, CastMember } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
-import {
-  SpatialNavigationFocusableView,
-  SpatialNavigationVirtualizedList,
-} from '@/services/tv-navigation';
 import MarqueeText from './MarqueeText';
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
@@ -79,8 +75,7 @@ const TVCastSection = memo(function TVCastSection({
 }: TVCastSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-
-  const itemSize = CARD_WIDTH + CARD_GAP;
+  const flatListRef = useRef<FlatList<CastMember>>(null);
 
   // Get cast to display
   const castToShow = useMemo(() => {
@@ -88,31 +83,54 @@ const TVCastSection = memo(function TVCastSection({
     return credits.cast.slice(0, maxCast);
   }, [credits, maxCast]);
 
+  const handleItemFocus = useCallback(
+    (index: number) => {
+      onFocus?.();
+      flatListRef.current?.scrollToIndex({
+        index,
+        animated: true,
+        viewPosition: 0.3,
+      });
+    },
+    [onFocus],
+  );
+
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<CastMember> | null | undefined, index: number) => ({
+      length: CARD_WIDTH + CARD_GAP,
+      offset: (CARD_WIDTH + CARD_GAP) * index,
+      index,
+    }),
+    [],
+  );
+
   const renderCastCard = useCallback(
-    ({ item: actor }: { item: CastMember }) => {
+    ({ item: actor, index }: { item: CastMember; index: number }) => {
       return (
-        <SpatialNavigationFocusableView
-          onFocus={() => onFocus?.()}
-          onSelect={() => onCastMemberPress?.(actor)}>
-          {({ isFocused }: { isFocused: boolean }) => (
-            <View style={[styles.card, isFocused && styles.cardFocused]}>
+        <Pressable
+          onFocus={() => handleItemFocus(index)}
+          onPress={() => onCastMemberPress?.(actor)}
+          renderToHardwareTextureAndroid={true}
+        >
+          {({ focused }: { focused: boolean }) => (
+            <View style={[styles.card, focused && styles.cardFocused]}>
               <CastPhoto profileUrl={actor.profileUrl} styles={styles} theme={theme} />
               <View style={styles.textContainer}>
-                <MarqueeText style={styles.actorName} focused={isFocused}>
+                <MarqueeText style={styles.actorName} focused={focused}>
                   {actor.name}
                 </MarqueeText>
                 {actor.character && (
-                  <MarqueeText style={styles.characterName} focused={isFocused}>
+                  <MarqueeText style={styles.characterName} focused={focused}>
                     {actor.character}
                   </MarqueeText>
                 )}
               </View>
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     },
-    [styles, theme, onFocus, onCastMemberPress],
+    [styles, theme, handleItemFocus, onCastMemberPress],
   );
 
   // Render skeleton cards while loading
@@ -133,44 +151,41 @@ const TVCastSection = memo(function TVCastSection({
     );
   }, [styles]);
 
+  const keyExtractor = useCallback(
+    (actor: CastMember) => actor.name + actor.character,
+    [],
+  );
+
   if (!castToShow.length && !isLoading) {
     return null;
   }
 
-  // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
-  // For small cast lists (< 3 items), render directly without virtualization
-  const useVirtualizedList = castToShow.length >= 3;
-
-  // Note: This component should be wrapped in a SpatialNavigationNode at the parent level
-  // to maintain consistent navigation order (see details.tsx)
   return (
     <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
       <Text style={styles.heading}>Cast</Text>
       {isLoading ? (
         renderSkeletonCards()
-      ) : useVirtualizedList ? (
+      ) : (
         <View style={styles.listContainer}>
-          <SpatialNavigationVirtualizedList
+          <FlatList
+            ref={flatListRef}
             data={castToShow}
             renderItem={renderCastCard}
-            itemSize={itemSize}
-            orientation="horizontal"
-            numberOfRenderedItems={castToShow.length}
-            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(castToShow.length - 2, isAndroidTV ? 5 : 6))}
+            keyExtractor={keyExtractor}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            getItemLayout={getItemLayout}
+            ItemSeparatorComponent={ItemSeparator}
+            contentContainerStyle={styles.listContent}
           />
-        </View>
-      ) : (
-        <View style={[styles.listContainer, styles.smallCastRow]}>
-          {castToShow.map((actor) => (
-            <React.Fragment key={actor.name + actor.character}>
-              {renderCastCard({ item: actor })}
-            </React.Fragment>
-          ))}
         </View>
       )}
     </View>
   );
 });
+
+// Static separator component - avoids re-creation on each render
+const ItemSeparator = () => <View style={{ width: CARD_GAP }} />;
 
 const createStyles = (theme: NovaTheme) =>
   StyleSheet.create({
@@ -187,6 +202,9 @@ const createStyles = (theme: NovaTheme) =>
     listContainer: {
       height: CARD_HEIGHT + tvScale(8),
       paddingLeft: tvScale(48),
+    },
+    listContent: {
+      paddingRight: tvScale(48),
     },
     smallCastRow: {
       flexDirection: 'row',

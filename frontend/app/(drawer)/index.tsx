@@ -3563,6 +3563,7 @@ function VirtualizedShelf({
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
   }
 
+  const { profileSelectorVisible } = useUserProfiles();
   // Compute which badges to show
   const showWatchState = badgeVisibility?.includes('watchState') ?? false;
   const showUnwatchedCount = badgeVisibility?.includes('unwatchedCount') ?? false;
@@ -3662,8 +3663,8 @@ function VirtualizedShelf({
       // Use stable key: for series with episode codes, use just the series ID
       const rawId = String(card.id ?? index);
       const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
-      // First item gets autoFocus if shelf has autoFocus enabled
-      const shouldAutoFocus = autoFocus && index === 0;
+      // First item gets autoFocus if shelf has autoFocus enabled (skip when profile selector is up)
+      const shouldAutoFocus = autoFocus && index === 0 && !profileSelectorVisible;
       // Check if this is the last item for spacing
       const isLastItem = index === lastItemIndexRef.current;
       // Use pre-computed release icon from card data
@@ -3700,7 +3701,7 @@ function VirtualizedShelf({
         </Pressable>
       );
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout, onFirstItemTagChange],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout, onFirstItemTagChange, profileSelectorVisible],
   );
 
   // Calculate row height for the virtualized list container

@@ -1,20 +1,15 @@
 /**
  * TV Episode Carousel - Simplified carousel with season selector and episode browser
- * Uses spatial navigation for proper D-pad navigation between rows
+ * Uses native React Native Pressable focus for proper D-pad navigation between rows
  * First press selects episode, second press plays
  */
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
-import {
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationVirtualizedList,
-} from '@/services/tv-navigation';
 import TVEpisodeThumbnail, { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from './TVEpisodeThumbnail';
 import { getSeasonLabel, isEpisodeUnreleased } from '@/app/details/utils';
 
@@ -86,6 +81,10 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
   // Debounce ref for focus updates - prevents re-renders during rapid navigation
   const focusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // FlatList refs for scroll-to-focused behavior
+  const seasonListRef = useRef<FlatList<SeriesSeason>>(null);
+  const episodeListRef = useRef<FlatList<SeriesEpisode>>(null);
+
   // Store frequently-changing props in refs to keep render callbacks stable
   // This prevents recreating callbacks when activeEpisode changes, which would cause all items to re-render
   const activeEpisodeRef = useRef(activeEpisode);
@@ -113,10 +112,6 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     };
   }, []);
 
-  // Calculate item sizes for virtualized lists
-  const seasonItemSize = SEASON_CHIP_WIDTH + SEASON_CHIP_GAP;
-  const episodeItemSize = THUMBNAIL_WIDTH + EPISODE_GAP;
-
   // Handle episode press - first press selects, second press plays
   // Uses ref to avoid recreating callback when activeEpisode changes
   const handleEpisodePress = useCallback(
@@ -136,33 +131,69 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     [onEpisodeSelect, onEpisodePlay],
   );
 
-  // Render season chip using SpatialNavigationFocusableView
+  // Scroll-to-focused handler for season chips
+  const handleSeasonFocus = useCallback(
+    (index: number) => {
+      if (currentFocusAreaRef.current !== 'seasons') {
+        currentFocusAreaRef.current = 'seasons';
+        onFocusRowChange?.('seasons');
+      }
+      seasonListRef.current?.scrollToIndex({
+        index,
+        animated: true,
+        viewPosition: 0.3,
+      });
+    },
+    [onFocusRowChange],
+  );
+
+  // Scroll-to-focused handler for episode items
+  const handleEpisodeFocus = useCallback(
+    (episode: SeriesEpisode, index: number) => {
+      // Debounce focus updates to prevent re-renders during rapid navigation
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
+      focusDebounceRef.current = setTimeout(() => {
+        setFocusedEpisode(episode);
+      }, 100);
+
+      if (currentFocusAreaRef.current !== 'episodes') {
+        currentFocusAreaRef.current = 'episodes';
+        onFocusRowChange?.('episodes');
+      }
+      episodeListRef.current?.scrollToIndex({
+        index,
+        animated: true,
+        viewPosition: 0.3,
+      });
+    },
+    [onFocusRowChange],
+  );
+
+  // Render season chip using native Pressable with focus callback
   const renderSeasonItem = useCallback(
-    ({ item: season }: { item: SeriesSeason }) => {
+    ({ item: season, index }: { item: SeriesSeason; index: number }) => {
       const isSelected = selectedSeason?.number === season.number;
       const seasonLabel = getSeasonLabel(season.number, season.name);
 
       return (
-        <SpatialNavigationFocusableView
-          onSelect={() => onSeasonSelect(season)}
-          onFocus={() => {
-            if (currentFocusAreaRef.current !== 'seasons') {
-              currentFocusAreaRef.current = 'seasons';
-              onFocusRowChange?.('seasons');
-            }
-          }}>
-          {({ isFocused }: { isFocused: boolean }) => (
+        <Pressable
+          onPress={() => onSeasonSelect(season)}
+          onFocus={() => handleSeasonFocus(index)}
+          renderToHardwareTextureAndroid={true}>
+          {({ focused }: { focused: boolean }) => (
             <View
               style={[
                 styles.seasonChip,
                 isSelected && styles.seasonChipSelected,
-                isFocused && styles.seasonChipFocused,
+                focused && styles.seasonChipFocused,
               ]}>
               <Text
                 style={[
                   styles.seasonChipText,
                   isSelected && styles.seasonChipTextSelected,
-                  isFocused && styles.seasonChipTextFocused,
+                  focused && styles.seasonChipTextFocused,
                 ]}
                 numberOfLines={1}
                 ellipsizeMode="tail">
@@ -170,42 +201,30 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
               </Text>
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     },
-    [selectedSeason, onSeasonSelect, onFocusRowChange, styles],
+    [selectedSeason, onSeasonSelect, handleSeasonFocus, styles],
   );
 
-  // Render episode thumbnail using SpatialNavigationFocusableView
+  // Render episode thumbnail using native Pressable with focus callback
   const renderEpisodeItem = useCallback(
-    ({ item: episode }: { item: SeriesEpisode }) => {
+    ({ item: episode, index }: { item: SeriesEpisode; index: number }) => {
       const isSelected =
         activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
       const isWatched = isEpisodeWatchedRef.current?.(episode) ?? false;
       const progress = getEpisodeProgressRef.current?.(episode) ?? 0;
 
       return (
-        <SpatialNavigationFocusableView
-          onSelect={() => handleEpisodePress(episode)}
-          onFocus={() => {
-            // Debounce focus updates to prevent re-renders during rapid navigation
-            if (focusDebounceRef.current) {
-              clearTimeout(focusDebounceRef.current);
-            }
-            focusDebounceRef.current = setTimeout(() => {
-              setFocusedEpisode(episode);
-            }, 100);
-
-            if (currentFocusAreaRef.current !== 'episodes') {
-              currentFocusAreaRef.current = 'episodes';
-              onFocusRowChange?.('episodes');
-            }
-          }}>
-          {({ isFocused }: { isFocused: boolean }) => (
+        <Pressable
+          onPress={() => handleEpisodePress(episode)}
+          onFocus={() => handleEpisodeFocus(episode, index)}
+          renderToHardwareTextureAndroid={true}>
+          {({ focused }: { focused: boolean }) => (
             <TVEpisodeThumbnail
               episode={episode}
               isActive={isSelected}
-              isFocused={isFocused}
+              isFocused={focused}
               isWatched={isWatched}
               isUnreleased={isEpisodeUnreleased(episode.airedDate)}
               progress={progress}
@@ -213,12 +232,43 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
               showSelectedBadge={isSelected}
             />
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     },
     // Note: activeEpisode in deps is intentional - it recreates the callback to trigger list re-render
     // when selection changes, updating the "Selected" badge on episode thumbnails
-    [handleEpisodePress, onFocusRowChange, theme, activeEpisode],
+    [handleEpisodePress, handleEpisodeFocus, theme, activeEpisode],
+  );
+
+  // Key extractors for FlatLists
+  const seasonKeyExtractor = useCallback((item: SeriesSeason) => `season-${item.number}`, []);
+  const episodeKeyExtractor = useCallback(
+    (item: SeriesEpisode) => `ep-${item.seasonNumber}-${item.episodeNumber}`,
+    [],
+  );
+
+  // Item separator components
+  const SeasonSeparator = useCallback(() => <View style={{ width: SEASON_CHIP_GAP }} />, []);
+  const EpisodeSeparator = useCallback(() => <View style={{ width: EPISODE_GAP }} />, []);
+
+  // getItemLayout for season FlatList (fixed size items for fast scrollToIndex)
+  const getSeasonItemLayout = useCallback(
+    (_data: ArrayLike<SeriesSeason> | null | undefined, index: number) => ({
+      length: SEASON_CHIP_WIDTH,
+      offset: (SEASON_CHIP_WIDTH + SEASON_CHIP_GAP) * index,
+      index,
+    }),
+    [],
+  );
+
+  // getItemLayout for episode FlatList (fixed size items for fast scrollToIndex)
+  const getEpisodeItemLayout = useCallback(
+    (_data: ArrayLike<SeriesEpisode> | null | undefined, index: number) => ({
+      length: THUMBNAIL_WIDTH,
+      offset: (THUMBNAIL_WIDTH + EPISODE_GAP) * index,
+      index,
+    }),
+    [],
   );
 
   // Episode details panel content
@@ -241,60 +291,35 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     return null;
   }
 
-  // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
-  // For small lists (< 3 items), render directly without virtualization
-  const useVirtualizedSeasons = seasons.length >= 3;
-  const useVirtualizedEpisodes = episodes.length >= 3;
-
   return (
     <View style={styles.container}>
-      {/* Season Selector Row - wrapped in SpatialNavigationNode for vertical nav */}
-      <SpatialNavigationNode orientation="horizontal">
-        <View style={styles.seasonRow}>
-          {useVirtualizedSeasons ? (
-            <SpatialNavigationVirtualizedList
-              data={seasons}
-              renderItem={renderSeasonItem}
-              itemSize={seasonItemSize}
-              orientation="horizontal"
-              numberOfRenderedItems={seasons.length}
-              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(seasons.length - 2, isAndroidTV ? 6 : 8))}
-            />
-          ) : (
-            <View style={styles.smallListRow}>
-              {seasons.map((season) => (
-                <React.Fragment key={`season-${season.number}`}>
-                  {renderSeasonItem({ item: season })}
-                </React.Fragment>
-              ))}
-            </View>
-          )}
-        </View>
-      </SpatialNavigationNode>
+      {/* Season Selector Row */}
+      <View style={styles.seasonRow}>
+        <FlatList
+          ref={seasonListRef}
+          data={seasons}
+          renderItem={renderSeasonItem}
+          keyExtractor={seasonKeyExtractor}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          ItemSeparatorComponent={SeasonSeparator}
+          getItemLayout={getSeasonItemLayout}
+        />
+      </View>
 
-      {/* Episode Carousel - wrapped in SpatialNavigationNode for vertical nav */}
-      <SpatialNavigationNode orientation="horizontal">
-        <View style={styles.episodeRow}>
-          {useVirtualizedEpisodes ? (
-            <SpatialNavigationVirtualizedList
-              data={episodes}
-              renderItem={renderEpisodeItem}
-              itemSize={episodeItemSize}
-              orientation="horizontal"
-              numberOfRenderedItems={episodes.length}
-              numberOfItemsVisibleOnScreen={Math.max(1, Math.min(episodes.length - 2, isAndroidTV ? 4 : 5))}
-            />
-          ) : (
-            <View style={styles.smallListRow}>
-              {episodes.map((episode) => (
-                <React.Fragment key={`ep-${episode.seasonNumber}-${episode.episodeNumber}`}>
-                  {renderEpisodeItem({ item: episode })}
-                </React.Fragment>
-              ))}
-            </View>
-          )}
-        </View>
-      </SpatialNavigationNode>
+      {/* Episode Carousel */}
+      <View style={styles.episodeRow}>
+        <FlatList
+          ref={episodeListRef}
+          data={episodes}
+          renderItem={renderEpisodeItem}
+          keyExtractor={episodeKeyExtractor}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          ItemSeparatorComponent={EpisodeSeparator}
+          getItemLayout={getEpisodeItemLayout}
+        />
+      </View>
 
       {/* Episode Details Panel */}
       {detailsContent && (

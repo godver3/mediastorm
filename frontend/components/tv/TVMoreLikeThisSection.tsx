@@ -1,19 +1,15 @@
 /**
  * TV More Like This Section - Horizontal scrollable similar content gallery with D-pad focus support
- * Uses spatial navigation for proper integration with other rows
+ * Uses native React Native FlatList + Pressable for focus handling instead of spatial navigation
  */
 
-import React, { memo, useCallback, useMemo } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import React, { memo, useCallback, useMemo, useRef } from 'react';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import type { NovaTheme } from '@/theme';
 import type { Title } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
-import {
-  SpatialNavigationFocusableView,
-  SpatialNavigationVirtualizedList,
-} from '@/services/tv-navigation';
 import MarqueeText from './MarqueeText';
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
@@ -42,6 +38,7 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
 }: TVMoreLikeThisSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const flatListRef = useRef<FlatList<Title>>(null);
 
   const itemSize = CARD_WIDTH + CARD_GAP;
 
@@ -51,17 +48,26 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
     return titles.slice(0, maxTitles);
   }, [titles, maxTitles]);
 
+  const handleItemFocus = useCallback(
+    (index: number) => {
+      onFocus?.();
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+    },
+    [onFocus],
+  );
+
   const renderTitleCard = useCallback(
-    ({ item: title }: { item: Title }) => {
+    ({ item: title, index }: { item: Title; index: number }) => {
       return (
-        <SpatialNavigationFocusableView
-          onFocus={() => onFocus?.()}
-          onSelect={() => {
-            console.log(`[TVMoreLikeThis DEBUG] onSelect fired for title: ${title.name} (id: ${title.id})`);
+        <Pressable
+          renderToHardwareTextureAndroid={true}
+          onFocus={() => handleItemFocus(index)}
+          onPress={() => {
+            console.log(`[TVMoreLikeThis DEBUG] onPress fired for title: ${title.name} (id: ${title.id})`);
             onTitlePress?.(title);
           }}>
-          {({ isFocused }: { isFocused: boolean }) => (
-            <View style={[styles.card, isFocused && styles.cardFocused]}>
+          {({ focused }: { focused: boolean }) => (
+            <View style={[styles.card, focused && styles.cardFocused]}>
               {title.poster?.url ? (
                 <Image source={{ uri: title.poster.url }} style={styles.poster} contentFit="cover" />
               ) : (
@@ -70,7 +76,7 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
                 </View>
               )}
               <View style={styles.textContainer}>
-                <MarqueeText style={styles.titleName} focused={isFocused}>
+                <MarqueeText style={styles.titleName} focused={focused}>
                   {title.name}
                 </MarqueeText>
                 {title.year > 0 && (
@@ -79,10 +85,10 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
               </View>
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     },
-    [styles, onFocus, onTitlePress],
+    [styles, handleItemFocus, onTitlePress],
   );
 
   // Render skeleton cards while loading
@@ -103,42 +109,46 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
     );
   }, [styles]);
 
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<Title> | null | undefined, index: number) => ({
+      length: itemSize,
+      offset: itemSize * index,
+      index,
+    }),
+    [itemSize],
+  );
+
+  const keyExtractor = useCallback((item: Title) => String(item.id), []);
+
   if (!titlesToShow.length && !isLoading) {
     return null;
   }
-
-  // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
-  // For small lists (< 3 items), render directly without virtualization
-  const useVirtualizedList = titlesToShow.length >= 3;
 
   return (
     <View style={styles.container}>
       <Text style={styles.heading}>More Like This</Text>
       {isLoading ? (
         renderSkeletonCards()
-      ) : useVirtualizedList ? (
+      ) : (
         <View style={styles.listContainer}>
-          <SpatialNavigationVirtualizedList
+          <FlatList
+            ref={flatListRef}
             data={titlesToShow}
             renderItem={renderTitleCard}
-            itemSize={itemSize}
-            orientation="horizontal"
-            numberOfRenderedItems={titlesToShow.length}
-            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(titlesToShow.length - 2, isAndroidTV ? 5 : 6))}
+            keyExtractor={keyExtractor}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.flatListContent}
+            getItemLayout={getItemLayout}
+            ItemSeparatorComponent={ItemSeparator}
           />
-        </View>
-      ) : (
-        <View style={[styles.listContainer, styles.smallTitleRow]}>
-          {titlesToShow.map((title) => (
-            <React.Fragment key={title.id}>
-              {renderTitleCard({ item: title })}
-            </React.Fragment>
-          ))}
         </View>
       )}
     </View>
   );
 });
+
+const ItemSeparator = () => <View style={{ width: CARD_GAP }} />;
 
 const createStyles = (theme: NovaTheme) =>
   StyleSheet.create({
@@ -156,9 +166,8 @@ const createStyles = (theme: NovaTheme) =>
       height: CARD_HEIGHT + tvScale(8),
       paddingLeft: tvScale(48),
     },
-    smallTitleRow: {
-      flexDirection: 'row',
-      gap: CARD_GAP,
+    flatListContent: {
+      paddingRight: tvScale(48),
     },
     skeletonRow: {
       flexDirection: 'row',
