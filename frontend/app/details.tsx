@@ -36,7 +36,7 @@ import {
   type Trailer,
 } from '@/services/api';
 import { useTheme } from '@/theme';
-import { getTVScaleMultiplier, isTablet } from '@/theme/tokens/tvScale';
+import { getTVScaleMultiplier, isTablet, isAndroidTV as isAndroidTVPlatform } from '@/theme/tokens/tvScale';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1269,10 +1269,13 @@ export default function DetailsScreen() {
     },
   });
 
-  // TV spacer — fixed height
+  // TV spacer — fixed height (pushes content below the hero image)
+  // Android TV has roughly half the dp coordinate space of tvOS (due to ~2x density),
+  // so we use a smaller ratio to keep the action row visible on screen
   const tvSpacerHeight = useMemo(() => {
     if (!Platform.isTV) return 0;
-    return Math.round(windowHeight * 0.7);
+    const ratio = isAndroidTVPlatform ? 0.45 : 0.7;
+    return Math.round(windowHeight * ratio);
   }, [windowHeight]);
 
   // Track if we've already triggered the fade-in
