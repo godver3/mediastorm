@@ -20,14 +20,7 @@ import { apiService, type Rating, ReleaseWindow, SeriesWatchState, Title, Trendi
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
-import {
-  DefaultFocus,
-  SpatialNavigationFocusableView,
-  SpatialNavigationNode,
-  SpatialNavigationRoot,
-  SpatialNavigationVirtualizedList,
-} from '@/services/tv-navigation';
-import type { Direction } from '@bam.tech/lrud';
+import { TVFocusGuard, useTVFocusBoundary } from '@/components/tv-focus';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { isTV, isTablet, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
@@ -822,9 +815,8 @@ function IndexScreen() {
 
       const performScroll = (rawY: number) => {
         const targetY = Math.max(0, rawY - topOffset);
-        if (skipAnimation || isInitialLoadRef.current || isAndroidTV) {
-          // No animation: instant snap (Android TV: avoids frame drops from
-          // removeClippedSubviews reattaching views across the scroll animation)
+        if (skipAnimation || isInitialLoadRef.current) {
+          // No animation: instant snap
           scrollViewRef.current?.scrollTo({ y: targetY, animated: false });
         } else {
           // Animated: use shared value for UI-thread smoothness
@@ -1821,6 +1813,15 @@ function IndexScreen() {
 
   // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
+  // Track shelf card counts for boundary detection (updated via ref to avoid callback recreation)
+  const shelfCardCountsRef = useRef<Record<string, number>>({});
+
+  // TV: detect boundary presses (left at first card → open menu)
+  const { reportFocusIndex } = useTVFocusBoundary({
+    onBoundaryReached: (dir) => {
+      if (dir === 'left' && !isMenuOpen && !profileSelectorVisible) openMenu();
+    },
+  });
   // heroImageDimensions removed — now computed inline in TVHero component
 
   // Remove from Continue Watching confirmation modal state
@@ -2438,6 +2439,10 @@ function IndexScreen() {
     (card: CardData, shelfKey: string, cardIndex: number): void => {
       const isVertical = focusedShelfKeyRef.current !== shelfKey;
 
+      // Report focus position for boundary detection (left-at-first → open menu)
+      const shelfTotal = shelfCardCountsRef.current[shelfKey] ?? 0;
+      reportFocusIndex(cardIndex, shelfTotal);
+
       // Close menu if open (no-op if already closed)
       closeMenu();
 
@@ -2467,7 +2472,7 @@ function IndexScreen() {
         setFocusedDesktopCard(card);
       }, debounceMs);
     },
-    [closeMenu, scrollToShelf, heroContentOpacity],
+    [closeMenu, scrollToShelf, heroContentOpacity, reportFocusIndex],
   );
 
   // These callbacks do actual work in production, not just logging
@@ -2618,6 +2623,15 @@ function IndexScreen() {
     kidsAllowedShelves,
   ]);
 
+  // Keep shelf card counts in sync for boundary detection (ref avoids callback recreation)
+  useEffect(() => {
+    const counts: Record<string, number> = {};
+    for (const shelf of desktopShelves) {
+      counts[shelf.key] = shelf.cards.length;
+    }
+    shelfCardCountsRef.current = counts;
+  }, [desktopShelves]);
+
   // Track navigation structure changes - only based on which shelves exist, NOT card counts
   // Using card counts in the key was causing full remounts on every data load
   const navigationKey = useMemo(() => {
@@ -2627,7 +2641,7 @@ function IndexScreen() {
   }, [desktopShelves]);
 
   // Set initial focused card for TV hero display on first load
-  // DefaultFocus grants focus but doesn't trigger onFocus callback, so we set it manually
+  // hasTVPreferredFocus grants focus but doesn't trigger onFocus callback, so we set it manually
   useEffect(() => {
     if (!Platform.isTV || focusedDesktopCard) {
       return;
@@ -2642,18 +2656,6 @@ function IndexScreen() {
 
   // Note: focusedShelfIndex computation removed - was unused (_shouldShowTopGradient)
   // The ref focusedShelfKeyRef.current can be read synchronously if needed
-
-  // Spatial navigation: active when screen focused, menu closed, and no modals open
-  const isSpatialNavActive =
-    focused && !isMenuOpen && !pendingPinUserId && !profileSelectorVisible && !isRemoveConfirmVisible && !isVersionMismatchVisible;
-  const onDirectionHandledWithoutMovement = useCallback(
-    (direction: Direction) => {
-      if (direction === 'left') {
-        openMenu();
-      }
-    },
-    [openMenu],
-  );
 
   if (shouldUseMobileLayout) {
     if (!mobileStyles) {
@@ -2907,9 +2909,12 @@ function IndexScreen() {
     return <View style={{ flex: 1, backgroundColor: theme.colors.background.base }} />;
   }
 
-  // Wrap content in SpatialNavigationRoot for TV platforms
   const desktopContent = (
-    <View ref={pageRef} style={desktopStyles?.styles.page}>
+    <View
+      ref={pageRef}
+      style={desktopStyles?.styles.page}
+      accessibilityElementsHidden={isMenuOpen}
+      importantForAccessibility={isMenuOpen ? 'no-hide-descendants' : 'auto'}>
       {/* Full-screen background art for TV — crossfades as user navigates between items */}
       {Platform.isTV && focusedDesktopCard && (
         <Animated.View style={[desktopStyles?.styles.tvBackgroundArt, heroContentAnimStyle]} pointerEvents="none">
@@ -3037,39 +3042,37 @@ function IndexScreen() {
           </View>
         )}
 
-        <SpatialNavigationNode orientation="vertical" focusKey="home-shelves">
-          <View key={navigationKey}>
-            {desktopShelves.map((shelf, shelfIndex) => {
-              const isLandscape = shelf.cardLayout === 'landscape';
-              return (
-                <MemoizedDesktopShelf
-                  key={shelf.key}
-                  title={shelf.title}
-                  cards={shelf.cards}
-                  styles={desktopStyles!.styles}
-                  cardWidth={isLandscape ? desktopStyles!.landscapeCardWidth : desktopStyles!.cardWidth}
-                  cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
-                  cardSpacing={desktopStyles!.cardSpacing}
-                  shelfPadding={desktopStyles!.shelfPadding}
-                  onCardSelect={handleCardSelect}
-                  onShelfItemFocus={handleShelfItemFocus}
-                  autoFocus={shelf.autoFocus && shelf.cards.length > 0}
-                  collapseIfEmpty={shelf.collapseIfEmpty}
-                  showEmptyState={shelf.showEmptyState}
-                  shelfKey={shelf.key}
-                  shelfIndex={shelfIndex}
-                  registerShelfRef={registerShelfRef}
-                  registerShelfFlatListRef={registerShelfFlatListRef}
-                  isInitialLoad={isInitialLoadRef.current}
-                  badgeVisibility={badgeVisibility}
-                  watchStateIconStyle={watchStateIconStyle}
-                  onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
-                  cardLayout={shelf.cardLayout}
-                />
-              );
-            })}
-          </View>
-        </SpatialNavigationNode>
+        <View key={navigationKey}>
+          {desktopShelves.map((shelf, shelfIndex) => {
+            const isLandscape = shelf.cardLayout === 'landscape';
+            return (
+              <MemoizedDesktopShelf
+                key={shelf.key}
+                title={shelf.title}
+                cards={shelf.cards}
+                styles={desktopStyles!.styles}
+                cardWidth={isLandscape ? desktopStyles!.landscapeCardWidth : desktopStyles!.cardWidth}
+                cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
+                cardSpacing={desktopStyles!.cardSpacing}
+                shelfPadding={desktopStyles!.shelfPadding}
+                onCardSelect={handleCardSelect}
+                onShelfItemFocus={handleShelfItemFocus}
+                autoFocus={shelf.autoFocus && shelf.cards.length > 0}
+                collapseIfEmpty={shelf.collapseIfEmpty}
+                showEmptyState={shelf.showEmptyState}
+                shelfKey={shelf.key}
+                shelfIndex={shelfIndex}
+                registerShelfRef={registerShelfRef}
+                registerShelfFlatListRef={registerShelfFlatListRef}
+                isInitialLoad={isInitialLoadRef.current}
+                badgeVisibility={badgeVisibility}
+                watchStateIconStyle={watchStateIconStyle}
+                onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
+                cardLayout={shelf.cardLayout}
+              />
+            );
+          })}
+        </View>
       </Animated.ScrollView>
       {!Platform.isTV && (
         <FloatingHero
@@ -3187,15 +3190,7 @@ function IndexScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      {Platform.isTV ? (
-        <SpatialNavigationRoot
-          isActive={isSpatialNavActive}
-          onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
-          {desktopContent}
-        </SpatialNavigationRoot>
-      ) : (
-        desktopContent
-      )}
+      {desktopContent}
     </>
   );
 }
@@ -3561,7 +3556,7 @@ function VirtualizedShelf({
   shelfPadding,
   badgeVisibility,
   watchStateIconStyle = 'colored',
-  onFirstItemTagChange: _onFirstItemTagChange,
+  onFirstItemTagChange,
   cardLayout = 'portrait',
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
@@ -3629,7 +3624,7 @@ function VirtualizedShelf({
 
       flatListRef.current.scrollToOffset({
         offset: targetX,
-        animated: !isAndroidTV,
+        animated: true,
       });
     },
     [cards.length, itemSize],
@@ -3674,50 +3669,25 @@ function VirtualizedShelf({
       // Use pre-computed release icon from card data
       const showReleaseStatus = Boolean(badgeVisibility?.includes('releaseStatus') && card.releaseIcon);
 
-      // TV platform: use spatial navigation focusable view
-      if (Platform.isTV) {
-        const focusKey = `shelf-${shelfKey}-card-${index}`;
-        const cardElement = (
-          <SpatialNavigationFocusableView
-            focusKey={focusKey}
-            onSelect={() => shelfHandlers.onSelect(card.id)}
-            onFocus={() => shelfHandlers.onFocus(card.id, index)}>
-            {({ isFocused }: { isFocused: boolean }) => (
-              <ShelfCardContent
-                card={card}
-                cardKey={cardKey}
-                isFocused={isFocused}
-                isLastItem={isLastItem}
-                showReleaseStatus={showReleaseStatus}
-                showWatchState={showWatchState}
-                showUnwatchedCount={showUnwatchedCount}
-                watchStateIconStyle={watchStateIconStyle}
-                styles={styles}
-                cardLayout={cardLayout}
-              />
-            )}
-          </SpatialNavigationFocusableView>
-        );
-
-        // First card of first shelf gets default focus
-        if (shouldAutoFocus) {
-          return <DefaultFocus>{cardElement}</DefaultFocus>;
-        }
-        return cardElement;
-      }
-
-      // Non-TV platform: use native Pressable with memoized content
       return (
         <Pressable
           ref={(ref) => {
             cardRefsMap.current.set(index, ref);
+            // Report first card's native tag for drawer focus restoration
+            if (index === 0 && ref && onFirstItemTagChange) {
+              const tag = findNodeHandle(ref);
+              if (tag) onFirstItemTagChange(tag);
+            }
           }}
-          onPress={() => shelfHandlers.onSelect(card.id)}>
-          {({ pressed }) => (
+          onPress={() => shelfHandlers.onSelect(card.id)}
+          onFocus={() => shelfHandlers.onFocus(card.id, index)}
+          hasTVPreferredFocus={shouldAutoFocus}
+          tvParallaxProperties={{ enabled: false }}>
+          {({ focused, pressed }) => (
             <ShelfCardContent
               card={card}
               cardKey={cardKey}
-              isFocused={pressed}
+              isFocused={Platform.isTV ? focused : pressed}
               isLastItem={isLastItem}
               showReleaseStatus={showReleaseStatus}
               showWatchState={showWatchState}
@@ -3730,116 +3700,24 @@ function VirtualizedShelf({
         </Pressable>
       );
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout, onFirstItemTagChange],
   );
 
   // Calculate row height for the virtualized list container
   const rowHeight = cardHeight + cardSpacing;
 
-  // TV: Render function for SpatialNavigationVirtualizedList
-  // Uses memoized ShelfCardContent to prevent unnecessary re-renders
-  const renderTVItem = useCallback(
-    ({ item, index }: { item: CardData; index: number }) => {
-      const card = item;
-      const rawId = String(card.id ?? index);
-      const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
-      const shouldAutoFocusItem = autoFocus && index === 0;
-      const isLastItem = index === lastItemIndexRef.current;
-      const showReleaseStatus = Boolean(badgeVisibility?.includes('releaseStatus') && card.releaseIcon);
-      const focusKey = `shelf-${shelfKey}-card-${index}`;
-
-      const cardElement = (
-        <SpatialNavigationFocusableView
-          focusKey={focusKey}
-          onSelect={() => shelfHandlers.onSelect(card.id)}
-          onFocus={() => shelfHandlers.onFocus(card.id, index)}>
-          {({ isFocused }: { isFocused: boolean }) => (
-            <ShelfCardContent
-              card={card}
-              cardKey={cardKey}
-              isFocused={isFocused}
-              isLastItem={isLastItem}
-              showReleaseStatus={showReleaseStatus}
-              showWatchState={showWatchState}
-              showUnwatchedCount={showUnwatchedCount}
-              watchStateIconStyle={watchStateIconStyle}
-              styles={styles}
-              cardLayout={cardLayout}
-            />
-          )}
-        </SpatialNavigationFocusableView>
-      );
-
-      // First card gets default focus
-      if (shouldAutoFocusItem) {
-        return <DefaultFocus>{cardElement}</DefaultFocus>;
-      }
-      return cardElement;
-    },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
-  );
-
   // Early return for collapsed shelves - must be after all hooks
-  // For TV: wrap in SpatialNavigationNode even when collapsed to maintain navigation order
-  // (nodes register in DOM order, so late-loading shelves would otherwise end up at the end)
   if (shouldCollapse) {
-    const collapsedView = (
+    return (
       <View ref={containerRef} style={[styles.shelf, styles.shelfCollapsed]} accessibilityElementsHidden>
         {/* Empty collapsed shelf */}
       </View>
-    );
-    return Platform.isTV ? (
-      <SpatialNavigationNode orientation="horizontal">{collapsedView}</SpatialNavigationNode>
-    ) : (
-      collapsedView
     );
   }
 
   const shouldShowEmptyState = Boolean(showEmptyState && isEmpty);
 
-  // Non-TV: Regular FlatList content
-  const nonTVShelfContent = (
-    <View style={{ height: rowHeight }} renderToHardwareTextureAndroid={isAndroidTV}>
-      <FlatList
-        ref={flatListRef}
-        data={cards}
-        renderItem={renderItem}
-        keyExtractor={(item, index) => String(item.id ?? index)}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEnabled={true}
-        contentContainerStyle={{ paddingRight: shelfPadding }}
-        getItemLayout={(_, index) => ({
-          length: itemSize,
-          offset: itemSize * index,
-          index,
-        })}
-        initialNumToRender={13}
-        maxToRenderPerBatch={7}
-        windowSize={3}
-      />
-    </View>
-  );
-
-  // TV: SpatialNavigationVirtualizedList (without outer SpatialNavigationNode - that's added at shelf level)
-  // Render all items (max 20 + explore card = 21) to ensure onDirectionHandledWithoutMovement
-  // only fires at actual list boundaries, not when items aren't yet rendered
-  const tvShelfContent = (
-    <View style={{ height: rowHeight }}>
-      <SpatialNavigationVirtualizedList
-        data={cards}
-        renderItem={renderTVItem}
-        itemSize={itemSize}
-        orientation="horizontal"
-        numberOfRenderedItems={21}
-        numberOfItemsVisibleOnScreen={isAndroidTV ? 6 : 8}
-        scrollDuration={isAndroidTV ? 0 : 200}
-      />
-    </View>
-  );
-
-  // Shelf content - same structure for TV and non-TV
-  const shelfView = (
+  return (
     <View ref={containerRef} style={styles.shelf} renderToHardwareTextureAndroid={isAndroidTV}>
       <View style={styles.shelfTitleWrapper}>
         <Text style={styles.shelfTitle}>{title}</Text>
@@ -3848,19 +3726,29 @@ function VirtualizedShelf({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyCardText}>Nothing to show yet</Text>
         </View>
-      ) : Platform.isTV ? (
-        tvShelfContent
       ) : (
-        nonTVShelfContent
+        <TVFocusGuard trapFocus={['left', 'right']} style={{ height: rowHeight }}>
+          <FlatList
+            ref={flatListRef}
+            data={cards}
+            renderItem={renderItem}
+            keyExtractor={(item, index) => String(item.id ?? index)}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            scrollEnabled={true}
+            contentContainerStyle={{ paddingRight: shelfPadding }}
+            getItemLayout={(_, index) => ({
+              length: itemSize,
+              offset: itemSize * index,
+              index,
+            })}
+            initialNumToRender={13}
+            maxToRenderPerBatch={7}
+            windowSize={3}
+          />
+        </TVFocusGuard>
       )}
     </View>
-  );
-
-  // For TV: wrap entire shelf in SpatialNavigationNode for consistent registration order
-  return Platform.isTV ? (
-    <SpatialNavigationNode orientation="horizontal">{shelfView}</SpatialNavigationNode>
-  ) : (
-    shelfView
   );
 }
 
