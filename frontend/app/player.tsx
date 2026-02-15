@@ -797,7 +797,7 @@ export default function PlayerScreen() {
     console.log('[player] triggering auto-subtitle search for language:', subtitleLang);
     autoSubtitleTriggeredRef.current = true;
     performAutoSubtitleSearch(subtitleLang);
-  }, [settings, userSettings, performAutoSubtitleSearch, useNativePlayer]);
+  }, [settings, userSettings, performAutoSubtitleSearch]);
 
   // Subtitle timing adjustment handlers (0.25s increments)
   // Uses refs to access extendControlsVisibility which is defined later in the component
@@ -4425,16 +4425,52 @@ export default function PlayerScreen() {
           setSelectedSubtitleTrackId(SUBTITLE_OFF_OPTION.id);
           console.log('[player] handleTracksAvailable: using preselected subtitle OFF');
         } else {
-          // Auto-select English track if available, otherwise first track
-          const englishTrack = playerSubtitleOptions.find(
-            (t) => t.label.toLowerCase().includes('english') || t.label.toLowerCase().includes('eng'),
-          );
-          const defaultTrackId = englishTrack?.id ?? playerSubtitleOptions[0]?.id ?? SUBTITLE_OFF_OPTION.id;
-          setSelectedSubtitleTrackId(defaultTrackId);
+          // No preselected track — use user's subtitle preferences to pick the best match
+          const preferredLang =
+            contentPreference?.subtitleLanguage ||
+            userSettings?.playback?.preferredSubtitleLanguage ||
+            settings?.playback?.preferredSubtitleLanguage;
+          const preferredModeRaw =
+            contentPreference?.subtitleMode ||
+            userSettings?.playback?.preferredSubtitleMode ||
+            settings?.playback?.preferredSubtitleMode;
+
+          if (preferredModeRaw === 'off') {
+            setSelectedSubtitleTrackId(SUBTITLE_OFF_OPTION.id);
+            console.log('[player] handleTracksAvailable: subtitle mode is off');
+          } else if (preferredLang) {
+            const normalizedPref = preferredLang.toLowerCase().trim();
+            // Match by label text (KSPlayer labels are like "English", "English (SDH)", "Spanish", etc.)
+            const matchingTrack = playerSubtitleOptions.find((t) => {
+              const label = t.label.toLowerCase();
+              return label.includes(normalizedPref) || normalizedPref.includes(label.split(' ')[0]);
+            });
+            if (matchingTrack) {
+              setSelectedSubtitleTrackId(matchingTrack.id);
+              console.log('[player] handleTracksAvailable: matched subtitle by preference', {
+                preferredLang,
+                matchedLabel: matchingTrack.label,
+                matchedId: matchingTrack.id,
+              });
+            } else {
+              // Preferred language not found in player tracks — trigger auto-search
+              setSelectedSubtitleTrackId(SUBTITLE_OFF_OPTION.id);
+              console.log('[player] handleTracksAvailable: preferred language not in player tracks, triggering auto-search', {
+                preferredLang,
+                availableTracks: playerSubtitleOptions.map((t) => t.label),
+              });
+              triggerAutoSubtitleSearchIfNeeded();
+            }
+          } else {
+            // No language preference set — select first available track
+            const defaultTrackId = playerSubtitleOptions[0]?.id ?? SUBTITLE_OFF_OPTION.id;
+            setSelectedSubtitleTrackId(defaultTrackId);
+            console.log('[player] handleTracksAvailable: no subtitle preference, selecting first track', { defaultTrackId });
+          }
         }
       }
     },
-    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack, audioStreamMetadata],
+    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack, audioStreamMetadata, settings, userSettings, contentPreference, triggerAutoSubtitleSearchIfNeeded],
   );
 
   const selectedAudioTrackIndex = useMemo(() => {
@@ -4639,6 +4675,12 @@ export default function PlayerScreen() {
         setSelectedSubtitleTrackId(String(selectedIndex));
       } else if (validMode === 'off') {
         setSelectedSubtitleTrackId('off');
+      } else if (useNativePlayer) {
+        // Native player: don't auto-search yet — pre-extracted tracks are text-only but the
+        // native player may have PGS/bitmap tracks that match. Defer to handleTracksAvailable
+        // which fires once KSPlayer/MPV reports all tracks (including PGS).
+        console.log('[player] native player: preferred language not in pre-extracted (text-only) tracks, deferring to native track detection');
+        setSelectedSubtitleTrackId('off');
       } else {
         // Preferred language not found - trigger auto-search
         setSelectedSubtitleTrackId('off');
@@ -4723,6 +4765,11 @@ export default function PlayerScreen() {
             setSelectedSubtitleTrackId(String(selectedIndex));
           } else if (validMode === 'off') {
             setSelectedSubtitleTrackId('off');
+          } else if (useNativePlayer) {
+            // Native player: don't auto-search yet — backend probe returns text-only tracks but
+            // native player may have PGS/bitmap tracks. Defer to handleTracksAvailable.
+            console.log('[player] native player: preferred language not in probed (text-only) tracks, deferring to native track detection');
+            setSelectedSubtitleTrackId('off');
           } else {
             // Preferred language not found - trigger auto-search
             setSelectedSubtitleTrackId('off');
@@ -4740,7 +4787,6 @@ export default function PlayerScreen() {
             // Don't clear player-reported tracks — handleTracksAvailable will populate
             // from KSPlayer's own track detection.
             console.log('[player] no text-based tracks from backend, deferring to native player for bitmap subtitle support');
-            triggerAutoSubtitleSearchIfNeeded();
             return;
           }
           // Non-native player: clear tracks (can't render PGS)
