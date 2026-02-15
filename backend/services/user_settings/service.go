@@ -169,7 +169,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	}
 
 	// Check HomeShelves
-	if len(s.HomeShelves.Shelves) > 0 || s.HomeShelves.TrendingMovieSource != "" {
+	if len(s.HomeShelves.Shelves) > 0 {
 		return false
 	}
 

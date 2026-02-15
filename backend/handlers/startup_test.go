@@ -117,7 +117,7 @@ type mockMetadataServiceStartup struct {
 	seriesErr   error
 }
 
-func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType string, source config.TrendingMovieSource) ([]models.TrendingItem, error) {
+func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
 	if mediaType == "movie" {
 		return m.movieItems, m.movieErr
 	}

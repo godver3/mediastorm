@@ -79,18 +79,9 @@ type ShelfConfig struct {
 	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content
 }
 
-// TrendingMovieSource determines which source to use for trending movies.
-type TrendingMovieSource string
-
-const (
-	TrendingMovieSourceAll      TrendingMovieSource = "all"      // TMDB trending (includes unreleased)
-	TrendingMovieSourceReleased TrendingMovieSource = "released" // MDBList top movies of the week (released only)
-)
-
 // HomeShelvesSettings controls which shelves appear on the home screen and their order.
 type HomeShelvesSettings struct {
-	Shelves             []ShelfConfig       `json:"shelves"`
-	TrendingMovieSource TrendingMovieSource `json:"trendingMovieSource,omitempty"` // "all" (TMDB) or "released" (MDBList)
+	Shelves []ShelfConfig `json:"shelves"`
 }
 
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
@@ -115,6 +106,7 @@ type FilterSettings struct {
 	PrioritizeHdr                    *bool       `json:"prioritizeHdr,omitempty"`          // Prioritize HDR/DV content in search results
 	FilterOutTerms                   []string    `json:"filterOutTerms,omitempty"`         // Terms to filter out from results (case-insensitive match in title)
 	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`         // Terms to prioritize in results (case-insensitive match in title)
+	NonPreferredTerms                []string    `json:"nonPreferredTerms,omitempty"`      // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
 }
 
@@ -133,7 +125,6 @@ func DefaultUserSettings() UserSettings {
 				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
 				{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 3},
 			},
-			TrendingMovieSource: TrendingMovieSourceReleased,
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   FloatPtr(0),

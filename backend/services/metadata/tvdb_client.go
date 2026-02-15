@@ -356,16 +356,6 @@ type tvdbArtwork struct {
 	Height    int             `json:"height"`
 }
 
-func (c *tvdbClient) seriesArtworks(id int64) ([]tvdbArtwork, error) {
-	var resp struct {
-		Data []tvdbArtwork `json:"data"`
-	}
-	if err := c.doGET(fmt.Sprintf("https://api4.thetvdb.com/v4/series/%d/artworks", id), nil, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Data, nil
-}
-
 func (c *tvdbClient) movieArtworks(id int64) ([]tvdbArtwork, error) {
 	extended, err := c.movieExtended(id, []string{"artwork"})
 	if err != nil {
@@ -650,11 +640,6 @@ func (c *tvdbClient) fetchMDBListTVShows() ([]mdblistTVShow, error) {
 	var tvShows []mdblistTVShow
 	if err := json.NewDecoder(resp.Body).Decode(&tvShows); err != nil {
 		return nil, err
-	}
-
-	// Take only the first 10 results
-	if len(tvShows) > 10 {
-		tvShows = tvShows[:10]
 	}
 
 	return tvShows, nil

@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"novastream/config"
 	"novastream/models"
 )
 
@@ -192,10 +191,8 @@ func cacheKey(parts ...string) string {
 }
 
 // Trending returns a list of trending titles for the given media type (series|movie).
-// The trendingMovieSource parameter controls which source is used for movies:
-// - "all": Use TMDB trending (includes unreleased movies)
-// - "released": Use MDBList top movies of the week (released only)
-func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieSource config.TrendingMovieSource) ([]models.TrendingItem, error) {
+// Uses MDBList curated lists for both movies and TV shows.
+func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
 	normalized := strings.ToLower(strings.TrimSpace(mediaType))
 	switch normalized {
 	case "", "tv", "series", "show", "shows":
@@ -212,79 +209,21 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		return items, nil
 	}
 
-	fallbackLabel := "series"
-	fallbackFetcher := s.getTrendingSeries
+	label := "series"
+	fetcher := s.getTrendingSeries
 	if normalized == "movie" {
-		fallbackLabel = "movie"
-		fallbackFetcher = s.getRecentMovies
+		label = "movie"
+		fetcher = s.getRecentMovies
 	}
 
-	// For movies, check if we should use released-only source (MDBList)
-	if normalized == "movie" && trendingMovieSource == config.TrendingMovieSourceReleased {
-		// Use MDBList directly for released movies only
-		// v2: includes release data enrichment
-		fallbackKey := cacheKey("mdblist", "trending", "movie", "v2")
-		var cached []models.TrendingItem
-		if ok, _ := s.cache.get(fallbackKey, &cached); ok && len(cached) > 0 {
-			return cached, nil
-		}
-
-		items, err := s.getRecentMovies()
-		if err != nil {
-			return nil, err
-		}
-		// Enrich movies with release data (theatrical/home release)
-		s.enrichTrendingMovieReleases(ctx, items)
-		if len(items) > 0 {
-			_ = s.cache.set(fallbackKey, items)
-		}
-		return items, nil
-	}
-
-	// Use TMDB for "all" trending (includes unreleased) or for TV shows
-	if s.tmdb != nil && s.tmdb.isConfigured() {
-		// v3: includes release data enrichment for movies and content ratings for TV
-		key := cacheKey("tmdb", "trending", normalized, "v3")
-		var cached []models.TrendingItem
-		if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
-			return cached, nil
-		}
-
-		items, err := s.tmdb.trending(ctx, normalized)
-		if err == nil && len(items) > 0 {
-			// Enrich with IMDB IDs using cached lookups
-			s.enrichTrendingIMDBIDs(ctx, items, normalized)
-			// Enrich movies with release data (theatrical/home release)
-			if normalized == "movie" {
-				s.enrichTrendingMovieReleases(ctx, items)
-			} else {
-				// Enrich TV shows with content ratings
-				s.enrichTrendingTVContentRatings(ctx, items)
-			}
-			_ = s.cache.set(key, items)
-			return items, nil
-		}
-		if err != nil {
-			fmt.Printf("[metadata] tmdb trending failed type=%s err=%v; falling back to %s feed\n", normalized, err, fallbackLabel)
-		} else {
-			fmt.Printf("[metadata] tmdb trending returned no results type=%s; falling back to %s feed\n", normalized, fallbackLabel)
-		}
-	} else {
-		fmt.Printf("[metadata] tmdb trending unavailable type=%s; using %s feed\n", normalized, fallbackLabel)
-	}
-
-	if fallbackFetcher == nil {
-		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
-	}
-
-	// v3: includes release data enrichment for movies and content ratings for TV
-	fallbackKey := cacheKey("mdblist", "trending", fallbackLabel, "v3")
+	// v4: MDBList-only (removed TMDB trending path)
+	key := cacheKey("mdblist", "trending", label, "v4")
 	var cached []models.TrendingItem
-	if ok, _ := s.cache.get(fallbackKey, &cached); ok && len(cached) > 0 {
+	if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
 		return cached, nil
 	}
 
-	items, err := fallbackFetcher()
+	items, err := fetcher()
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +235,7 @@ func (s *Service) Trending(ctx context.Context, mediaType string, trendingMovieS
 		s.enrichTrendingTVContentRatings(ctx, items)
 	}
 	if len(items) > 0 {
-		_ = s.cache.set(fallbackKey, items)
+		_ = s.cache.set(key, items)
 	}
 	return items, nil
 }
@@ -350,31 +289,6 @@ func (s *Service) enrichDemoArtwork(ctx context.Context, items []models.Trending
 		// Cache the artwork
 		_ = s.cache.set(cacheID, *title)
 	}
-}
-
-// enrichTrendingIMDBIDs adds IMDB IDs to trending items using cached lookups.
-// This runs concurrently for performance but uses the ID cache to minimize API calls.
-// Uses a semaphore to limit concurrent TMDB API calls and prevent thundering herd.
-func (s *Service) enrichTrendingIMDBIDs(ctx context.Context, items []models.TrendingItem, mediaType string) {
-	const maxConcurrent = 5
-	sem := make(chan struct{}, maxConcurrent)
-	var wg sync.WaitGroup
-	for idx := range items {
-		if items[idx].Title.IMDBID != "" || items[idx].Title.TMDBID <= 0 {
-			continue
-		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			imdbID := s.getIMDBIDForTMDB(ctx, mediaType, items[i].Title.TMDBID)
-			if imdbID != "" {
-				items[i].Title.IMDBID = imdbID
-			}
-		}(idx)
-	}
-	wg.Wait()
 }
 
 // enrichTrendingMovieReleases adds release data (theatrical/home release) to trending movie items.
@@ -978,79 +892,90 @@ func (s *Service) getTrendingSeries() ([]models.TrendingItem, error) {
 			log.Printf("[metadata] series imdb id from mdblist title=%q imdbId=%s", tvShow.Title, tvShow.IMDBID)
 		}
 
-		// Try to enrich with TVDB data using enhanced search
+		// Enrich with TVDB data — use cachedSeriesExtended (same path as custom lists)
 		var found bool
-		var searchResult *tvdbSearchResult
 
-		// First, try to use TVDB ID from MDBList if available
 		if tvShow.TVDBID != nil && *tvShow.TVDBID > 0 {
-			// Use direct TVDB ID lookup
-			if tvdbDetails, err := s.getTVDBSeriesDetails(*tvShow.TVDBID); err == nil {
-				title.TVDBID = *tvShow.TVDBID
-				title.ID = fmt.Sprintf("tvdb:series:%d", *tvShow.TVDBID)
-				title.Overview = tvdbDetails.Overview
-				if tvdbDetails.Score > 0 {
-					title.Popularity = tvdbDetails.Score
-				}
+			tvdbID := *tvShow.TVDBID
+			// Parallel: extended (includes artwork) + translations
+			var ext tvdbSeriesExtendedData
+			var extErr error
+			var trans *tvdbSeriesTranslation
+
+			var innerWg sync.WaitGroup
+			innerWg.Add(2)
+			go func() {
+				defer innerWg.Done()
+				ext, extErr = s.cachedSeriesExtended(tvdbID, []string{"artworks"})
+			}()
+			go func() {
+				defer innerWg.Done()
+				trans, _ = s.cachedSeriesTranslations(tvdbID, s.client.language)
+			}()
+			innerWg.Wait()
+
+			if extErr == nil {
+				title.TVDBID = tvdbID
+				title.ID = fmt.Sprintf("tvdb:series:%d", tvdbID)
+				title.Overview = ext.Overview
+				title.Status = ext.Status.Name
 				found = true
+				applyTVDBArtworks(&title, ext.Artworks)
+
+				if trans != nil {
+					if trans.Name != "" {
+						title.Name = trans.Name
+					}
+					if trans.Overview != "" {
+						title.Overview = trans.Overview
+					}
+				}
 			} else {
-				log.Printf("[metadata] tvdb series lookup failed id=%d title=%q err=%v", *tvShow.TVDBID, tvShow.Title, err)
+				log.Printf("[metadata] tvdb series extended failed id=%d title=%q err=%v", tvdbID, tvShow.Title, extErr)
 			}
 		}
 
-		// If direct lookup failed or no TVDB ID available, try search
+		// Fallback: search TVDB by title/year
 		if !found {
-			// Try to search using MDBList ID as remote_id for more accurate results
-			remoteID := fmt.Sprintf("%d", tvShow.ID)
+			remoteID := tvShow.IMDBID
 			if searchResults, err := s.searchTVDBSeries(tvShow.Title, tvShow.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
-				searchResult = &searchResults[0]
+				result := searchResults[0]
+				title.TVDBID, _ = strconv.ParseInt(result.TVDBID, 10, 64)
+				title.ID = fmt.Sprintf("tvdb:series:%s", result.TVDBID)
+				title.Overview = result.Overview
 				found = true
-				log.Printf("[metadata] tvdb series search via remote id matched title=%q remoteId=%s tvdbId=%s", tvShow.Title, remoteID, searchResult.TVDBID)
-			} else {
-				// Fallback to title/year search if remote_id search fails
-				if searchResults, err := s.searchTVDBSeries(tvShow.Title, tvShow.ReleaseYear, ""); err == nil && len(searchResults) > 0 {
-					searchResult = &searchResults[0]
-					found = true
-					log.Printf("[metadata] tvdb series search matched title=%q year=%d tvdbId=%s", tvShow.Title, tvShow.ReleaseYear, searchResult.TVDBID)
-				} else if err != nil {
-					log.Printf("[metadata] tvdb series search failed title=%q year=%d err=%v", tvShow.Title, tvShow.ReleaseYear, err)
+
+				if title.IMDBID == "" {
+					for _, remote := range result.RemoteIDs {
+						id := strings.TrimSpace(remote.ID)
+						if id == "" {
+							continue
+						}
+						if strings.Contains(strings.ToLower(remote.SourceName), "imdb") {
+							title.IMDBID = id
+							break
+						}
+					}
 				}
+				if img := newTVDBImage(result.ImageURL, "poster", 0, 0); img != nil {
+					title.Poster = img
+				}
+				thumbURL := normalizeTVDBImageURL(result.Thumbnail)
+				if thumbURL != "" {
+					title.Backdrop = &models.Image{URL: thumbURL, Type: "backdrop"}
+				}
+
+				// Fetch extended artwork if we have a TVDB ID and still missing poster/backdrop
+				if title.TVDBID > 0 && (title.Poster == nil || title.Backdrop == nil) {
+					if ext, err := s.cachedSeriesExtended(title.TVDBID, []string{"artworks"}); err == nil {
+						applyTVDBArtworks(&title, ext.Artworks)
+					}
+				}
+			} else if err != nil {
+				log.Printf("[metadata] tvdb series search failed title=%q year=%d err=%v", tvShow.Title, tvShow.ReleaseYear, err)
 			}
 		}
 
-		// Process search result data if we found something via search
-		if found && searchResult != nil {
-			title.TVDBID, _ = strconv.ParseInt(searchResult.TVDBID, 10, 64)
-			title.ID = fmt.Sprintf("tvdb:series:%s", searchResult.TVDBID)
-			title.Overview = searchResult.Overview
-
-			// Extract IMDB ID from remote IDs if not already set
-			if title.IMDBID == "" {
-				for _, remote := range searchResult.RemoteIDs {
-					id := strings.TrimSpace(remote.ID)
-					if id == "" {
-						continue
-					}
-					lower := strings.ToLower(remote.SourceName)
-					if strings.Contains(lower, "imdb") {
-						title.IMDBID = id
-						log.Printf("[metadata] series imdb id from tvdb search title=%q imdbId=%s", title.Name, id)
-						break
-					}
-				}
-			}
-			if img := newTVDBImage(searchResult.ImageURL, "poster", 0, 0); img != nil {
-				title.Poster = img
-			}
-			thumbURL := normalizeTVDBImageURL(searchResult.Thumbnail)
-			if thumbURL != "" {
-				title.Backdrop = &models.Image{URL: thumbURL, Type: "backdrop"}
-			} else {
-				log.Printf("[metadata] tvdb series thumbnail missing title=%q tvdbId=%d", title.Name, title.TVDBID)
-			}
-		}
-
-		// If no TVDB enrichment worked, at least provide a basic overview
 		if !found && title.Overview == "" {
 			log.Printf("[metadata] no tvdb match for series title=%q year=%d", tvShow.Title, tvShow.ReleaseYear)
 			title.Overview = fmt.Sprintf("TV series from %d", tvShow.ReleaseYear)
@@ -1060,23 +985,6 @@ func (s *Service) getTrendingSeries() ([]models.TrendingItem, error) {
 			Rank:  tvShow.Rank,
 			Title: title,
 		})
-	}
-
-	// Enrich with artwork for series that have TVDB IDs
-	for idx := range items {
-		if items[idx].Title.TVDBID > 0 {
-			if arts, err := s.client.seriesArtworks(items[idx].Title.TVDBID); err == nil {
-				applyTVDBArtworks(&items[idx].Title, arts)
-				if items[idx].Title.Backdrop == nil {
-					log.Printf("[metadata] no series backdrop from artworks title=%q tvdbId=%d", items[idx].Title.Name, items[idx].Title.TVDBID)
-				}
-				if items[idx].Title.Poster == nil {
-					log.Printf("[metadata] no series poster from artworks title=%q tvdbId=%d", items[idx].Title.Name, items[idx].Title.TVDBID)
-				}
-			} else {
-				log.Printf("[metadata] series artworks fetch failed title=%q tvdbId=%d err=%v", items[idx].Title.Name, items[idx].Title.TVDBID, err)
-			}
-		}
 	}
 
 	return items, nil

@@ -135,12 +135,10 @@ export interface BackendShelfConfig {
   hideUnreleased?: boolean; // Filter out unreleased/in-theaters content
 }
 
-export type TrendingMovieSource = 'all' | 'released';
 export type ExploreCardPosition = 'front' | 'end';
 
 export interface BackendHomeShelvesSettings {
   shelves: BackendShelfConfig[];
-  trendingMovieSource?: TrendingMovieSource;
   exploreCardPosition?: ExploreCardPosition;
 }
 

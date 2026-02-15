@@ -118,23 +118,6 @@ func (c *tmdbClient) isConfigured() bool {
 	return c != nil && c.apiKey != ""
 }
 
-type tmdbTrendingResponse struct {
-	Results []struct {
-		ID               int64   `json:"id"`
-		Name             string  `json:"name"`
-		Title            string  `json:"title"`
-		Overview         string  `json:"overview"`
-		OriginalLanguage string  `json:"original_language"`
-		PosterPath       string  `json:"poster_path"`
-		BackdropPath     string  `json:"backdrop_path"`
-		Popularity       float64 `json:"popularity"`
-		VoteAverage      float64 `json:"vote_average"`
-		FirstAirDate     string  `json:"first_air_date"`
-		ReleaseDate      string  `json:"release_date"`
-		MediaType        string  `json:"media_type"`
-	} `json:"results"`
-}
-
 type tmdbExternalIDsResponse struct {
 	IMDBID      string `json:"imdb_id"`
 	FacebookID  string `json:"facebook_id"`
@@ -199,74 +182,6 @@ type tmdbReleaseEntry struct {
 	ReleaseDate   string   `json:"release_date"`
 	Type          int      `json:"type"`
 	Descriptors   []string `json:"descriptors"`
-}
-
-func (c *tmdbClient) trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
-	if !c.isConfigured() {
-		return nil, errors.New("tmdb api key not configured")
-	}
-
-	endpoint, err := url.JoinPath(tmdbBaseURL, "trending", mediaType, "week")
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	q := req.URL.Query()
-	q.Set("api_key", c.apiKey)
-	if lang := strings.TrimSpace(c.language); lang != "" {
-		q.Set("language", normalizeLanguage(lang))
-	} else {
-		q.Set("language", "en-US")
-	}
-	req.URL.RawQuery = q.Encode()
-
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("tmdb trending %s failed: %s", mediaType, resp.Status)
-	}
-
-	var payload tmdbTrendingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
-	}
-
-	items := make([]models.TrendingItem, len(payload.Results))
-
-	// Build trending items (IMDB IDs are enriched separately by the service layer with caching)
-	for idx, r := range payload.Results {
-		title := models.Title{
-			ID:         fmt.Sprintf("tmdb:%s:%d", mediaType, r.ID),
-			Name:       pickTMDBName(mediaType, r.Name, r.Title),
-			Overview:   r.Overview,
-			Language:   r.OriginalLanguage,
-			MediaType:  mapMediaType(mediaType),
-			TMDBID:     r.ID,
-			Popularity: scoreFallback(r.Popularity, r.VoteAverage),
-		}
-		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
-			title.Year = year
-		}
-		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
-			title.Poster = poster
-		}
-		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
-			title.Backdrop = backdrop
-		}
-
-		items[idx] = models.TrendingItem{Rank: idx + 1, Title: title}
-	}
-
-	return items, nil
 }
 
 func pickTMDBName(mediaType, seriesName, movieTitle string) string {

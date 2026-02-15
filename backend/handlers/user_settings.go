@@ -117,8 +117,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			SubtitleSize:              globalSettings.Playback.SubtitleSize,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),
-			TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
+			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:                   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -128,6 +127,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 			FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
+			NonPreferredTerms:                globalSettings.Filtering.NonPreferredTerms,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 		},
 		LiveTV: models.LiveTVSettings{

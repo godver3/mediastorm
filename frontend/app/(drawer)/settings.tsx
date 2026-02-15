@@ -26,7 +26,6 @@ import {
   type StreamingServiceMode,
   type StreamingServicePriority,
   type MultiProviderMode,
-  type TrendingMovieSource,
 } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useAuth } from '@/components/AuthContext';
@@ -241,7 +240,6 @@ interface EditableBackendSettings {
   };
   homeShelves: {
     shelves: BackendShelfConfig[];
-    trendingMovieSource: TrendingMovieSource;
   };
   filtering: {
     maxSizeMovieGb: string;
@@ -551,7 +549,6 @@ const toEditableSettings = (settings: BackendSettings): EditableBackendSettings 
     },
     homeShelves: {
       shelves: settings.homeShelves?.shelves ?? [],
-      trendingMovieSource: settings.homeShelves?.trendingMovieSource ?? 'released',
     },
     filtering: {
       maxSizeMovieGb: settings.filtering?.maxSizeMovieGb != null ? String(settings.filtering.maxSizeMovieGb) : '0',
@@ -700,8 +697,6 @@ const toBackendPayload = (editable: EditableBackendSettings, baseline: BackendSe
     },
     homeShelves: {
       shelves: editable.homeShelves?.shelves ?? baseline.homeShelves?.shelves ?? [],
-      trendingMovieSource:
-        editable.homeShelves?.trendingMovieSource ?? baseline.homeShelves?.trendingMovieSource ?? 'released',
     },
     filtering: {
       maxSizeMovieGb: toNumber(

@@ -280,14 +280,6 @@ type ShelfConfig struct {
 	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content
 }
 
-// TrendingMovieSource determines which source to use for trending movies.
-type TrendingMovieSource string
-
-const (
-	TrendingMovieSourceAll      TrendingMovieSource = "all"      // TMDB trending (includes unreleased)
-	TrendingMovieSourceReleased TrendingMovieSource = "released" // MDBList top movies of the week (released only)
-)
-
 // ExploreCardPosition determines where the explore card is placed on shelves.
 type ExploreCardPosition string
 
@@ -299,7 +291,6 @@ const (
 // HomeShelvesSettings controls which shelves appear on the home screen and their order.
 type HomeShelvesSettings struct {
 	Shelves             []ShelfConfig       `json:"shelves"`
-	TrendingMovieSource TrendingMovieSource `json:"trendingMovieSource,omitempty"` // "all" (TMDB) or "released" (MDBList)
 	ExploreCardPosition ExploreCardPosition `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
 }
 
@@ -625,7 +616,6 @@ func DefaultSettings() Settings {
 				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
 				{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 3},
 			},
-			TrendingMovieSource: TrendingMovieSourceReleased, // Default to released-only (MDBList)
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   0,                        // 0 means no limit
@@ -1003,11 +993,6 @@ func (m *Manager) Load() (Settings, error) {
 		if id == "trending-movies" || id == "trending-tv" {
 			s.HomeShelves.Shelves[i].HideUnreleased = false
 		}
-	}
-
-	// Backfill TrendingMovieSource if empty (default to released-only)
-	if s.HomeShelves.TrendingMovieSource == "" {
-		s.HomeShelves.TrendingMovieSource = TrendingMovieSourceReleased
 	}
 
 	// Backfill ExploreCardPosition if empty (default to front)

@@ -139,14 +139,11 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	// With ~3000 items (~1 MB), including it blocks the React Native JS bridge
 	// on low-power devices (Fire Stick) for 7+ seconds during deserialization.
 
-	// Determine trending source from user or global settings
-	trendingSource := h.getTrendingSource(userID)
-
 	// 6. Trending movies (slimmed — heavy Title fields stripped for startup)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		items, err := h.metadata.Trending(r.Context(), "movie", trendingSource)
+		items, err := h.metadata.Trending(r.Context(), "movie")
 		if err != nil {
 			log.Printf("[startup] trending movies error: %v", err)
 			resp.TrendingMovies = &DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0}
@@ -161,7 +158,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		items, err := h.metadata.Trending(r.Context(), "series", trendingSource)
+		items, err := h.metadata.Trending(r.Context(), "series")
 		if err != nil {
 			log.Printf("[startup] trending series error: %v", err)
 			resp.TrendingSeries = &DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0}
@@ -198,25 +195,6 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 // Options handles CORS preflight for the startup endpoint.
 func (h *StartupHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-}
-
-// getTrendingSource resolves the trending movie source from user settings or global config.
-func (h *StartupHandler) getTrendingSource(userID string) config.TrendingMovieSource {
-	if h.userSettings != nil {
-		if userSettings, err := h.userSettings.Get(userID); err == nil && userSettings != nil {
-			if userSettings.HomeShelves.TrendingMovieSource != "" {
-				return config.TrendingMovieSource(userSettings.HomeShelves.TrendingMovieSource)
-			}
-		}
-	}
-
-	if settings, err := h.cfgManager.Load(); err == nil {
-		if settings.HomeShelves.TrendingMovieSource != "" {
-			return settings.HomeShelves.TrendingMovieSource
-		}
-	}
-
-	return config.TrendingMovieSourceReleased
 }
 
 // applyFilters applies hideUnreleased and hideWatched filters to trending items.
@@ -348,8 +326,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			SubtitleSize:              globalSettings.Playback.SubtitleSize,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             convertShelves(globalSettings.HomeShelves.Shelves),
-			TrendingMovieSource: models.TrendingMovieSource(globalSettings.HomeShelves.TrendingMovieSource),
+			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:                   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -359,6 +336,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 			FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
+			NonPreferredTerms:                globalSettings.Filtering.NonPreferredTerms,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 		},
 		LiveTV: models.LiveTVSettings{

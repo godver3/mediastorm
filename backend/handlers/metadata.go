@@ -17,7 +17,7 @@ import (
 )
 
 type metadataService interface {
-	Trending(context.Context, string, config.TrendingMovieSource) ([]models.TrendingItem, error)
+	Trending(context.Context, string) ([]models.TrendingItem, error)
 	Search(context.Context, string, string) ([]models.SearchResult, error)
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
@@ -109,31 +109,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get trending movie source - prefer user settings, fall back to global settings
-	var trendingMovieSource config.TrendingMovieSource
-
-	// Try user-specific settings first
-	if userID != "" && h.UserSettings != nil {
-		if userSettings, err := h.UserSettings.Get(userID); err == nil && userSettings != nil {
-			if userSettings.HomeShelves.TrendingMovieSource != "" {
-				trendingMovieSource = config.TrendingMovieSource(userSettings.HomeShelves.TrendingMovieSource)
-			}
-		}
-	}
-
-	// Fall back to global settings
-	if trendingMovieSource == "" {
-		if settings, err := h.CfgManager.Load(); err == nil {
-			trendingMovieSource = settings.HomeShelves.TrendingMovieSource
-		}
-	}
-
-	// Default if still not set
-	if trendingMovieSource == "" {
-		trendingMovieSource = config.TrendingMovieSourceReleased
-	}
-
-	items, err := h.Service.Trending(r.Context(), mediaType, trendingMovieSource)
+	items, err := h.Service.Trending(r.Context(), mediaType)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
