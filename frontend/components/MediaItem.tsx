@@ -63,8 +63,16 @@ export const getMovieReleaseIcon = (title: Title): ReleaseIconInfo => {
   if (title.homeRelease?.released) {
     return { name: 'home', color: '#4ade80', label: 'HOME' }; // Green - available at home
   }
-  // In theaters only
+  // In theaters — but if theatrical release is older than 12 months, assume home release exists
   if (title.theatricalRelease?.released) {
+    if (title.theatricalRelease.date) {
+      const theatricalDate = new Date(title.theatricalRelease.date);
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
+      if (theatricalDate <= twelveMonthsAgo) {
+        return { name: 'home', color: '#4ade80', label: 'HOME' }; // Green - assumed home release
+      }
+    }
     return { name: 'filmstrip', color: '#facc15', label: 'THEATER' }; // Yellow - in theaters
   }
   // Has release data but not yet released
