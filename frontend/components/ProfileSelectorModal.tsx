@@ -7,9 +7,10 @@ import { usePathname } from 'expo-router';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
+import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { UserProfile } from '@/services/api';
-import { wasNativePlayerRecentlyActive } from '@/app/details/playback';
+import { wasNativePlayerRecentlyActive, clearNativePlayerLaunching } from '@/app/details/playback';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { responsiveSize } from '@/theme/tokens/tvScale';
@@ -188,11 +189,11 @@ export const ProfileSelectorModal: React.FC = () => {
     return () => RemoteControlManager.setTvMenuKeyEnabled(true);
   }, [visible]);
 
-  // Block back from reaching GoBackConfiguration (which would open the drawer).
+  // Block back/menu from dismissing the modal or reaching GoBackConfiguration.
   useEffect(() => {
     if (!visible) return;
     const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
-      return true; // Consumed — prevent GoBackConfiguration from opening drawer
+      return true; // Consumed — profile must be selected, can't dismiss
     });
     return () => removeInterceptor();
   }, [visible]);
@@ -234,7 +235,10 @@ export const ProfileSelectorModal: React.FC = () => {
         // Async check: was a native Android TV player recently launched?
         // AsyncStorage survives process kills (Fire Stick etc.)
         wasNativePlayerRecentlyActive().then((nativeRecent) => {
-          if (!nativeRecent) {
+          if (nativeRecent) {
+            // Flag was valid — suppress modal and clear for next resume
+            clearNativePlayerLaunching().catch(() => {});
+          } else {
             setVisible(true);
           }
         }).catch(() => {
@@ -280,8 +284,6 @@ export const ProfileSelectorModal: React.FC = () => {
     return null;
   }
 
-  // Use an absolutely-positioned View (not Modal) so it doesn't block
-  // the PinEntryModal's Modal from rendering on top.
   return (
     <View style={styles.fullscreen} focusable={false}>
       <BlurView intensity={40} tint="dark" style={styles.blurOverlay}>
@@ -289,31 +291,33 @@ export const ProfileSelectorModal: React.FC = () => {
         {/* Hide the profile grid while PIN modal is showing on top,
             but keep the blur overlay so there's no visual gap. */}
         {showGrid && (
-          <View style={styles.container} focusable={false}>
-            <Text style={styles.title}>Who's watching?</Text>
-            <View style={styles.grid} focusable={false}>
-              {users.map((user, index) => {
-                const selfHandle = cardHandles[index] ?? undefined;
-                const leftHandle = index > 0 ? (cardHandles[index - 1] ?? undefined) : selfHandle;
-                const rightHandle = index < users.length - 1 ? (cardHandles[index + 1] ?? undefined) : selfHandle;
-                return (
-                  <ProfileCard
-                    key={user.id}
-                    ref={(ref) => { cardRefs.current[index] = ref; }}
-                    user={user}
-                    isActive={user.id === activeUserId}
-                    styles={styles}
-                    onSelect={handleSelectProfile}
-                    hasTVPreferredFocus={index === 0}
-                    nextFocusUp={selfHandle}
-                    nextFocusDown={selfHandle}
-                    nextFocusLeft={leftHandle}
-                    nextFocusRight={rightHandle}
-                  />
-                );
-              })}
+          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus>
+            <View style={styles.container} focusable={false}>
+              <Text style={styles.title}>Who's watching?</Text>
+              <View style={styles.grid} focusable={false}>
+                {users.map((user, index) => {
+                  const selfHandle = cardHandles[index] ?? undefined;
+                  const leftHandle = index > 0 ? (cardHandles[index - 1] ?? undefined) : selfHandle;
+                  const rightHandle = index < users.length - 1 ? (cardHandles[index + 1] ?? undefined) : selfHandle;
+                  return (
+                    <ProfileCard
+                      key={user.id}
+                      ref={(ref) => { cardRefs.current[index] = ref; }}
+                      user={user}
+                      isActive={user.id === activeUserId}
+                      styles={styles}
+                      onSelect={handleSelectProfile}
+                      hasTVPreferredFocus={index === 0}
+                      nextFocusUp={selfHandle}
+                      nextFocusDown={selfHandle}
+                      nextFocusLeft={leftHandle}
+                      nextFocusRight={rightHandle}
+                    />
+                  );
+                })}
+              </View>
             </View>
-          </View>
+          </TVFocusGuard>
         )}
       </BlurView>
     </View>
