@@ -12,6 +12,7 @@ type ClientFilterSettings struct {
 	PrioritizeHdr                    *bool        `json:"prioritizeHdr,omitempty"`
 	FilterOutTerms                   *[]string    `json:"filterOutTerms,omitempty"`
 	PreferredTerms                   *[]string    `json:"preferredTerms,omitempty"`
+	NonPreferredTerms                *[]string    `json:"nonPreferredTerms,omitempty"`
 	BypassFilteringForAIOStreamsOnly *bool        `json:"bypassFilteringForAioStreamsOnly,omitempty"`
 
 	// Network settings for URL switching based on WiFi
@@ -32,6 +33,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.PrioritizeHdr == nil &&
 		c.FilterOutTerms == nil &&
 		c.PreferredTerms == nil &&
+		c.NonPreferredTerms == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&
