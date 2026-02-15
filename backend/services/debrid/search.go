@@ -209,8 +209,9 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 		MaxResolution:    globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		PrioritizeHdr:    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
-		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
-		PreferredTerms:   globalSettings.Filtering.PreferredTerms,
+		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
 	}
 
 	// Layer 2: Profile settings override global (field-by-field, only if set)
@@ -241,6 +242,9 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			}
 			if profileFiltering.PreferredTerms != nil {
 				filterSettings.PreferredTerms = profileFiltering.PreferredTerms
+			}
+			if profileFiltering.NonPreferredTerms != nil {
+				filterSettings.NonPreferredTerms = profileFiltering.NonPreferredTerms
 			}
 			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
 				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
@@ -275,6 +279,9 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			}
 			if clientSettings.PreferredTerms != nil {
 				filterSettings.PreferredTerms = *clientSettings.PreferredTerms
+			}
+			if clientSettings.NonPreferredTerms != nil {
+				filterSettings.NonPreferredTerms = *clientSettings.NonPreferredTerms
 			}
 		}
 	}
