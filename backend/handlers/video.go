@@ -2925,7 +2925,6 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 			}
 
 		case "subtitle":
-			// Only include text-based subtitle codecs that can be converted to WebVTT
 			codecName := strings.ToLower(strings.TrimSpace(s.CodecName))
 			textSubtitleCodecs := map[string]bool{
 				"subrip": true, "srt": true, "ass": true, "ssa": true,
@@ -2934,8 +2933,14 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 				"mpl2": true, "pjs": true, "realtext": true, "stl": true,
 				"subviewer": true, "subviewer1": true, "vplayer": true,
 			}
-			if !textSubtitleCodecs[codecName] {
-				// Skip bitmap/unsupported subtitle formats
+			bitmapSubtitleCodecs := map[string]bool{
+				"hdmv_pgs_subtitle": true, "pgssub": true, "pgs": true,
+				"dvd_subtitle": true, "dvdsub": true,
+				"dvb_subtitle": true, "dvbsub": true,
+				"xsub": true,
+			}
+			if !textSubtitleCodecs[codecName] && !bitmapSubtitleCodecs[codecName] {
+				// Skip completely unknown subtitle formats
 				continue
 			}
 			isForced := false
