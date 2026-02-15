@@ -74,6 +74,8 @@ export interface NativePlayerProps {
   subtitleStyle?: SubtitleStyle;
   // When true, subtitles move up to avoid being hidden by controls
   controlsVisible?: boolean;
+  // External subtitle URL (VTT) for native player to load
+  externalSubtitleUrl?: string;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
   onProgress?: (data: ProgressEvent) => void;
@@ -125,6 +127,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     subtitleTrack,
     subtitleStyle,
     controlsVisible,
+    externalSubtitleUrl,
     style,
     onLoad,
     onProgress,
@@ -228,6 +231,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       subtitleTrack={subtitleTrack}
       subtitleStyle={subtitleStyle}
       controlsVisible={controlsVisible}
+      externalSubtitleUrl={externalSubtitleUrl}
       style={[styles.player, style]}
       onLoad={handleLoad}
       onProgress={handleProgress}

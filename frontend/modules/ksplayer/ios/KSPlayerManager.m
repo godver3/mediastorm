@@ -20,6 +20,7 @@ RCT_EXPORT_VIEW_PROPERTY(audioTrack, NSInteger)
 RCT_EXPORT_VIEW_PROPERTY(subtitleTrack, NSInteger)
 RCT_EXPORT_VIEW_PROPERTY(subtitleStyle, NSDictionary)
 RCT_EXPORT_VIEW_PROPERTY(controlsVisible, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(externalSubtitleUrl, NSString)
 
 // Event callbacks
 RCT_EXPORT_VIEW_PROPERTY(onLoad, RCTDirectEventBlock)

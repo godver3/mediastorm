@@ -159,6 +159,17 @@ public class KSPlayerView: UIView {
         }
     }
 
+    @objc var externalSubtitleUrl: NSString? {
+        didSet {
+            print("[KSPlayer] externalSubtitleUrl didSet: old=\(String(describing: oldValue)), new=\(String(describing: externalSubtitleUrl))")
+            handleExternalSubtitleUrlChanged(externalSubtitleUrl as String?)
+        }
+    }
+
+    // External subtitle state
+    private var currentExternalSubtitleInfo: URLSubtitleInfo?
+    private var pendingExternalSubtitleUrl: String?
+
     // Base bottom margin from subtitleStyle (default 50)
     private var baseBottomMargin: CGFloat = 50
 
@@ -315,6 +326,8 @@ public class KSPlayerView: UIView {
         subtitleRetryTimer?.invalidate()
         subtitleRetryTimer = nil
         subtitleRetryCount = 0
+        currentExternalSubtitleInfo = nil
+        pendingExternalSubtitleUrl = nil
 
         setupAndPlaySource(url: url, source: source)
     }
@@ -500,6 +513,10 @@ public class KSPlayerView: UIView {
             // This allows the retry mechanism to work if subtitleInfos isn't ready
             setSubtitleTrack(subtitleTrack)
         }
+        if let pendingUrl = pendingExternalSubtitleUrl {
+            pendingExternalSubtitleUrl = nil
+            handleExternalSubtitleUrlChanged(pendingUrl)
+        }
     }
 
     func applySubtitleStyle(_ style: NSDictionary?) {
@@ -587,6 +604,51 @@ public class KSPlayerView: UIView {
             }
         }
         print("[KSPlayer] Subtitle position updated: controlsVisible=\(controlsVisible), offset=\(controlsOffset)")
+    }
+
+    private func handleExternalSubtitleUrlChanged(_ urlString: String?) {
+        guard let pv = playerView else {
+            // Player not ready yet — store for later
+            print("[KSPlayer] externalSubtitleUrl: playerView not ready, storing pending URL")
+            pendingExternalSubtitleUrl = urlString
+            return
+        }
+
+        pendingExternalSubtitleUrl = nil
+
+        // Clear case: URL is nil or empty
+        guard let urlString = urlString, !urlString.isEmpty else {
+            if let existing = currentExternalSubtitleInfo {
+                print("[KSPlayer] externalSubtitleUrl: clearing external subtitle")
+                // Deselect if it's currently selected
+                if pv.srtControl.selectedSubtitleInfo?.subtitleID == existing.subtitleID {
+                    pv.srtControl.selectedSubtitleInfo = nil
+                }
+                currentExternalSubtitleInfo = nil
+            }
+            return
+        }
+
+        // Same URL — ensure it's selected
+        if let existing = currentExternalSubtitleInfo, existing.downloadURL.absoluteString == urlString {
+            if pv.srtControl.selectedSubtitleInfo?.subtitleID != existing.subtitleID {
+                print("[KSPlayer] externalSubtitleUrl: re-selecting existing external subtitle")
+                pv.srtControl.selectedSubtitleInfo = existing
+            }
+            return
+        }
+
+        // New URL — create URLSubtitleInfo, add to srtControl, select it
+        guard let url = URL(string: urlString) else {
+            print("[KSPlayer] externalSubtitleUrl: invalid URL: \(urlString)")
+            return
+        }
+
+        print("[KSPlayer] externalSubtitleUrl: loading external subtitle from \(urlString)")
+        let subtitleInfo = URLSubtitleInfo(subtitleID: "external-subtitle", name: "External Subtitle", url: url)
+        pv.srtControl.addSubtitle(info: subtitleInfo)
+        pv.srtControl.selectedSubtitleInfo = subtitleInfo
+        currentExternalSubtitleInfo = subtitleInfo
     }
 
     /// Recalculate and apply the bitmap subtitle scale on VideoPlayerView.

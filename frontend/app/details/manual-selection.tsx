@@ -381,8 +381,8 @@ export const ManualSelection = ({
       return { index: null, willSearchExternal: subModePref === 'on' && !!subLangPref };
     }
 
-    // Filter out bitmap subtitles (PGS, VOBSUB) - they can't be used
-    const usableTracks = tracks.filter(t => !t.isBitmap);
+    // Include all tracks (including PGS/bitmap) — native players (KSPlayer/MPV) can render them
+    const usableTracks = tracks;
 
     // If no language preference, can't select a track
     if (!subLangPref) {
@@ -513,17 +513,13 @@ export const ManualSelection = ({
               {/* Show subtitle tracks */}
               {subtitleTracks?.map((track) => {
                 const isSelected = track.index === selectedSubIdx;
-                const isUnusable = track.isBitmap;
                 return (
                   <Pressable
                     key={track.index}
                     onPress={(e) => {
                       e.stopPropagation();
-                      if (!isUnusable) {
-                        setSubtitleTrackOverride(resultKey, track.index);
-                      }
+                      setSubtitleTrackOverride(resultKey, track.index);
                     }}
-                    disabled={isUnusable}
                     style={styles.trackItemRow}
                   >
                     {isSelected && <Text style={styles.selectedIndicator}>▶</Text>}
@@ -531,15 +527,14 @@ export const ManualSelection = ({
                       styles.trackItem,
                       isFocused && styles.trackItemFocused,
                       isSelected && styles.trackItemSelected,
-                      !isSelected && !isUnusable && styles.trackItemDimmed,
-                      isUnusable && styles.trackItemUnusable,
+                      !isSelected && styles.trackItemDimmed,
                     ]}>
                       {formatLanguage(track.language)}
                       {track.title ? ` - ${track.title}` : ''}
                       {track.forced && ' (Forced)'}
                     </Text>
                     {track.isBitmap && (
-                      <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>
+                      <Text style={styles.bitmapBadge}>{track.bitmapType || 'PGS'}</Text>
                     )}
                   </Pressable>
                 );
@@ -711,35 +706,30 @@ export const ManualSelection = ({
               </SpatialNavigationFocusableView>
               {subtitleTracks.map((track) => {
                 const isSelected = track.index === selectedSubIdx;
-                const isUnusable = track.isBitmap;
                 return (
                   <SpatialNavigationFocusableView
                     key={track.index}
                     onSelect={() => {
-                      if (!isUnusable) {
-                        setSubtitleTrackOverride(tvFocusedKey, track.index);
-                      }
+                      setSubtitleTrackOverride(tvFocusedKey, track.index);
                     }}>
                     {({ isFocused }: { isFocused: boolean }) => (
                       <View style={[
                         styles.tvTrackItemRow,
                         styles.tvTrackItemSelectable,
                         isFocused && styles.tvTrackItemFocused,
-                        isUnusable && styles.tvTrackItemDisabled,
                       ]}>
                         {isSelected && <Text style={[styles.tvSelectedIndicator, isFocused && styles.tvSelectedIndicatorFocused]}>▶</Text>}
                         <Text style={[
                           styles.tvTrackItem,
                           isSelected && styles.tvTrackItemSelected,
-                          !isSelected && !isUnusable && styles.tvTrackItemDimmed,
-                          isUnusable && styles.tvTrackItemUnusable,
-                          isFocused && !isUnusable && styles.tvTrackItemTextFocused,
+                          !isSelected && styles.tvTrackItemDimmed,
+                          isFocused && styles.tvTrackItemTextFocused,
                         ]}>
                           {formatLanguage(track.language)}
                           {track.title ? ` - ${track.title}` : ''}
                           {track.forced && ' (Forced)'}
                         </Text>
-                        {track.isBitmap && <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>}
+                        {track.isBitmap && <Text style={styles.bitmapBadge}>{track.bitmapType || 'PGS'}</Text>}
                       </View>
                     )}
                   </SpatialNavigationFocusableView>

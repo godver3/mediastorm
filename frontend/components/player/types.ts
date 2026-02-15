@@ -66,4 +66,6 @@ export interface VideoPlayerProps {
   onPlaybackStateChanged?: (isPlaying: boolean) => void;
   /** Whether player controls overlay is visible (for subtitle positioning) */
   controlsVisible?: boolean;
+  /** External subtitle URL (VTT) for native player to load via its built-in subtitle system */
+  externalSubtitleUrl?: string;
 }

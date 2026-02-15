@@ -82,6 +82,8 @@ export interface KSPlayerProps {
   subtitleStyle?: SubtitleStyle;
   // When true, subtitles move up to avoid being hidden by controls
   controlsVisible?: boolean;
+  // External subtitle URL (VTT) for native player to load
+  externalSubtitleUrl?: string;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
   onProgress?: (data: ProgressEvent) => void;
@@ -117,6 +119,7 @@ interface NativeKSPlayerProps {
   subtitleTrack?: number;
   subtitleStyle?: SubtitleStyle;
   controlsVisible?: boolean;
+  externalSubtitleUrl?: string;
   style?: StyleProp<ViewStyle>;
   onLoad?: (event: NativeSyntheticEvent<LoadEvent>) => void;
   onProgress?: (event: NativeSyntheticEvent<ProgressEvent>) => void;
@@ -155,6 +158,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
     subtitleTrack,
     subtitleStyle,
     controlsVisible,
+    externalSubtitleUrl,
     style,
     onLoad,
     onProgress,
@@ -324,6 +328,7 @@ export const KSPlayer = forwardRef<KSPlayerRef, KSPlayerProps>((props, ref) => {
       subtitleTrack={subtitleTrack}
       subtitleStyle={subtitleStyle}
       controlsVisible={controlsVisible}
+      externalSubtitleUrl={externalSubtitleUrl}
       style={style}
       onLoad={handleLoad}
       onProgress={handleProgress}

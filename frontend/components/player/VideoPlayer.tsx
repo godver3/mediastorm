@@ -79,6 +79,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     subtitleSize = 1.0,
     controlsVisible,
     onPictureInPictureStatusChanged,
+    externalSubtitleUrl,
   } = props;
 
   const playerRef = useRef<NativePlayerRef>(null);
@@ -314,6 +315,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
   console.log('[NativePlayerAdapter] ===== RENDER =====', {
     audioTrack: selectedAudioTrackIndex ?? 'undefined',
     subtitleTrack: selectedSubtitleTrackIndex ?? -1,
+    externalSubtitleUrl: externalSubtitleUrl ?? 'undefined',
   });
 
   return (
@@ -326,6 +328,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       subtitleTrack={selectedSubtitleTrackIndex ?? -1}
       subtitleStyle={subtitleStyle}
       controlsVisible={controlsVisible}
+      externalSubtitleUrl={externalSubtitleUrl}
       style={nativePlayerStyles.player}
       onLoad={handleLoad}
       onProgress={handleProgress}

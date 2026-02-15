@@ -766,11 +766,6 @@ export default function PlayerScreen() {
 
   // Check conditions and trigger auto-subtitle search if needed
   const triggerAutoSubtitleSearchIfNeeded = useCallback(() => {
-    // Skip for NativePlayer - external subtitle loading not yet supported for KSPlayer/MPV
-    if (useNativePlayer) {
-      return;
-    }
-
     if (autoSubtitleTriggeredRef.current) {
       console.log('[player] auto-subtitle search already triggered, skipping');
       return;
@@ -6121,6 +6116,7 @@ export default function PlayerScreen() {
               onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
               onPlaybackStateChanged={handleNativePlaybackStateChanged}
               controlsVisible={useNativePlayer ? controlsVisible : undefined}
+              externalSubtitleUrl={useNativePlayer && selectedSubtitleTrackId === 'external' ? externalSubtitleUrl ?? undefined : undefined}
             />
           </View>
 
