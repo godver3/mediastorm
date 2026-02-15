@@ -326,8 +326,9 @@ var SettingsSchema = map[string]interface{}{
 				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
 			},
 			"prioritizeHdr":                    map[string]interface{}{"type": "boolean", "label": "Prioritize HDR", "description": "Prioritize HDR/DV content in results"},
-			"filterOutTerms":                   map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive match in title)"},
-			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive match in title, ranked higher)"},
+			"filterOutTerms":                   map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
+			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive substring match, ranked higher; wrap in /slashes/ for regex)"},
+			"nonPreferredTerms":               map[string]interface{}{"type": "tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results (case-insensitive substring match, ranked lower but not removed; wrap in /slashes/ for regex)"},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip strmr filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
 		},
 	},
@@ -1429,6 +1430,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 			FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
+			NonPreferredTerms:                globalSettings.Filtering.NonPreferredTerms,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 		},
 		LiveTV: models.LiveTVSettings{
@@ -1530,6 +1532,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 		PrioritizeHdr:                    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:                   globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:                   globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms:                globalSettings.Filtering.NonPreferredTerms,
 		BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Filtering.BypassFilteringForAIOStreamsOnly),
 	}
 

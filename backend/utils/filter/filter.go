@@ -214,23 +214,13 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 	}
 
 	filtered := make([]filteredResult, 0, len(results))
+	compiledFilterOutTerms := CompileTerms(opts.FilterOutTerms)
 
 	for i, result := range results {
 		// Check filter out terms first (before parsing)
-		if len(opts.FilterOutTerms) > 0 {
-			titleLower := strings.ToLower(result.Title)
-			shouldFilter := false
-			for _, term := range opts.FilterOutTerms {
-				termLower := strings.ToLower(strings.TrimSpace(term))
-				if termLower != "" && strings.Contains(titleLower, termLower) {
-					log.Printf("[filter] Rejecting %q: contains filtered term %q", result.Title, term)
-					shouldFilter = true
-					break
-				}
-			}
-			if shouldFilter {
-				continue
-			}
+		if MatchesAnyTerm(result.Title, compiledFilterOutTerms) {
+			log.Printf("[filter] Rejecting %q: matches filter-out term", result.Title)
+			continue
 		}
 
 		// NOTE: Daily show date filtering is handled below alongside S##E## matching.
