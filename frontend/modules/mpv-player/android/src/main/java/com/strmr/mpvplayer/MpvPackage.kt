@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class MpvPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(PlayerLauncherModule(reactContext))
+        return listOf(HdrColorModeModule(reactContext), TvKeyEventModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

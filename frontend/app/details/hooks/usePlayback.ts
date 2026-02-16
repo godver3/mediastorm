@@ -12,6 +12,7 @@ import {
   type SeriesEpisode,
 } from '@/services/api';
 import type { PlaybackPreference } from '@/components/BackendSettingsContext';
+import { clearMemoryCache } from '@/components/Image';
 import type { ManualTrackOverrides } from '../manual-selection';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
 import {
@@ -21,7 +22,6 @@ import {
   initiatePlayback,
   isHealthFailureError,
   isTimeoutError,
-  markNativePlayerLaunching,
 } from '../playback';
 import { buildEpisodeQuery, formatUnreleasedMessage, isEpisodeUnreleased, padNumber } from '../utils';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
@@ -1634,54 +1634,9 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
         streamUrl: streamUrl.substring(0, 100) + '...',
       });
 
-      // Android TV: launch standalone native PlayerActivity (saves ~150-200MB RAM vs RN player)
+      // Android TV: free GL-cached browse UI bitmaps before playback allocates video buffers
       if (Platform.isTV && Platform.OS === 'android') {
-        try {
-          const { launchPlayer } = require('mpv-player') as typeof import('mpv-player');
-          // Mark before launching — ProfileSelectorModal checks this on AppState resume
-          await markNativePlayerLaunching();
-          const nativeAudioTrack = (() => {
-            if (selectedAudioTrack === undefined || selectedAudioTrack < 0) return -1;
-            const hasTrackArray = prequeueStatus.audioTracks && prequeueStatus.audioTracks.length > 0;
-            return hasTrackArray
-              ? prequeueStatus.audioTracks!.findIndex((t) => t.index === selectedAudioTrack)
-              : selectedAudioTrack;
-          })();
-          const nativeSubtitleTrack = (() => {
-            if (selectedSubtitleTrack === undefined || selectedSubtitleTrack < 0) return -1;
-            const hasTrackArray = prequeueStatus.subtitleTracks && prequeueStatus.subtitleTracks.length > 0;
-            return hasTrackArray
-              ? prequeueStatus.subtitleTracks!.findIndex((t) => t.index === selectedSubtitleTrack)
-              : selectedSubtitleTrack;
-          })();
-          const result = await launchPlayer({
-            streamUrl,
-            title: displayTitle,
-            authToken: apiService.getAuthToken() || '',
-            userId: activeUserId || '',
-            mediaType: isSeries ? 'episode' : 'movie',
-            itemId: titleId || '',
-            backendUrl: apiService.getBaseUrl(),
-            ...(typeof startOffset === 'number' ? { startOffset } : {}),
-            ...(typeof hlsDuration === 'number' ? { durationHint: hlsDuration } : {}),
-            ...(nativeAudioTrack >= 0 ? { preselectedAudioTrack: nativeAudioTrack } : {}),
-            ...(nativeSubtitleTrack >= 0 ? { preselectedSubtitleTrack: nativeSubtitleTrack } : {}),
-            ...(prequeueStatus.targetEpisode
-              ? {
-                  seasonNumber: prequeueStatus.targetEpisode.seasonNumber,
-                  episodeNumber: prequeueStatus.targetEpisode.episodeNumber,
-                }
-              : {}),
-            ...(titleId ? { seriesId: titleId, titleId } : {}),
-            ...(isSeries ? { seriesName: title } : {}),
-            ...(imdbId ? { imdbId } : {}),
-            ...(tvdbId ? { tvdbId } : {}),
-          });
-          console.log('[prequeue] Android TV native player result:', result);
-          return;
-        } catch (e) {
-          console.error('[prequeue] Android TV native player failed, falling back to RN player:', e);
-        }
+        await clearMemoryCache();
       }
 
       router.push({

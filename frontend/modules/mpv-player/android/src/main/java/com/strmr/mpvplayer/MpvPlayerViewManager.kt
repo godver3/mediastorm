@@ -69,6 +69,11 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
         view.setSubtitlePosition(position)
     }
 
+    @ReactProp(name = "isHDR", defaultBoolean = false)
+    fun setIsHDR(view: MpvPlayerView, hdr: Boolean) {
+        view.isHDR = hdr
+    }
+
     // --- Events ---
 
     override fun getExportedCustomDirectEventTypeConstants(): Map<String, Any>? {

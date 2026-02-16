@@ -4,7 +4,6 @@ import {
   Platform,
   UIManager,
   findNodeHandle,
-  NativeModules,
   NativeSyntheticEvent,
   StyleProp,
   ViewStyle,
@@ -63,6 +62,7 @@ export interface MpvPlayerProps {
   subtitleSize?: number;
   subtitleColor?: string;
   subtitlePosition?: number;
+  isHDR?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
   onProgress?: (data: ProgressEvent) => void;
@@ -90,6 +90,7 @@ interface NativeMpvPlayerProps {
   subtitleSize?: number;
   subtitleColor?: string;
   subtitlePosition?: number;
+  isHDR?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (event: NativeSyntheticEvent<LoadEvent>) => void;
   onProgress?: (event: NativeSyntheticEvent<ProgressEvent>) => void;
@@ -127,6 +128,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     subtitleSize,
     subtitleColor,
     subtitlePosition,
+    isHDR,
     style,
     onLoad,
     onProgress,
@@ -250,6 +252,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
       subtitleSize={subtitleSize}
       subtitleColor={subtitleColor}
       subtitlePosition={subtitlePosition}
+      isHDR={isHDR}
       style={style}
       onLoad={handleLoad}
       onProgress={handleProgress}
@@ -263,64 +266,5 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
 });
 
 MpvPlayer.displayName = 'MpvPlayer';
-
-// === Native PlayerActivity launcher (Android TV only) ===
-
-export interface PlayerLaunchParams {
-  streamUrl: string;
-  title: string;
-  authToken: string;
-  userId: string;
-  mediaType: string;
-  itemId: string;
-  backendUrl: string;
-  startOffset?: number;
-  durationHint?: number;
-  preselectedAudioTrack?: number;
-  preselectedSubtitleTrack?: number;
-  seasonNumber?: number;
-  episodeNumber?: number;
-  seriesId?: string;
-  seriesName?: string;
-  episodeName?: string;
-  titleId?: string;
-  imdbId?: string;
-  tvdbId?: string;
-  isHDR?: boolean;
-  isDolbyVision?: boolean;
-  resolution?: string;
-  dolbyVisionProfile?: string;
-  videoCodec?: string;
-  videoBitrate?: number;
-  frameRate?: string;
-  audioCodec?: string;
-  audioChannels?: string;
-  audioBitrate?: number;
-  sourcePath?: string;
-  passthroughName?: string;
-  passthroughDescription?: string;
-  colorTransfer?: string;
-  colorPrimaries?: string;
-  colorSpace?: string;
-  year?: number;
-}
-
-export interface PlayerResult {
-  lastPosition: number;
-  completed: boolean;
-  percentWatched: number;
-}
-
-/**
- * Launch the native PlayerActivity (Android TV only).
- * Returns playback result when the Activity finishes.
- */
-export async function launchPlayer(params: PlayerLaunchParams): Promise<PlayerResult> {
-  const { PlayerLauncherModule } = NativeModules;
-  if (!PlayerLauncherModule) {
-    throw new Error('PlayerLauncherModule is not available');
-  }
-  return PlayerLauncherModule.launch(params);
-}
 
 export default MpvPlayer;

@@ -48,6 +48,9 @@ class MpvPlayerView(context: ThemedReactContext) :
     private var surfaceReady = false
     private var fileLoaded = false
 
+    // HDR mode — set via React prop before source is loaded
+    var isHDR = false
+
     // Source state
     private var pendingUri: String? = null
     private var currentUri: String? = null
@@ -67,6 +70,8 @@ class MpvPlayerView(context: ThemedReactContext) :
     private var currentDuration = 0.0
 
     private val isLowRamDevice: Boolean
+    private val totalMb: Long
+    private val isSystemLowRam: Boolean
 
     init {
         addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -77,30 +82,56 @@ class MpvPlayerView(context: ThemedReactContext) :
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
-        val totalMb = memInfo.totalMem / (1024 * 1024)
-        isLowRamDevice = am.isLowRamDevice || totalMb <= LOW_RAM_THRESHOLD_MB
+        totalMb = memInfo.totalMem / (1024 * 1024)
+        isSystemLowRam = am.isLowRamDevice
+        isLowRamDevice = isSystemLowRam || totalMb <= LOW_RAM_THRESHOLD_MB
+    }
+
+    /**
+     * Initialize MPV with the appropriate configuration.
+     * Called lazily when the first source is set, so that isHDR prop is available.
+     */
+    private fun initializeMpv() {
+        if (initialized || destroyed) return
 
         try {
             MPVLib.create(context.applicationContext)
 
             // Detect device memory and choose cache sizes
-            val (demuxerMax, demuxerBack) = getDemuxerCacheSizes(totalMb, am.isLowRamDevice)
+            val (demuxerMax, demuxerBack) = getDemuxerCacheSizes(totalMb, isSystemLowRam)
 
             // Use mpv's built-in fast profile (simpler scaling, fewer shader passes)
             MPVLib.setOptionString("profile", "fast")
 
-            // Video output: always GPU with Android OpenGL ES context
-            // (all reference apps — mpv-android, Findroid, Flixor — use this)
-            MPVLib.setOptionString("vo", "gpu")
-            MPVLib.setOptionString("gpu-context", "android")
-            MPVLib.setOptionString("opengl-es", "yes")
-
-            // Hardware decode with fallback chain
-            MPVLib.setOptionString("hwdec", "mediacodec,mediacodec-copy")
             MPVLib.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
 
             // Workaround for mpv issue #14651
             MPVLib.setOptionString("vd-lavc-film-grain", "cpu")
+
+            if (isHDR) {
+                // HDR passthrough: use gpu-next (Vulkan) for proper HDR surface support,
+                // falling back to gpu (OpenGL ES) if Vulkan is unavailable.
+                // target-colorspace-hint tells mpv to signal the display about the
+                // content's color space so Android switches HDMI output to HDR mode.
+                MPVLib.setOptionString("vo", "gpu-next,gpu")
+                MPVLib.setOptionString("gpu-context", "android")
+                MPVLib.setOptionString("hwdec", "mediacodec")
+                MPVLib.setOptionString("target-colorspace-hint", "yes")
+                // Avoid tone-mapping — output PQ/BT.2020 directly for the display to handle
+                MPVLib.setOptionString("target-trc", "pq")
+                MPVLib.setOptionString("target-prim", "bt.2020")
+                MPVLib.setOptionString("target-peak", "10000")
+                MPVLib.setOptionString("tone-mapping", "clip")
+                MPVLib.setOptionString("hdr-compute-peak", "no")
+                Log.i(TAG, "MPV configured for HDR passthrough (vo=gpu-next,gpu)")
+            } else {
+                // Video output: GPU with Android OpenGL ES context
+                MPVLib.setOptionString("vo", "gpu")
+                MPVLib.setOptionString("gpu-context", "android")
+                MPVLib.setOptionString("opengl-es", "yes")
+                // Hardware decode with fallback chain
+                MPVLib.setOptionString("hwdec", "mediacodec,mediacodec-copy")
+            }
 
             MPVLib.setOptionString("ao", "audiotrack,opensles")
             MPVLib.setOptionString("save-position-on-quit", "no")
@@ -139,7 +170,8 @@ class MpvPlayerView(context: ThemedReactContext) :
             context.applicationContext.registerComponentCallbacks(this)
 
             initialized = true
-            Log.d(TAG, "MPV initialized (vo=gpu, RAM=${totalMb}MB, lowRam=$isLowRamDevice, cache: $demuxerMax / $demuxerBack)")
+            val voMode = if (isHDR) "gpu-next,gpu (HDR)" else "gpu"
+            Log.d(TAG, "MPV initialized (vo=$voMode, RAM=${totalMb}MB, lowRam=$isLowRamDevice, cache: $demuxerMax / $demuxerBack)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize MPV", e)
             mainHandler.post { emitError("Failed to initialize MPV: ${e.message}") }
@@ -176,7 +208,11 @@ class MpvPlayerView(context: ThemedReactContext) :
         emitDebugLog("surfaceCreated")
         MPVLib.attachSurface(holder.surface)
         MPVLib.setOptionString("force-window", "yes")
-        MPVLib.setOptionString("vo", "gpu")
+        if (isHDR) {
+            MPVLib.setOptionString("vo", "gpu-next,gpu")
+        } else {
+            MPVLib.setOptionString("vo", "gpu")
+        }
         surfaceReady = true
 
         // Load pending file if source was set before surface was ready
@@ -209,6 +245,11 @@ class MpvPlayerView(context: ThemedReactContext) :
         source ?: return
         val uri = source.getString("uri") ?: return
         if (uri == currentUri) return
+
+        // Initialize MPV lazily on first source set (so isHDR prop is available)
+        if (!initialized && !destroyed) {
+            initializeMpv()
+        }
 
         // Parse headers
         var headerList: List<String>? = null

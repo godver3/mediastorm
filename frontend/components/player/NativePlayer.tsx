@@ -76,6 +76,8 @@ export interface NativePlayerProps {
   controlsVisible?: boolean;
   // External subtitle URL (VTT) for native player to load
   externalSubtitleUrl?: string;
+  // Enable HDR passthrough mode (Android TV only — sets mpv to gpu-next with PQ/BT.2020)
+  isHDR?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
   onProgress?: (data: ProgressEvent) => void;
@@ -128,6 +130,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     subtitleStyle,
     controlsVisible,
     externalSubtitleUrl,
+    isHDR,
     style,
     onLoad,
     onProgress,
@@ -232,6 +235,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       subtitleStyle={subtitleStyle}
       controlsVisible={controlsVisible}
       externalSubtitleUrl={externalSubtitleUrl}
+      isHDR={isHDR}
       style={[styles.player, style]}
       onLoad={handleLoad}
       onProgress={handleProgress}

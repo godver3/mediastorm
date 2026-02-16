@@ -68,4 +68,6 @@ export interface VideoPlayerProps {
   controlsVisible?: boolean;
   /** External subtitle URL (VTT) for native player to load via its built-in subtitle system */
   externalSubtitleUrl?: string;
+  /** Enable HDR passthrough mode (Android TV only) */
+  isHDR?: boolean;
 }

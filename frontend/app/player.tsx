@@ -916,6 +916,38 @@ export default function PlayerScreen() {
     [routeHasAnyHDR, videoColorInfo?.isHDR10],
   );
 
+  // Android TV: enable HDR color mode on the hosting activity when playing HDR content.
+  // This must be set at the activity level (COLOR_MODE_HDR) so that mpv can output
+  // PQ/BT.2020 signals to the display. Reset to default on unmount.
+  const isAndroidTvHDR = Platform.isTV && Platform.OS === 'android' && useNativePlayer && hasAnyHDR;
+  useEffect(() => {
+    if (!isAndroidTvHDR) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { enableHDR } = require('mpv-player/src/HdrColorMode') as typeof import('mpv-player/src/HdrColorMode');
+        const caps = await enableHDR();
+        if (!cancelled) {
+          console.log('[player] HDR color mode enabled for Android TV', caps);
+        }
+      } catch (e) {
+        console.warn('[player] Failed to enable HDR color mode:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      (async () => {
+        try {
+          const { disableHDR } = require('mpv-player/src/HdrColorMode') as typeof import('mpv-player/src/HdrColorMode');
+          await disableHDR();
+          console.log('[player] HDR color mode disabled');
+        } catch (e) {
+          console.warn('[player] Failed to disable HDR color mode:', e);
+        }
+      })();
+    };
+  }, [isAndroidTvHDR]);
+
   // Refresh settings on playback start to ensure latest values (e.g., subtitle size)
   useEffect(() => {
     refreshSettings().catch((err) => {
@@ -2439,6 +2471,17 @@ export default function PlayerScreen() {
     }
 
     RemoteControlManager.enableTvEventHandling();
+
+    // On Android TV, enable native key event forwarding to JS.
+    // The Activity's Window.Callback is wrapped to intercept D-pad/media keys
+    // and emit them as "onHWKeyEvent" events that RemoteControlManager listens for.
+    if (Platform.OS === 'android' && Platform.isTV) {
+      const { enableTvKeyForwarding, disableTvKeyForwarding } = require('mpv-player/src/TvKeyEvent') as typeof import('mpv-player/src/TvKeyEvent');
+      enableTvKeyForwarding();
+      return () => {
+        disableTvKeyForwarding();
+      };
+    }
   }, [usesSystemManagedControls]);
 
   useEffect(() => {
@@ -6173,6 +6216,7 @@ export default function PlayerScreen() {
               onPlaybackStateChanged={handleNativePlaybackStateChanged}
               controlsVisible={useNativePlayer ? controlsVisible : undefined}
               externalSubtitleUrl={useNativePlayer && selectedSubtitleTrackId === 'external' ? externalSubtitleUrl ?? undefined : undefined}
+              isHDR={isAndroidTvHDR || undefined}
             />
           </View>
 
