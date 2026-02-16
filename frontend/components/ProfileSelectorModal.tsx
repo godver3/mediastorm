@@ -10,7 +10,6 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { UserProfile } from '@/services/api';
-import { wasNativePlayerRecentlyActive, clearNativePlayerLaunching } from '@/app/details/playback';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { responsiveSize } from '@/theme/tokens/tvScale';
@@ -241,8 +240,7 @@ export const ProfileSelectorModal: React.FC = () => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // Only show if the app was away for >2s — brief inactive blips from
         // screen transitions (e.g. player dismiss) are ignored.
-        // Also skip if the player is active (PiP return to foreground)
-        // or the native Android TV player was just open.
+        // Also skip if the player is active (PiP return to foreground).
         const awayMs = Date.now() - leftActiveAtRef.current;
         const onRNPlayer = pathnameRef.current === '/player';
         console.log(`[ProfileSelector] Resume check: awayMs=${awayMs}, onRNPlayer=${onRNPlayer}`);
@@ -251,19 +249,7 @@ export const ProfileSelectorModal: React.FC = () => {
           appStateRef.current = nextAppState;
           return;
         }
-        // Async check: was a native Android TV player recently launched?
-        // AsyncStorage survives process kills (Fire Stick etc.)
-        wasNativePlayerRecentlyActive().then((nativeRecent) => {
-          console.log(`[ProfileSelector] wasNativePlayerRecentlyActive=${nativeRecent}`);
-          if (nativeRecent) {
-            // Flag was valid — suppress modal and clear for next resume
-            clearNativePlayerLaunching().catch(() => {});
-          } else {
-            setVisible(true);
-          }
-        }).catch(() => {
-          setVisible(true);
-        });
+        setVisible(true);
       }
       appStateRef.current = nextAppState;
     });
@@ -284,6 +270,11 @@ export const ProfileSelectorModal: React.FC = () => {
 
   const handleSelectProfile = useCallback(
     async (id: string) => {
+      // If same profile is selected, just dismiss without reloading
+      if (id === activeUserId) {
+        setVisible(false);
+        return;
+      }
       const user = users.find((u) => u.id === id);
       if (user?.hasPin) {
         // PIN flow: selectUser sets pendingPinUserId → PinEntryModal opens.
@@ -297,7 +288,7 @@ export const ProfileSelectorModal: React.FC = () => {
         setVisible(false);
       }
     },
-    [selectUser, users],
+    [selectUser, users, activeUserId],
   );
 
   if (!visible) {

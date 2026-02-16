@@ -46,6 +46,8 @@ interface UserProfilesContextValue {
   setProfileSelectorVisible: (visible: boolean) => void;
   // Increments on every successful PIN verification (used by profile selector to dismiss)
   pinVerifiedGeneration: number;
+  // Increments when the active profile actually changes (used by pages to reload content)
+  profileChangeGeneration: number;
 }
 
 const UserProfilesContext = createContext<UserProfilesContextValue | undefined>(undefined);
@@ -92,6 +94,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [pendingPinUserId, setPendingPinUserId] = useState<Nullable<string>>(null);
   const [isInitialPinCheck, setIsInitialPinCheck] = useState(false);
   const [pinVerifiedGeneration, setPinVerifiedGeneration] = useState(0);
+  const [profileChangeGeneration, setProfileChangeGeneration] = useState(0);
   const activeUserIdRef = useRef<Nullable<string>>(null);
   const usersRef = useRef<UserProfile[]>([]);
   const profileSelectorActiveRef = useRef(false);
@@ -221,8 +224,12 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
         setPendingPinUserId(trimmed);
         return; // Don't switch yet - wait for PIN verification
       }
+      const changed = activeUserIdRef.current !== trimmed;
       setActiveUserId(trimmed);
       activeUserIdRef.current = trimmed;
+      if (changed) {
+        setProfileChangeGeneration((g) => g + 1);
+      }
       await persistActiveUserId(trimmed);
       // Update client registration with the selected profile
       try {
@@ -251,11 +258,15 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (!isValid) {
         throw new Error('Invalid PIN');
       }
+      const changed = activeUserIdRef.current !== trimmed;
       setPendingPinUserId(null);
       setIsInitialPinCheck(false);
       setActiveUserId(trimmed);
       activeUserIdRef.current = trimmed;
       setPinVerifiedGeneration((g) => g + 1);
+      if (changed) {
+        setProfileChangeGeneration((g) => g + 1);
+      }
       await persistActiveUserId(trimmed);
       // Update client registration with the selected profile
       try {
@@ -418,6 +429,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       profileSelectorVisible,
       setProfileSelectorVisible,
       pinVerifiedGeneration,
+      profileChangeGeneration,
     };
   }, [
     users,
@@ -447,6 +459,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     profileSelectorVisible,
     setProfileSelectorVisible,
     pinVerifiedGeneration,
+    profileChangeGeneration,
     findUser,
   ]);
 

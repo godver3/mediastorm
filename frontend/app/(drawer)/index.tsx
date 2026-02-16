@@ -548,7 +548,7 @@ function IndexScreen() {
     refresh: refreshContinueWatching,
     hideFromContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisible } =
+  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisible, profileChangeGeneration } =
     useUserProfiles();
   const {
     data: trendingMovies,
@@ -922,6 +922,17 @@ function IndexScreen() {
       triggerReloadAfterAuthFailure();
     }
   }, [settingsLastLoadedAt, triggerReloadAfterAuthFailure]);
+
+  // Reload content when the active user profile changes
+  const previousProfileChangeRef = React.useRef(profileChangeGeneration);
+  useEffect(() => {
+    if (profileChangeGeneration === previousProfileChangeRef.current) {
+      return;
+    }
+    previousProfileChangeRef.current = profileChangeGeneration;
+    console.log('[IndexPage] Profile changed, reloading content');
+    triggerReloadAfterAuthFailure();
+  }, [profileChangeGeneration, triggerReloadAfterAuthFailure]);
 
   // Reload content when backend reconnects after going down.
   // Only cascades on actual reconnection (was reachable, went down, came back).
