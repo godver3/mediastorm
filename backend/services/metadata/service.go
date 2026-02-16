@@ -2102,7 +2102,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 
 	log.Printf("[metadata] series details lite fetch tvdbId=%d", tvdbID)
 
-	// Fetch extended data and translations in parallel — only 2 HTTP calls
+	// Fetch extended data, translations, and localized episodes in parallel — 3 HTTP calls
 	type transResult struct {
 		name     string
 		overview string
@@ -2113,6 +2113,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		err  error
 	}, 1)
 	transChan := make(chan transResult, 1)
+	localizedEpsChan := make(chan map[int64]tvdbEpisode, 1)
 
 	go func() {
 		ext, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
@@ -2136,6 +2137,22 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		return nil, fmt.Errorf("failed to fetch extended series metadata: %w", extResult.err)
 	}
 	extended := extResult.data
+
+	// Now that we have extended data, fetch localized episodes in background
+	go func() {
+		seasonType := detectPrimarySeasonType(extended.Seasons)
+		if seasonType == "" {
+			seasonType = "official"
+		}
+		localizedEps := make(map[int64]tvdbEpisode)
+		if localized, err := s.client.seriesEpisodesBySeasonType(tvdbID, seasonType, s.client.language); err == nil {
+			for _, ep := range localized {
+				localizedEps[ep.ID] = ep
+			}
+		}
+		localizedEpsChan <- localizedEps
+	}()
+
 	tr := <-transChan
 
 	// Build title from extended data + translation
@@ -2195,7 +2212,11 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		applyTVDBArtworks(&seriesTitle, extended.Artworks)
 	}
 
-	// Build seasons and episodes from extended data (no localized episode fetch)
+	// Get localized episodes from parallel fetch
+	localizedEps := <-localizedEpsChan
+	log.Printf("[metadata] lite: received localized episodes tvdbId=%d count=%d", tvdbID, len(localizedEps))
+
+	// Build seasons and episodes from extended data + localized translations
 	primarySeasonType := detectPrimarySeasonType(extended.Seasons)
 	if primarySeasonType == "" {
 		primarySeasonType = "official"
@@ -2257,11 +2278,21 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		if season == nil {
 			continue
 		}
+		var translatedName string
+		var translatedOverview string
+		if localized, ok := localizedEps[episode.ID]; ok {
+			if strings.TrimSpace(localized.Name) != "" {
+				translatedName = localized.Name
+			}
+			if strings.TrimSpace(localized.Overview) != "" {
+				translatedOverview = localized.Overview
+			}
+		}
 		ep := models.SeriesEpisode{
 			ID:                    fmt.Sprintf("tvdb:episode:%d", episode.ID),
 			TVDBID:                episode.ID,
-			Name:                  strings.TrimSpace(firstNonEmpty(episode.Name, episode.Abbreviation)),
-			Overview:              strings.TrimSpace(episode.Overview),
+			Name:                  strings.TrimSpace(firstNonEmpty(translatedName, episode.Name, episode.Abbreviation)),
+			Overview:              strings.TrimSpace(firstNonEmpty(translatedOverview, episode.Overview)),
 			SeasonNumber:          episode.SeasonNumber,
 			EpisodeNumber:         episode.Number,
 			AbsoluteEpisodeNumber: episode.AbsoluteNumber,
