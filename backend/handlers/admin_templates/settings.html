@@ -168,12 +168,6 @@
         const needsDebrid = serviceMode === 'debrid' || serviceMode === 'hybrid';
         const needsUsenet = serviceMode === 'usenet' || serviceMode === 'hybrid';
 
-        // Server Settings - all required
-        const serverErrors = { fields: {}, messages: [] };
-        if (isEmpty(currentSettings.server?.host)) serverErrors.fields.host = 'Host is required';
-        if (isEmpty(currentSettings.server?.port) && currentSettings.server?.port !== 0) serverErrors.fields.port = 'Port is required';
-        if (Object.keys(serverErrors.fields).length > 0) errors.server = serverErrors;
-
         // Streaming - all required
         const streamingErrors = { fields: {}, messages: [] };
         if (isEmpty(currentSettings.streaming?.serviceMode)) streamingErrors.fields.serviceMode = 'Service mode is required';
@@ -223,7 +217,7 @@
             if (!hasEnabledItem(indexers)) {
                 errors.indexers = {
                     fields: {},
-                    messages: ['At least one enabled indexer is required for ' + serviceMode + ' mode']
+                    messages: ['At least one enabled usenet indexer is required for ' + serviceMode + ' mode']
                 };
             }
         }
@@ -244,18 +238,6 @@
         if (isEmpty(currentSettings.metadata?.tvdbApiKey)) metadataErrors.fields.tvdbApiKey = 'TVDB API Key is required';
         if (isEmpty(currentSettings.metadata?.tmdbApiKey)) metadataErrors.fields.tmdbApiKey = 'TMDB API Key is required';
         if (Object.keys(metadataErrors.fields).length > 0) errors.metadata = metadataErrors;
-
-        // Cache - all required
-        const cacheErrors = { fields: {}, messages: [] };
-        if (isEmpty(currentSettings.cache?.directory)) cacheErrors.fields.directory = 'Cache directory is required';
-        if (Object.keys(cacheErrors.fields).length > 0) errors.cache = cacheErrors;
-
-        // Import Settings - all required (numbers can be 0, so just check existence)
-        const importErrors = { fields: {}, messages: [] };
-        if (currentSettings.import?.rarMaxWorkers === undefined) importErrors.fields.rarMaxWorkers = 'RAR Max Workers is required';
-        if (currentSettings.import?.rarMaxCacheSizeMb === undefined) importErrors.fields.rarMaxCacheSizeMb = 'RAR Cache Size is required';
-        if (currentSettings.import?.rarMaxMemoryGB === undefined) importErrors.fields.rarMaxMemoryGB = 'RAR Max Memory is required';
-        if (Object.keys(importErrors.fields).length > 0) errors.import = importErrors;
 
         return errors;
     }
@@ -2826,6 +2808,8 @@
         const fieldsHtml = Object.entries(sectionDef.fields)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .map(([fieldKey, fieldDef]) => {
+                // Skip hidden fields
+                if (fieldDef.hidden) return '';
                 // Filter by search: if we have a field filter Set, only show matching fields
                 // (null means section-level match, so show all fields)
                 if (filteredFields && sectionFieldFilter !== null && !sectionFieldFilter.has(fieldKey)) {
@@ -3694,6 +3678,8 @@
         for (const group of groups) {
             const groupSections = Object.entries(schema).filter(([key, def]) => {
                 if (def.group !== group.id) return false;
+                // Skip hidden sections
+                if (def.hidden) return false;
                 // If search is active, only show matching sections
                 if (filteredSections !== null && !filteredSections.has(key)) return false;
                 // If a client is selected, only show client-configurable sections

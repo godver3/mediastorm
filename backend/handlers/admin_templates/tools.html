@@ -1187,6 +1187,39 @@
     </div>
 </div>
 
+<!-- MAINTENANCE CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">Maintenance</div>
+
+    <!-- Clear Cache Section -->
+    <div class="section" id="clearCacheSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Clear Metadata Cache
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Remove all cached metadata and posters. Fresh data will be fetched from TVDB/TMDB on next request.
+            </p>
+            <button class="btn btn-secondary" id="clear-cache-btn" onclick="clearMetadataCache()">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Clear Cache
+            </button>
+        </div>
+    </div>
+</div>
+
 <style>
     /* Link styling - consistent light grey with underline */
     a {
@@ -1629,6 +1662,37 @@
     function toggleSection(header) {
         const section = header.parentElement;
         section.classList.toggle('open');
+    }
+
+    // ========== Clear Cache ==========
+    async function clearMetadataCache() {
+        const btn = document.getElementById('clear-cache-btn');
+        if (!btn) return;
+
+        if (!confirm('Clear all cached metadata and posters? This will force fresh data to be fetched from TVDB/TMDB.')) {
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Clearing...';
+
+        try {
+            const response = await fetch(basePath + '/api/cache/clear', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            if (response.ok) {
+                showToast('Metadata cache cleared successfully');
+            } else {
+                showToast(result.error || 'Failed to clear cache', 'error');
+            }
+        } catch (e) {
+            showToast('Error clearing cache: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
     }
 
     // ========== Plex State ==========
