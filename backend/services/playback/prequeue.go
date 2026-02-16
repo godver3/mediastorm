@@ -39,7 +39,8 @@ type PrequeueRequest struct {
 	StartOffset           float64 `json:"startOffset,omitempty"`           // Resume position in seconds for subtitle extraction
 	// Prequeue reason: "details" (user opened details page) or "next_episode" (auto-queue for next episode)
 	// Defaults to "details" if not specified
-	Reason string `json:"reason,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	SkipHLS bool   `json:"skipHLS,omitempty"` // Native clients set this to skip HLS session creation
 }
 
 // PrequeueResponse is returned when a prequeue request is initiated

@@ -282,7 +282,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason)
 
 	// Start background worker with all the info needed for search
-	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset)
+	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset, req.SkipHLS)
 
 	// Return response
 	resp := playback.PrequeueResponse{
@@ -351,7 +351,7 @@ func (h *PrequeueHandler) Options(w http.ResponseWriter, r *http.Request) {
 }
 
 // runPrequeueWorker runs the prequeue background task
-func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64) {
+func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64, skipHLS bool) {
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1109,8 +1109,11 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		// When TrueHD/DTS is present, we need transmux to exclude those tracks even if compatible audio exists
 		// This is because the player may still encounter the incompatible codec in the container
 		needsAudioTranscode := hasTrueHD // Always transcode if TrueHD/DTS present
-		// TESTING: Force HLS for all native content to test fMP4 with react-native-video
-		needsHLS := true // hasDV || hasHDR10 || needsAudioTranscode
+		needsHLS := hasDV || hasHDR10 || needsAudioTranscode
+		if skipHLS {
+			log.Printf("[prequeue] Skipping HLS session creation (native client)")
+			needsHLS = false
+		}
 		if needsHLS {
 			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 				e.HasDolbyVision = hasDV
@@ -1119,7 +1122,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 				e.NeedsAudioTranscode = needsAudioTranscode
 			})
 
-			reason := "SDR (testing fMP4)"
+			reason := "unknown"
 			if hasDV {
 				reason = "Dolby Vision"
 			} else if hasHDR10 {

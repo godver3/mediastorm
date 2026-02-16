@@ -629,6 +629,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
           seasonNumber: targetEpisode?.seasonNumber,
           episodeNumber: targetEpisode?.episodeNumber,
           absoluteEpisodeNumber: (targetEpisode as any)?.absoluteEpisodeNumber,
+          skipHLS: Platform.OS !== 'web' ? true : undefined,
         });
 
         if (cancelled) {

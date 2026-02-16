@@ -873,6 +873,7 @@ export interface PrequeueRequest {
   episodeNumber?: number;
   absoluteEpisodeNumber?: number; // For anime: absolute episode number (e.g., 1153 for One Piece)
   startOffset?: number; // Resume position in seconds for subtitle extraction
+  skipHLS?: boolean; // Native clients skip HLS session creation (they use direct streaming)
 }
 
 export interface PrequeueResponse {
