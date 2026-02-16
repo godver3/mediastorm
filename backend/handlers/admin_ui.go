@@ -180,30 +180,32 @@ func (s *adminSessionStore) revoke(token string) {
 
 // SettingsGroups defines the order and labels for settings groups
 var SettingsGroups = []map[string]string{
-	{"id": "server", "label": "Server"},
 	{"id": "providers", "label": "Providers"},
 	{"id": "sources", "label": "Sources"},
+	{"id": "searchFiltering", "label": "Search & Filtering"},
+	{"id": "services", "label": "Services"},
 	{"id": "experience", "label": "Experience"},
-	{"id": "storage", "label": "Storage & Data"},
 }
 
 // SettingsSchema defines the schema for dynamic form generation
 var SettingsSchema = map[string]interface{}{
 	"server": map[string]interface{}{
-		"label": "Server Settings",
-		"icon":  "server",
-		"group": "server",
-		"order": 0,
+		"label":  "Server Settings",
+		"icon":   "server",
+		"group":  "server",
+		"order":  0,
+		"hidden": true,
 		"fields": map[string]interface{}{
 			"host": map[string]interface{}{"type": "text", "label": "Host", "description": "Server bind address"},
 			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
 		},
 	},
 	"network": map[string]interface{}{
-		"label": "Network URL Switching",
-		"icon":  "wifi",
-		"group": "server",
-		"order": 1,
+		"label":  "Network URL Switching",
+		"icon":   "wifi",
+		"group":  "server",
+		"order":  1,
+		"hidden": true,
 		"fields": map[string]interface{}{
 			"homeWifiSSID": map[string]interface{}{
 				"type":        "text",
@@ -229,13 +231,13 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"streaming": map[string]interface{}{
-		"label": "Streaming",
-		"icon":  "play-circle",
-		"group": "providers",
+		"label": "Search & Resolution",
+		"icon":  "search",
+		"group": "searchFiltering",
 		"order": 0,
 		"fields": map[string]interface{}{
-			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers"},
-			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes"},
+			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers", "hidden": true},
+			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes", "hidden": true},
 			"serviceMode":        map[string]interface{}{"type": "select", "label": "Service Mode", "options": []string{"usenet", "debrid", "hybrid"}, "description": "Streaming service mode"},
 			"servicePriority": map[string]interface{}{
 				"type":        "select",
@@ -262,7 +264,7 @@ var SettingsSchema = map[string]interface{}{
 			},
 			"indexerTimeoutSec": map[string]interface{}{
 				"type":        "number",
-				"label":       "Search Resolution Timeout (seconds)",
+				"label":       "Search Timeout (seconds)",
 				"description": "Maximum time to wait for indexer/scraper searches (default: 5). Increase if using Aiostreams, which may need more time to respond.",
 			},
 		},
@@ -309,8 +311,8 @@ var SettingsSchema = map[string]interface{}{
 	"filtering": map[string]interface{}{
 		"label": "Content Filtering",
 		"icon":  "filter",
-		"group": "sources",
-		"order": 0,
+		"group": "searchFiltering",
+		"order": 1,
 		"fields": map[string]interface{}{
 			"maxSizeMovieGb":   map[string]interface{}{"type": "number", "label": "Max Movie Size (GB)", "description": "Maximum movie file size (0 = no limit)"},
 			"maxSizeEpisodeGb": map[string]interface{}{"type": "number", "label": "Max Episode Size (GB)", "description": "Maximum episode file size (0 = no limit)"},
@@ -335,8 +337,8 @@ var SettingsSchema = map[string]interface{}{
 	"ranking": map[string]interface{}{
 		"label":  "Result Ranking",
 		"icon":   "list",
-		"group":  "sources",
-		"order":  1,
+		"group":  "searchFiltering",
+		"order":  2,
 		"fields": map[string]interface{}{},
 	},
 	"ranking.criteria": map[string]interface{}{
@@ -377,10 +379,10 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"indexers": map[string]interface{}{
-		"label":    "Indexers",
+		"label":    "Usenet Indexers",
 		"icon":     "search",
 		"group":    "sources",
-		"order":    3,
+		"order":    0,
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":       map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name", "order": 0},
@@ -395,7 +397,7 @@ var SettingsSchema = map[string]interface{}{
 		"label":    "Torrent Scrapers",
 		"icon":     "magnet",
 		"group":    "sources",
-		"order":    4,
+		"order":    1,
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
@@ -515,7 +517,7 @@ var SettingsSchema = map[string]interface{}{
 	"metadata": map[string]interface{}{
 		"label": "Metadata",
 		"icon":  "film",
-		"group": "storage",
+		"group": "services",
 		"order": 0,
 		"fields": map[string]interface{}{
 			"tvdbApiKey": map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
@@ -555,20 +557,22 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"cache": map[string]interface{}{
-		"label": "Cache",
-		"icon":  "database",
-		"group": "storage",
-		"order": 1,
+		"label":  "Cache",
+		"icon":   "database",
+		"group":  "services",
+		"order":  99,
+		"hidden": true,
 		"fields": map[string]interface{}{
 			"directory":        map[string]interface{}{"type": "text", "label": "Directory", "description": "Cache directory path"},
 			"metadataTtlHours": map[string]interface{}{"type": "number", "label": "Metadata TTL (hours)", "description": "Metadata cache duration"},
 		},
 	},
 	"import": map[string]interface{}{
-		"label": "Import Settings",
-		"icon":  "upload",
-		"group": "storage",
-		"order": 2,
+		"label":  "Import Settings",
+		"icon":   "upload",
+		"group":  "services",
+		"order":  99,
+		"hidden": true,
 		"fields": map[string]interface{}{
 			"rarMaxWorkers":     map[string]interface{}{"type": "number", "label": "RAR Max Workers", "description": "Maximum RAR extraction workers"},
 			"rarMaxCacheSizeMb": map[string]interface{}{"type": "number", "label": "RAR Cache Size (MB)", "description": "RAR cache size"},
@@ -576,10 +580,11 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"transmux": map[string]interface{}{
-		"label": "Transmux Settings",
-		"icon":  "film",
-		"group": "storage",
-		"order": 3,
+		"label":  "Transmux Settings",
+		"icon":   "film",
+		"group":  "services",
+		"order":  99,
+		"hidden": true,
 		"fields": map[string]interface{}{
 			"enabled":          map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable video transmuxing for HLS streaming"},
 			"ffmpegPath":       map[string]interface{}{"type": "text", "label": "FFmpeg Path", "description": "Path to ffmpeg binary"},
@@ -588,10 +593,10 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"subtitles": map[string]interface{}{
-		"label":    "Subtitles",
-		"icon":     "film",
-		"group":    "sources",
-		"order":    4,
+		"label":    "OpenSubtitles",
+		"icon":     "key",
+		"group":    "services",
+		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
 			"openSubtitlesUsername": map[string]interface{}{"type": "text", "label": "OpenSubtitles Username", "description": "OpenSubtitles.org username (optional, enables more results)", "order": 0},
@@ -601,8 +606,8 @@ var SettingsSchema = map[string]interface{}{
 	"mdblist": map[string]interface{}{
 		"label": "MDBList Ratings",
 		"icon":  "star",
-		"group": "sources",
-		"order": 5,
+		"group": "services",
+		"order": 1,
 		"fields": map[string]interface{}{
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable MDBList integration for aggregated ratings (Rotten Tomatoes, IMDB, etc.)", "order": 0},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "MDBList API key from mdblist.com (free tier available)", "order": 1},
