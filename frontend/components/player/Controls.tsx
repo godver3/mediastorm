@@ -535,10 +535,12 @@ const Controls: React.FC<ControlsProps> = ({
             showPipButton) && (
               <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
                 <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
-                  {hasAudioSelection && audioSummary && (
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      {isLiveTV ? (
-                        <DefaultFocus>
+                  {/* Mobile PiP layout: tracks on separate lines, PiP icon at end of last line */}
+                  {showPipButton ? (
+                    <View style={styles.mobilePipContainer} pointerEvents="box-none">
+                      {/* Line 1: Audio (only when subtitle also present) */}
+                      {hasAudioSelection && audioSummary && hasSubtitleSelection && subtitleSummary && (
+                        <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           <FocusablePressable
                             icon="musical-notes"
                             focusKey="audio-track-button"
@@ -547,73 +549,115 @@ const Controls: React.FC<ControlsProps> = ({
                             style={[styles.controlButton, styles.trackButton]}
                             disabled={isSeeking || activeMenu !== null}
                           />
-                        </DefaultFocus>
-                      ) : (
-                        <FocusablePressable
-                          icon="musical-notes"
-                          focusKey="audio-track-button"
-                          onSelect={handleOpenAudioMenu}
-                          onFocus={handleAudioTrackFocus}
-                          style={[styles.controlButton, styles.trackButton]}
-                          disabled={isSeeking || activeMenu !== null}
-                        />
+                          <Text style={styles.trackLabel}>{audioSummary}</Text>
+                        </View>
                       )}
-                      <Text style={styles.trackLabel}>{audioSummary}</Text>
+                      {/* Last line: track (if any) + PiP icon */}
+                      <View style={styles.mobilePipRow} pointerEvents="box-none">
+                        {hasSubtitleSelection && subtitleSummary ? (
+                          <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
+                            <FocusablePressable
+                              icon="chatbubble-ellipses"
+                              focusKey={hasAudioSelection ? 'subtitle-track-button-secondary' : 'subtitle-track-button'}
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={hasAudioSelection ? handleSubtitleTrackSecondaryFocus : handleSubtitleTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                            <Text style={styles.trackLabel} numberOfLines={1}>{subtitleSummary}</Text>
+                          </View>
+                        ) : hasAudioSelection && audioSummary ? (
+                          <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
+                            <FocusablePressable
+                              icon="musical-notes"
+                              focusKey="audio-track-button"
+                              onSelect={handleOpenAudioMenu}
+                              onFocus={handleAudioTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                            <Text style={styles.trackLabel} numberOfLines={1}>{audioSummary}</Text>
+                          </View>
+                        ) : null}
+                        <Pressable
+                          onPress={onEnterPip}
+                          style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
+                          <MaterialCommunityIcons
+                            name="picture-in-picture-bottom-right"
+                            size={24}
+                            color={theme.colors.text.primary}
+                          />
+                        </Pressable>
+                      </View>
                     </View>
-                  )}
-                  {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      {isLiveTV ? (
-                        <DefaultFocus>
+                  ) : (
+                    <>
+                      {hasAudioSelection && audioSummary && (
+                        <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                          {isLiveTV ? (
+                            <DefaultFocus>
+                              <FocusablePressable
+                                icon="musical-notes"
+                                focusKey="audio-track-button"
+                                onSelect={handleOpenAudioMenu}
+                                onFocus={handleAudioTrackFocus}
+                                style={[styles.controlButton, styles.trackButton]}
+                                disabled={isSeeking || activeMenu !== null}
+                              />
+                            </DefaultFocus>
+                          ) : (
+                            <FocusablePressable
+                              icon="musical-notes"
+                              focusKey="audio-track-button"
+                              onSelect={handleOpenAudioMenu}
+                              onFocus={handleAudioTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                          )}
+                          <Text style={styles.trackLabel}>{audioSummary}</Text>
+                        </View>
+                      )}
+                      {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
+                        <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                          {isLiveTV ? (
+                            <DefaultFocus>
+                              <FocusablePressable
+                                icon="chatbubble-ellipses"
+                                focusKey="subtitle-track-button"
+                                onSelect={handleOpenSubtitlesMenu}
+                                onFocus={handleSubtitleTrackFocus}
+                                style={[styles.controlButton, styles.trackButton]}
+                                disabled={isSeeking || activeMenu !== null}
+                              />
+                            </DefaultFocus>
+                          ) : (
+                            <FocusablePressable
+                              icon="chatbubble-ellipses"
+                              focusKey="subtitle-track-button"
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={handleSubtitleTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                          )}
+                          <Text style={styles.trackLabel}>{subtitleSummary}</Text>
+                        </View>
+                      )}
+                      {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
+                        <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           <FocusablePressable
                             icon="chatbubble-ellipses"
-                            focusKey="subtitle-track-button"
+                            focusKey="subtitle-track-button-secondary"
                             onSelect={handleOpenSubtitlesMenu}
-                            onFocus={handleSubtitleTrackFocus}
+                            onFocus={handleSubtitleTrackSecondaryFocus}
                             style={[styles.controlButton, styles.trackButton]}
                             disabled={isSeeking || activeMenu !== null}
                           />
-                        </DefaultFocus>
-                      ) : (
-                        <FocusablePressable
-                          icon="chatbubble-ellipses"
-                          focusKey="subtitle-track-button"
-                          onSelect={handleOpenSubtitlesMenu}
-                          onFocus={handleSubtitleTrackFocus}
-                          style={[styles.controlButton, styles.trackButton]}
-                          disabled={isSeeking || activeMenu !== null}
-                        />
+                          <Text style={styles.trackLabel}>{subtitleSummary}</Text>
+                        </View>
                       )}
-                      <Text style={styles.trackLabel}>{subtitleSummary}</Text>
-                    </View>
-                  )}
-                  {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
-                        icon="chatbubble-ellipses"
-                        focusKey="subtitle-track-button-secondary"
-                        onSelect={handleOpenSubtitlesMenu}
-                        onFocus={handleSubtitleTrackSecondaryFocus}
-                        style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null}
-                      />
-                      <Text style={styles.trackLabel}>{subtitleSummary}</Text>
-                    </View>
-                  )}
-                  {/* PiP button for mobile */}
-                  {showPipButton && (
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <Pressable
-                        onPress={onEnterPip}
-                        style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
-                        <MaterialCommunityIcons
-                          name="picture-in-picture-bottom-right"
-                          size={24}
-                          color={theme.colors.text.primary}
-                        />
-                      </Pressable>
-                      <Text style={styles.trackLabel}>PiP</Text>
-                    </View>
+                    </>
                   )}
                   {/* Episode navigation buttons for TV platforms */}
                   {isTvPlatform && onPreviousEpisode && (
@@ -895,6 +939,23 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       justifyContent: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
+    },
+    // Mobile PiP layout container
+    mobilePipContainer: {
+      width: '100%',
+    },
+    // Row that holds the last track + PiP icon
+    mobilePipRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: theme.spacing.xs,
+    },
+    // Track button group that fills available space (for PiP row)
+    trackButtonGroupFlex: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      marginRight: theme.spacing.sm,
     },
     secondaryRow: {
       marginTop: theme.spacing.sm,
