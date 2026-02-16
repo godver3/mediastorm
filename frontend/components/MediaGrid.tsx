@@ -683,7 +683,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                       const releaseIcon = getMovieReleaseIcon(item);
                       return releaseIcon ? (
                         <View style={styles.releaseStatusBadge}>
-                          <MaterialCommunityIcons name={releaseIcon.name} size={14} color={releaseIcon.color} />
+                          <MaterialCommunityIcons name={releaseIcon.name} size={14} color={watchStateIconStyle === 'white' ? '#ffffff' : releaseIcon.color} />
                         </View>
                       ) : null;
                     })()}
