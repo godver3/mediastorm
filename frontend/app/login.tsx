@@ -30,6 +30,36 @@ export default function LoginScreen() {
   const [showServerConfig, setShowServerConfig] = useState(!backendUrl);
   const [serverUrl, setServerUrl] = useState(backendUrl?.replace(/\/api$/, '') || '');
   const [isSavingServer, setIsSavingServer] = useState(false);
+  const [serverReachable, setServerReachable] = useState<boolean | null>(null);
+
+  // Check server reachability
+  useEffect(() => {
+    if (!backendUrl) {
+      setServerReachable(null);
+      return;
+    }
+
+    let cancelled = false;
+    const checkReachability = async () => {
+      try {
+        const baseUrl = backendUrl.replace(/\/api$/, '');
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!cancelled) setServerReachable(res.ok);
+      } catch {
+        if (!cancelled) setServerReachable(false);
+      }
+    };
+
+    checkReachability();
+    const interval = setInterval(checkReachability, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [backendUrl]);
 
   // Logo source with fallback chain: local → backend → github
   const [logoSource, setLogoSource] = useState<'local' | 'backend' | 'github'>('local');
@@ -114,17 +144,21 @@ export default function LoginScreen() {
     Keyboard.dismiss();
     clearError();
 
-    if (!username.trim()) {
+    // On TV, read from uncontrolled input refs to avoid re-renders during navigation
+    const loginUsername = Platform.isTV ? tempUsernameRef.current : username;
+    const loginPassword = Platform.isTV ? tempPasswordRef.current : password;
+
+    if (!loginUsername.trim()) {
       showToast('Username is required', { tone: 'danger' });
       return;
     }
-    if (!password) {
+    if (!loginPassword) {
       showToast('Password is required', { tone: 'danger' });
       return;
     }
 
     try {
-      await login(username.trim(), password);
+      await login(loginUsername.trim(), loginPassword);
       // Refresh settings now that we're authenticated
       try {
         await refreshSettings();
@@ -141,7 +175,9 @@ export default function LoginScreen() {
   const handleSaveServer = useCallback(async () => {
     Keyboard.dismiss();
 
-    if (!serverUrl.trim()) {
+    const saveUrl = Platform.isTV ? tempServerUrlRef.current : serverUrl;
+
+    if (!saveUrl.trim()) {
       showToast('Server URL is required', { tone: 'danger' });
       return;
     }
@@ -149,7 +185,7 @@ export default function LoginScreen() {
     setIsSavingServer(true);
     try {
       // Normalize URL: ensure /api suffix
-      let normalizedUrl = serverUrl.trim();
+      let normalizedUrl = saveUrl.trim();
       if (!normalizedUrl.endsWith('/api')) {
         normalizedUrl = normalizedUrl.replace(/\/$/, '') + '/api';
       }
@@ -175,7 +211,6 @@ export default function LoginScreen() {
   }, []);
   const handleUsernameBlur = useCallback(() => {
     lowerFieldFocused.current = false;
-    setUsername(tempUsernameRef.current);
   }, []);
 
   const handlePasswordFocus = useCallback(() => {
@@ -183,7 +218,6 @@ export default function LoginScreen() {
   }, []);
   const handlePasswordBlur = useCallback(() => {
     lowerFieldFocused.current = false;
-    setPassword(tempPasswordRef.current);
   }, []);
 
   const handleServerUrlFocus = useCallback(() => {
@@ -191,7 +225,6 @@ export default function LoginScreen() {
   }, []);
   const handleServerUrlBlur = useCallback(() => {
     lowerFieldFocused.current = false;
-    setServerUrl(tempServerUrlRef.current);
   }, []);
 
   // TV-specific render - using native navigation
@@ -222,31 +255,41 @@ export default function LoginScreen() {
             <View style={styles.header}>
               <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
               {!showServerConfig && backendUrl ? (
-                <Text style={styles.serverInfo} numberOfLines={1}>
-                  {backendUrl.replace(/\/api$/, '')}
-                </Text>
+                <View style={styles.serverInfoRow}>
+                  <View
+                    style={[
+                      styles.reachabilityDot,
+                      serverReachable === true && styles.reachabilityDotOnline,
+                      serverReachable === false && styles.reachabilityDotOffline,
+                      serverReachable === null && styles.reachabilityDotChecking,
+                    ]}
+                  />
+                  <Text style={styles.serverInfo} numberOfLines={1}>
+                    {backendUrl.replace(/\/api$/, '')}
+                  </Text>
+                </View>
               ) : null}
             </View>
 
             {showServerConfig ? (
               <View style={styles.form}>
-                <Pressable
-                  onPress={() => serverUrlRef.current?.focus()}
-                  hasTVPreferredFocus={true}
-                  tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
-                  {({ focused }) => (
-                    <View style={styles.inputContainer}>
-                      <Text style={styles.inputLabel}>Server URL</Text>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Server URL</Text>
+                  <Pressable
+                    onPress={() => serverUrlRef.current?.focus()}
+                    hasTVPreferredFocus={true}
+                    tvParallaxProperties={{ enabled: false }}
+                    style={({ focused }) => [
+                      styles.tvInputBox,
+                      focused && styles.tvInputBoxFocused,
+                    ]}>
+                    {({ focused }: { focused: boolean }) => (
                       <TextInput
-                        key={`server-url-${serverUrl}`}
                         ref={serverUrlRef}
                         defaultValue={serverUrl}
                         onChangeText={(text) => {
                           tempServerUrlRef.current = text;
                         }}
-                        onFocus={handleServerUrlFocus}
-                        onBlur={handleServerUrlBlur}
                         placeholder="http://192.168.1.100:7777"
                         placeholderTextColor={theme.colors.text.muted}
                         autoCapitalize="none"
@@ -255,13 +298,14 @@ export default function LoginScreen() {
                         textContentType="none"
                         returnKeyType="done"
                         onSubmitEditing={Keyboard.dismiss}
-                        style={[styles.input, focused && styles.inputFocused]}
+                        style={[styles.tvNativeInput, focused && styles.tvNativeInputFocused]}
                         underlineColorAndroid="transparent"
                         importantForAutofill="no"
+                        {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
                       />
-                    </View>
-                  )}
-                </Pressable>
+                    )}
+                  </Pressable>
+                </View>
 
                 <FocusablePressable
                   text="Connect"
@@ -276,55 +320,56 @@ export default function LoginScreen() {
               </View>
             ) : (
               <View style={styles.form}>
-                <Pressable
-                  onPress={() => usernameRef.current?.focus()}
-                  hasTVPreferredFocus={true}
-                  tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
-                  {({ focused }) => (
-                    <View style={styles.inputContainer}>
-                      <Text style={styles.inputLabel}>Username</Text>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Username</Text>
+                  <Pressable
+                    onPress={() => usernameRef.current?.focus()}
+                    hasTVPreferredFocus={true}
+                    tvParallaxProperties={{ enabled: false }}
+                    style={({ focused }) => [
+                      styles.tvInputBox,
+                      focused && styles.tvInputBoxFocused,
+                    ]}>
+                    {({ focused }: { focused: boolean }) => (
                       <TextInput
-                        key={`username-${username}`}
                         ref={usernameRef}
                         defaultValue={username}
                         onChangeText={(text) => {
                           tempUsernameRef.current = text;
                         }}
-                        onFocus={handleUsernameFocus}
-                        onBlur={handleUsernameBlur}
                         placeholder="Enter username"
                         placeholderTextColor={theme.colors.text.muted}
                         autoCapitalize="none"
                         autoCorrect={false}
                         autoComplete="off"
                         textContentType="none"
-                        returnKeyType="next"
-                        onSubmitEditing={() => passwordRef.current?.focus()}
-                        style={[styles.input, focused && styles.inputFocused]}
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
+                        style={[styles.tvNativeInput, focused && styles.tvNativeInputFocused]}
                         underlineColorAndroid="transparent"
                         importantForAutofill="no"
+                        {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
                       />
-                    </View>
-                  )}
-                </Pressable>
+                    )}
+                  </Pressable>
+                </View>
 
-                <Pressable
-                  onPress={() => passwordRef.current?.focus()}
-                  tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.tvInputWrapper, focused && styles.tvInputWrapperFocused]}>
-                  {({ focused }) => (
-                    <View style={styles.inputContainer}>
-                      <Text style={styles.inputLabel}>Password</Text>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Password</Text>
+                  <Pressable
+                    onPress={() => passwordRef.current?.focus()}
+                    tvParallaxProperties={{ enabled: false }}
+                    style={({ focused }) => [
+                      styles.tvInputBox,
+                      focused && styles.tvInputBoxFocused,
+                    ]}>
+                    {({ focused }: { focused: boolean }) => (
                       <TextInput
-                        key={`password-${password}`}
                         ref={passwordRef}
                         defaultValue={password}
                         onChangeText={(text) => {
                           tempPasswordRef.current = text;
                         }}
-                        onFocus={handlePasswordFocus}
-                        onBlur={handlePasswordBlur}
                         placeholder="Enter password"
                         placeholderTextColor={theme.colors.text.muted}
                         secureTextEntry
@@ -333,14 +378,15 @@ export default function LoginScreen() {
                         autoComplete="off"
                         textContentType="none"
                         returnKeyType="done"
-                        onSubmitEditing={Keyboard.dismiss}
-                        style={[styles.input, focused && styles.inputFocused]}
+                        onSubmitEditing={handleLogin}
+                        style={[styles.tvNativeInput, focused && styles.tvNativeInputFocused]}
                         underlineColorAndroid="transparent"
                         importantForAutofill="no"
+                        {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
                       />
-                    </View>
-                  )}
-                </Pressable>
+                    )}
+                  </Pressable>
+                </View>
 
                 <FocusablePressable
                   text="Sign In"
@@ -438,9 +484,19 @@ export default function LoginScreen() {
           <Text style={styles.subtitle}>Sign in to your account</Text>
           {backendUrl ? (
             <Pressable onPress={() => setShowServerConfig(true)}>
-              <Text style={styles.serverInfo} numberOfLines={1}>
-                {backendUrl.replace(/\/api$/, '')} (change)
-              </Text>
+              <View style={styles.serverInfoRow}>
+                <View
+                  style={[
+                    styles.reachabilityDot,
+                    serverReachable === true && styles.reachabilityDotOnline,
+                    serverReachable === false && styles.reachabilityDotOffline,
+                    serverReachable === null && styles.reachabilityDotChecking,
+                  ]}
+                />
+                <Text style={styles.serverInfo} numberOfLines={1}>
+                  {backendUrl.replace(/\/api$/, '')} (change)
+                </Text>
+              </View>
             </Pressable>
           ) : null}
         </View>
@@ -700,10 +756,29 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       fontSize: sText(16),
       color: theme.colors.text.secondary,
     },
+    serverInfoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+    },
     serverInfo: {
       fontSize: sText(14),
       color: theme.colors.text.muted,
-      marginTop: 8,
+    },
+    reachabilityDot: {
+      width: s(8),
+      height: s(8),
+      borderRadius: s(4),
+      marginRight: s(6),
+    },
+    reachabilityDotOnline: {
+      backgroundColor: '#34C759',
+    },
+    reachabilityDotOffline: {
+      backgroundColor: '#FF3B30',
+    },
+    reachabilityDotChecking: {
+      backgroundColor: theme.colors.text.muted,
     },
     form: {
       gap: s(16),
@@ -743,6 +818,30 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       ...(isWeb ? { outlineStyle: 'none' } : {}),
     } as any,
     inputFocused: {
+      borderColor: theme.colors.accent.primary,
+    },
+    tvInputBox: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: s(8),
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    tvInputBoxFocused: {
+      borderColor: theme.colors.accent.primary,
+    },
+    tvNativeInput: {
+      fontSize: s(16),
+      color: theme.colors.text.primary,
+      textAlign: 'left',
+      paddingLeft: s(2),
+      paddingRight: s(10),
+      paddingVertical: s(14),
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: s(8),
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    tvNativeInputFocused: {
       borderColor: theme.colors.accent.primary,
     },
     tvInputWrapper: {
