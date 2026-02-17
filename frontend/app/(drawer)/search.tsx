@@ -35,7 +35,6 @@ import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
 
-const RECENT_SEARCHES_KEY = 'strmr.recentSearches';
 const MAX_RECENT_SEARCHES = 5;
 
 // Calculate similarity score between search query and a single title string
@@ -178,11 +177,16 @@ export default function SearchScreen() {
   const isNavigatingRef = useRef(false);
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
 
-  // Load recent searches from storage on mount
+  // Per-user AsyncStorage key for recent searches
+  const recentSearchesKey = activeUser?.id ? `strmr.recentSearches.${activeUser.id}` : null;
+
+  // Load recent searches from storage; reload when profile changes
   useEffect(() => {
+    setRecentSearches([]);
+    if (!recentSearchesKey) return;
     const loadRecentSearches = async () => {
       try {
-        const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
+        const stored = await AsyncStorage.getItem(recentSearchesKey);
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
@@ -194,12 +198,12 @@ export default function SearchScreen() {
       }
     };
     loadRecentSearches();
-  }, []);
+  }, [recentSearchesKey]);
 
   // Save a new search to recent searches
   const saveRecentSearch = useCallback(async (searchQuery: string) => {
     const trimmed = searchQuery.trim();
-    if (!trimmed) return;
+    if (!trimmed || !recentSearchesKey) return;
 
     setRecentSearches((prev) => {
       // Remove if already exists, then add to front
@@ -207,13 +211,13 @@ export default function SearchScreen() {
       const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
 
       // Persist to storage
-      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch((error) => {
+      AsyncStorage.setItem(recentSearchesKey, JSON.stringify(updated)).catch((error) => {
         console.warn('Failed to save recent searches:', error);
       });
 
       return updated;
     });
-  }, []);
+  }, [recentSearchesKey]);
 
   const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
     [
@@ -444,14 +448,15 @@ export default function SearchScreen() {
   }, []);
 
   const handleClearRecentSearch = useCallback(async (searchTerm: string) => {
+    if (!recentSearchesKey) return;
     setRecentSearches((prev) => {
       const updated = prev.filter((s) => s !== searchTerm);
-      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch((error) => {
+      AsyncStorage.setItem(recentSearchesKey, JSON.stringify(updated)).catch((error) => {
         console.warn('Failed to save recent searches:', error);
       });
       return updated;
     });
-  }, []);
+  }, [recentSearchesKey]);
 
   const renderContent = () => {
     if (!hasQuery) {
