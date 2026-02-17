@@ -15,6 +15,7 @@ import (
 	"novastream/handlers"
 	"novastream/models"
 	"novastream/services/accounts"
+	"novastream/services/metadata"
 	"novastream/services/invitations"
 	"novastream/services/sessions"
 	"novastream/services/user_settings"
@@ -34,6 +35,13 @@ func (m *mockMetadataService) MovieDetails(ctx context.Context, req models.Movie
 
 func (m *mockMetadataService) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error) {
 	return &models.Title{}, nil
+}
+
+func (m *mockMetadataService) GetCacheManagerStatus() metadata.CacheManagerStatus {
+	return metadata.CacheManagerStatus{}
+}
+
+func (m *mockMetadataService) RefreshTrendingCache() {
 }
 
 // setupAdminUIHandler creates an AdminUIHandler with all required dependencies for testing

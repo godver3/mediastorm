@@ -19,6 +19,7 @@ import (
 type metadataService interface {
 	Trending(context.Context, string) ([]models.TrendingItem, error)
 	Search(context.Context, string, string) ([]models.SearchResult, error)
+	EnrichSearchCertifications(context.Context, []models.SearchResult)
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
@@ -131,7 +132,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	// Apply kids rating filter if user is a kids profile
 	if userID != "" && h.UsersService != nil {
 		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile {
-			if user.KidsMode == "rating" || user.KidsMode == "both" {
+			if user.KidsMode == "rating" {
 				movieRating := user.KidsMaxMovieRating
 				tvRating := user.KidsMaxTVRating
 				if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
@@ -167,6 +168,20 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+
+	// Check kids profile restrictions before searching
+	if userID != "" && h.UsersService != nil {
+		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile {
+			if user.KidsMode == "content_list" {
+				// Search is disabled for curated-list profiles
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]models.SearchResult{})
+				return
+			}
+		}
+	}
+
 	results, err := h.Service.Search(r.Context(), q, mediaType)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -174,6 +189,23 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Apply kids rating filter if user is a kids profile with rating mode
+	if userID != "" && h.UsersService != nil {
+		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile && user.KidsMode == "rating" {
+			// Enrich results with certification data
+			h.Service.EnrichSearchCertifications(r.Context(), results)
+
+			movieRating := user.KidsMaxMovieRating
+			tvRating := user.KidsMaxTVRating
+			if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+				movieRating = user.KidsMaxRating
+				tvRating = user.KidsMaxRating
+			}
+			results = kids.FilterSearchByRatings(results, movieRating, tvRating)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
 }

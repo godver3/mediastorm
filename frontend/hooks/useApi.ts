@@ -14,6 +14,9 @@ export interface UseApiState<T> {
 
 const DEFAULT_SEARCH_DEBOUNCE_MS = 400;
 const MIN_SEARCH_QUERY_LENGTH = 2;
+// Match the backend startupShelfLimit (20) to avoid fetching hundreds of
+// trending items that the home screen will never display.
+const TRENDING_FETCH_LIMIT = 20;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -76,7 +79,7 @@ export function useTrendingMovies(
         // Without limit, getTrendingMovies returns TrendingItem[]
         const result = await apiService.getTrendingMovies(
           userId ?? undefined,
-          undefined,
+          TRENDING_FETCH_LIMIT,
           undefined,
           hideUnreleased,
           hideWatched,
@@ -85,12 +88,14 @@ export function useTrendingMovies(
           console.log('[useTrendingMovies] Request cancelled, ignoring response');
           return;
         }
-        console.log('[useTrendingMovies] Received', (result as TrendingItem[]).length, 'items');
-        if ((result as TrendingItem[]).length > 0) {
-          const first = (result as TrendingItem[])[0];
+        // With limit, getTrendingMovies returns { items, total } — extract items
+        const items = Array.isArray(result) ? result : (result as { items: TrendingItem[] }).items;
+        console.log('[useTrendingMovies] Received', items.length, 'items');
+        if (items.length > 0) {
+          const first = items[0];
           console.log('[useTrendingMovies] First item:', first.title.name, 'certification:', first.title.certification);
         }
-        setData(result as TrendingItem[]);
+        setData(items);
       } catch (err) {
         if (cancelled) return;
         console.error('[useTrendingMovies] Error:', err);
@@ -162,10 +167,9 @@ export function useTrendingTVShows(
         setLoading(true);
         setError(null);
         console.log('[useTrendingTVShows] Fetching with userId:', userId, 'hideUnreleased:', hideUnreleased, 'hideWatched:', hideWatched);
-        // Without limit, getTrendingTVShows returns TrendingItem[]
         const result = await apiService.getTrendingTVShows(
           userId ?? undefined,
-          undefined,
+          TRENDING_FETCH_LIMIT,
           undefined,
           hideUnreleased,
           hideWatched,
@@ -174,8 +178,10 @@ export function useTrendingTVShows(
           console.log('[useTrendingTVShows] Request cancelled, ignoring response');
           return;
         }
-        console.log('[useTrendingTVShows] Received', (result as TrendingItem[]).length, 'items');
-        setData(result as TrendingItem[]);
+        // With limit, getTrendingTVShows returns { items, total } — extract items
+        const items = Array.isArray(result) ? result : (result as { items: TrendingItem[] }).items;
+        console.log('[useTrendingTVShows] Received', items.length, 'items');
+        setData(items);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
@@ -217,7 +223,7 @@ function mergeAndSortResults(results: SearchResult[]): SearchResult[] {
   return Array.from(deduped.values()).sort((a, b) => b.score - a.score);
 }
 
-export function useSearchTitles(query: string): UseApiState<SearchResult[]> {
+export function useSearchTitles(query: string, userId?: string): UseApiState<SearchResult[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -279,7 +285,7 @@ export function useSearchTitles(query: string): UseApiState<SearchResult[]> {
 
     // Fire both searches independently - show results as they arrive
     apiService
-      .searchMovies(debouncedQuery)
+      .searchMovies(debouncedQuery, userId)
       .then((results) => {
         handleResults(results, 'movie');
         handleComplete();
@@ -287,7 +293,7 @@ export function useSearchTitles(query: string): UseApiState<SearchResult[]> {
       .catch(handleError);
 
     apiService
-      .searchTVShows(debouncedQuery)
+      .searchTVShows(debouncedQuery, userId)
       .then((results) => {
         handleResults(results, 'series');
         handleComplete();
@@ -297,7 +303,7 @@ export function useSearchTitles(query: string): UseApiState<SearchResult[]> {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, backendUrl, isReady, refreshToken]);
+  }, [debouncedQuery, backendUrl, isReady, refreshToken, userId]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
   return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);

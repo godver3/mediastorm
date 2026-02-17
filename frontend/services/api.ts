@@ -647,7 +647,7 @@ export interface UserProfile {
   hasIcon?: boolean; // Whether this profile has a custom icon set
   isKidsProfile?: boolean; // Whether this is a kids profile with content restrictions
   // Kids profile content restriction settings
-  kidsMode?: 'rating' | 'content_list' | 'both' | ''; // Restriction mode
+  kidsMode?: 'rating' | 'content_list' | ''; // Restriction mode
   kidsMaxRating?: string; // Deprecated: use kidsMaxMovieRating/kidsMaxTVRating instead
   kidsMaxMovieRating?: string; // Max allowed movie rating: G, PG, PG-13, R, NC-17
   kidsMaxTVRating?: string; // Max allowed TV rating: TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA
@@ -1286,15 +1286,19 @@ class ApiService {
   }
 
   // Search movies
-  async searchMovies(query: string): Promise<SearchResult[]> {
+  async searchMovies(query: string, userId?: string): Promise<SearchResult[]> {
     const encodedQuery = encodeURIComponent(query);
-    return this.request<SearchResult[]>(`/search?q=${encodedQuery}&type=movie`);
+    let url = `/search?q=${encodedQuery}&type=movie`;
+    if (userId) url += `&userId=${encodeURIComponent(userId)}`;
+    return this.request<SearchResult[]>(url);
   }
 
   // Search TV shows
-  async searchTVShows(query: string): Promise<SearchResult[]> {
+  async searchTVShows(query: string, userId?: string): Promise<SearchResult[]> {
     const encodedQuery = encodeURIComponent(query);
-    return this.request<SearchResult[]>(`/search?q=${encodedQuery}&type=series`);
+    let url = `/search?q=${encodedQuery}&type=series`;
+    if (userId) url += `&userId=${encodeURIComponent(userId)}`;
+    return this.request<SearchResult[]>(url);
   }
 
   async getSeriesDetails(params: {
@@ -2173,7 +2177,7 @@ class ApiService {
   }
 
   // Kids profile content restriction configuration
-  async setKidsMode(userId: string, mode: 'rating' | 'content_list' | 'both' | ''): Promise<UserProfile> {
+  async setKidsMode(userId: string, mode: 'rating' | 'content_list' | ''): Promise<UserProfile> {
     const safeId = this.normaliseUserId(userId);
     return this.request<UserProfile>(`/users/${safeId}/kids/mode`, {
       method: 'PUT',

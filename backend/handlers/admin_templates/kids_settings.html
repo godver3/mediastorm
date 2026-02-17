@@ -49,13 +49,6 @@
                             <span style="color: var(--text-secondary); font-size: 0.875rem;">Only allow content from specific MDBList URLs</span>
                         </div>
                     </label>
-                    <label class="mode-option" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 1rem; background: var(--bg-tertiary); border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.2s;">
-                        <input type="radio" name="kidsMode" value="both" style="margin-top: 0.25rem;">
-                        <div>
-                            <strong style="display: block; margin-bottom: 0.25rem;">Both</strong>
-                            <span style="color: var(--text-secondary); font-size: 0.875rem;">Combine rating filter with curated lists</span>
-                        </div>
-                    </label>
                 </div>
             </div>
             <button class="btn btn-primary" onclick="saveMode()" style="margin-top: 1rem;">
@@ -388,9 +381,6 @@ function updateSectionVisibility() {
     } else if (mode === 'content_list') {
         ratingSection.style.display = 'none';
         listsSection.style.display = 'block';
-    } else { // both
-        ratingSection.style.display = 'block';
-        listsSection.style.display = 'block';
     }
 }
 
@@ -576,8 +566,8 @@ async function loadContentPreview() {
             return out;
         }
 
-        // For rating mode or both mode, show trending content
-        if (mode === 'rating' || mode === 'both') {
+        // For rating mode, show trending content
+        if (mode === 'rating') {
             const moviesRes = await fetch(basePath + '/api/discover/new?type=movie&limit=12&userId=' + encodeURIComponent(profileId));
             const moviesData = moviesRes.ok ? await moviesRes.json() : { items: [] };
             const movies = moviesData.items || [];
@@ -606,8 +596,8 @@ async function loadContentPreview() {
             }
         }
 
-        // For content_list mode or both mode, show items from allowed lists
-        if (mode === 'content_list' || mode === 'both') {
+        // For content_list mode, show items from allowed lists
+        if (mode === 'content_list') {
             const lists = profile?.kidsAllowedLists || [];
 
             if (lists.length > 0) {

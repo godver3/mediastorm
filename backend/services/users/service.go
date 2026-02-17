@@ -1105,6 +1105,11 @@ func (s *Service) load() error {
 			user.KidsMaxRating = "G"
 			needsSave = true
 		}
+		// Migration: convert removed "both" mode to "rating"
+		if user.KidsMode == "both" {
+			user.KidsMode = "rating"
+			needsSave = true
+		}
 		s.users[user.ID] = user
 	}
 

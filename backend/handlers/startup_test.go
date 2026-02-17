@@ -174,6 +174,9 @@ func (m *mockMetadataServiceStartup) ServePrequeuedTrailer(_ string, _ http.Resp
 	return nil
 }
 
+func (m *mockMetadataServiceStartup) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
+}
+
 type mockUserServiceStartup struct {
 	exists bool
 }

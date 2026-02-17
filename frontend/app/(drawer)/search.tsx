@@ -131,7 +131,7 @@ export default function SearchScreen() {
 
   // Check if user is in kids curated list mode (content restricted to allowed lists)
   const isKidsCuratedMode =
-    activeUser?.isKidsProfile && (activeUser.kidsMode === 'content_list' || activeUser.kidsMode === 'both');
+    activeUser?.isKidsProfile && activeUser.kidsMode === 'content_list';
   const isFocused = useIsFocused();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
 
@@ -222,7 +222,7 @@ export default function SearchScreen() {
       { key: 'series', label: 'TV Shows', icon: 'tv-outline' },
     ];
 
-  const { data: searchResults, loading, error } = useSearchTitles(submittedQuery);
+  const { data: searchResults, loading, error } = useSearchTitles(submittedQuery, activeUser?.id);
   const items = useMemo(() => {
     const seen = new Map<string, number>();
     const titlesWithKeys =
@@ -892,7 +892,7 @@ export default function SearchScreen() {
               </SpatialNavigationNode>
             </View>
 
-            {/* Kids mode notice - search may show unrestricted results */}
+            {/* Kids mode notice - search disabled for curated-list profiles */}
             {isKidsCuratedMode && (
               <View style={styles.kidsNotice}>
                 <MaterialCommunityIcons
@@ -901,7 +901,7 @@ export default function SearchScreen() {
                   color={theme.colors.warning.text}
                 />
                 <Text style={styles.kidsNoticeText}>
-                  Only content from allowed lists can be viewed on this kids profile.
+                  Search is not available on this profile. Content is limited to curated lists.
                 </Text>
               </View>
             )}

@@ -3547,6 +3547,51 @@ func (s *Service) enrichTVContentRating(ctx context.Context, title *models.Title
 	return rating != ""
 }
 
+// EnrichSearchCertifications adds certification (content rating) data to search results.
+// It resolves TMDB IDs and fetches certifications concurrently using existing enrichment functions.
+func (s *Service) EnrichSearchCertifications(ctx context.Context, results []models.SearchResult) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return
+	}
+
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for i := range results {
+		if results[i].Title.Certification != "" {
+			continue // Already has a rating
+		}
+
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mediaType := strings.ToLower(results[idx].Title.MediaType)
+			tmdbID := results[idx].Title.TMDBID
+
+			if mediaType == "movie" {
+				if tmdbID <= 0 && results[idx].Title.IMDBID != "" {
+					tmdbID = s.getTMDBIDForIMDB(ctx, results[idx].Title.IMDBID)
+				}
+				if tmdbID > 0 {
+					s.enrichMovieReleases(ctx, &results[idx].Title, tmdbID)
+				}
+			} else {
+				if tmdbID <= 0 && results[idx].Title.IMDBID != "" {
+					tmdbID = s.getTMDBIDForIMDBTV(ctx, results[idx].Title.IMDBID)
+				}
+				if tmdbID > 0 {
+					s.enrichTVContentRating(ctx, &results[idx].Title, tmdbID)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 func (s *Service) ensureMovieReleasePointers(title *models.Title) {
 	if title == nil {
 		return

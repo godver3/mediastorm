@@ -143,7 +143,7 @@ func IsListAllowed(listURL string, allowedLists []string) bool {
 // GetDefaultRatingForMode returns the default max rating for a kids mode.
 func GetDefaultRatingForMode(mode string) string {
 	switch mode {
-	case "rating", "both":
+	case "rating":
 		return "G" // Default to G for rating-based mode
 	default:
 		return ""
@@ -153,11 +153,39 @@ func GetDefaultRatingForMode(mode string) string {
 // ValidateKidsMode checks if a mode string is valid.
 func ValidateKidsMode(mode string) bool {
 	switch mode {
-	case "", "rating", "content_list", "both":
+	case "", "rating", "content_list":
 		return true
 	default:
 		return false
 	}
+}
+
+// FilterSearchByRatings filters a list of SearchResults by rating.
+// Uses separate max ratings for movies and TV shows.
+// Items without a certification or with a rating exceeding the max are removed.
+func FilterSearchByRatings(results []models.SearchResult, maxMovieRating, maxTVRating string) []models.SearchResult {
+	if strings.TrimSpace(maxMovieRating) == "" && strings.TrimSpace(maxTVRating) == "" {
+		return results
+	}
+
+	filtered := make([]models.SearchResult, 0, len(results))
+	for _, r := range results {
+		mediaType := strings.ToLower(r.Title.MediaType)
+		var maxRating string
+		if mediaType == "movie" {
+			maxRating = maxMovieRating
+		} else {
+			maxRating = maxTVRating
+		}
+		if strings.TrimSpace(maxRating) == "" {
+			filtered = append(filtered, r)
+			continue
+		}
+		if IsRatingAllowed(r.Title.Certification, maxRating, r.Title.MediaType) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 // ValidateRating checks if a rating string is valid (known MPAA or TV rating).

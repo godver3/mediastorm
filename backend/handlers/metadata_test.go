@@ -132,6 +132,20 @@ func (f *fakeMetadataService) Similar(_ context.Context, _ string, _ int64) ([]m
 	return nil, nil
 }
 
+func (f *fakeMetadataService) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
+	// no-op in tests — certifications are pre-set on test data
+}
+
+// fakeUsersServiceForSearch implements usersServiceInterface for search handler tests.
+type fakeUsersServiceForSearch struct {
+	users map[string]models.User
+}
+
+func (f *fakeUsersServiceForSearch) Get(id string) (models.User, bool) {
+	u, ok := f.users[id]
+	return u, ok
+}
+
 func testConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -296,5 +310,105 @@ func TestMetadataHandler_MovieDetailsError(t *testing.T) {
 	}
 	if payload["error"] == "" {
 		t.Fatalf("expected error payload, got %+v", payload)
+	}
+}
+
+func TestMetadataHandler_SearchKidsContentListReturnsEmpty(t *testing.T) {
+	fake := &fakeMetadataService{
+		searchResp: []models.SearchResult{
+			{Score: 80, Title: models.Title{Name: "Action Movie", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"kid1": {ID: "kid1", IsKidsProfile: true, KidsMode: "content_list"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=action&type=movie&userId=kid1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var payload []models.SearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("expected empty results for content_list kids, got %d", len(payload))
+	}
+}
+
+func TestMetadataHandler_SearchKidsRatingFilters(t *testing.T) {
+	fake := &fakeMetadataService{
+		searchResp: []models.SearchResult{
+			{Score: 90, Title: models.Title{Name: "Kids Movie", MediaType: "movie", Certification: "G"}},
+			{Score: 80, Title: models.Title{Name: "Adult Movie", MediaType: "movie", Certification: "R"}},
+			{Score: 70, Title: models.Title{Name: "No Rating", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"kid2": {ID: "kid2", IsKidsProfile: true, KidsMode: "rating", KidsMaxMovieRating: "PG", KidsMaxTVRating: "TV-PG"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=movie&type=movie&userId=kid2", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var payload []models.SearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	// Only "Kids Movie" (G) should pass — "Adult Movie" (R) exceeds PG, "No Rating" blocked
+	if len(payload) != 1 {
+		t.Fatalf("expected 1 result, got %d: %+v", len(payload), payload)
+	}
+	if payload[0].Title.Name != "Kids Movie" {
+		t.Fatalf("expected Kids Movie, got %q", payload[0].Title.Name)
+	}
+}
+
+func TestMetadataHandler_SearchNormalUserUnfiltered(t *testing.T) {
+	fake := &fakeMetadataService{
+		searchResp: []models.SearchResult{
+			{Score: 90, Title: models.Title{Name: "Movie A", MediaType: "movie"}},
+			{Score: 80, Title: models.Title{Name: "Movie B", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"adult1": {ID: "adult1", IsKidsProfile: false},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=movie&type=movie&userId=adult1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var payload []models.SearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload) != 2 {
+		t.Fatalf("expected 2 unfiltered results for normal user, got %d", len(payload))
 	}
 }

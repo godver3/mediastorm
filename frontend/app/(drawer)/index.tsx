@@ -644,7 +644,7 @@ function IndexScreen() {
   // Check if user is in kids curated list mode (only allowed lists, no trending)
   const isKidsCuratedMode = useMemo(() => {
     if (!activeUser?.isKidsProfile) return false;
-    return activeUser.kidsMode === 'content_list' || activeUser.kidsMode === 'both';
+    return activeUser.kidsMode === 'content_list';
   }, [activeUser?.isKidsProfile, activeUser?.kidsMode]);
 
   // Virtual shelves for kids allowed lists (when in curated mode)
@@ -928,6 +928,9 @@ function IndexScreen() {
     }
     previousProfileChangeRef.current = profileChangeGeneration;
     console.log('[IndexPage] Profile changed, reloading content');
+    // Clear hero carousel state so stale items from the previous profile don't persist
+    stableHeroItemsRef.current = [];
+    heroItemKeysRef.current.clear();
     triggerReloadAfterAuthFailure();
   }, [profileChangeGeneration, triggerReloadAfterAuthFailure]);
 
@@ -2083,8 +2086,11 @@ function IndexScreen() {
 
     addCards(continueWatchingCards);
     addCards(watchlistCards);
-    addCards(trendingMovieCards);
-    addCards(trendingShowCards);
+    // Exclude trending from hero when in kids curated mode (content restricted to allowed lists)
+    if (!isKidsCuratedMode) {
+      addCards(trendingMovieCards);
+      addCards(trendingShowCards);
+    }
 
     // If we have new items, shuffle only them and append to existing stable list
     if (newItems.length > 0) {
@@ -2096,7 +2102,7 @@ function IndexScreen() {
     capSetSize(heroItemKeysRef.current, MAX_HERO_KEYS_CACHE);
 
     return stableHeroItemsRef.current;
-  }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards]);
+  }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards, isKidsCuratedMode]);
 
   const heroSource = useMemo<HeroContent>(() => {
     // For mobile, use rotating hero items
@@ -2111,7 +2117,10 @@ function IndexScreen() {
     }
 
     // For desktop, use focused card or first available (excluding continue watching)
-    const candidate = focusedDesktopCard ?? watchlistCards[0] ?? trendingMovieCards[0] ?? trendingShowCards[0];
+    // Skip trending fallback when in kids curated mode
+    const candidate = isKidsCuratedMode
+      ? focusedDesktopCard ?? watchlistCards[0]
+      : focusedDesktopCard ?? watchlistCards[0] ?? trendingMovieCards[0] ?? trendingShowCards[0];
 
     if (candidate) {
       const description = candidate.seriesOverview ?? candidate.description;
@@ -2140,6 +2149,7 @@ function IndexScreen() {
     retryCountdown,
     isBackendReachable,
     settingsLoading,
+    isKidsCuratedMode,
   ]);
 
   // Calculate hero width for carousel scrolling

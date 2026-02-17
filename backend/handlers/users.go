@@ -722,7 +722,7 @@ func (h *UsersHandler) SetKidsMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Mode string `json:"mode"` // "rating", "content_list", "both", or ""
+		Mode string `json:"mode"` // "rating", "content_list", or ""
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -732,9 +732,9 @@ func (h *UsersHandler) SetKidsMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate mode
-	validModes := map[string]bool{"": true, "rating": true, "content_list": true, "both": true}
+	validModes := map[string]bool{"": true, "rating": true, "content_list": true}
 	if !validModes[body.Mode] {
-		http.Error(w, "invalid mode, must be 'rating', 'content_list', 'both', or empty", http.StatusBadRequest)
+		http.Error(w, "invalid mode, must be 'rating', 'content_list', or empty", http.StatusBadRequest)
 		return
 	}
 
