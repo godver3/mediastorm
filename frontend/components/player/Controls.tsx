@@ -535,39 +535,12 @@ const Controls: React.FC<ControlsProps> = ({
             showPipButton) && (
               <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
                 <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
-                  {/* Mobile PiP layout: tracks on separate lines, PiP icon at end of last line */}
+                  {/* Mobile PiP layout: portrait=stacked, landscape=side-by-side */}
                   {showPipButton ? (
-                    <View style={styles.mobilePipContainer} pointerEvents="box-none">
-                      {/* Line 1: Audio (only when subtitle also present) */}
-                      {hasAudioSelection && audioSummary && hasSubtitleSelection && subtitleSummary && (
-                        <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                          <FocusablePressable
-                            icon="musical-notes"
-                            focusKey="audio-track-button"
-                            onSelect={handleOpenAudioMenu}
-                            onFocus={handleAudioTrackFocus}
-                            style={[styles.controlButton, styles.trackButton]}
-                            disabled={isSeeking || activeMenu !== null}
-                          />
-                          <Text style={styles.trackLabel}>{audioSummary}</Text>
-                        </View>
-                      )}
-                      {/* Last line: track (if any) + PiP icon */}
+                    isLandscape ? (
                       <View style={styles.mobilePipRow} pointerEvents="box-none">
-                        {hasSubtitleSelection && subtitleSummary ? (
-                          <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
-                            <FocusablePressable
-                              icon="chatbubble-ellipses"
-                              focusKey={hasAudioSelection ? 'subtitle-track-button-secondary' : 'subtitle-track-button'}
-                              onSelect={handleOpenSubtitlesMenu}
-                              onFocus={hasAudioSelection ? handleSubtitleTrackSecondaryFocus : handleSubtitleTrackFocus}
-                              style={[styles.controlButton, styles.trackButton]}
-                              disabled={isSeeking || activeMenu !== null}
-                            />
-                            <Text style={styles.trackLabel} numberOfLines={1}>{subtitleSummary}</Text>
-                          </View>
-                        ) : hasAudioSelection && audioSummary ? (
-                          <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
+                        {hasAudioSelection && audioSummary && (
+                          <View style={styles.trackButtonGroup} pointerEvents="box-none">
                             <FocusablePressable
                               icon="musical-notes"
                               focusKey="audio-track-button"
@@ -578,7 +551,21 @@ const Controls: React.FC<ControlsProps> = ({
                             />
                             <Text style={styles.trackLabel} numberOfLines={1}>{audioSummary}</Text>
                           </View>
-                        ) : null}
+                        )}
+                        {hasSubtitleSelection && subtitleSummary && (
+                          <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                            <FocusablePressable
+                              icon="chatbubble-ellipses"
+                              focusKey={hasAudioSelection ? 'subtitle-track-button-secondary' : 'subtitle-track-button'}
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={hasAudioSelection ? handleSubtitleTrackSecondaryFocus : handleSubtitleTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                            <Text style={styles.trackLabel} numberOfLines={1}>{subtitleSummary}</Text>
+                          </View>
+                        )}
+                        <View style={styles.pipButtonSpacer} />
                         <Pressable
                           onPress={onEnterPip}
                           style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
@@ -589,7 +576,59 @@ const Controls: React.FC<ControlsProps> = ({
                           />
                         </Pressable>
                       </View>
-                    </View>
+                    ) : (
+                      <View style={styles.mobilePipContainer} pointerEvents="box-none">
+                        {hasAudioSelection && audioSummary && hasSubtitleSelection && subtitleSummary && (
+                          <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                            <FocusablePressable
+                              icon="musical-notes"
+                              focusKey="audio-track-button"
+                              onSelect={handleOpenAudioMenu}
+                              onFocus={handleAudioTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                            <Text style={styles.trackLabel}>{audioSummary}</Text>
+                          </View>
+                        )}
+                        <View style={styles.mobilePipRow} pointerEvents="box-none">
+                          {hasSubtitleSelection && subtitleSummary ? (
+                            <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
+                              <FocusablePressable
+                                icon="chatbubble-ellipses"
+                                focusKey={hasAudioSelection ? 'subtitle-track-button-secondary' : 'subtitle-track-button'}
+                                onSelect={handleOpenSubtitlesMenu}
+                                onFocus={hasAudioSelection ? handleSubtitleTrackSecondaryFocus : handleSubtitleTrackFocus}
+                                style={[styles.controlButton, styles.trackButton]}
+                                disabled={isSeeking || activeMenu !== null}
+                              />
+                              <Text style={styles.trackLabel} numberOfLines={1}>{subtitleSummary}</Text>
+                            </View>
+                          ) : hasAudioSelection && audioSummary ? (
+                            <View style={styles.trackButtonGroupFlex} pointerEvents="box-none">
+                              <FocusablePressable
+                                icon="musical-notes"
+                                focusKey="audio-track-button"
+                                onSelect={handleOpenAudioMenu}
+                                onFocus={handleAudioTrackFocus}
+                                style={[styles.controlButton, styles.trackButton]}
+                                disabled={isSeeking || activeMenu !== null}
+                              />
+                              <Text style={styles.trackLabel} numberOfLines={1}>{audioSummary}</Text>
+                            </View>
+                          ) : null}
+                          <Pressable
+                            onPress={onEnterPip}
+                            style={[styles.controlButton, styles.trackButton, styles.pipButton]}>
+                            <MaterialCommunityIcons
+                              name="picture-in-picture-bottom-right"
+                              size={24}
+                              color={theme.colors.text.primary}
+                            />
+                          </Pressable>
+                        </View>
+                      </View>
+                    )
                   ) : (
                     <>
                       {hasAudioSelection && audioSummary && (
@@ -929,6 +968,10 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     trackButton: {
       marginRight: 0,
     },
+    // Pushes PiP button to far right in landscape row
+    pipButtonSpacer: {
+      flex: 1,
+    },
     // PiP button styled to match FocusablePressable
     pipButton: {
       backgroundColor: theme.colors.overlay.button,
@@ -940,11 +983,11 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
     },
-    // Mobile PiP layout container
+    // Portrait: stacked layout container
     mobilePipContainer: {
       width: '100%',
     },
-    // Row that holds the last track + PiP icon
+    // Row that holds tracks + PiP icon
     mobilePipRow: {
       flexDirection: 'row',
       alignItems: 'center',
