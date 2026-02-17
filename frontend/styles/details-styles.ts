@@ -572,5 +572,71 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     tvContentInner: {
       paddingBottom: tvScale * 32,
     },
+
+    // More Options Menu Modal — matches BulkWatchModal visual style
+    moreOptionsModal: {
+      width: Platform.isTV ? '50%' : theme.breakpoint === 'compact' ? '90%' : '80%',
+      maxWidth: Platform.isTV ? 700 : 440,
+      backgroundColor: theme.colors.background.surface,
+      borderRadius: theme.radius.lg,
+      overflow: 'hidden' as const,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 8,
+        },
+        android: {
+          elevation: 8,
+        },
+      }),
+    },
+    moreOptionsHeader: {
+      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
+      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border.subtle,
+    },
+    moreOptionsTitle: {
+      ...theme.typography.title.lg,
+      color: theme.colors.text.primary,
+      ...(isTV
+        ? {
+            fontSize: theme.typography.title.lg.fontSize * tvScale,
+            lineHeight: theme.typography.title.lg.lineHeight * tvScale,
+          }
+        : {}),
+    },
+    moreOptionsContent: {
+      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
+      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+    },
+    moreOptionsItem: {
+      width: '100%' as const,
+      backgroundColor: 'rgba(255, 255, 255, 0.08)' as const,
+      borderRadius: theme.radius.md,
+      paddingVertical: Platform.isTV ? theme.spacing.xl : theme.spacing.md,
+      paddingHorizontal: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.lg,
+      marginBottom: Platform.isTV ? theme.spacing.lg : theme.spacing.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+    },
+    moreOptionsFooter: {
+      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
+      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border.subtle,
+      alignItems: 'flex-end' as const,
+    },
+    moreOptionsCancelButton: {
+      paddingHorizontal: theme.spacing['2xl'],
+      paddingVertical: theme.spacing.md,
+    },
+    moreOptionsCancelButtonText: {
+      fontSize: theme.typography.body.md.fontSize * tvScale,
+    },
   });
 };

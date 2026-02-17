@@ -7,6 +7,7 @@ import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import MobileTabBar from '@/components/MobileTabBar';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
+import { TvModal } from '@/components/TvModal';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import EpisodeCard from '@/components/EpisodeCard';
@@ -455,12 +456,18 @@ export default function DetailsScreen() {
     refresh: refreshWatchStatus,
   } = useWatchStatus();
   const { showToast, hideToast } = useToast();
-  const { recordEpisodeWatch } = useContinueWatching();
+  const { recordEpisodeWatch, items: continueWatchingItems, hideFromContinueWatching } = useContinueWatching();
   const { activeUserId, activeUser } = useUserProfiles();
   const { showLoadingScreen, hideLoadingScreen, setOnCancel } = useLoadingScreen();
 
   // Kids profiles have restricted navigation - disable cast/crew and similar content links
   const isKidsProfile = activeUser?.isKidsProfile ?? false;
+
+  // Check if this title is in the continue watching list
+  const isInContinueWatching = useMemo(() => {
+    if (!seriesIdentifier) return false;
+    return continueWatchingItems.some(item => item.seriesId === seriesIdentifier);
+  }, [continueWatchingItems, seriesIdentifier]);
 
   // ===== Lifted Episode State (shared between usePlayback and useEpisodeManager) =====
   const [activeEpisode, setActiveEpisode] = useState<SeriesEpisode | null>(null);
@@ -483,6 +490,7 @@ export default function DetailsScreen() {
   const [activeTrailer, setActiveTrailer] = useState<Trailer | null>(null);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
   const [episodeSelectorVisible, setEpisodeSelectorVisible] = useState(false);
+  const [moreOptionsVisible, setMoreOptionsVisible] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
@@ -1146,6 +1154,29 @@ export default function DetailsScreen() {
     });
   }, [movieDetails?.collection, trailersHook, router]);
 
+  // More Options menu handlers
+  const handleMenuShuffleShow = useCallback(() => {
+    setMoreOptionsVisible(false);
+    episodeManager.handleShufflePlay();
+  }, [episodeManager]);
+
+  const handleMenuShuffleSeason = useCallback(() => {
+    setMoreOptionsVisible(false);
+    episodeManager.handleShuffleSeasonPlay();
+  }, [episodeManager]);
+
+  const handleRemoveFromContinueWatching = useCallback(() => {
+    if (!seriesIdentifier) return;
+    setMoreOptionsVisible(false);
+    hideFromContinueWatching(seriesIdentifier)
+      .then(() => {
+        showToast('Removed from Continue Watching', { tone: 'success', duration: 3000 });
+      })
+      .catch(() => {
+        showToast('Failed to remove from Continue Watching', { tone: 'danger', duration: 3000 });
+      });
+  }, [seriesIdentifier, hideFromContinueWatching, showToast]);
+
   const handleSimilarTitlePress = useCallback(
     (item: Title) => {
       router.replace({
@@ -1555,18 +1586,16 @@ export default function DetailsScreen() {
               style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
             />
           )}
-          {isSeries && (
+          {(isSeries || isInContinueWatching) && (
             <FocusablePressable
-              focusKey="shuffle-play"
-              text={!useCompactActionLayout ? 'Shuffle' : undefined}
-              icon={useCompactActionLayout || Platform.isTV ? 'shuffle' : undefined}
-              accessibilityLabel="Shuffle play random episode"
-              onSelect={episodeManager.handleShufflePlay}
-              onLongPress={episodeManager.handleShuffleSeasonPlay}
+              focusKey="more-options"
+              text={!useCompactActionLayout ? 'More' : undefined}
+              icon="ellipsis-vertical"
+              accessibilityLabel="More options"
+              onSelect={() => setMoreOptionsVisible(true)}
               onFocus={() => handleTVFocusAreaChange('actions')}
-  
+
               style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-              disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
             />
           )}
           <FocusablePressable
@@ -1976,7 +2005,7 @@ export default function DetailsScreen() {
         <FocusablePressable focusKey="watch-now-mobile" icon="play" onSelect={playback.handleWatchNow} style={styles.iconActionButton} loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} showReadyPip={playback.prequeueReady} badge={(() => { if (isSeries) return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined; return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined; })()} />
         <FocusablePressable focusKey="manual-selection-mobile" icon="search" onSelect={manualSelect.handleManualSelect} style={styles.iconActionButton} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} />
         {isSeries && <FocusablePressable focusKey="watch-management-mobile" icon="checkmark-done" onSelect={() => watchActions.setBulkWatchModalVisible(true)} style={styles.iconActionButton} />}
-        {isSeries && <FocusablePressable focusKey="shuffle-play-mobile" icon="shuffle" accessibilityLabel="Shuffle play random episode" onSelect={episodeManager.handleShufflePlay} onLongPress={episodeManager.handleShuffleSeasonPlay} style={styles.iconActionButton} disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0} />}
+        {(isSeries || isInContinueWatching) && <FocusablePressable focusKey="more-options-mobile" icon="ellipsis-vertical" accessibilityLabel="More options" onSelect={() => setMoreOptionsVisible(true)} style={styles.iconActionButton} />}
         <FocusablePressable focusKey="watchlist-toggle-mobile" icon={watchActions.isWatchlisted ? 'bookmark' : 'bookmark-outline'} onSelect={watchActions.handleToggleWatchlist} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatchlisted && styles.watchlistActionButtonActive]} />
         {!isSeries && <FocusablePressable focusKey="watch-state-toggle-mobile" icon={watchActions.isWatched ? 'eye' : 'eye-outline'} accessibilityLabel={watchActions.watchStateButtonLabel} onSelect={watchActions.handleToggleWatched} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatched && styles.watchStateButtonActive]} disabled={watchActions.watchlistBusy} />}
         {(trailersLoading || hasAvailableTrailer) && <FocusablePressable focusKey="watch-trailer-mobile" icon="videocam" accessibilityLabel={trailerButtonLabel} onSelect={handleWatchTrailer} loading={trailersLoading} style={styles.iconActionButton} disabled={trailerButtonDisabled} />}
@@ -2347,6 +2376,60 @@ export default function DetailsScreen() {
         onSeasonSelect={isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect}
         theme={theme}
       />
+      {/* More Options Menu */}
+      <TvModal visible={moreOptionsVisible} onRequestClose={() => setMoreOptionsVisible(false)}>
+        <View style={styles.moreOptionsModal}>
+          <View style={styles.moreOptionsHeader}>
+            <Text style={styles.moreOptionsTitle}>More Options</Text>
+          </View>
+          <View style={styles.moreOptionsContent}>
+            {isSeries && (
+              <FocusablePressable
+                focusKey="menu-shuffle-show"
+                autoFocus
+                text="Shuffle Show"
+                icon="shuffle"
+                accessibilityLabel="Shuffle play random episode from entire show"
+                onSelect={handleMenuShuffleShow}
+                style={styles.moreOptionsItem}
+                disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
+              />
+            )}
+            {isSeries && (
+              <FocusablePressable
+                focusKey="menu-shuffle-season"
+                text={`Shuffle Season${episodeManager.selectedSeason ? ` ${episodeManager.selectedSeason.number}` : ''}`}
+                icon="shuffle"
+                accessibilityLabel="Shuffle play random episode from current season"
+                onSelect={handleMenuShuffleSeason}
+                style={styles.moreOptionsItem}
+                disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
+              />
+            )}
+            {isInContinueWatching && (
+              <FocusablePressable
+                focusKey="menu-remove-cw"
+                autoFocus={!isSeries}
+                text="Remove from Continue Watching"
+                icon="eye-off-outline"
+                accessibilityLabel="Remove from continue watching"
+                onSelect={handleRemoveFromContinueWatching}
+                style={styles.moreOptionsItem}
+              />
+            )}
+          </View>
+          <View style={styles.moreOptionsFooter}>
+            <FocusablePressable
+              focusKey="menu-cancel"
+              text="Cancel"
+              accessibilityLabel="Close menu"
+              onSelect={() => setMoreOptionsVisible(false)}
+              style={styles.moreOptionsCancelButton}
+              textStyle={styles.moreOptionsCancelButtonText}
+            />
+          </View>
+        </View>
+      </TvModal>
       <EpisodeSelector
         visible={episodeSelectorVisible}
         onClose={() => setEpisodeSelectorVisible(false)}
