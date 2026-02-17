@@ -2349,11 +2349,16 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
 
     setResumeModalVisible(false);
     await showLoadingScreenIfEnabled();
-    await pendingPlaybackAction(currentProgress.position);
+
+    // Apply rewind-on-playback-start setting
+    const rewindAmount =
+      userSettings?.playback?.rewindOnPlaybackStart ?? settings?.playback?.rewindOnPlaybackStart ?? 0;
+    const resumePosition = Math.max(0, currentProgress.position - rewindAmount);
+    await pendingPlaybackAction(resumePosition);
 
     setPendingPlaybackAction(null);
     setCurrentProgress(null);
-  }, [pendingPlaybackAction, currentProgress, showLoadingScreenIfEnabled]);
+  }, [pendingPlaybackAction, currentProgress, showLoadingScreenIfEnabled, userSettings, settings]);
 
   // =========================================================================
   // handlePlayFromBeginning

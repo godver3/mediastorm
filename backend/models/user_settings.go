@@ -64,7 +64,9 @@ type PlaybackSettings struct {
 	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
 	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
 	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
-	SubtitleSize              float64 `json:"subtitleSize,omitempty"` // Scaling factor for subtitle size (1.0 = default)
+	SubtitleSize              float64 `json:"subtitleSize,omitempty"`              // Scaling factor for subtitle size (1.0 = default)
+	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause,omitempty"`   // Seconds to rewind when unpausing (default 0)
+	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart,omitempty"`     // Seconds to rewind when resuming from saved progress (default 0)
 }
 
 // ShelfConfig represents a configurable home screen shelf.

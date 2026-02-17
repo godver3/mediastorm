@@ -407,6 +407,9 @@ export default function PlayerScreen() {
   const isTvPlatform = Platform.isTV;
   const [paused, setPaused] = useState<boolean>(false);
   const pausedRef = useRef<boolean>(paused);
+  const wasPausedRef = useRef<boolean>(false); // Tracks previous paused state for rewind-on-unpause
+  const userToggledUnpauseRef = useRef<boolean>(false); // Only rewind on user-initiated unpause
+  const pausedAtRef = useRef<number>(0); // Timestamp when paused, for minimum pause duration check
   const [isPipActive, setIsPipActive] = useState<boolean>(false);
   // Pause teardown state: Prevents AVPlayer HLS timeout (-11866) by tearing down
   // the player after extended pause and showing a poster overlay instead
@@ -970,6 +973,43 @@ export default function PlayerScreen() {
       deactivateKeepAwake();
     };
   }, [paused]);
+
+  // Rewind on resume from pause — after paused transitions from true to false
+  // via user toggle, seek back by the configured amount. Only triggers if paused
+  // for 10+ seconds to avoid rewinding on accidental pause/unpause.
+  useEffect(() => {
+    if (!wasPausedRef.current && paused) {
+      // Record when pause started
+      pausedAtRef.current = Date.now();
+    }
+    if (wasPausedRef.current && !paused && userToggledUnpauseRef.current) {
+      userToggledUnpauseRef.current = false;
+      const pauseDurationMs = Date.now() - pausedAtRef.current;
+      const rewindAmount =
+        userSettings?.playback?.rewindOnResumeFromPause ?? settings?.playback?.rewindOnResumeFromPause ?? 0;
+      if (rewindAmount > 0 && pauseDurationMs >= 10_000) {
+        const absoluteTarget = Math.max(0, currentTimeRef.current - rewindAmount);
+        console.log('[player] rewind on unpause', {
+          rewindAmount, pausedForSec: Math.round(pauseDurationMs / 1000),
+          from: currentTimeRef.current, to: absoluteTarget,
+        });
+        currentTimeRef.current = absoluteTarget;
+        setCurrentTime(absoluteTarget);
+        // Small delay to ensure the native player is playing before seeking
+        setTimeout(() => {
+          if (isHlsStream) {
+            // HLS: seek relative to session start
+            const relativeTime = Math.max(0, absoluteTarget - playbackOffsetRef.current);
+            videoRef.current?.seek(relativeTime);
+          } else {
+            // Native player / direct stream: absolute seek
+            videoRef.current?.seek(absoluteTarget);
+          }
+        }, 100);
+      }
+    }
+    wasPausedRef.current = paused;
+  }, [paused, settings, userSettings, isHlsStream]);
 
   // Enable/disable Android auto-PiP based on playback state
   // This controls whether the native onUserLeaveHint() should trigger PiP
@@ -3834,6 +3874,10 @@ export default function PlayerScreen() {
 
   const togglePausePlay = () => {
     console.log('[player] togglePausePlay called, current paused:', pausedRef.current);
+    // Flag user-initiated unpause so the rewind effect knows to fire
+    if (pausedRef.current) {
+      userToggledUnpauseRef.current = true;
+    }
     if (usesSystemManagedControls) {
       try {
         const result = videoRef.current?.play?.();
