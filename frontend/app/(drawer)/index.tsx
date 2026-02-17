@@ -901,12 +901,9 @@ function IndexScreen() {
     callAndReport('User Profiles', refreshUserProfiles);
     callAndReport('Continue Watching', refreshContinueWatching);
     callAndReport('Watchlist', refreshWatchlist);
-    // Note: Trending movies/TV shows are NOT reloaded here — they self-manage
-    // via the startup bundle and their own dependency arrays (hideUnreleased,
-    // hideWatched, userId, etc.). Calling refetch() here would defeat startup
-    // bundle hydration by resetting the hydration flag and forcing independent
-    // HTTP requests.
-  }, [refreshUserProfiles, refreshContinueWatching, refreshWatchlist]);
+    callAndReport('Trending Movies', refetchTrendingMovies);
+    callAndReport('Trending TV Shows', refetchTrendingTVShows);
+  }, [refreshUserProfiles, refreshContinueWatching, refreshWatchlist, refetchTrendingMovies, refetchTrendingTVShows]);
 
   // Full reload when settings are applied/saved (settingsLastLoadedAt changes)
   useEffect(() => {

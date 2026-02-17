@@ -29,6 +29,7 @@ import (
 	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/invitations"
+	"novastream/services/metadata"
 	"novastream/services/plex"
 	"novastream/services/sessions"
 	"novastream/services/trakt"
@@ -664,6 +665,8 @@ type MetadataService interface {
 	ClearCache() error
 	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
 	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
+	GetCacheManagerStatus() metadata.CacheManagerStatus
+	RefreshTrendingCache()
 }
 
 // SetMetadataService sets the metadata service for cache clearing and overview fetching
@@ -2621,8 +2624,10 @@ type ProfileWithPinStatus struct {
 	HasIcon          bool      `json:"hasIcon"`
 	IsKidsProfile    bool      `json:"isKidsProfile"`
 	KidsMode         string    `json:"kidsMode,omitempty"`
-	KidsMaxRating    string    `json:"kidsMaxRating,omitempty"`
-	KidsAllowedLists []string  `json:"kidsAllowedLists,omitempty"`
+	KidsMaxRating      string    `json:"kidsMaxRating,omitempty"`
+	KidsMaxMovieRating string    `json:"kidsMaxMovieRating,omitempty"`
+	KidsMaxTVRating    string    `json:"kidsMaxTVRating,omitempty"`
+	KidsAllowedLists   []string  `json:"kidsAllowedLists,omitempty"`
 	TraktAccountID   string    `json:"traktAccountId,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
@@ -2651,8 +2656,10 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 			HasIcon:          u.HasIcon(),
 			IsKidsProfile:    u.IsKidsProfile,
 			KidsMode:         u.KidsMode,
-			KidsMaxRating:    u.KidsMaxRating,
-			KidsAllowedLists: u.KidsAllowedLists,
+			KidsMaxRating:      u.KidsMaxRating,
+			KidsMaxMovieRating: u.KidsMaxMovieRating,
+			KidsMaxTVRating:    u.KidsMaxTVRating,
+			KidsAllowedLists:   u.KidsAllowedLists,
 			TraktAccountID:   u.TraktAccountID,
 			CreatedAt:        u.CreatedAt,
 			UpdatedAt:        u.UpdatedAt,
@@ -2709,8 +2716,10 @@ func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -2749,8 +2758,10 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -2815,8 +2826,10 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -2868,8 +2881,10 @@ func (h *AdminUIHandler) RenameProfile(w http.ResponseWriter, r *http.Request) {
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -2948,8 +2963,10 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -2999,8 +3016,10 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -3052,8 +3071,10 @@ func (h *AdminUIHandler) SetProfileIcon(w http.ResponseWriter, r *http.Request) 
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -3092,8 +3113,10 @@ func (h *AdminUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -3158,8 +3181,10 @@ func (h *AdminUIHandler) UploadProfileIcon(w http.ResponseWriter, r *http.Reques
 		HasIcon:          user.HasIcon(),
 		IsKidsProfile:    user.IsKidsProfile,
 		KidsMode:         user.KidsMode,
-		KidsMaxRating:    user.KidsMaxRating,
-		KidsAllowedLists: user.KidsAllowedLists,
+		KidsMaxRating:      user.KidsMaxRating,
+		KidsMaxMovieRating: user.KidsMaxMovieRating,
+		KidsMaxTVRating:    user.KidsMaxTVRating,
+		KidsAllowedLists:   user.KidsAllowedLists,
 		CreatedAt:        user.CreatedAt,
 		UpdatedAt:        user.UpdatedAt,
 	})
@@ -3717,6 +3742,29 @@ func (h *AdminUIHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Reque
 	}
 	log.Printf("[admin] metadata cache cleared by user request")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Metadata cache cleared"})
+}
+
+// GetCacheManagerStatus returns the current status of the background metadata cache manager.
+func (h *AdminUIHandler) GetCacheManagerStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	json.NewEncoder(w).Encode(h.metadataService.GetCacheManagerStatus())
+}
+
+// RefreshTrendingCache triggers an immediate refresh of the trending metadata cache.
+func (h *AdminUIHandler) RefreshTrendingCache(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	h.metadataService.RefreshTrendingCache()
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Refresh started"})
 }
 
 // GetWatchHistory returns watch history for a user (admin session auth)

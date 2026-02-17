@@ -10,6 +10,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/kids"
 
 	"github.com/gorilla/mux"
 )
@@ -22,12 +23,13 @@ const startupShelfLimit = 20
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
 type StartupHandler struct {
-	userSettings userSettingsService
-	watchlist    watchlistService
-	history      historyService
-	metadata     metadataService
-	cfgManager   *config.Manager
-	users        userService
+	userSettings  userSettingsService
+	watchlist     watchlistService
+	history       historyService
+	metadata      metadataService
+	cfgManager    *config.Manager
+	users         userService
+	usersProvider usersServiceInterface // for kids profile filtering
 }
 
 // NewStartupHandler constructs a StartupHandler.
@@ -154,8 +156,12 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+		total := len(items)
+		if len(items) > startupShelfLimit {
+			items = items[:startupShelfLimit]
+		}
 		items = slimTrendingItems(items)
-		resp.TrendingMovies = &DiscoverNewResponse{Items: items, Total: len(items)}
+		resp.TrendingMovies = &DiscoverNewResponse{Items: items, Total: total}
 	}()
 
 	// 7. Trending series (slimmed — heavy Title fields stripped for startup)
@@ -169,8 +175,12 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+		total := len(items)
+		if len(items) > startupShelfLimit {
+			items = items[:startupShelfLimit]
+		}
 		items = slimTrendingItems(items)
-		resp.TrendingSeries = &DiscoverNewResponse{Items: items, Total: len(items)}
+		resp.TrendingSeries = &DiscoverNewResponse{Items: items, Total: total}
 	}()
 
 	wg.Wait()
@@ -196,18 +206,37 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// SetUsersProvider sets the users service for kids profile filtering.
+func (h *StartupHandler) SetUsersProvider(provider usersServiceInterface) {
+	h.usersProvider = provider
+}
+
 // Options handles CORS preflight for the startup endpoint.
 func (h *StartupHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// applyFilters applies hideUnreleased and hideWatched filters to trending items.
+// applyFilters applies hideUnreleased, hideWatched, and kids rating filters to trending items.
 func (h *StartupHandler) applyFilters(items []models.TrendingItem, userID string, hideUnreleased, hideWatched bool) []models.TrendingItem {
 	if hideUnreleased {
 		items = filterUnreleasedItems(items)
 	}
 	if hideWatched && userID != "" && h.history != nil {
 		items = filterWatchedItems(items, userID, h.history)
+	}
+	// Apply kids rating filter
+	if userID != "" && h.usersProvider != nil {
+		if user, ok := h.usersProvider.Get(userID); ok && user.IsKidsProfile {
+			if user.KidsMode == "rating" || user.KidsMode == "both" {
+				movieRating := user.KidsMaxMovieRating
+				tvRating := user.KidsMaxTVRating
+				if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+					movieRating = user.KidsMaxRating
+					tvRating = user.KidsMaxRating
+				}
+				items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
+			}
+		}
 	}
 	return items
 }
@@ -304,8 +333,9 @@ func slimTrendingItems(items []models.TrendingItem) []models.TrendingItem {
 				IMDBID:     item.Title.IMDBID,
 				TMDBID:     item.Title.TMDBID,
 				Theatrical: item.Title.Theatrical,
-				HomeRelease: item.Title.HomeRelease,
-				Genres:     item.Title.Genres,
+				HomeRelease:   item.Title.HomeRelease,
+				Certification: item.Title.Certification,
+				Genres:        item.Title.Genres,
 			},
 		}
 	}

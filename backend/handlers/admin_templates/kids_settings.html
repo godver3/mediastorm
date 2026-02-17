@@ -552,62 +552,57 @@ async function loadContentPreview() {
 
     try {
         const mode = profile?.kidsMode || 'rating';
+        const movieRating = document.getElementById('movieRating').value;
+        const tvRating = document.getElementById('tvRating').value;
         let html = '';
+
+        function renderGrid(items, maxItems) {
+            let out = '<div class="preview-grid">';
+            for (const item of items.slice(0, maxItems)) {
+                const posterUrl = item.title?.poster?.url || '';
+                const name = escapeHtml(item.title?.name || 'Unknown');
+                const cert = item.title?.certification || '';
+                out += `
+                    <div class="preview-item">
+                        <div class="preview-poster">
+                            ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
+                            ${cert ? `<span class="preview-badge">${cert}</span>` : ''}
+                        </div>
+                        <div class="preview-title" title="${name}">${name}</div>
+                    </div>
+                `;
+            }
+            out += '</div>';
+            return out;
+        }
 
         // For rating mode or both mode, show trending content
         if (mode === 'rating' || mode === 'both') {
-            // Fetch trending movies with userId for kids filtering
-            const moviesRes = await fetch(basePath + '/api/discover/trending?type=movie&limit=12&userId=' + encodeURIComponent(profileId));
+            const moviesRes = await fetch(basePath + '/api/discover/new?type=movie&limit=12&userId=' + encodeURIComponent(profileId));
             const moviesData = moviesRes.ok ? await moviesRes.json() : { items: [] };
             const movies = moviesData.items || [];
 
-            // Fetch trending TV shows with userId for kids filtering
-            const tvRes = await fetch(basePath + '/api/discover/trending?type=tv&limit=12&userId=' + encodeURIComponent(profileId));
+            const tvRes = await fetch(basePath + '/api/discover/new?type=tv&limit=12&userId=' + encodeURIComponent(profileId));
             const tvData = tvRes.ok ? await tvRes.json() : { items: [] };
             const tvShows = tvData.items || [];
 
-            html += `<h3 class="preview-section-title">Trending Movies (${movies.length} filtered)</h3>`;
+            html += `<p style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: var(--radius);">
+                Rating filter active: Movies <b>${escapeHtml(movieRating)}</b> or lower, TV <b>${escapeHtml(tvRating)}</b> or lower.
+                Content without a known rating will be hidden from this profile.
+            </p>`;
+
+            html += `<h3 class="preview-section-title">Trending Movies (${movies.length})</h3>`;
             if (movies.length > 0) {
-                html += '<div class="preview-grid">';
-                for (const item of movies.slice(0, 12)) {
-                    const posterUrl = item.title?.poster?.url || '';
-                    const name = escapeHtml(item.title?.name || 'Unknown');
-                    const cert = escapeHtml(item.title?.certification || '');
-                    html += `
-                        <div class="preview-item">
-                            <div class="preview-poster">
-                                ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
-                                ${cert ? `<span class="preview-badge">${cert}</span>` : ''}
-                            </div>
-                            <div class="preview-title" title="${name}">${name}</div>
-                        </div>
-                    `;
-                }
-                html += '</div>';
+                html += renderGrid(movies, 12);
             } else {
-                html += '<div class="preview-empty">No movies match current rating settings</div>';
+                html += '<div class="preview-empty">No trending movies available</div>';
             }
 
-            html += `<h3 class="preview-section-title">Trending TV Shows (${tvShows.length} filtered)</h3>`;
+            html += `<h3 class="preview-section-title">Trending TV Shows (${tvShows.length})</h3>`;
             if (tvShows.length > 0) {
-                html += '<div class="preview-grid">';
-                for (const item of tvShows.slice(0, 12)) {
-                    const posterUrl = item.title?.poster?.url || '';
-                    const name = escapeHtml(item.title?.name || 'Unknown');
-                    const cert = escapeHtml(item.title?.certification || '');
-                    html += `
-                        <div class="preview-item">
-                            <div class="preview-poster">
-                                ${posterUrl ? `<img src="${posterUrl}" alt="${name}" loading="lazy">` : '<div class="placeholder">No Image</div>'}
-                                ${cert ? `<span class="preview-badge">${cert}</span>` : ''}
-                            </div>
-                            <div class="preview-title" title="${name}">${name}</div>
-                        </div>
-                    `;
-                }
-                html += '</div>';
+                html += renderGrid(tvShows, 12);
             } else {
-                html += '<div class="preview-empty">No TV shows match current rating settings</div>';
+                html += '<div class="preview-empty">No trending TV shows available</div>';
             }
         }
 
@@ -619,8 +614,8 @@ async function loadContentPreview() {
                 html += `<h3 class="preview-section-title">Allowed Lists Content</h3>`;
 
                 for (const listUrl of lists) {
-                    // Fetch content from each list
-                    const listRes = await fetch(basePath + '/api/discover/list?url=' + encodeURIComponent(listUrl) + '&limit=8&userId=' + encodeURIComponent(profileId));
+                    // Fetch content from each list (no userId - no server-side kids filter)
+                    const listRes = await fetch(basePath + '/api/lists/custom?url=' + encodeURIComponent(listUrl) + '&limit=8');
                     const listData = listRes.ok ? await listRes.json() : { items: [] };
                     const items = listData.items || [];
 

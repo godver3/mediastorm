@@ -334,6 +334,7 @@ func main() {
 		userSettingsService, watchlistService, historyService,
 		metadataService, cfgManager, userService,
 	)
+	startupHandler.SetUsersProvider(userService)
 
 	// Details bundle handler bundles details-page API calls for low-power devices
 	detailsBundleHandler := handlers.NewDetailsBundleHandler(
@@ -515,6 +516,9 @@ func main() {
 	r.HandleFunc("/admin/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/color", adminUIHandler.RequireAuth(adminUIHandler.SetProfileColor)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+	// Content discovery endpoints (for admin kids-settings preview)
+	r.HandleFunc("/admin/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for admin kids-settings page)
 	r.HandleFunc("/admin/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
@@ -552,6 +556,8 @@ func main() {
 
 	// Cache management endpoints
 	r.HandleFunc("/admin/api/cache/clear", adminUIHandler.RequireAuth(adminUIHandler.ClearMetadataCache)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/cache/manager/status", adminUIHandler.RequireAuth(adminUIHandler.GetCacheManagerStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/cache/manager/refresh", adminUIHandler.RequireAuth(adminUIHandler.RefreshTrendingCache)).Methods(http.MethodPost)
 
 	// History endpoints (admin session auth, no PIN required)
 	r.HandleFunc("/admin/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)
@@ -683,6 +689,9 @@ func main() {
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.SetProfilePin)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/profiles/pin", adminUIHandler.RequireAuth(adminUIHandler.ClearProfilePin)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/profiles/kids", adminUIHandler.RequireAuth(adminUIHandler.SetKidsProfile)).Methods(http.MethodPut)
+	// Content discovery endpoints (for account kids-settings preview)
+	r.HandleFunc("/account/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for account kids-settings page)
 	r.HandleFunc("/account/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
@@ -773,6 +782,44 @@ func main() {
 		log.Printf("Warning: failed to start scheduler service: %v", err)
 	}
 
+	// Start background cache manager to warm trending data and custom lists
+	// on startup and refresh periodically (every 2 hours)
+	metadataService.SetCustomListURLsProvider(func() []string {
+		seen := make(map[string]bool)
+		var urls []string
+
+		addURL := func(u string) {
+			u = strings.TrimSpace(u)
+			if u != "" && !seen[u] {
+				seen[u] = true
+				urls = append(urls, u)
+			}
+		}
+
+		// Global shelves
+		if globalCfg, err := cfgManager.Load(); err == nil {
+			for _, shelf := range globalCfg.HomeShelves.Shelves {
+				if shelf.Type == "mdblist" && shelf.Enabled {
+					addURL(shelf.ListURL)
+				}
+			}
+		}
+
+		// Per-user shelves
+		for userID := range userSettingsService.GetUsersWithOverrides() {
+			if us, err := userSettingsService.Get(userID); err == nil && us != nil {
+				for _, shelf := range us.HomeShelves.Shelves {
+					if shelf.Type == "mdblist" && shelf.Enabled {
+						addURL(shelf.ListURL)
+					}
+				}
+			}
+		}
+
+		return urls
+	})
+	metadataService.StartBackgroundCacheManager(2 * time.Hour)
+
 	// Start server in goroutine
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -787,6 +834,9 @@ func main() {
 	// Create shutdown context with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// Stop background cache manager
+	metadataService.StopBackgroundCacheManager()
 
 	// Stop scheduler service
 	log.Println("🧹 Stopping scheduler service...")

@@ -1298,6 +1298,11 @@ func (c *tmdbClient) findMovieByIMDBID(ctx context.Context, imdbID string) (int6
 	backoff := 300 * time.Millisecond
 
 	for attempt := 0; attempt < 3; attempt++ {
+		// Don't retry if context is already canceled
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+
 		// Rate limiting
 		c.throttleMu.Lock()
 		since := time.Since(c.lastRequest)
@@ -1314,6 +1319,9 @@ func (c *tmdbClient) findMovieByIMDBID(ctx context.Context, imdbID string) (int6
 
 		resp, err := c.httpc.Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return 0, ctx.Err() // context canceled — don't retry
+			}
 			lastErr = err
 			log.Printf("[tmdb] findMovieByIMDBID http error (attempt %d/3): %v", attempt+1, err)
 			time.Sleep(backoff)
@@ -1353,6 +1361,62 @@ func (c *tmdbClient) findMovieByIMDBID(ctx context.Context, imdbID string) (int6
 	}
 
 	return 0, lastErr
+}
+
+// findTVByIMDBID looks up a TV show's TMDB ID using its IMDB ID
+func (c *tmdbClient) findTVByIMDBID(ctx context.Context, imdbID string) (int64, error) {
+	if !c.isConfigured() {
+		return 0, errors.New("tmdb api key not configured")
+	}
+	if imdbID == "" {
+		return 0, errors.New("imdb id required")
+	}
+	if !strings.HasPrefix(imdbID, "tt") {
+		imdbID = "tt" + imdbID
+	}
+
+	endpoint := fmt.Sprintf("%s/find/%s?api_key=%s&external_source=imdb_id", tmdbBaseURL, imdbID, c.apiKey)
+
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+
+	c.throttleMu.Lock()
+	since := time.Since(c.lastRequest)
+	if since < c.minInterval {
+		time.Sleep(c.minInterval - since)
+	}
+	c.lastRequest = time.Now()
+	c.throttleMu.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("tmdb find TV %s failed: %s", imdbID, resp.Status)
+	}
+
+	var result struct {
+		TVResults []struct {
+			ID int64 `json:"id"`
+		} `json:"tv_results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	if len(result.TVResults) > 0 {
+		return result.TVResults[0].ID, nil
+	}
+	return 0, fmt.Errorf("no TV show found for IMDB ID %s", imdbID)
 }
 
 func mapTMDBReleaseType(releaseType int) string {

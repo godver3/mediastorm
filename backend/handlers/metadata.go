@@ -93,8 +93,6 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
-	log.Printf("[metadata] DiscoverNew: type=%s userId=%s hideUnreleased=%v hideWatched=%v UsersService=%v", mediaType, userID, hideUnreleased, hideWatched, h.UsersService != nil)
-
 	// Parse optional pagination parameters
 	limit := 0
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -132,30 +130,17 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 
 	// Apply kids rating filter if user is a kids profile
 	if userID != "" && h.UsersService != nil {
-		if user, ok := h.UsersService.Get(userID); ok {
-			log.Printf("[metadata] user found: id=%s isKidsProfile=%v kidsMode=%s movieRating=%s tvRating=%s", userID, user.IsKidsProfile, user.KidsMode, user.KidsMaxMovieRating, user.KidsMaxTVRating)
-			if user.IsKidsProfile {
-				if user.KidsMode == "rating" || user.KidsMode == "both" {
-					beforeCount := len(items)
-					// Use new separate ratings, fall back to old field for backwards compatibility
-					movieRating := user.KidsMaxMovieRating
-					tvRating := user.KidsMaxTVRating
-					if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
-						// Backwards compatibility: old single rating field
-						movieRating = user.KidsMaxRating
-						tvRating = user.KidsMaxRating
-					}
-					items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
-					log.Printf("[metadata] kids filter applied: userId=%s movieRating=%s tvRating=%s before=%d after=%d", userID, movieRating, tvRating, beforeCount, len(items))
-				} else {
-					log.Printf("[metadata] kids profile but mode is %q - not applying rating filter", user.KidsMode)
+		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile {
+			if user.KidsMode == "rating" || user.KidsMode == "both" {
+				movieRating := user.KidsMaxMovieRating
+				tvRating := user.KidsMaxTVRating
+				if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+					movieRating = user.KidsMaxRating
+					tvRating = user.KidsMaxRating
 				}
+				items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
 			}
-		} else {
-			log.Printf("[metadata] user not found: %s", userID)
 		}
-	} else if userID == "" {
-		log.Printf("[metadata] no userId provided - skipping kids filter")
 	}
 
 	// Apply pagination

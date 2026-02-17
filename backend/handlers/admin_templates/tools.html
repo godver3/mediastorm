@@ -572,6 +572,34 @@
             </div>
         </div>
     </div>
+
+    <!-- Background Workers Section -->
+    <div class="section" id="backgroundWorkersSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+                </svg>
+                Background Workers
+            </div>
+            <span id="workersCountBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Background processes that keep data fresh and ready for users.
+            </p>
+
+            <div id="workersList">
+                <div class="loading-box">
+                    <div class="spinner"></div>
+                    <span>Loading workers...</span>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {{end}}
 
@@ -1728,7 +1756,7 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadClients(), loadScheduledTasks()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     // ========== Plex Account Functions ==========
@@ -4235,6 +4263,104 @@
             showToast('Task updated', 'success');
             hideEditScheduledTaskModal();
             await loadScheduledTasks();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    // ========== Background Workers Functions ==========
+    let workersPollTimer = null;
+
+    async function loadWorkers() {
+        try {
+            const res = await fetch(basePath + '/api/cache/manager/status');
+            if (!res.ok) throw new Error('Failed to load worker status');
+            const status = await res.json();
+            renderWorkers(status);
+        } catch (err) {
+            const el = document.getElementById('workersList');
+            if (el) el.innerHTML = '<p class="text-muted">Could not load worker status.</p>';
+        }
+        // Poll every 10s while warming/refreshing, 30s when idle
+        clearTimeout(workersPollTimer);
+        workersPollTimer = setTimeout(loadWorkers, 15000);
+    }
+
+    function renderWorkers(cm) {
+        const el = document.getElementById('workersList');
+        if (!el) return;
+
+        const badge = document.getElementById('workersCountBadge');
+        if (badge) badge.textContent = '1';
+
+        let statusClass = '';
+        let statusLabel = cm.status || 'unknown';
+        if (cm.status === 'idle') { statusClass = 'connected'; statusLabel = 'Idle'; }
+        else if (cm.status === 'warming' || cm.status === 'refreshing') { statusClass = 'connected'; statusLabel = cm.status === 'warming' ? 'Warming...' : 'Refreshing...'; }
+        else if (cm.status === 'stopped') { statusClass = 'disconnected'; statusLabel = 'Stopped'; }
+
+        const lastRefresh = cm.lastRefreshAt && cm.lastRefreshAt !== '0001-01-01T00:00:00Z'
+            ? formatRelativeTime(cm.lastRefreshAt)
+            : 'Never';
+        const duration = cm.lastRefreshMs > 0 ? (cm.lastRefreshMs / 1000).toFixed(1) + 's' : '';
+        const nextRefresh = cm.nextRefreshAt && cm.nextRefreshAt !== '0001-01-01T00:00:00Z'
+            ? formatRelativeTime(cm.nextRefreshAt)
+            : '';
+
+        el.innerHTML = `
+            <div class="import-card" style="margin-bottom: 0.75rem;">
+                <div class="import-card-header">
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1;">
+                        <h3 style="margin: 0;">Metadata Cache Manager</h3>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                            <span class="type-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent); font-size: 0.7rem;">Trending</span>
+                            <span class="type-badge" style="background: rgba(99, 102, 241, 0.1); color: var(--accent); font-size: 0.65rem;">TVDB + TMDB</span>
+                        </div>
+                    </div>
+                    <span class="status-badge ${statusClass}" style="font-size: 0.75rem; margin-left: auto;">${cm.running ? 'Active' : 'Inactive'}</span>
+                </div>
+                <div class="import-card-body" style="padding: 0.75rem 1rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.6;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            <span>Every ${cm.refreshInterval || '2h'}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-muted);">
+                            <span>Movies: <strong>${cm.moviesCached || 0}</strong></span>
+                            <span>|</span>
+                            <span>TV: <strong>${cm.seriesCached || 0}</strong></span>
+                            ${cm.customListsCached > 0 ? `<span>|</span><span>Lists: <strong>${cm.customListsCached}</strong></span>` : ''}
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+                        <span class="status-badge ${statusClass}" style="font-size: 0.75rem;">${statusLabel}</span>
+                        <span class="text-muted" style="font-size: 0.8125rem;">Last: ${lastRefresh}${duration ? ' (' + duration + ')' : ''}</span>
+                        ${nextRefresh ? `<span class="text-muted" style="font-size: 0.8125rem;">Next: ${nextRefresh}</span>` : ''}
+                        ${cm.lastError ? `<span style="color: var(--danger); font-size: 0.8125rem;">${escapeHtml(cm.lastError)}</span>` : ''}
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <button class="btn btn-sm btn-secondary" onclick="refreshTrendingCache()" ${cm.status === 'warming' || cm.status === 'refreshing' ? 'disabled' : ''}>
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.25rem;">
+                                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            ${cm.status === 'warming' || cm.status === 'refreshing' ? 'Working...' : 'Refresh Now'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    async function refreshTrendingCache() {
+        try {
+            const res = await fetch(basePath + '/api/cache/manager/refresh', { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to trigger refresh');
+            showToast('Cache refresh started', 'success');
+            setTimeout(loadWorkers, 1000);
         } catch (err) {
             showToast(err.message, 'error');
         }
