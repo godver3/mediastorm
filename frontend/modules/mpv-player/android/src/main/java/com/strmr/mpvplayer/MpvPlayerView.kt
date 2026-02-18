@@ -191,15 +191,14 @@ class MpvPlayerView(context: ThemedReactContext) :
             MPVLib.setOptionString("sub-scale", "0.667")
             MPVLib.setOptionString("sub-font-size", "82")
             MPVLib.setOptionString("sub-use-margins", "yes")
-            // Force our styling on ASS subs too (consistent sizing with SRT).
+            // Force our styling on ASS subs (consistent sizing with SRT).
             // Also required for sub-scale to apply to image subs (sd_lavc.c check).
             MPVLib.setOptionString("sub-ass-override", "force")
-            // BorderStyle=4 = background box mode. Without this, sub-back-color
-            // is treated as shadow color (BorderStyle=1 default) and invisible at offset 0.
-            MPVLib.setOptionString("sub-ass-style-overrides", "BorderStyle=4")
-            MPVLib.setOptionString("sub-back-color", "#99000000")    // 60% black background box (mpv #AARRGGBB)
-            MPVLib.setOptionString("sub-border-size", "0")           // No outline
-            MPVLib.setOptionString("sub-shadow-offset", "0")         // No shadow
+            // background-box = BorderStyle 4 — translucent box behind text (like KSPlayer)
+            MPVLib.setOptionString("sub-border-style", "background-box")
+            MPVLib.setOptionString("sub-back-color", "#99000000")    // 60% black background box
+            MPVLib.setOptionString("sub-border-size", "3")           // padding inside background box
+            MPVLib.setOptionString("sub-shadow-offset", "0")
 
             MPVLib.init()
             MPVLib.addObserver(this)
@@ -402,6 +401,8 @@ class MpvPlayerView(context: ThemedReactContext) :
 
     fun setPaused(paused: Boolean) {
         if (!initialized || destroyed) return
+        // Keep screen awake while playing (prevents screensaver on Android TV)
+        keepScreenOn = !paused
         mpvHandler.post {
             try {
                 MPVLib.setPropertyBoolean("pause", paused)
@@ -507,17 +508,8 @@ class MpvPlayerView(context: ThemedReactContext) :
                 MPVLib.setPropertyString("sub-visibility", "yes")
                 val actualSid = try { MPVLib.getPropertyString("sid") } catch (_: Exception) { "error" }
                 val subVis = try { MPVLib.getPropertyString("sub-visibility") } catch (_: Exception) { "error" }
-                val subText = try { MPVLib.getPropertyString("sub-text") } catch (_: Exception) { "n/a" }
-                val subDelay = try { MPVLib.getPropertyString("sub-delay") } catch (_: Exception) { "n/a" }
-                val subFont = try { MPVLib.getPropertyString("sub-font") } catch (_: Exception) { "n/a" }
-                val subFontSize = try { MPVLib.getPropertyString("sub-font-size") } catch (_: Exception) { "n/a" }
-                val subColor = try { MPVLib.getPropertyString("sub-color") } catch (_: Exception) { "n/a" }
-                val subMarginY = try { MPVLib.getPropertyString("sub-margin-y") } catch (_: Exception) { "n/a" }
-                val currentVo = try { MPVLib.getPropertyString("current-vo") } catch (_: Exception) { "n/a" }
                 mainHandler.post {
-                    emitDebugLog("applySubtitleMpvId: SET sid=$mpvId, readback sid=$actualSid, sub-visibility=$subVis, current-vo=$currentVo")
-                    emitDebugLog("  sub-font=$subFont, sub-font-size=$subFontSize, sub-color=$subColor, sub-margin-y=$subMarginY, sub-delay=$subDelay")
-                    emitDebugLog("  sub-text=${if (subText.isNullOrEmpty()) "(empty)" else "\"${subText.take(60)}\""}")
+                    emitDebugLog("applySubtitleMpvId: SET sid=$mpvId, readback sid=$actualSid, sub-visibility=$subVis")
                 }
             } catch (e: Exception) {
                 mainHandler.post {
@@ -988,6 +980,7 @@ class MpvPlayerView(context: ThemedReactContext) :
     fun destroy() {
         if (destroyed) return
         destroyed = true
+        keepScreenOn = false
         Log.d(TAG, "Destroying MpvPlayerView")
 
         mainHandler.removeCallbacksAndMessages(null)
