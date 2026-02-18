@@ -186,13 +186,20 @@ class MpvPlayerView(context: ThemedReactContext) :
             }
             MPVLib.setOptionString("sub-font", "Roboto")
             MPVLib.setOptionString("sub-visibility", "yes")
-            MPVLib.setOptionString("sub-font-size", "55")
+            // sub-scale=0.667 reduces PGS/image subs to 2/3 size (they're ~1.5x too big
+            // vs tvOS KSPlayer). Compensate text sub base: 55 / 0.667 ≈ 82.
+            MPVLib.setOptionString("sub-scale", "0.667")
+            MPVLib.setOptionString("sub-font-size", "82")
             MPVLib.setOptionString("sub-use-margins", "yes")
-            MPVLib.setOptionString("sub-back-color", "#99000000")    // 60% black background (mpv #AARRGGBB)
-            MPVLib.setOptionString("sub-border-size", "2")
-            MPVLib.setOptionString("sub-border-color", "#80000000")
-            MPVLib.setOptionString("sub-shadow-offset", "1")
-            MPVLib.setOptionString("sub-shadow-color", "#80000000")
+            // Force our styling on ASS subs too (consistent sizing with SRT).
+            // Also required for sub-scale to apply to image subs (sd_lavc.c check).
+            MPVLib.setOptionString("sub-ass-override", "force")
+            // BorderStyle=4 = background box mode. Without this, sub-back-color
+            // is treated as shadow color (BorderStyle=1 default) and invisible at offset 0.
+            MPVLib.setOptionString("sub-ass-style-overrides", "BorderStyle=4")
+            MPVLib.setOptionString("sub-back-color", "#99000000")    // 60% black background box (mpv #AARRGGBB)
+            MPVLib.setOptionString("sub-border-size", "0")           // No outline
+            MPVLib.setOptionString("sub-shadow-offset", "0")         // No shadow
 
             MPVLib.init()
             MPVLib.addObserver(this)
@@ -559,7 +566,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         if (style.hasKey("fontSize")) {
             val multiplier = style.getDouble("fontSize")
             if (multiplier > 0) {
-                val size = (55 * multiplier).toInt()
+                val size = (82 * multiplier).toInt()
                 if (initialized && !destroyed) {
                     mpvHandler.post {
                         try {
