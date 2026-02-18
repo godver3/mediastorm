@@ -52,6 +52,13 @@ export interface DebugLogEvent {
   message: string;
 }
 
+export interface SubtitleStyle {
+  fontSize?: number;
+  textColor?: string;
+  backgroundColor?: string;
+  bottomMargin?: number;
+}
+
 export interface MpvPlayerProps {
   source?: MpvPlayerSource;
   paused?: boolean;
@@ -62,6 +69,9 @@ export interface MpvPlayerProps {
   subtitleSize?: number;
   subtitleColor?: string;
   subtitlePosition?: number;
+  subtitleStyle?: SubtitleStyle;
+  controlsVisible?: boolean;
+  externalSubtitleUrl?: string;
   isHDR?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
@@ -90,6 +100,9 @@ interface NativeMpvPlayerProps {
   subtitleSize?: number;
   subtitleColor?: string;
   subtitlePosition?: number;
+  subtitleStyle?: SubtitleStyle;
+  controlsVisible?: boolean;
+  externalSubtitleUrl?: string;
   isHDR?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (event: NativeSyntheticEvent<LoadEvent>) => void;
@@ -113,9 +126,16 @@ if (Platform.OS === 'android') {
   }
 }
 
-// Get the view manager for imperative commands
-const MpvPlayerViewManager =
-  Platform.OS === 'android' ? UIManager.getViewManagerConfig('MpvPlayer') : null;
+// Helper to dispatch commands to the native view.
+// Uses string command names for Fabric (new architecture) compatibility —
+// UIManager.getViewManagerConfig() returns undefined under Fabric interop,
+// but dispatchViewManagerCommand accepts string names that map to receiveCommand().
+const dispatchCommand = (ref: any, command: string, args: any[]) => {
+  const handle = findNodeHandle(ref);
+  if (handle != null) {
+    UIManager.dispatchViewManagerCommand(handle, command, args);
+  }
+};
 
 export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) => {
   const {
@@ -128,6 +148,9 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     subtitleSize,
     subtitleColor,
     subtitlePosition,
+    subtitleStyle,
+    controlsVisible,
+    externalSubtitleUrl,
     isHDR,
     style,
     onLoad,
@@ -143,34 +166,13 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
 
   useImperativeHandle(ref, () => ({
     seek: (time: number) => {
-      const handle = findNodeHandle(nativeRef.current);
-      if (handle && MpvPlayerViewManager?.Commands) {
-        UIManager.dispatchViewManagerCommand(
-          handle,
-          MpvPlayerViewManager.Commands.seek,
-          [time]
-        );
-      }
+      dispatchCommand(nativeRef.current, 'seek', [time]);
     },
     setAudioTrack: (trackId: number) => {
-      const handle = findNodeHandle(nativeRef.current);
-      if (handle && MpvPlayerViewManager?.Commands) {
-        UIManager.dispatchViewManagerCommand(
-          handle,
-          MpvPlayerViewManager.Commands.setAudioTrack,
-          [trackId]
-        );
-      }
+      dispatchCommand(nativeRef.current, 'setAudioTrack', [trackId]);
     },
     setSubtitleTrack: (trackId: number) => {
-      const handle = findNodeHandle(nativeRef.current);
-      if (handle && MpvPlayerViewManager?.Commands) {
-        UIManager.dispatchViewManagerCommand(
-          handle,
-          MpvPlayerViewManager.Commands.setSubtitleTrack,
-          [trackId]
-        );
-      }
+      dispatchCommand(nativeRef.current, 'setSubtitleTrack', [trackId]);
     },
   }));
 
@@ -252,6 +254,9 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
       subtitleSize={subtitleSize}
       subtitleColor={subtitleColor}
       subtitlePosition={subtitlePosition}
+      subtitleStyle={subtitleStyle}
+      controlsVisible={controlsVisible}
+      externalSubtitleUrl={externalSubtitleUrl}
       isHDR={isHDR}
       style={style}
       onLoad={handleLoad}

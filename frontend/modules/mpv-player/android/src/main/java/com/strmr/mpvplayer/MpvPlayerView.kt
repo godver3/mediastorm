@@ -5,12 +5,14 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.FrameLayout
+import java.io.File
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.ReadableMap
@@ -21,7 +23,7 @@ import com.facebook.react.uimanager.events.RCTEventEmitter
 import dev.jdtech.mpv.MPVLib
 
 class MpvPlayerView(context: ThemedReactContext) :
-    FrameLayout(context), MPVLib.EventObserver, SurfaceHolder.Callback, ComponentCallbacks2 {
+    FrameLayout(context), MPVLib.EventObserver, MPVLib.LogObserver, SurfaceHolder.Callback, ComponentCallbacks2 {
 
     companion object {
         private const val TAG = "MpvPlayerView"
@@ -30,6 +32,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         private const val MPV_FORMAT_FLAG = 3
         private const val MPV_FORMAT_INT64 = 4
         private const val MPV_FORMAT_DOUBLE = 5
+        private const val MPV_FORMAT_STRING = 1
 
         // mpv event ID constants
         private const val MPV_EVENT_END_FILE = 7
@@ -40,8 +43,18 @@ class MpvPlayerView(context: ThemedReactContext) :
         private const val MID_RAM_THRESHOLD_MB = 3072L   // <= 3 GB
     }
 
-    private val surfaceView = SurfaceView(context)
+    private val surfaceView = SurfaceView(context).apply {
+        // Place the surface above the default surface layer but below the window.
+        // Without this, RN's view hierarchy can obscure mpv's subtitle rendering
+        // when the SurfaceView is embedded in a React Native layout (vs standalone Activity).
+        setZOrderMediaOverlay(true)
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Dedicated thread for mpv property/command calls (matching old PlayerActivity pattern).
+    // MPVLib calls from the UI thread can race with mpv's internal event processing.
+    private val mpvThread = HandlerThread("mpv-cmd").also { it.start() }
+    private val mpvHandler = Handler(mpvThread.looper)
 
     private var initialized = false
     private var destroyed = false
@@ -65,8 +78,20 @@ class MpvPlayerView(context: ThemedReactContext) :
     private var pendingAudioTrack: Int? = null
     private var pendingSubtitleTrack: Int? = null
 
+    // Last applied subtitle mpv ID — re-applied after FILE_LOADED since mpv resets sid
+    private var lastAppliedSubtitleMpvId: String? = null
+
+    // Subtitle positioning
+    private var baseSubtitleMarginY = 0
+    private var controlsVisible = false
+
+    // External subtitle state
+    private var currentExternalSubUrl: String? = null
+    private var pendingExternalSubUrl: String? = null
+
     // Progress throttling
     private var lastProgressEmitTime = 0L
+    private var lastSubTextCheckTime = 0L
     private var currentDuration = 0.0
 
     private val isLowRamDevice: Boolean
@@ -150,14 +175,28 @@ class MpvPlayerView(context: ThemedReactContext) :
                 MPVLib.setOptionString("video-latency-hacks", "yes")
             }
 
-            // Subtitle rendering
+            // Subtitle rendering — defaults match KSPlayer's rounded-box appearance
+            // libass on Android has no fontconfig font provider, so we must add fonts
+            // manually via sub-fonts-dir. Copy a single system font to avoid scanning
+            // the entire /system/fonts directory (200+ files).
+            val fontsDir = ensureSubtitleFont(context.applicationContext)
+            if (fontsDir != null) {
+                MPVLib.setOptionString("sub-fonts-dir", fontsDir)
+                Log.d(TAG, "sub-fonts-dir set to: $fontsDir")
+            }
+            MPVLib.setOptionString("sub-font", "Roboto")
             MPVLib.setOptionString("sub-visibility", "yes")
-            MPVLib.setOptionString("sub-font", "sans-serif")
             MPVLib.setOptionString("sub-font-size", "55")
             MPVLib.setOptionString("sub-use-margins", "yes")
+            MPVLib.setOptionString("sub-back-color", "#99000000")    // 60% black background (mpv #AARRGGBB)
+            MPVLib.setOptionString("sub-border-size", "2")
+            MPVLib.setOptionString("sub-border-color", "#80000000")
+            MPVLib.setOptionString("sub-shadow-offset", "1")
+            MPVLib.setOptionString("sub-shadow-color", "#80000000")
 
             MPVLib.init()
             MPVLib.addObserver(this)
+            MPVLib.addLogObserver(this)
 
             // Observe properties
             MPVLib.observeProperty("time-pos", MPV_FORMAT_DOUBLE)
@@ -165,6 +204,8 @@ class MpvPlayerView(context: ThemedReactContext) :
             MPVLib.observeProperty("track-list/count", MPV_FORMAT_INT64)
             MPVLib.observeProperty("eof-reached", MPV_FORMAT_FLAG)
             MPVLib.observeProperty("paused-for-cache", MPV_FORMAT_FLAG)
+            MPVLib.observeProperty("sub-text", MPV_FORMAT_STRING)
+            MPVLib.observeProperty("sub-delay", MPV_FORMAT_DOUBLE)
 
             // Register for system memory pressure callbacks
             context.applicationContext.registerComponentCallbacks(this)
@@ -175,6 +216,40 @@ class MpvPlayerView(context: ThemedReactContext) :
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize MPV", e)
             mainHandler.post { emitError("Failed to initialize MPV: ${e.message}") }
+        }
+    }
+
+    /**
+     * Copy a system font (Roboto) to the app's cache/fonts directory so libass
+     * can load it without scanning all of /system/fonts. Returns the directory
+     * path on success, or null on failure.
+     */
+    private fun ensureSubtitleFont(appContext: Context): String? {
+        return try {
+            val fontsDir = File(appContext.cacheDir, "mpv-fonts")
+            val destFont = File(fontsDir, "Roboto-Regular.ttf")
+            if (!destFont.exists()) {
+                fontsDir.mkdirs()
+                val srcFont = File("/system/fonts/Roboto-Regular.ttf")
+                if (srcFont.exists()) {
+                    srcFont.copyTo(destFont, overwrite = true)
+                    Log.d(TAG, "Copied Roboto font to ${destFont.absolutePath}")
+                } else {
+                    // Fallback: try DroidSans (older devices)
+                    val fallback = File("/system/fonts/DroidSans.ttf")
+                    if (fallback.exists()) {
+                        fallback.copyTo(destFont, overwrite = true)
+                        Log.d(TAG, "Copied DroidSans font to ${destFont.absolutePath}")
+                    } else {
+                        Log.w(TAG, "No system font found to copy for subtitles")
+                        return null
+                    }
+                }
+            }
+            fontsDir.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set up subtitle font", e)
+            null
         }
     }
 
@@ -226,7 +301,9 @@ class MpvPlayerView(context: ThemedReactContext) :
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (!initialized || destroyed) return
         emitDebugLog("surfaceChanged: ${width}x${height}")
-        MPVLib.setPropertyString("android-surface-size", "${width}x${height}")
+        mpvHandler.post {
+            MPVLib.setPropertyString("android-surface-size", "${width}x${height}")
+        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -285,58 +362,68 @@ class MpvPlayerView(context: ThemedReactContext) :
         audioIndexToMpvId.clear()
         subtitleIndexToMpvId.clear()
         currentDuration = 0.0
+        currentExternalSubUrl = null
+        lastAppliedSubtitleMpvId = null
 
-        // Set headers before loading
-        try {
-            MPVLib.command(arrayOf("set", "http-header-fields", ""))
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to clear headers", e)
-        }
+        // Set headers and load file on mpv thread
+        mpvHandler.post {
+            try {
+                MPVLib.command(arrayOf("set", "http-header-fields", ""))
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clear headers", e)
+            }
 
-        if (headers != null) {
-            for (header in headers) {
-                try {
-                    MPVLib.command(arrayOf("change-list", "http-header-fields", "append", header))
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to set header: $header", e)
+            if (headers != null) {
+                for (header in headers) {
+                    try {
+                        MPVLib.command(arrayOf("change-list", "http-header-fields", "append", header))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to set header: $header", e)
+                    }
                 }
             }
-        }
 
-        Log.d(TAG, "Loading file: $uri")
-        try {
-            MPVLib.command(arrayOf("loadfile", uri, "replace"))
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load file", e)
-            emitError("Failed to load file: ${e.message}")
+            Log.d(TAG, "Loading file: $uri")
+            try {
+                MPVLib.command(arrayOf("loadfile", uri, "replace"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load file", e)
+                mainHandler.post { emitError("Failed to load file: ${e.message}") }
+            }
         }
     }
 
     fun setPaused(paused: Boolean) {
         if (!initialized || destroyed) return
-        try {
-            MPVLib.setPropertyBoolean("pause", paused)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set pause", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyBoolean("pause", paused)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set pause", e)
+            }
         }
     }
 
     fun setVolume(volume: Float) {
         if (!initialized || destroyed) return
         val mpvVolume = (volume.coerceIn(0f, 1f) * 100).toInt()
-        try {
-            MPVLib.setPropertyInt("volume", mpvVolume)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set volume", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyInt("volume", mpvVolume)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set volume", e)
+            }
         }
     }
 
     fun setRate(rate: Float) {
         if (!initialized || destroyed) return
-        try {
-            MPVLib.setPropertyDouble("speed", rate.toDouble())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set rate", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyDouble("speed", rate.toDouble())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set rate", e)
+            }
         }
     }
 
@@ -351,11 +438,13 @@ class MpvPlayerView(context: ThemedReactContext) :
 
         val mpvId = audioIndexToMpvId[rnIndex]
         if (mpvId != null) {
-            try {
-                MPVLib.setPropertyString("aid", mpvId.toString())
-                Log.d(TAG, "Set audio track: rnIndex=$rnIndex -> mpvId=$mpvId")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to set audio track", e)
+            mpvHandler.post {
+                try {
+                    MPVLib.setPropertyString("aid", mpvId.toString())
+                    Log.d(TAG, "Set audio track: rnIndex=$rnIndex -> mpvId=$mpvId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set audio track", e)
+                }
             }
         } else {
             Log.w(TAG, "No mpv track ID for audio index $rnIndex")
@@ -363,69 +452,235 @@ class MpvPlayerView(context: ThemedReactContext) :
     }
 
     fun setSubtitleTrack(rnIndex: Int) {
-        if (!initialized || destroyed) return
+        emitDebugLog("setSubtitleTrack called: rnIndex=$rnIndex, initialized=$initialized, destroyed=$destroyed, tracksAvailable=$tracksAvailable, fileLoaded=$fileLoaded")
+
+        if (!initialized || destroyed) {
+            emitDebugLog("setSubtitleTrack: SKIPPED (initialized=$initialized, destroyed=$destroyed)")
+            return
+        }
 
         if (rnIndex < 0) {
-            try {
-                MPVLib.setPropertyString("sid", "no")
-                Log.d(TAG, "Disabled subtitles")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to disable subtitles", e)
+            lastAppliedSubtitleMpvId = null
+            mpvHandler.post {
+                try {
+                    MPVLib.setPropertyString("sid", "no")
+                    mainHandler.post { emitDebugLog("setSubtitleTrack: disabled subtitles (sid=no)") }
+                } catch (e: Exception) {
+                    mainHandler.post { emitDebugLog("setSubtitleTrack: FAILED to disable subtitles: ${e.message}") }
+                }
             }
             return
         }
 
         if (!tracksAvailable) {
             pendingSubtitleTrack = rnIndex
+            emitDebugLog("setSubtitleTrack: tracks not available yet, queued pending=$rnIndex")
             return
         }
 
         val mpvId = subtitleIndexToMpvId[rnIndex]
+        emitDebugLog("setSubtitleTrack: map lookup rnIndex=$rnIndex -> mpvId=$mpvId, map=$subtitleIndexToMpvId")
         if (mpvId != null) {
-            try {
-                MPVLib.setPropertyString("sid", mpvId.toString())
-                Log.d(TAG, "Set subtitle track: rnIndex=$rnIndex -> mpvId=$mpvId")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to set subtitle track", e)
-            }
+            applySubtitleMpvId(mpvId.toString())
         } else {
-            Log.w(TAG, "No mpv track ID for subtitle index $rnIndex")
+            emitDebugLog("setSubtitleTrack: NO mpv track ID for rnIndex=$rnIndex")
+        }
+    }
+
+    /**
+     * Apply a subtitle track by mpv ID, storing it for re-application after FILE_LOADED
+     * (mpv resets sid when a file finishes loading).
+     * Runs on the dedicated mpv thread to match PlayerActivity's working pattern.
+     */
+    private fun applySubtitleMpvId(mpvId: String) {
+        lastAppliedSubtitleMpvId = mpvId
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyString("sid", mpvId)
+                MPVLib.setPropertyString("sub-visibility", "yes")
+                val actualSid = try { MPVLib.getPropertyString("sid") } catch (_: Exception) { "error" }
+                val subVis = try { MPVLib.getPropertyString("sub-visibility") } catch (_: Exception) { "error" }
+                val subText = try { MPVLib.getPropertyString("sub-text") } catch (_: Exception) { "n/a" }
+                val subDelay = try { MPVLib.getPropertyString("sub-delay") } catch (_: Exception) { "n/a" }
+                val subFont = try { MPVLib.getPropertyString("sub-font") } catch (_: Exception) { "n/a" }
+                val subFontSize = try { MPVLib.getPropertyString("sub-font-size") } catch (_: Exception) { "n/a" }
+                val subColor = try { MPVLib.getPropertyString("sub-color") } catch (_: Exception) { "n/a" }
+                val subMarginY = try { MPVLib.getPropertyString("sub-margin-y") } catch (_: Exception) { "n/a" }
+                val currentVo = try { MPVLib.getPropertyString("current-vo") } catch (_: Exception) { "n/a" }
+                mainHandler.post {
+                    emitDebugLog("applySubtitleMpvId: SET sid=$mpvId, readback sid=$actualSid, sub-visibility=$subVis, current-vo=$currentVo")
+                    emitDebugLog("  sub-font=$subFont, sub-font-size=$subFontSize, sub-color=$subColor, sub-margin-y=$subMarginY, sub-delay=$subDelay")
+                    emitDebugLog("  sub-text=${if (subText.isNullOrEmpty()) "(empty)" else "\"${subText.take(60)}\""}")
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    emitDebugLog("applySubtitleMpvId: FAILED to set sid=$mpvId: ${e.message}")
+                }
+            }
         }
     }
 
     fun setSubtitleSize(size: Float) {
         if (!initialized || destroyed || size <= 0) return
-        try {
-            MPVLib.setPropertyString("sub-font-size", size.toInt().toString())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set subtitle size", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyString("sub-font-size", size.toInt().toString())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set subtitle size", e)
+            }
         }
     }
 
     fun setSubtitleColor(color: String?) {
         if (!initialized || destroyed || color == null) return
-        try {
-            MPVLib.setPropertyString("sub-color", color)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set subtitle color", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyString("sub-color", color)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set subtitle color", e)
+            }
         }
     }
 
     fun setSubtitlePosition(position: Float) {
         if (!initialized || destroyed) return
-        try {
-            MPVLib.setPropertyString("sub-margin-y", position.toInt().toString())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set subtitle position", e)
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyString("sub-margin-y", position.toInt().toString())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set subtitle position", e)
+            }
+        }
+    }
+
+    fun setSubtitleStyle(style: ReadableMap?) {
+        if (style == null) return
+
+        if (style.hasKey("fontSize")) {
+            val multiplier = style.getDouble("fontSize")
+            if (multiplier > 0) {
+                val size = (55 * multiplier).toInt()
+                if (initialized && !destroyed) {
+                    mpvHandler.post {
+                        try {
+                            MPVLib.setPropertyString("sub-font-size", size.toString())
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to set subtitle font size", e)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (style.hasKey("textColor")) {
+            val color = style.getString("textColor")
+            if (color != null && initialized && !destroyed) {
+                mpvHandler.post {
+                    try {
+                        MPVLib.setPropertyString("sub-color", convertHexToMpvColor(color))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to set subtitle text color", e)
+                    }
+                }
+            }
+        }
+
+        if (style.hasKey("backgroundColor")) {
+            val color = style.getString("backgroundColor")
+            if (color != null && initialized && !destroyed) {
+                mpvHandler.post {
+                    try {
+                        MPVLib.setPropertyString("sub-back-color", convertHexToMpvColor(color))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to set subtitle background color", e)
+                    }
+                }
+            }
+        }
+
+        if (style.hasKey("bottomMargin")) {
+            baseSubtitleMarginY = style.getInt("bottomMargin")
+            updateSubtitlePosition()
+        }
+    }
+
+    fun setControlsVisible(visible: Boolean) {
+        controlsVisible = visible
+        updateSubtitlePosition()
+    }
+
+    private fun updateSubtitlePosition() {
+        if (!initialized || destroyed) return
+        val margin = baseSubtitleMarginY + if (controlsVisible) 125 else 0
+        mpvHandler.post {
+            try {
+                MPVLib.setPropertyString("sub-margin-y", margin.toString())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to update subtitle position", e)
+            }
+        }
+    }
+
+    /**
+     * Convert CSS/KSPlayer hex color to mpv's #AARRGGBB format.
+     * Input: #RRGGBB or #RRGGBBAA
+     * Output: #FFRRGGBB or #AARRGGBB
+     */
+    private fun convertHexToMpvColor(color: String): String {
+        val hex = color.removePrefix("#")
+        return when (hex.length) {
+            6 -> "#FF$hex"                    // #RRGGBB → #FFRRGGBB
+            8 -> "#${hex.substring(6, 8)}${hex.substring(0, 6)}"  // #RRGGBBAA → #AARRGGBB
+            else -> color                     // pass through as-is
+        }
+    }
+
+    fun setExternalSubtitleUrl(url: String?) {
+        val effectiveUrl = if (url.isNullOrEmpty()) null else url
+
+        // No change
+        if (effectiveUrl == currentExternalSubUrl) return
+
+        if (!initialized || destroyed || !fileLoaded) {
+            // Defer until file is loaded
+            pendingExternalSubUrl = effectiveUrl
+            return
+        }
+
+        applyExternalSubtitle(effectiveUrl)
+    }
+
+    private fun applyExternalSubtitle(url: String?) {
+        if (!initialized || destroyed) return
+
+        val prevUrl = currentExternalSubUrl
+        currentExternalSubUrl = url
+        mpvHandler.post {
+            try {
+                // Remove previous external subtitle if any
+                if (prevUrl != null) {
+                    MPVLib.command(arrayOf("sub-remove"))
+                    Log.d(TAG, "Removed previous external subtitle")
+                }
+
+                if (url != null) {
+                    MPVLib.command(arrayOf("sub-add", url, "select"))
+                    Log.d(TAG, "Added external subtitle: $url")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to set external subtitle: $url", e)
+            }
         }
     }
 
     fun seekTo(time: Double) {
         if (!initialized || destroyed) return
-        try {
-            MPVLib.command(arrayOf("seek", time.toString(), "absolute"))
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to seek", e)
+        mpvHandler.post {
+            try {
+                MPVLib.command(arrayOf("seek", time.toString(), "absolute"))
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to seek", e)
+            }
         }
     }
 
@@ -439,9 +694,11 @@ class MpvPlayerView(context: ThemedReactContext) :
         when (property) {
             "track-list/count" -> {
                 val count = value.toInt()
+                Log.d(TAG, "track-list/count changed: $count")
                 val result = buildTrackList(count)
                 mainHandler.post {
                     tracksAvailable = true
+                    emitDebugLog("track-list/count=$count -> tracksAvailable=true, emitting tracks + applying pending")
                     emitTracksChanged(result)
                     applyPendingTracks()
                 }
@@ -479,7 +736,36 @@ class MpvPlayerView(context: ThemedReactContext) :
     }
 
     override fun eventProperty(property: String, value: String) {
-        // Not used currently
+        when (property) {
+            "sub-text" -> {
+                mainHandler.post {
+                    if (value.isNotEmpty()) {
+                        emitDebugLog("sub-text: \"${value.take(80)}\"")
+                    } else {
+                        emitDebugLog("sub-text: (cleared)")
+                    }
+                }
+            }
+        }
+    }
+
+    // ========== MPVLib.LogObserver — capture mpv's internal log messages ==========
+
+    override fun logMessage(prefix: String, level: Int, text: String) {
+        // level: 0=fatal, 10=error, 20=warn, 30=info, 40=verbose, 50=debug, 60=trace
+        // Only forward sub/font/ass related messages + errors/warnings
+        val msg = text.trimEnd()
+        if (msg.isEmpty()) return
+        val isSubRelated = prefix == "sub" || prefix == "ass" || prefix == "sd" ||
+            prefix == "fontselect" || prefix == "osd" ||
+            msg.contains("sub", ignoreCase = true) ||
+            msg.contains("font", ignoreCase = true) ||
+            msg.contains("ass", ignoreCase = true)
+        if (level <= 20 || isSubRelated) {
+            mainHandler.post {
+                emitDebugLog("mpv[$prefix/$level]: $msg")
+            }
+        }
     }
 
     override fun event(eventId: Int) {
@@ -488,10 +774,28 @@ class MpvPlayerView(context: ThemedReactContext) :
                 val duration = MPVLib.getPropertyDouble("duration") ?: 0.0
                 val width = MPVLib.getPropertyInt("width") ?: 0
                 val height = MPVLib.getPropertyInt("height") ?: 0
+                val sid = try { MPVLib.getPropertyString("sid") } catch (_: Exception) { "error" }
+                val subVis = try { MPVLib.getPropertyString("sub-visibility") } catch (_: Exception) { "error" }
+                val currentVo = try { MPVLib.getPropertyString("current-vo") } catch (_: Exception) { "error" }
+                val subText = try { MPVLib.getPropertyString("sub-text") } catch (_: Exception) { "n/a" }
                 currentDuration = duration
                 mainHandler.post {
                     fileLoaded = true
+                    emitDebugLog("FILE_LOADED: ${width}x${height}, dur=$duration, sid=$sid, sub-visibility=$subVis, vo=$currentVo, tracksAvailable=$tracksAvailable, pendingSub=$pendingSubtitleTrack")
+                    emitDebugLog("FILE_LOADED: sub-text=${if (subText.isNullOrEmpty()) "(empty)" else "\"${subText.take(60)}\""}")
                     emitLoad(duration, width, height)
+
+                    // Re-apply subtitle track — mpv resets sid on file load
+                    lastAppliedSubtitleMpvId?.let { mpvId ->
+                        emitDebugLog("FILE_LOADED: re-applying subtitle sid=$mpvId")
+                        applySubtitleMpvId(mpvId)
+                    }
+
+                    // Apply deferred external subtitle if set before file was loaded
+                    pendingExternalSubUrl?.let { url ->
+                        pendingExternalSubUrl = null
+                        applyExternalSubtitle(url)
+                    }
                 }
             }
             MPV_EVENT_END_FILE -> {
@@ -533,6 +837,7 @@ class MpvPlayerView(context: ThemedReactContext) :
                     audioIndex++
                 }
                 "sub" -> {
+                    Log.d(TAG, "buildTrackList: sub track i=$i mpvId=$mpvId title=$title lang=$lang codec=$codec selected=$selected -> subtitleIndex=$subtitleIndex")
                     val track = Arguments.createMap().apply {
                         putInt("id", subtitleIndex)
                         putString("type", "subtitle")
@@ -553,10 +858,15 @@ class MpvPlayerView(context: ThemedReactContext) :
         subtitleIndexToMpvId.clear()
         subtitleIndexToMpvId.putAll(newSubtitleMap)
 
+        mainHandler.post {
+            emitDebugLog("buildTrackList: ${audioIndex} audio, ${subtitleIndex} subtitle tracks. subMap=$newSubtitleMap")
+        }
+
         return Pair(audioTracks, subtitleTracks)
     }
 
     private fun applyPendingTracks() {
+        emitDebugLog("applyPendingTracks: pendingAudio=$pendingAudioTrack, pendingSub=$pendingSubtitleTrack")
         pendingAudioTrack?.let { index ->
             pendingAudioTrack = null
             setAudioTrack(index)
@@ -674,6 +984,8 @@ class MpvPlayerView(context: ThemedReactContext) :
         Log.d(TAG, "Destroying MpvPlayerView")
 
         mainHandler.removeCallbacksAndMessages(null)
+        mpvHandler.removeCallbacksAndMessages(null)
+        mpvThread.quitSafely()
 
         try {
             context.applicationContext.unregisterComponentCallbacks(this)
@@ -686,6 +998,11 @@ class MpvPlayerView(context: ThemedReactContext) :
                 MPVLib.removeObserver(this)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to remove observer", e)
+            }
+            try {
+                MPVLib.removeLogObserver(this)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove log observer", e)
             }
             try {
                 MPVLib.destroy()

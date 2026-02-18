@@ -69,6 +69,21 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
         view.setSubtitlePosition(position)
     }
 
+    @ReactProp(name = "subtitleStyle")
+    fun setSubtitleStyle(view: MpvPlayerView, style: ReadableMap?) {
+        view.setSubtitleStyle(style)
+    }
+
+    @ReactProp(name = "controlsVisible", defaultBoolean = false)
+    fun setControlsVisible(view: MpvPlayerView, visible: Boolean) {
+        view.setControlsVisible(visible)
+    }
+
+    @ReactProp(name = "externalSubtitleUrl")
+    fun setExternalSubtitleUrl(view: MpvPlayerView, url: String?) {
+        view.setExternalSubtitleUrl(url)
+    }
+
     @ReactProp(name = "isHDR", defaultBoolean = false)
     fun setIsHDR(view: MpvPlayerView, hdr: Boolean) {
         view.isHDR = hdr
