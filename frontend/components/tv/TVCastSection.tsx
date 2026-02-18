@@ -110,6 +110,7 @@ const TVCastSection = memo(function TVCastSection({
         <Pressable
           onFocus={() => handleItemFocus(index)}
           onPress={() => onCastMemberPress?.(actor)}
+          android_disableSound
           renderToHardwareTextureAndroid={true}
         >
           {({ focused }: { focused: boolean }) => (

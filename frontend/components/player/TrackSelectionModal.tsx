@@ -363,6 +363,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
           <Pressable
             onPress={() => handleOptionSelect(option.id)}
             onFocus={() => handleItemFocus(index)}
+            android_disableSound
             hasTVPreferredFocus={shouldHaveInitialFocus}
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [
@@ -498,6 +499,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     console.log('[TrackSelectionModal] Search Online pressed');
                     handleSearchSubtitles();
                   }}
+                  android_disableSound
                   tvParallaxProperties={{ enabled: false }}
                   style={({ focused }) => [styles.closeButton, styles.searchButton, focused && styles.closeButtonFocused]}>
                   {({ focused }) => (
@@ -509,6 +511,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
               )}
               <Pressable
                 onPress={handleClose}
+                android_disableSound
                 hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}
                 tvParallaxProperties={{ enabled: false }}
                 style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}>

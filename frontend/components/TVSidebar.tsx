@@ -143,6 +143,7 @@ export const TVSidebar = React.memo(function TVSidebar() {
               onPress={() => handleItemSelect(item.name)}
               onFocus={handleSidebarFocus}
               onBlur={handleSidebarBlur}
+              android_disableSound
               hasTVPreferredFocus={isFirst && isActive}
               tvParallaxProperties={{ enabled: false }}
               nextFocusRight={contentFirstItemTag ?? undefined}

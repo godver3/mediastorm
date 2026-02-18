@@ -26,6 +26,7 @@ export const FocusableItem = forwardRef<any, FocusableItemProps>(
         ref={ref}
         onPress={onSelect}
         onFocus={handleFocus}
+        android_disableSound
         hasTVPreferredFocus={autoFocus}
         tvParallaxProperties={{ enabled: false }}>
         {({ focused }) => (

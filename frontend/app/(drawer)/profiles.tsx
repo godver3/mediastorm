@@ -355,6 +355,7 @@ export default function ProfilesScreen() {
                     <Pressable
                       key={color.value}
                       onPress={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}
+                      android_disableSound
                       hasTVPreferredFocus={colorIndex === 0}
                       tvParallaxProperties={{ enabled: false }}
                       style={({ focused }) => [
@@ -375,6 +376,7 @@ export default function ProfilesScreen() {
                     <Pressable
                       key={color.value}
                       onPress={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}
+                      android_disableSound
                       tvParallaxProperties={{ enabled: false }}
                       style={({ focused }) => [
                         styles.colorSwatch,
@@ -396,6 +398,7 @@ export default function ProfilesScreen() {
                 handleCloseProfileActions();
               })}
               disabled={activeUserId === selectedProfile.id || pending === `activate:${selectedProfile.id}`}
+              android_disableSound
               hasTVPreferredFocus={selectedProfile.hasIcon}
               tvParallaxProperties={{ enabled: false }}
               style={({ focused }) => [
@@ -411,6 +414,7 @@ export default function ProfilesScreen() {
             </Pressable>
             <Pressable
               onPress={() => withSelectGuard(handleCloseProfileActions)}
+              android_disableSound
               tvParallaxProperties={{ enabled: false }}
               style={({ focused }) => [styles.modalButton, focused && styles.modalButtonFocused]}>
               {({ focused }) => (

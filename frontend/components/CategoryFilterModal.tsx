@@ -184,6 +184,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
           <Pressable
             ref={actionButtonRef}
             onPress={() => withSelectGuard(handleSelectAll)}
+            android_disableSound
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
             nextFocusUp={actionButtonHandle}
@@ -213,6 +214,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
                   }
                 }}
                 onPress={() => withSelectGuard(() => onToggleCategory(category))}
+                android_disableSound
                 tvParallaxProperties={{ enabled: false }}
                 {...(isFirst && { nextFocusUp: actionButtonHandle })}
                 {...(isLast && { nextFocusDown: closeButtonHandle })}
@@ -254,6 +256,7 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
                 onClose();
               })
             }
+            android_disableSound
             tvParallaxProperties={{ enabled: false }}
             nextFocusUp={lastCategoryHandle ?? actionButtonHandle}
             nextFocusDown={closeButtonHandle}

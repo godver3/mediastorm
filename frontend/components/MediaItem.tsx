@@ -673,6 +673,7 @@ const MediaItem = memo(function MediaItem({
         ref={pressableRef}
         onPress={handlePress}
         onFocus={handleFocus}
+        android_disableSound
         hasTVPreferredFocus={autoFocus}
         nextFocusLeft={effectiveNextFocusLeft}
         style={({ focused }) => [styles.container, style, focused && styles.containerFocused]}

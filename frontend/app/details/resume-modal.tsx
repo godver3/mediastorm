@@ -73,6 +73,7 @@ export const ResumePlaybackModal = ({
                           <Pressable
                             style={[styles.option, isFocused && styles.optionFocused]}
                             onPress={!Platform.isTV ? handleResume : undefined}
+                            android_disableSound
                             tvParallaxProperties={{ enabled: false }}>
                             <View style={styles.optionContent}>
                               <Ionicons
@@ -108,6 +109,7 @@ export const ResumePlaybackModal = ({
                         <Pressable
                           style={[styles.option, isFocused && styles.optionFocused]}
                           onPress={!Platform.isTV ? handlePlayFromBeginning : undefined}
+                          android_disableSound
                           tvParallaxProperties={{ enabled: false }}>
                           <View style={styles.optionContent}>
                             <Ionicons

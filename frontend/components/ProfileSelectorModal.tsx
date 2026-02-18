@@ -362,6 +362,7 @@ const ProfileCard = React.forwardRef<View, ProfileCardProps>(
       <Pressable
         ref={ref}
         onPress={handleSelect}
+        android_disableSound
         hasTVPreferredFocus={hasTVPreferredFocus}
         tvParallaxProperties={{ enabled: false }}
         nextFocusUp={nextFocusUp}

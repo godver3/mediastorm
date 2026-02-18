@@ -3496,6 +3496,7 @@ function VirtualizedShelf({
           }}
           onPress={() => shelfHandlers.onSelect(card.id)}
           onFocus={() => shelfHandlers.onFocus(card.id, index)}
+          android_disableSound
           hasTVPreferredFocus={shouldAutoFocus}
           tvParallaxProperties={{ enabled: false }}>
           {({ focused, pressed }) => (

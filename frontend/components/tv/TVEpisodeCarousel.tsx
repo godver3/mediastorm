@@ -181,6 +181,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         <Pressable
           onPress={() => onSeasonSelect(season)}
           onFocus={() => handleSeasonFocus(index)}
+          android_disableSound
           renderToHardwareTextureAndroid={true}>
           {({ focused }: { focused: boolean }) => (
             <View
@@ -219,6 +220,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         <Pressable
           onPress={() => handleEpisodePress(episode)}
           onFocus={() => handleEpisodeFocus(episode, index)}
+          android_disableSound
           renderToHardwareTextureAndroid={true}>
           {({ focused }: { focused: boolean }) => (
             <TVEpisodeThumbnail

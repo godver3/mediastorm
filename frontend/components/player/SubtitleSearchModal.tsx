@@ -300,6 +300,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
         key={lang.code}
         onPress={() => handleLanguageChange(lang.code)}
         onFocus={() => handleLanguageFocus(index)}
+        android_disableSound
         hasTVPreferredFocus={shouldHaveInitialFocus}
         tvParallaxProperties={{ enabled: false }}>
         {({ focused: isFocused }) => (
@@ -335,6 +336,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
         <Pressable
           onPress={() => handleSelectSubtitle(result)}
           onFocus={() => handleResultFocus(index)}
+          android_disableSound
           tvParallaxProperties={{ enabled: false }}>
           {({ focused: isFocused }) => (
             <View style={[styles.resultItem, isFocused && styles.resultItemFocused]}>
@@ -453,6 +455,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
           <View style={styles.modalFooter}>
             <Pressable
               onPress={handleClose}
+              android_disableSound
               tvParallaxProperties={{ enabled: false }}>
               {({ focused: isCloseFocused }) => (
                 <View style={[styles.closeButton, isCloseFocused && styles.closeButtonFocused]}>

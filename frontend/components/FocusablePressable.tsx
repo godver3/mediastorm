@@ -107,6 +107,7 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
           disabled={disabled || loading}
           onPress={onSelect}
           onFocus={onFocus}
+          android_disableSound
           hasTVPreferredFocus={autoFocus}
           tvParallaxProperties={{ enabled: false }}
           renderToHardwareTextureAndroid={Platform.isTV && Platform.OS === 'android'}

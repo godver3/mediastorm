@@ -2362,6 +2362,7 @@ function LiveScreen() {
           <Pressable
             ref={filterCloseButtonRef}
             onPress={handleCloseFilter}
+            android_disableSound
             tvParallaxProperties={{ enabled: false }}
             nextFocusUp={filterInputHandle}
             nextFocusDown={filterCloseHandle}
@@ -2393,6 +2394,7 @@ function LiveScreen() {
         <View style={styles.tvActionModalButtons}>
           <Pressable
             onPress={handleActionPlay}
+            android_disableSound
             hasTVPreferredFocus={true}
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
@@ -2404,6 +2406,7 @@ function LiveScreen() {
           </Pressable>
           <Pressable
             onPress={handleActionToggleFavorite}
+            android_disableSound
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
             {({ focused }) => (
@@ -2414,6 +2417,7 @@ function LiveScreen() {
           </Pressable>
           <Pressable
             onPress={handleActionHide}
+            android_disableSound
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [
               styles.tvActionModalButton,
@@ -2434,6 +2438,7 @@ function LiveScreen() {
           </Pressable>
           <Pressable
             onPress={handleCloseActionModal}
+            android_disableSound
             tvParallaxProperties={{ enabled: false }}
             style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
             {({ focused }) => (

@@ -405,6 +405,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           <Pressable
             key={section.key}
             onFocus={() => handleSectionFocus(index)}
+            android_disableSound
             hasTVPreferredFocus={index === 0}
             tvParallaxProperties={{ enabled: false }}>
             {({ focused: isFocused }) => (
@@ -419,7 +420,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
 
       {/* Close button */}
       <View style={styles.tvModalFooter}>
-        <Pressable onPress={handleClose} tvParallaxProperties={{ enabled: false }}>
+        <Pressable onPress={handleClose} android_disableSound tvParallaxProperties={{ enabled: false }}>
           {({ focused: isFocused }) => (
             <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
               <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>

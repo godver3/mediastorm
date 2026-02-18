@@ -133,6 +133,7 @@ const MinimalCard = React.memo(
         onPress={handlePress}
         onLongPress={handleLongPress}
         onFocus={handleFocus}
+        android_disableSound
         hasTVPreferredFocus={autoFocus}
         style={({ focused }) => (focused ? minimalCardStyles.focused : minimalCardStyles.base)}>
         {item.poster?.url ? (

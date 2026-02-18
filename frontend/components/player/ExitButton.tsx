@@ -22,6 +22,7 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
       <Pressable
         onPress={onSelect}
         onFocus={onFocus}
+        android_disableSound
         style={({ focused }) => [styles.exitBtn, styles.androidTvButton, focused && styles.androidTvButtonFocused]}>
         {({ focused }) => (
           <Text style={[styles.androidTvText, focused && styles.androidTvTextFocused]}>Exit</Text>

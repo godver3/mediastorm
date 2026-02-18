@@ -61,6 +61,7 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
       return (
         <Pressable
           renderToHardwareTextureAndroid={true}
+          android_disableSound
           onFocus={() => handleItemFocus(index)}
           onPress={() => {
             console.log(`[TVMoreLikeThis DEBUG] onPress fired for title: ${title.name} (id: ${title.id})`);

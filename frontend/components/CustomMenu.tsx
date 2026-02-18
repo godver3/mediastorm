@@ -169,6 +169,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
               firstMenuTag.current = tag ?? undefined;
             } : undefined}
             onPress={() => handleItemSelect(item.name)}
+            android_disableSound
             hasTVPreferredFocus={isFirstEnabled && isVisible}
             tvParallaxProperties={{ enabled: false }}
             nextFocusRight={firstMenuTag.current}

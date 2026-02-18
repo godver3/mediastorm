@@ -106,6 +106,7 @@ export function TvModal({
             },
           ]}
           onPress={onRequestClose}
+          android_disableSound
           // Disable native tvOS parallax effects on backdrop
           tvParallaxProperties={{ enabled: false }}
         />
