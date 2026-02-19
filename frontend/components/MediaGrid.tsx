@@ -19,7 +19,7 @@ import { useTVDimensions } from '../hooks/useTVDimensions';
 import type { ColumnOverride } from '../hooks/useResponsiveColumns';
 import { useTheme } from '../theme';
 import type { NovaTheme } from '../theme';
-import { isAndroidTablet, isTablet } from '../theme/tokens/tvScale';
+import { isAndroidTablet, isAndroidTV, isTablet } from '../theme/tokens/tvScale';
 import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -734,7 +734,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                           bottom: 0,
                           left: 0,
                           right: 0,
-                          height: 4,
+                          height: isAndroidTV ? 1.5 : 4,
                           zIndex: 3,
                         }}>
                         <View
@@ -754,7 +754,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                             left: 0,
                             bottom: 0,
                             width: `${percentWatched}%`,
-                            backgroundColor: theme.colors.accent.primary,
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
                           }}
                         />
                       </View>

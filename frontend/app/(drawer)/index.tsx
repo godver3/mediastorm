@@ -3936,7 +3936,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       borderRadius: theme.radius.md,
       overflow: 'hidden',
       backgroundColor: theme.colors.background.surface,
-      borderWidth: 3,
+      borderWidth: isAndroidTV ? 1.5 : 3,
       borderColor: 'transparent',
     },
     cardFocused: {
@@ -4034,7 +4034,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       borderRadius: theme.radius.md,
       overflow: 'hidden',
       backgroundColor: theme.colors.background.surface,
-      borderWidth: 3,
+      borderWidth: isAndroidTV ? 1.5 : 3,
       borderColor: 'transparent',
     },
     unreleasedOverlay: {
@@ -4125,7 +4125,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       bottom: 0,
       left: 0,
       right: 0,
-      height: 4,
+      height: isAndroidTV ? 1.5 : 4,
       zIndex: 3,
     },
     progressBarBackground: {
@@ -4141,7 +4141,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       top: 0,
       left: 0,
       bottom: 0,
-      backgroundColor: theme.colors.accent.primary,
+      backgroundColor: 'rgba(255, 255, 255, 0.9)',
     },
     progressBadge: {
       position: 'absolute',

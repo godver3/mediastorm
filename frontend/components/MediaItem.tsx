@@ -142,7 +142,7 @@ const createStyles = (theme: NovaTheme) => {
       backgroundColor: theme.colors.background.surface,
       borderRadius: theme.radius.md,
       overflow: 'hidden',
-      borderWidth: 3,
+      borderWidth: isAndroidTV ? 1.5 : 3,
       borderColor: 'transparent',
     },
     containerFocused: {
