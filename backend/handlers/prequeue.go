@@ -1110,17 +1110,21 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		// This is because the player may still encounter the incompatible codec in the container
 		needsAudioTranscode := hasTrueHD // Always transcode if TrueHD/DTS present
 		needsHLS := hasDV || hasHDR10 || needsAudioTranscode
+
+		// Always store HDR detection results so the frontend can display correct badges,
+		// regardless of whether HLS is needed (native clients skip HLS but still need HDR info)
+		h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+			e.HasDolbyVision = hasDV
+			e.HasHDR10 = hasHDR10
+			e.DolbyVisionProfile = dvProfile
+			e.NeedsAudioTranscode = needsAudioTranscode
+		})
+
 		if skipHLS {
 			log.Printf("[prequeue] Skipping HLS session creation (native client)")
 			needsHLS = false
 		}
 		if needsHLS {
-			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
-				e.HasDolbyVision = hasDV
-				e.HasHDR10 = hasHDR10
-				e.DolbyVisionProfile = dvProfile
-				e.NeedsAudioTranscode = needsAudioTranscode
-			})
 
 			reason := "unknown"
 			if hasDV {
