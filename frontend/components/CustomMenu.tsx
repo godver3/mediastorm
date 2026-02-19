@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Routes that should remain accessible when backend is unreachable
@@ -26,7 +27,7 @@ interface CustomMenuProps {
 }
 
 // Unified responsive menu width - design for 1920px, scales to screen
-const MENU_WIDTH = responsiveSize(400, 320);
+const MENU_WIDTH = responsiveSize(520, 416);
 
 export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }: CustomMenuProps) {
   const router = useRouter();
@@ -132,7 +133,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
         name={getMenuIconName(item.name)}
         size={iconSize}
         color={
-          disabled ? theme.colors.text.disabled : isFocused ? theme.colors.background.base : theme.colors.text.primary
+          disabled ? theme.colors.text.disabled : theme.colors.text.primary
         }
         style={[styles.icon, disabled && styles.iconDisabled]}
       />
@@ -167,7 +168,16 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
             key={item.name}
             onSelect={() => handleItemSelect(item.name)}>
             {({ isFocused }: { isFocused: boolean }) => (
-              <View style={[styles.menuItem, isFocused && styles.menuItemFocused]}>
+              <View style={[styles.menuItem]}>
+                {isFocused && (
+                  <LinearGradient
+                    colors={['rgba(63, 102, 255, 1)', 'rgba(63, 102, 255, 0)']}
+                    locations={[0, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                )}
                 {renderMenuItemContent(item, isFocused, false)}
               </View>
             )}
@@ -194,10 +204,22 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
             disabled={disabled}
             style={({ pressed }) => [
               styles.menuItem,
-              pressed && !disabled && styles.menuItemFocused,
               disabled && styles.menuItemDisabled,
             ]}>
-            {({ pressed }) => renderMenuItemContent(item, pressed, disabled)}
+            {({ pressed }) => (
+              <>
+                {pressed && !disabled && (
+                  <LinearGradient
+                    colors={['rgba(63, 102, 255, 1)', 'rgba(63, 102, 255, 0)']}
+                    locations={[0, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                )}
+                {renderMenuItemContent(item, pressed, disabled)}
+              </>
+            )}
           </Pressable>
         );
       })}
@@ -215,6 +237,20 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
           paddingBottom: insets.bottom,
         },
       ]}>
+      <LinearGradient
+        colors={[
+          'rgba(22, 22, 31, 0.97)',
+          'rgba(22, 22, 31, 0.9)',
+          'rgba(22, 22, 31, 0.7)',
+          'rgba(22, 22, 31, 0.35)',
+          'rgba(22, 22, 31, 0.1)',
+          'rgba(22, 22, 31, 0)',
+        ]}
+        locations={[0, 0.35, 0.5, 0.68, 0.85, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={StyleSheet.absoluteFill}
+      />
       <View style={[styles.scrollView, styles.scrollContent]}>
         <View style={styles.header}>
           {isTV &&
@@ -235,7 +271,6 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
 
   return (
     <>
-      {isVisible && <View style={styles.overlay} pointerEvents="none" />}
       {Platform.isTV ? (
         <SpatialNavigationRoot isActive={isVisible} onDirectionHandledWithoutMovement={(direction: string) => {
           if (direction === 'right') onClose();
@@ -262,30 +297,13 @@ const useMenuStyles = function (theme: NovaTheme) {
   const menuLineHeight = responsiveSize(36, 22);
 
   return StyleSheet.create({
-    overlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      zIndex: 999,
-    },
     menuContainer: {
       position: 'absolute',
       left: 0,
       top: 0,
       bottom: 0,
       width: MENU_WIDTH,
-      backgroundColor: theme.colors.background.surface,
       zIndex: 1000,
-      ...Platform.select({
-        ios: {
-          shadowColor: '#000',
-          shadowOffset: { width: 2, height: 0 },
-          shadowOpacity: 0.25,
-          shadowRadius: 8,
-        },
-        android: {
-          elevation: 8,
-        },
-      }),
     },
     scrollView: {
       flex: 1,
@@ -300,7 +318,7 @@ const useMenuStyles = function (theme: NovaTheme) {
       paddingVertical: headerPadding,
       gap: responsiveSize(16, 8),
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.border.subtle,
+      borderBottomColor: 'rgba(255, 255, 255, 0.1)',
       marginBottom: theme.spacing.md,
     },
     headerAvatar: {
@@ -335,9 +353,7 @@ const useMenuStyles = function (theme: NovaTheme) {
       paddingEnd: menuItemPaddingEnd,
       marginHorizontal: theme.spacing.md,
       borderRadius: theme.radius.md,
-    },
-    menuItemFocused: {
-      backgroundColor: theme.colors.accent.primary,
+      overflow: 'hidden',
     },
     menuItemDisabled: {
       opacity: 0.5,
@@ -360,7 +376,7 @@ const useMenuStyles = function (theme: NovaTheme) {
       color: theme.colors.text.disabled,
     },
     menuTextFocused: {
-      color: theme.colors.background.base,
+      color: theme.colors.text.primary,
     },
   });
 };
