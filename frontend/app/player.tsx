@@ -154,8 +154,20 @@ export default function PlayerScreen() {
     // Expo Router automatically decodes URL params, but we need to re-encode
     // special characters for proper URL parsing.
     // URLSearchParams doesn't encode semicolons which breaks some URL parsers.
+    // Also, new URL().searchParams uses form-urlencoded decoding where bare `+`
+    // becomes a space. Since buildStreamUrl uses encodeURIComponent (which encodes
+    // spaces as %20, never +), any `+` after Expo Router decode is a literal plus.
+    // Re-encode it as %2B in the query string before parsing.
     try {
-      const url = new URL(movieParam);
+      let safeToParse = movieParam;
+      const qIdx = safeToParse.indexOf('?');
+      if (qIdx !== -1) {
+        safeToParse =
+          safeToParse.substring(0, qIdx) +
+          '?' +
+          safeToParse.substring(qIdx + 1).replace(/\+/g, '%2B');
+      }
+      const url = new URL(safeToParse);
       // Re-encode path segments while preserving slashes
       const encodedPathname = url.pathname
         .split('/')

@@ -686,6 +686,48 @@ func TestComputeSimilarityScore(t *testing.T) {
 			"onepiece",
 			false, // Should be penalized
 		},
+		{
+			"Trailer file penalty",
+			"Show.S01E01.Trailer.mkv",
+			[]string{"show", "s01e01"},
+			"shows01e01",
+			false, // Should be penalized
+		},
+		{
+			"Trailer in path penalty",
+			"/Trailers/Show.S01E01.mkv",
+			[]string{"show", "s01e01"},
+			"shows01e01",
+			false, // Should be penalized
+		},
+		{
+			"Featurette penalty",
+			"Show.Featurette.mkv",
+			[]string{"show"},
+			"show",
+			false, // Should be penalized
+		},
+		{
+			"Bonus penalty",
+			"Bonus - Behind the Scenes.mkv",
+			[]string{"show"},
+			"show",
+			false, // Should be penalized
+		},
+		{
+			"Promo penalty",
+			"Show.Promo.mkv",
+			[]string{"show"},
+			"show",
+			false, // Should be penalized
+		},
+		{
+			"Behind the scenes path penalty",
+			"/Behind The Scenes/Making.Of.mkv",
+			[]string{"making"},
+			"making",
+			false, // Should be penalized
+		},
 	}
 
 	for _, tt := range tests {

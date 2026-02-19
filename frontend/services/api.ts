@@ -2602,9 +2602,7 @@ class ApiService {
       forced: boolean;
     }>;
   }> {
-    const search = new URLSearchParams();
-    search.set('path', path);
-    return this.request(`/video/subtitles/tracks?${search.toString()}`);
+    return this.request(`/video/subtitles/tracks?path=${encodeURIComponent(path)}`);
   }
 
   /**
@@ -2619,13 +2617,12 @@ class ApiService {
     subtitleTrack: number,
     startOffset?: number,
   ): Promise<{ sessionId: string; subtitleUrl: string; firstCueTime?: number }> {
-    const search = new URLSearchParams();
-    search.set('path', path);
-    search.set('subtitleTrack', subtitleTrack.toString());
+    const params = new URLSearchParams();
+    params.set('subtitleTrack', subtitleTrack.toString());
     if (startOffset !== undefined && startOffset > 0) {
-      search.set('startOffset', startOffset.toString());
+      params.set('startOffset', startOffset.toString());
     }
-    return this.request<{ sessionId: string; subtitleUrl: string }>(`/video/subtitles/start?${search.toString()}`);
+    return this.request<{ sessionId: string; subtitleUrl: string }>(`/video/subtitles/start?path=${encodeURIComponent(path)}&${params.toString()}`);
   }
 
   // Watch Status API methods (now using History API)

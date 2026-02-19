@@ -336,10 +336,20 @@ func ComputeSimilarityScore(candidateName string, releaseTokens []string, releas
 		}
 	}
 
-	// Heavy penalty for sample/extras files - these are never the actual content
+	// Heavy penalty for non-content files - these are never the actual episode/movie
 	lower := strings.ToLower(normalized)
-	if strings.Contains(lower, "sample") || strings.Contains(lower, "extras") {
+	if strings.Contains(lower, "sample") || strings.Contains(lower, "extras") ||
+		strings.Contains(lower, "trailer") || strings.Contains(lower, "featurette") ||
+		strings.Contains(lower, "bonus") || strings.Contains(lower, "promo") {
 		score = 0
+	}
+	// Also check full path for non-content directories
+	lowerPath := strings.ToLower(candidateName)
+	for _, dir := range []string{"/trailers/", "/extras/", "/bonus/", "/featurettes/", "/promos/", "/behind the scenes/"} {
+		if strings.Contains(lowerPath, dir) {
+			score = 0
+			break
+		}
 	}
 
 	return score
