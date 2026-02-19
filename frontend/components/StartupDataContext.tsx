@@ -2,18 +2,22 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import { apiService, type StartupData } from '@/services/api';
+import { apiService, type MetadataProgressSnapshot, type StartupData } from '@/services/api';
+import { useMetadataProgress } from '@/hooks/useMetadataProgress';
 
 interface StartupDataContextValue {
   /** The bundled startup payload, or null while loading / on error. */
   startupData: StartupData | null;
   /** True once the startup fetch has resolved (success or failure). */
   ready: boolean;
+  /** Live progress snapshot for metadata enrichment, or null when idle/unavailable. */
+  progress: MetadataProgressSnapshot | null;
 }
 
 const StartupDataContext = createContext<StartupDataContextValue>({
   startupData: null,
   ready: false,
+  progress: null,
 });
 
 /**
@@ -75,9 +79,12 @@ export const StartupDataProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
   }, [backendReady, activeUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll metadata enrichment progress while startup data is still loading
+  const progress = useMetadataProgress(!ready);
+
   const value = useMemo<StartupDataContextValue>(
-    () => ({ startupData, ready }),
-    [startupData, ready],
+    () => ({ startupData, ready, progress }),
+    [startupData, ready, progress],
   );
 
   return <StartupDataContext.Provider value={value}>{children}</StartupDataContext.Provider>;

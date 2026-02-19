@@ -2,6 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -352,60 +358,56 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     const shouldHaveInitialFocus = option.id === defaultFocusOptionId;
 
     if (Platform.isTV) {
-      // TV: Use native Pressable with hasTVPreferredFocus for reliable focus
-      return (
-        <View
+      // TV: Use SpatialNavigationFocusableView for focus management
+      const tvOptionItem = (
+        <SpatialNavigationFocusableView
           key={option.id}
-          onLayout={(event) => {
-            const { y, height } = event.nativeEvent.layout;
-            handleItemLayout(index, y, height);
-          }}>
-          <Pressable
-            onPress={() => handleOptionSelect(option.id)}
-            onFocus={() => handleItemFocus(index)}
-            android_disableSound
-            hasTVPreferredFocus={shouldHaveInitialFocus}
-            tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [
-              styles.optionItem,
-              focused && !isSelected && styles.optionItemFocused,
-              isSelected && !focused && styles.optionItemSelected,
-              isSelected && focused && styles.optionItemSelectedFocused,
-            ]}>
-            {({ focused }) => (
-              <>
-                <View style={styles.optionTextContainer}>
+          onSelect={() => handleOptionSelect(option.id)}
+          onFocus={() => handleItemFocus(index)}>
+          {({ isFocused }: { isFocused: boolean }) => (
+            <View
+              onLayout={(event) => {
+                const { y, height } = event.nativeEvent.layout;
+                handleItemLayout(index, y, height);
+              }}
+              style={[
+                styles.optionItem,
+                isFocused && !isSelected && styles.optionItemFocused,
+                isSelected && !isFocused && styles.optionItemSelected,
+                isSelected && isFocused && styles.optionItemSelectedFocused,
+              ]}>
+              <View style={styles.optionTextContainer}>
+                <Text
+                  style={[
+                    styles.optionLabel,
+                    isFocused && !isSelected && styles.optionLabelFocused,
+                    isSelected && !isFocused && styles.optionLabelSelected,
+                    isSelected && isFocused && styles.optionLabelSelectedFocused,
+                  ]}>
+                  {option.label}
+                </Text>
+                {option.description ? (
                   <Text
                     style={[
-                      styles.optionLabel,
-                      focused && !isSelected && styles.optionLabelFocused,
-                      isSelected && !focused && styles.optionLabelSelected,
-                      isSelected && focused && styles.optionLabelSelectedFocused,
+                      styles.optionDescription,
+                      isFocused && !isSelected && styles.optionDescriptionFocused,
+                      isSelected && !isFocused && styles.optionDescriptionSelected,
+                      isSelected && isFocused && styles.optionDescriptionSelectedFocused,
                     ]}>
-                    {option.label}
+                    {option.description}
                   </Text>
-                  {option.description ? (
-                    <Text
-                      style={[
-                        styles.optionDescription,
-                        focused && !isSelected && styles.optionDescriptionFocused,
-                        isSelected && !focused && styles.optionDescriptionSelected,
-                        isSelected && focused && styles.optionDescriptionSelectedFocused,
-                      ]}>
-                      {option.description}
-                    </Text>
-                  ) : null}
-                </View>
-                {isSelected ? (
-                  <View style={[styles.optionStatusBadge, focused && styles.optionStatusBadgeFocused]}>
-                    <Text style={[styles.optionStatusText, focused && styles.optionStatusTextFocused]}>Selected</Text>
-                  </View>
                 ) : null}
-              </>
-            )}
-          </Pressable>
-        </View>
+              </View>
+              {isSelected ? (
+                <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
+                  <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+        </SpatialNavigationFocusableView>
       );
+      return shouldHaveInitialFocus ? <DefaultFocus key={option.id}>{tvOptionItem}</DefaultFocus> : tvOptionItem;
     }
 
     // Non-TV: Use Pressable
@@ -473,8 +475,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         </View>
 
         {Platform.isTV ? (
-          // TV: Use native focus with Pressable (no SpatialNavigationNode needed)
-          <>
+          // TV: Use SpatialNavigationNode for focus management
+          <SpatialNavigationNode orientation="vertical">
             {/* Options list with animated scrolling */}
             <View
               style={[styles.optionsScrollView, { overflow: 'hidden' }]}
@@ -494,33 +496,40 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
             {/* Footer with optional Search Online and Close button */}
             <View style={styles.modalFooter}>
               {onSearchSubtitles && (
-                <Pressable
-                  onPress={() => {
-                    console.log('[TrackSelectionModal] Search Online pressed');
-                    handleSearchSubtitles();
-                  }}
-                  android_disableSound
-                  tvParallaxProperties={{ enabled: false }}
-                  style={({ focused }) => [styles.closeButton, styles.searchButton, focused && styles.closeButtonFocused]}>
-                  {({ focused }) => (
-                    <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>
-                      Search Online
-                    </Text>
+                <SpatialNavigationFocusableView onSelect={() => {
+                  console.log('[TrackSelectionModal] Search Online pressed');
+                  handleSearchSubtitles();
+                }}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
+                        Search Online
+                      </Text>
+                    </View>
                   )}
-                </Pressable>
+                </SpatialNavigationFocusableView>
               )}
-              <Pressable
-                onPress={handleClose}
-                android_disableSound
-                hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}
-                tvParallaxProperties={{ enabled: false }}
-                style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}>
-                {({ focused }) => (
-                  <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
-                )}
-              </Pressable>
+              {!hasOptions && !onSearchSubtitles ? (
+                <DefaultFocus>
+                  <SpatialNavigationFocusableView onSelect={handleClose}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                </DefaultFocus>
+              ) : (
+                <SpatialNavigationFocusableView onSelect={handleClose}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              )}
             </View>
-          </>
+          </SpatialNavigationNode>
         ) : (
           <>
             <ScrollView style={styles.optionsScrollView} contentContainerStyle={styles.optionsList}>
@@ -558,8 +567,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     </View>
   );
 
-  // TV: Render modal content directly without SpatialNavigationRoot
-  // Native Pressable with hasTVPreferredFocus handles focus
   return (
     <Modal
       visible={visible}
@@ -568,7 +575,9 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
       hardwareAccelerated>
-      {modalContent}
+      <SpatialNavigationRoot isActive={visible}>
+        {modalContent}
+      </SpatialNavigationRoot>
     </Modal>
   );
 };

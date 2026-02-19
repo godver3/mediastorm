@@ -5,10 +5,16 @@ import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { findNodeHandle, Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
+import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Routes that should remain accessible when backend is unreachable
@@ -81,10 +87,6 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     return unsubscribe;
   }, [isVisible, onClose]);
 
-  // Track the native tag of the first enabled menu item for focus trapping
-  const firstMenuRef = useRef<View | null>(null);
-  const firstMenuTag = useRef<number | undefined>(undefined);
-
   const handleItemSelect = useCallback(
     (routeName: string) => {
       if (isRouteDisabled(routeName)) {
@@ -145,9 +147,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     </>
   );
 
-  // TV platform: use native Pressable with focus render prop
+  // TV platform: use SpatialNavigationFocusableView for D-pad navigation
   const renderTVMenuItems = () => (
-    <>
+    <SpatialNavigationNode orientation="vertical">
       {menuItems.map((item, index) => {
         const disabled = isRouteDisabled(item.name);
         const isFirstEnabled = index === firstEnabledIndex;
@@ -160,28 +162,24 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
           );
         }
 
-        return (
-          <Pressable
+        const focusableItem = (
+          <SpatialNavigationFocusableView
             key={item.name}
-            ref={isFirstEnabled ? (ref: View | null) => {
-              firstMenuRef.current = ref;
-              const tag = ref ? findNodeHandle(ref) : null;
-              firstMenuTag.current = tag ?? undefined;
-            } : undefined}
-            onPress={() => handleItemSelect(item.name)}
-            android_disableSound
-            hasTVPreferredFocus={isFirstEnabled && isVisible}
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusRight={firstMenuTag.current}
-            style={({ focused }) => [
-              styles.menuItem,
-              focused && styles.menuItemFocused,
-            ]}>
-            {({ focused }) => renderMenuItemContent(item, focused, false)}
-          </Pressable>
+            onSelect={() => handleItemSelect(item.name)}>
+            {({ isFocused }: { isFocused: boolean }) => (
+              <View style={[styles.menuItem, isFocused && styles.menuItemFocused]}>
+                {renderMenuItemContent(item, isFocused, false)}
+              </View>
+            )}
+          </SpatialNavigationFocusableView>
         );
+
+        if (isFirstEnabled) {
+          return <DefaultFocus key={item.name}>{focusableItem}</DefaultFocus>;
+        }
+        return focusableItem;
       })}
-    </>
+    </SpatialNavigationNode>
   );
 
   // Non-TV platform: use regular Pressable
@@ -238,7 +236,15 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   return (
     <>
       {isVisible && <View style={styles.overlay} pointerEvents="none" />}
-      {menuContent}
+      {Platform.isTV ? (
+        <SpatialNavigationRoot isActive={isVisible} onDirectionHandledWithoutMovement={(direction: string) => {
+          if (direction === 'right') onClose();
+        }}>
+          {menuContent}
+        </SpatialNavigationRoot>
+      ) : (
+        menuContent
+      )}
     </>
   );
 });

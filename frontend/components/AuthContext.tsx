@@ -88,52 +88,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setAccount(storedAccount);
           }
 
-          // Validate the session is still valid (only if we have a backend URL)
-          if (storedBackendUrl) {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            try {
-              const response = await fetch(`${apiService.getBaseUrl()}/auth/me`, {
-                headers: {
-                  Authorization: `Bearer ${storedToken}`,
-                  'Content-Type': 'application/json',
-                },
-                signal: controller.signal,
-              });
+          // Validate the session and refresh settings using whatever base URL is available
+          // (either stored URL, network-detected URL, or the default)
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          try {
+            const response = await fetch(`${apiService.getBaseUrl()}/auth/me`, {
+              headers: {
+                Authorization: `Bearer ${storedToken}`,
+                'Content-Type': 'application/json',
+              },
+              signal: controller.signal,
+            });
 
-              if (!response.ok) {
-                // Session expired or invalid - clear auth state
-                console.log('[Auth] Stored session is invalid, clearing auth state');
-                await clearStoredAuth();
-                if (mountedRef.current) {
-                  setToken(null);
-                  setAccount(null);
-                }
-                apiService.setAuthToken(null);
-              } else {
-                // Session is valid - register client with backend
-                try {
-                  const clientPayload = await getClientRegistrationPayload();
-                  await apiService.registerClient(clientPayload);
-                  console.log('[Auth] Client registered with backend');
-                } catch (regErr) {
-                  // Non-fatal - client registration is optional
-                  console.warn('[Auth] Failed to register client:', regErr);
-                }
-                // Refresh backend settings now that we're authenticated
-                try {
-                  console.log('[Auth] Refreshing backend settings after auth validation');
-                  await refreshSettingsRef.current();
-                } catch (settingsErr) {
-                  console.warn('[Auth] Failed to refresh settings after auth:', settingsErr);
-                }
+            if (!response.ok) {
+              // Session expired or invalid - clear auth state
+              console.log('[Auth] Stored session is invalid, clearing auth state');
+              await clearStoredAuth();
+              if (mountedRef.current) {
+                setToken(null);
+                setAccount(null);
               }
-            } catch (err) {
-              // Network error or timeout - keep stored auth, will be validated on next request
-              console.warn('[Auth] Failed to validate stored session:', err);
-            } finally {
-              clearTimeout(timeoutId);
+              apiService.setAuthToken(null);
+            } else {
+              // Session is valid - register client with backend
+              try {
+                const clientPayload = await getClientRegistrationPayload();
+                await apiService.registerClient(clientPayload);
+                console.log('[Auth] Client registered with backend');
+              } catch (regErr) {
+                // Non-fatal - client registration is optional
+                console.warn('[Auth] Failed to register client:', regErr);
+              }
+              // Refresh backend settings now that we're authenticated
+              try {
+                console.log('[Auth] Refreshing backend settings after auth validation');
+                await refreshSettingsRef.current();
+              } catch (settingsErr) {
+                console.warn('[Auth] Failed to refresh settings after auth:', settingsErr);
+              }
             }
+          } catch (err) {
+            // Network error or timeout - keep stored auth, will be validated on next request
+            console.warn('[Auth] Failed to validate stored session:', err);
+            // Still try to refresh settings since we have a stored token that might work
+            try {
+              console.log('[Auth] Attempting settings refresh despite validation failure');
+              await refreshSettingsRef.current();
+            } catch (settingsErr) {
+              console.warn('[Auth] Settings refresh also failed:', settingsErr);
+            }
+          } finally {
+            clearTimeout(timeoutId);
           }
         }
       } catch (err) {

@@ -44,9 +44,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { findNodeHandle, Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
+import { Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
+import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView, DefaultFocus } from '@/services/tv-navigation';
+import TVActionButton from '@/components/tv/TVActionButton';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
   useAnimatedStyle,
@@ -1249,13 +1251,69 @@ export default function DetailsScreen() {
 
   // ===== TV scroll and animation =====
   const tvScrollViewRef = useRef<Animated.ScrollView>(null);
-  const currentTVFocusAreaRef = useRef<string | null>(Platform.isTV ? 'actions' : null);
+  const currentTVFocusAreaRef = useRef<string | null>(null);
   const actionRowRef = useRef<View>(null);
-  const watchNowRef = useRef<View>(null);
-  const [watchNowTag, setWatchNowTag] = useState<number | undefined>();
+  // Section refs for scroll-to-section on TV (measureLayout targets)
+  const sectionRefs = useRef<Record<string, View | null>>({});
+  // Cache measured positions to avoid expensive measureLayout calls on Android
+  const sectionPositionsRef = useRef<Record<string, number>>({});
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
   const tvActionsScrollY = useRef<number | null>(null);
+
+  const scrollToSection = useCallback(
+    (sectionKey: string, animated = true) => {
+      if (!Platform.isTV) return;
+
+      // Per-section viewport offset: how far from the TOP of the screen the section should appear.
+      // 'actions' sits near the bottom so the backdrop art stays visible above.
+      // Other sections sit near the top with a small inset.
+      const getSectionViewportOffset = (key: string): number => {
+        if (key === 'actions') {
+          // Place action row ~80% down the screen (bottom area)
+          return Math.round(windowHeight * 0.75);
+        }
+        // Episodes, cast, similar — small offset from top so heading is visible
+        return Math.round(windowHeight * 0.12);
+      };
+
+      const performScroll = (rawY: number, key: string) => {
+        const viewportOffset = getSectionViewportOffset(key);
+        const targetY = Math.max(0, rawY - viewportOffset);
+        tvScrollViewRef.current?.scrollTo({ y: targetY, animated });
+      };
+
+      // Check cache first (raw measured position)
+      const cachedPosition = sectionPositionsRef.current[sectionKey];
+      if (cachedPosition !== undefined) {
+        performScroll(cachedPosition, sectionKey);
+        return;
+      }
+
+      const tryMeasure = () => {
+        const sectionRef = sectionRefs.current[sectionKey];
+        const scrollViewNode = tvScrollViewRef.current;
+        if (!sectionRef || !scrollViewNode) return false;
+
+        sectionRef.measureLayout(
+          scrollViewNode as any,
+          (_left, top) => {
+            sectionPositionsRef.current[sectionKey] = top;
+            performScroll(top, sectionKey);
+          },
+          () => { /* silently fail */ },
+        );
+        return true;
+      };
+
+      // Measure layout on first access, then cache.
+      // If ref isn't ready yet (initial render), retry after next frame.
+      if (!tryMeasure()) {
+        requestAnimationFrame(() => tryMeasure());
+      }
+    },
+    [windowHeight],
+  );
 
   const handleTVFocusAreaChange = useCallback(
     (area: 'seasons' | 'episodes' | 'actions' | 'cast' | 'similar') => {
@@ -1267,13 +1325,19 @@ export default function DetailsScreen() {
         trailersHook.dismissTrailerAutoPlay();
       }
       currentTVFocusAreaRef.current = area;
-      // Restore actions scroll position to show the background
-      if (area === 'actions' && tvActionsScrollY.current != null) {
-        tvScrollViewRef.current?.scrollTo({ y: tvActionsScrollY.current, animated: true });
+      if (area === 'actions') {
+        if (tvActionsScrollY.current != null) {
+          // Restore saved actions scroll position
+          tvScrollViewRef.current?.scrollTo({ y: tvActionsScrollY.current, animated: true });
+        } else {
+          // First focus on actions — scroll to show the action row
+          scrollToSection('actions');
+        }
+      } else {
+        scrollToSection(area);
       }
-      // All other sections: native TV focus engine handles scrolling
     },
-    [trailersHook.dismissTrailerAutoPlay],
+    [trailersHook.dismissTrailerAutoPlay, scrollToSection],
   );
 
   // ===== Visibility gate =====
@@ -1299,6 +1363,15 @@ export default function DetailsScreen() {
       tvScrollY.value = event.contentOffset.y;
     },
   });
+
+  // Invalidate section position cache when content height changes significantly
+  const lastTVContentHeightRef = useRef(0);
+  const handleTVContentSizeChange = useCallback((_width: number, height: number) => {
+    if (Platform.isTV && Math.abs(height - lastTVContentHeightRef.current) > 100) {
+      sectionPositionsRef.current = {};
+    }
+    lastTVContentHeightRef.current = height;
+  }, []);
 
   // TV spacer — fixed height (pushes content below the hero image)
   // Android TV has roughly half the dp coordinate space of tvOS (due to ~2x density),
@@ -1337,6 +1410,11 @@ export default function DetailsScreen() {
       </>
     );
   }
+
+  // Spatial navigation: disable when any modal with its own SpatialNavigationRoot is open
+  const isSpatialNavActive = isDetailsPageActive && !seasonSelectorVisible && !trailerModalVisible
+    && !playback.resumeModalVisible && !watchActions.bulkWatchModalVisible
+    && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible;
 
   // ===== Render helpers =====
   const renderDetailsContent = () => (
@@ -1526,166 +1604,240 @@ export default function DetailsScreen() {
       </View>
       <View style={[styles.bottomContent, isMobile && styles.mobileBottomContent]}>
         {/* Action Row */}
-        <View ref={actionRowRef} style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
-          <FocusablePressable
-            focusKey="watch-now"
-            text={!useCompactActionLayout ? watchNowLabel : undefined}
-            icon={useCompactActionLayout || Platform.isTV ? 'play' : undefined}
-            accessibilityLabel={watchNowLabel}
-            onSelect={playback.handleWatchNow}
-            onFocus={() => handleTVFocusAreaChange('actions')}
-            disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
-            loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
-            style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
-            showReadyPip={playback.prequeueReady}
-
-            badge={(() => {
-              if (isSeries) {
-                return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
-              }
-              return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-            })()}
-            autoFocus={Platform.isTV}
-          />
-          <FocusablePressable
-            focusKey="manual-select"
-            text={!useCompactActionLayout ? manualSelectLabel : undefined}
-            icon={useCompactActionLayout || Platform.isTV ? 'search' : undefined}
-            accessibilityLabel={manualSelectLabel}
-            onSelect={manualSelect.handleManualSelect}
-            onFocus={() => handleTVFocusAreaChange('actions')}
-
-            disabled={isSeries && episodeManager.episodesLoading}
-            style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-          />
-          {shouldShowDebugPlayerButton && (
-            <FocusablePressable
-              focusKey="debug-player"
-              text={!useCompactActionLayout ? 'Debug Player' : undefined}
-              icon={useCompactActionLayout || Platform.isTV ? 'bug' : undefined}
-              accessibilityLabel="Launch debug player overlay"
-              onSelect={playback.handleLaunchDebugPlayer}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-  
-              disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
-              style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
-            />
-          )}
-          {isSeries && (
-            <FocusablePressable
-              focusKey="select-episode"
-              text={!useCompactActionLayout ? 'Select' : undefined}
-              icon={useCompactActionLayout || Platform.isTV ? 'list' : undefined}
-              accessibilityLabel="Select Episode"
-              onSelect={() => {
-                trailersHook.dismissTrailerAutoPlay();
-                setSeasonSelectorVisible(true);
-              }}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-  
-              style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-            />
-          )}
-          {(isSeries || isInContinueWatching) && (
-            <FocusablePressable
-              focusKey="more-options"
-              text={!useCompactActionLayout ? 'More' : undefined}
-              icon="ellipsis-vertical"
-              accessibilityLabel="More options"
-              onSelect={() => setMoreOptionsVisible(true)}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-
-              style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
-            />
-          )}
-          <FocusablePressable
-            focusKey="toggle-watchlist"
-            text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchlistButtonLabel) : undefined}
-            icon={
-              useCompactActionLayout || Platform.isTV
-                ? watchActions.isWatchlisted
-                  ? 'bookmark'
-                  : 'bookmark-outline'
-                : undefined
-            }
-            accessibilityLabel={watchActions.watchlistBusy ? 'Saving watchlist change' : watchActions.watchlistButtonLabel}
-            onSelect={watchActions.handleToggleWatchlist}
-            onFocus={() => handleTVFocusAreaChange('actions')}
-
-            loading={watchActions.watchlistBusy}
-            style={[
-              useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
-              watchActions.isWatchlisted && styles.watchlistActionButtonActive,
-            ]}
-            disabled={!watchActions.canToggleWatchlist || watchActions.watchlistBusy}
-          />
-          <FocusablePressable
-            focusKey="toggle-watched"
-            text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchStateButtonLabel) : undefined}
-            icon={useCompactActionLayout || Platform.isTV ? (watchActions.isWatched ? 'eye' : 'eye-outline') : undefined}
-            accessibilityLabel={watchActions.watchlistBusy ? 'Saving watched state' : watchActions.watchStateButtonLabel}
-            onSelect={watchActions.handleToggleWatched}
-            onFocus={() => handleTVFocusAreaChange('actions')}
-
-            loading={watchActions.watchlistBusy}
-            style={[
-              useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
-              watchActions.isWatched && styles.watchStateButtonActive,
-            ]}
-            disabled={watchActions.watchlistBusy}
-          />
-          {/* Trailer button */}
-          {(trailersLoading || hasAvailableTrailer) && (
-            <FocusablePressable
-              focusKey="watch-trailer"
-              text={!useCompactActionLayout ? trailerButtonLabel : undefined}
-              icon={useCompactActionLayout || Platform.isTV ? 'videocam' : undefined}
-              accessibilityLabel={trailerButtonLabel}
-              onSelect={handleWatchTrailer}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-  
-              loading={trailersLoading}
-              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-              disabled={trailerButtonDisabled}
-            />
-          )}
-          {/* Collection button */}
-          {!isSeries && movieDetails?.collection && (
-            <FocusablePressable
-              focusKey="view-collection"
-              text={!useCompactActionLayout ? movieDetails.collection.name : undefined}
-              icon={useCompactActionLayout || Platform.isTV ? 'albums' : undefined}
-              accessibilityLabel={`View ${movieDetails.collection.name}`}
-              onSelect={handleViewCollection}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-  
-              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-            />
-          )}
-          {/* Fullscreen trailer button */}
-          {showTrailerFullscreen && (
-            <FocusablePressable
-              focusKey="trailer-fullscreen"
-              icon="expand"
-              accessibilityLabel="Watch trailer fullscreen"
-              onSelect={() => trailersHook.setIsTrailerImmersiveMode(true)}
-              onFocus={() => handleTVFocusAreaChange('actions')}
-              style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
-            />
-          )}
-          {/* Progress badge for movies */}
-          {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
-            <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
-              <Text
-                style={[
-                  styles.progressIndicatorText,
-                  useCompactActionLayout && styles.progressIndicatorTextCompact,
-                ]}>
-                {`${displayProgress}%`}
-              </Text>
+        {Platform.isTV ? (
+          <SpatialNavigationNode orientation="horizontal">
+            <View ref={(ref) => { sectionRefs.current['actions'] = ref; }} style={styles.actionRow}>
+              <TVActionButton
+                icon="play"
+                onSelect={playback.handleWatchNow}
+                onFocus={() => handleTVFocusAreaChange('actions')}
+                disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+                loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+                showReadyPip={playback.prequeueReady}
+                badge={(() => {
+                  if (isSeries) {
+                    return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                  }
+                  return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+                })()}
+                variant="primary"
+                autoFocus
+              />
+              <TVActionButton
+                icon="search"
+                onSelect={manualSelect.handleManualSelect}
+                onFocus={() => handleTVFocusAreaChange('actions')}
+                disabled={isSeries && episodeManager.episodesLoading}
+              />
+              {shouldShowDebugPlayerButton && (
+                <TVActionButton
+                  icon="bug"
+                  onSelect={playback.handleLaunchDebugPlayer}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+                />
+              )}
+              {isSeries && (
+                <TVActionButton
+                  icon="list"
+                  onSelect={() => {
+                    trailersHook.dismissTrailerAutoPlay();
+                    setSeasonSelectorVisible(true);
+                  }}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                />
+              )}
+              {(isSeries || isInContinueWatching) && (
+                <TVActionButton
+                  icon="ellipsis-vertical"
+                  onSelect={() => setMoreOptionsVisible(true)}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                />
+              )}
+              <TVActionButton
+                icon={watchActions.isWatchlisted ? 'bookmark' : 'bookmark-outline'}
+                onSelect={watchActions.handleToggleWatchlist}
+                onFocus={() => handleTVFocusAreaChange('actions')}
+                loading={watchActions.watchlistBusy}
+                disabled={!watchActions.canToggleWatchlist || watchActions.watchlistBusy}
+              />
+              <TVActionButton
+                icon={watchActions.isWatched ? 'eye' : 'eye-outline'}
+                onSelect={watchActions.handleToggleWatched}
+                onFocus={() => handleTVFocusAreaChange('actions')}
+                loading={watchActions.watchlistBusy}
+                disabled={watchActions.watchlistBusy}
+              />
+              {(trailersLoading || hasAvailableTrailer) && (
+                <TVActionButton
+                  icon="videocam"
+                  onSelect={handleWatchTrailer}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  loading={trailersLoading}
+                  disabled={trailerButtonDisabled}
+                />
+              )}
+              {!isSeries && movieDetails?.collection && (
+                <TVActionButton
+                  icon="albums"
+                  onSelect={handleViewCollection}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                />
+              )}
+              {showTrailerFullscreen && (
+                <TVActionButton
+                  icon="expand"
+                  onSelect={() => trailersHook.setIsTrailerImmersiveMode(true)}
+                  onFocus={() => handleTVFocusAreaChange('actions')}
+                />
+              )}
+              {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
+                <View style={styles.progressIndicator}>
+                  <Text style={styles.progressIndicatorText}>
+                    {`${displayProgress}%`}
+                  </Text>
+                </View>
+              )}
             </View>
-          )}
-        </View>
+          </SpatialNavigationNode>
+        ) : (
+          <View ref={actionRowRef} style={[styles.actionRow, useCompactActionLayout && styles.compactActionRow]}>
+            <FocusablePressable
+              focusKey="watch-now"
+              text={!useCompactActionLayout ? watchNowLabel : undefined}
+              icon={useCompactActionLayout ? 'play' : undefined}
+              accessibilityLabel={watchNowLabel}
+              onSelect={playback.handleWatchNow}
+              disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+              loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+              style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
+              showReadyPip={playback.prequeueReady}
+              badge={(() => {
+                if (isSeries) {
+                  return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                }
+                return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+              })()}
+            />
+            <FocusablePressable
+              focusKey="manual-select"
+              text={!useCompactActionLayout ? manualSelectLabel : undefined}
+              icon={useCompactActionLayout ? 'search' : undefined}
+              accessibilityLabel={manualSelectLabel}
+              onSelect={manualSelect.handleManualSelect}
+              disabled={isSeries && episodeManager.episodesLoading}
+              style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+            />
+            {shouldShowDebugPlayerButton && (
+              <FocusablePressable
+                focusKey="debug-player"
+                text={!useCompactActionLayout ? 'Debug Player' : undefined}
+                icon={useCompactActionLayout ? 'bug' : undefined}
+                accessibilityLabel="Launch debug player overlay"
+                onSelect={playback.handleLaunchDebugPlayer}
+                disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.debugActionButton}
+              />
+            )}
+            {isSeries && (
+              <FocusablePressable
+                focusKey="select-episode"
+                text={!useCompactActionLayout ? 'Select' : undefined}
+                icon={useCompactActionLayout ? 'list' : undefined}
+                accessibilityLabel="Select Episode"
+                onSelect={() => {
+                  trailersHook.dismissTrailerAutoPlay();
+                  setSeasonSelectorVisible(true);
+                }}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+              />
+            )}
+            {(isSeries || isInContinueWatching) && (
+              <FocusablePressable
+                focusKey="more-options"
+                text={!useCompactActionLayout ? 'More' : undefined}
+                icon="ellipsis-vertical"
+                accessibilityLabel="More options"
+                onSelect={() => setMoreOptionsVisible(true)}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.manualActionButton}
+              />
+            )}
+            <FocusablePressable
+              focusKey="toggle-watchlist"
+              text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchlistButtonLabel) : undefined}
+              icon={
+                useCompactActionLayout
+                  ? watchActions.isWatchlisted
+                    ? 'bookmark'
+                    : 'bookmark-outline'
+                  : undefined
+              }
+              accessibilityLabel={watchActions.watchlistBusy ? 'Saving watchlist change' : watchActions.watchlistButtonLabel}
+              onSelect={watchActions.handleToggleWatchlist}
+              loading={watchActions.watchlistBusy}
+              style={[
+                useCompactActionLayout ? styles.iconActionButton : styles.watchlistActionButton,
+                watchActions.isWatchlisted && styles.watchlistActionButtonActive,
+              ]}
+              disabled={!watchActions.canToggleWatchlist || watchActions.watchlistBusy}
+            />
+            <FocusablePressable
+              focusKey="toggle-watched"
+              text={!useCompactActionLayout ? (watchActions.watchlistBusy ? 'Saving...' : watchActions.watchStateButtonLabel) : undefined}
+              icon={useCompactActionLayout ? (watchActions.isWatched ? 'eye' : 'eye-outline') : undefined}
+              accessibilityLabel={watchActions.watchlistBusy ? 'Saving watched state' : watchActions.watchStateButtonLabel}
+              onSelect={watchActions.handleToggleWatched}
+              loading={watchActions.watchlistBusy}
+              style={[
+                useCompactActionLayout ? styles.iconActionButton : styles.watchStateButton,
+                watchActions.isWatched && styles.watchStateButtonActive,
+              ]}
+              disabled={watchActions.watchlistBusy}
+            />
+            {(trailersLoading || hasAvailableTrailer) && (
+              <FocusablePressable
+                focusKey="watch-trailer"
+                text={!useCompactActionLayout ? trailerButtonLabel : undefined}
+                icon={useCompactActionLayout ? 'videocam' : undefined}
+                accessibilityLabel={trailerButtonLabel}
+                onSelect={handleWatchTrailer}
+                loading={trailersLoading}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+                disabled={trailerButtonDisabled}
+              />
+            )}
+            {!isSeries && movieDetails?.collection && (
+              <FocusablePressable
+                focusKey="view-collection"
+                text={!useCompactActionLayout ? movieDetails.collection.name : undefined}
+                icon={useCompactActionLayout ? 'albums' : undefined}
+                accessibilityLabel={`View ${movieDetails.collection.name}`}
+                onSelect={handleViewCollection}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+              />
+            )}
+            {showTrailerFullscreen && (
+              <FocusablePressable
+                focusKey="trailer-fullscreen"
+                icon="expand"
+                accessibilityLabel="Watch trailer fullscreen"
+                onSelect={() => trailersHook.setIsTrailerImmersiveMode(true)}
+                style={useCompactActionLayout ? styles.iconActionButton : styles.trailerActionButton}
+              />
+            )}
+            {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
+              <View style={[styles.progressIndicator, useCompactActionLayout && styles.progressIndicatorCompact]}>
+                <Text
+                  style={[
+                    styles.progressIndicatorText,
+                    useCompactActionLayout && styles.progressIndicatorTextCompact,
+                  ]}>
+                  {`${displayProgress}%`}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
         {watchActions.watchlistError && <Text style={styles.watchlistError}>{watchActions.watchlistError}</Text>}
         {/* Prequeue stream info display */}
         <Animated.View style={[styles.prequeueInfoContainer, styles.prequeueInfoMinHeight, playback.prequeuePulseStyle]}>
@@ -1727,63 +1879,124 @@ export default function DetailsScreen() {
                   {(playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
                     <View style={styles.prequeueTrackRow}>
                       {playback.prequeueDisplayInfo.audioTracks && playback.prequeueDisplayInfo.audioTracks.length > 0 && (
-                        <Pressable
-                          onPress={() => playback.setShowAudioTrackModal(true)}
-                          onFocus={() => trailersHook.dismissTrailerAutoPlay()}
-                          disabled={playback.prequeueDisplayInfo.audioTracks.length <= 1}
-                          style={styles.prequeueTrackPressable}
-                        >
-                          <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
-                          <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                        Platform.isTV ? (
+                          <SpatialNavigationFocusableView
+                            onSelect={() => playback.setShowAudioTrackModal(true)}
+                            onFocus={() => { handleTVFocusAreaChange('actions'); trailersHook.dismissTrailerAutoPlay(); }}>
+                            {({ isFocused }: { isFocused: boolean }) => (
+                              <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                                <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                                <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                                  {(() => {
+                                    const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                                    const track = selectedIdx !== undefined && selectedIdx >= 0
+                                      ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                                      : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                                    if (!track) return 'Default';
+                                    return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                                  })()}
+                                </Text>
+                                {(() => {
+                                  const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                                  const track = selectedIdx !== undefined && selectedIdx >= 0
+                                    ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                                    : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                                  if (track?.codec) {
+                                    return (
+                                      <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                        {track.codec.toUpperCase()}
+                                      </Text>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                                {playback.prequeueDisplayInfo!.audioTracks!.length > 1 && (
+                                  <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                                )}
+                              </View>
+                            )}
+                          </SpatialNavigationFocusableView>
+                        ) : (
+                          <Pressable
+                            onPress={() => playback.setShowAudioTrackModal(true)}
+                            onFocus={() => trailersHook.dismissTrailerAutoPlay()}
+                            disabled={playback.prequeueDisplayInfo.audioTracks.length <= 1}
+                            style={styles.prequeueTrackPressable}
+                          >
+                            <Ionicons name="volume-high" size={16 * tvScale} color={theme.colors.text.secondary} />
+                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                              {(() => {
+                                const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                                const track = selectedIdx !== undefined && selectedIdx >= 0
+                                  ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                                  : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                                if (!track) return 'Default';
+                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                              })()}
+                            </Text>
                             {(() => {
                               const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
                               const track = selectedIdx !== undefined && selectedIdx >= 0
                                 ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
                                 : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                              if (!track) return 'Default';
-                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                              if (track?.codec) {
+                                return (
+                                  <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                    {track.codec.toUpperCase()}
+                                  </Text>
+                                );
+                              }
+                              return null;
                             })()}
-                          </Text>
-                          {(() => {
-                            const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
-                            const track = selectedIdx !== undefined && selectedIdx >= 0
-                              ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
-                              : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                            if (track?.codec) {
-                              return (
-                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                                  {track.codec.toUpperCase()}
-                                </Text>
-                              );
-                            }
-                            return null;
-                          })()}
-                          {playback.prequeueDisplayInfo.audioTracks.length > 1 && (
-                            <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
-                          )}
-                        </Pressable>
+                            {playback.prequeueDisplayInfo.audioTracks.length > 1 && (
+                              <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
+                            )}
+                          </Pressable>
+                        )
                       )}
                       {(playback.prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
                         <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>
                       )}
                       {playback.prequeueDisplayInfo.subtitleTracks && playback.prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                        <Pressable
-                          onPress={() => playback.setShowSubtitleTrackModal(true)}
-                          onFocus={() => trailersHook.dismissTrailerAutoPlay()}
-                          style={styles.prequeueTrackPressable}
-                        >
-                          <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
-                          <Text style={styles.prequeueTrackValue} numberOfLines={1}>
-                            {(() => {
-                              const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
-                              if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                              const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
-                              if (!track) return 'Off';
-                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                            })()}
-                          </Text>
-                          <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
-                        </Pressable>
+                        Platform.isTV ? (
+                          <SpatialNavigationFocusableView
+                            onSelect={() => playback.setShowSubtitleTrackModal(true)}
+                            onFocus={() => { handleTVFocusAreaChange('actions'); trailersHook.dismissTrailerAutoPlay(); }}>
+                            {({ isFocused }: { isFocused: boolean }) => (
+                              <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                                <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                                <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                                  {(() => {
+                                    const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
+                                    if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                                    const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
+                                    if (!track) return 'Off';
+                                    return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                                  })()}
+                                </Text>
+                                <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                              </View>
+                            )}
+                          </SpatialNavigationFocusableView>
+                        ) : (
+                          <Pressable
+                            onPress={() => playback.setShowSubtitleTrackModal(true)}
+                            onFocus={() => trailersHook.dismissTrailerAutoPlay()}
+                            style={styles.prequeueTrackPressable}
+                          >
+                            <Ionicons name="text" size={16 * tvScale} color={theme.colors.text.secondary} />
+                            <Text style={styles.prequeueTrackValue} numberOfLines={1}>
+                              {(() => {
+                                const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
+                                if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                                const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
+                                if (!track) return 'Off';
+                                return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                              })()}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
+                          </Pressable>
+                        )
                       )}
                     </View>
                   ) : null}
@@ -1794,7 +2007,7 @@ export default function DetailsScreen() {
         </Animated.View>
         {/* TV Episode Carousel */}
         {Platform.isTV && isSeries && (
-          <View style={{ minHeight: Math.round(tvScale * 416) }}>
+          <View ref={(ref) => { sectionRefs.current['episodes'] = ref; sectionRefs.current['seasons'] = ref; }} style={{ minHeight: Math.round(tvScale * 416) }}>
             {episodeManager.seasons.length > 0 && TVEpisodeCarousel ? (
               <TVEpisodeCarousel
                 seasons={episodeManager.seasons}
@@ -1828,24 +2041,28 @@ export default function DetailsScreen() {
         )}
         {/* TV Cast Section */}
         {Platform.isTV && TVCastSection && (
-          <TVCastSection
-            credits={credits}
-            isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-            maxCast={10}
-            onFocus={() => handleTVFocusAreaChange('cast')}
-            compactMargin
-            onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
-          />
+          <View ref={(ref) => { sectionRefs.current['cast'] = ref; }}>
+            <TVCastSection
+              credits={credits}
+              isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+              maxCast={10}
+              onFocus={() => handleTVFocusAreaChange('cast')}
+              compactMargin
+              onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
+            />
+          </View>
         )}
         {/* TV More Like This Section */}
         {Platform.isTV && TVMoreLikeThisSection && (
-          <TVMoreLikeThisSection
-            titles={similarContent}
-            isLoading={similarLoading}
-            maxTitles={20}
-            onFocus={() => handleTVFocusAreaChange('similar')}
-            onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
-          />
+          <View ref={(ref) => { sectionRefs.current['similar'] = ref; }}>
+            <TVMoreLikeThisSection
+              titles={similarContent}
+              isLoading={similarLoading}
+              maxTitles={20}
+              onFocus={() => handleTVFocusAreaChange('similar')}
+              onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
+            />
+          </View>
         )}
         {!Platform.isTV && activeEpisode && (
           <View style={styles.episodeCardContainer}>
@@ -2160,9 +2377,8 @@ export default function DetailsScreen() {
   const SafeAreaWrapper = isTV ? View : FixedSafeAreaView;
   const safeAreaProps = isTV ? {} : { edges: ['top'] as ('top' | 'bottom' | 'left' | 'right')[] };
 
-  return (
+  const detailsContent = (
     <>
-      <Stack.Screen options={{ headerShown: false }} />
       <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
         <View style={styles.container}>
           {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) */}
@@ -2283,6 +2499,7 @@ export default function DetailsScreen() {
                         contentContainerStyle={styles.tvScrollContent}
                         showsVerticalScrollIndicator={false}
                         onScroll={tvScrollHandler}
+                        onContentSizeChange={handleTVContentSizeChange}
                         scrollEventThrottle={16}
                         scrollEnabled={true}>
                         {/* Fixed height spacer */}
@@ -2321,6 +2538,19 @@ export default function DetailsScreen() {
         </View>
       </SafeAreaWrapper>
       <MobileTabBar />
+    </>
+  );
+
+  return (
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      {Platform.isTV ? (
+        <SpatialNavigationRoot isActive={isSpatialNavActive}>
+          {detailsContent}
+        </SpatialNavigationRoot>
+      ) : (
+        detailsContent
+      )}
       <TrailerModal
         visible={trailerModalVisible}
         trailer={activeTrailer}
@@ -2378,57 +2608,67 @@ export default function DetailsScreen() {
       />
       {/* More Options Menu */}
       <TvModal visible={moreOptionsVisible} onRequestClose={() => setMoreOptionsVisible(false)}>
-        <View style={styles.moreOptionsModal}>
-          <View style={styles.moreOptionsHeader}>
-            <Text style={styles.moreOptionsTitle}>More Options</Text>
+        <SpatialNavigationRoot isActive={moreOptionsVisible}>
+          <View style={styles.moreOptionsModal}>
+            <View style={styles.moreOptionsHeader}>
+              <Text style={styles.moreOptionsTitle}>More Options</Text>
+            </View>
+            <SpatialNavigationNode orientation="vertical">
+              <View style={styles.moreOptionsContent}>
+                {isSeries && (
+                  <DefaultFocus>
+                    <SpatialNavigationFocusableView
+                      onSelect={handleMenuShuffleShow}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
+                          <Ionicons name="shuffle" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                          <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Shuffle Show</Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  </DefaultFocus>
+                )}
+                {isSeries && (
+                  <SpatialNavigationFocusableView
+                    onSelect={handleMenuShuffleSeason}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
+                        <Ionicons name="shuffle" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                        <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>
+                          {`Shuffle Season${episodeManager.selectedSeason ? ` ${episodeManager.selectedSeason.number}` : ''}`}
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+                {isInContinueWatching && (
+                  (() => {
+                    const removeCWItem = (
+                      <SpatialNavigationFocusableView
+                        onSelect={handleRemoveFromContinueWatching}>
+                        {({ isFocused }: { isFocused: boolean }) => (
+                          <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
+                            <Ionicons name="eye-off-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                            <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Remove from Continue Watching</Text>
+                          </View>
+                        )}
+                      </SpatialNavigationFocusableView>
+                    );
+                    return !isSeries ? <DefaultFocus>{removeCWItem}</DefaultFocus> : removeCWItem;
+                  })()
+                )}
+                <SpatialNavigationFocusableView
+                  onSelect={() => setMoreOptionsVisible(false)}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.moreOptionsCancelButton, isFocused && styles.moreOptionsCancelFocused]}>
+                      <Text style={[styles.moreOptionsCancelButtonText, isFocused && { color: theme.colors.text.inverse }]}>Cancel</Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              </View>
+            </SpatialNavigationNode>
           </View>
-          <View style={styles.moreOptionsContent}>
-            {isSeries && (
-              <FocusablePressable
-                focusKey="menu-shuffle-show"
-                autoFocus
-                text="Shuffle Show"
-                icon="shuffle"
-                accessibilityLabel="Shuffle play random episode from entire show"
-                onSelect={handleMenuShuffleShow}
-                style={styles.moreOptionsItem}
-                disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
-              />
-            )}
-            {isSeries && (
-              <FocusablePressable
-                focusKey="menu-shuffle-season"
-                text={`Shuffle Season${episodeManager.selectedSeason ? ` ${episodeManager.selectedSeason.number}` : ''}`}
-                icon="shuffle"
-                accessibilityLabel="Shuffle play random episode from current season"
-                onSelect={handleMenuShuffleSeason}
-                style={styles.moreOptionsItem}
-                disabled={episodeManager.episodesLoading || episodeManager.allEpisodes.length === 0}
-              />
-            )}
-            {isInContinueWatching && (
-              <FocusablePressable
-                focusKey="menu-remove-cw"
-                autoFocus={!isSeries}
-                text="Remove from Continue Watching"
-                icon="eye-off-outline"
-                accessibilityLabel="Remove from continue watching"
-                onSelect={handleRemoveFromContinueWatching}
-                style={styles.moreOptionsItem}
-              />
-            )}
-          </View>
-          <View style={styles.moreOptionsFooter}>
-            <FocusablePressable
-              focusKey="menu-cancel"
-              text="Cancel"
-              accessibilityLabel="Close menu"
-              onSelect={() => setMoreOptionsVisible(false)}
-              style={styles.moreOptionsCancelButton}
-              textStyle={styles.moreOptionsCancelButtonText}
-            />
-          </View>
-        </View>
+        </SpatialNavigationRoot>
       </TvModal>
       <EpisodeSelector
         visible={episodeSelectorVisible}

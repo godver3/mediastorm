@@ -16,10 +16,17 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
+import { apiService, type MetadataProgressSnapshot, type MetadataProgressTask, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { TVFocusGuard, useTVFocusBoundary } from '@/components/tv-focus';
+import { useTVFocusBoundary } from '@/components/tv-focus';
+import {
+  DefaultFocus,
+  SpatialNavigationFocusableView,
+  SpatialNavigationNode,
+  SpatialNavigationRoot,
+  SpatialNavigationVirtualizedList,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { isTV, isTablet, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
@@ -30,8 +37,8 @@ import React, { startTransition, useCallback, useEffect, useMemo, useRef, useSta
 import type { LayoutChangeEvent, View as RNView } from 'react-native';
 import { Image } from '@/components/Image';
 import {
+  ActivityIndicator,
   findNodeHandle,
-  FlatList,
   Image as RNImage,
   Modal,
   NativeScrollEvent,
@@ -379,6 +386,46 @@ const DEBUG_MAX_CARDS_PER_SHELF = 0;
 const KILL_ALL_SHELVES = false;
 // === END KILL SWITCHES ===
 
+/** Convert a metadata progress task phase into a human-readable label. */
+function formatProgressPhase(phase: string): string {
+  return phase === 'enriching'
+    ? 'Enriching artwork'
+    : phase === 'enriching-releases'
+      ? 'Fetching metadata'
+      : 'Fetching list';
+}
+
+/** Dedicated loading indicator shown above shelves while metadata enrichment is active. */
+function MetadataLoadingIndicator({ progress, theme }: { progress: MetadataProgressSnapshot; theme: NovaTheme }) {
+  const tvFontSize = isTV ? Math.round(16 * getTVScaleMultiplier()) : 13;
+  const tvSpinnerSize = isTV ? Math.round(48 * getTVScaleMultiplier()) : undefined;
+
+  return (
+    <View style={{
+      alignItems: 'center',
+      paddingVertical: isTV ? theme.spacing['3xl'] : theme.spacing.xl,
+      marginBottom: theme.spacing.md,
+    }}>
+      <ActivityIndicator
+        size={tvSpinnerSize ?? 'large'}
+        color={theme.colors.accent.primary}
+      />
+      {progress.tasks.map((task: MetadataProgressTask) => {
+        const current = task.total > 0 ? Math.min(task.current, task.total) : task.current;
+        return (
+          <Text key={task.id} style={{
+            color: theme.colors.text.secondary,
+            fontSize: tvFontSize,
+            marginTop: isTV ? theme.spacing.md : theme.spacing.sm,
+          }}>
+            {task.label}: {formatProgressPhase(task.phase)} {current}/{task.total}
+          </Text>
+        );
+      })}
+    </View>
+  );
+}
+
 let indexRenderCount = 0;
 let renderStartTime = 0;
 
@@ -502,7 +549,7 @@ function IndexScreen() {
   const theme = useTheme();
   const router = useRouter();
   const focused = useIsFocused();
-  const { isOpen: isMenuOpen, openMenu, closeMenu, setFirstContentFocusableTag } = useMenuContext();
+  const { isOpen: isMenuOpen, openMenu, closeMenu } = useMenuContext();
 
   // Backend settings - must come before trending hooks so we can extract hideUnreleased settings
   const {
@@ -514,7 +561,7 @@ function IndexScreen() {
     isBackendReachable,
     retryCountdown,
   } = useBackendSettings();
-  const { startupData, ready: startupReady } = useStartupData();
+  const { startupData, ready: startupReady, progress: metadataProgress } = useStartupData();
 
   // Extract hideUnreleased settings for trending shelves from settings
   const trendingMoviesHideUnreleased = useMemo(() => {
@@ -566,8 +613,6 @@ function IndexScreen() {
   const shelfRefs = React.useRef<{ [key: string]: RNView | null }>({});
   // Cache shelf positions to avoid measureLayout on every shelf change (expensive on Android)
   const shelfPositionsRef = React.useRef<{ [key: string]: number }>({});
-  // Store FlatList refs for each shelf for programmatic horizontal scrolling
-  const shelfFlatListRefs = React.useRef<{ [key: string]: FlatList | null }>({});
   // Shared value for animated vertical scrolling on TV (allows custom duration)
   const shelfScrollTargetY = useSharedValue(-1); // -1 = no pending scroll
 
@@ -720,6 +765,7 @@ function IndexScreen() {
               undefined, // offset
               shelf.hideUnreleased,
               hideWatched,
+              shelf.name, // shelf name for progress label
             );
             startTransition(() => {
               setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
@@ -855,10 +901,6 @@ function IndexScreen() {
 
   const registerShelfRef = useCallback((key: string, ref: RNView | null) => {
     shelfRefs.current[key] = ref;
-  }, []);
-
-  const registerShelfFlatListRef = useCallback((key: string, ref: FlatList | null) => {
-    shelfFlatListRefs.current[key] = ref;
   }, []);
 
   const MemoizedDesktopShelf = useMemo(
@@ -1841,6 +1883,16 @@ function IndexScreen() {
   });
   // heroImageDimensions removed — now computed inline in TVHero component
 
+  // Spatial navigation: left-at-edge opens menu (same pattern as settings/watchlist)
+  const handleDirectionWithoutMovement = useCallback(
+    (direction: string) => {
+      if (direction === 'left' && !isMenuOpen && !profileSelectorVisible) {
+        openMenu();
+      }
+    },
+    [isMenuOpen, profileSelectorVisible, openMenu],
+  );
+
   // Version mismatch modal state
   const [isVersionMismatchVisible, setIsVersionMismatchVisible] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
@@ -2726,6 +2778,10 @@ function IndexScreen() {
               )}
             </View>
 
+            {metadataProgress && metadataProgress.activeCount > 0 && (
+              <MetadataLoadingIndicator progress={metadataProgress} theme={theme} />
+            )}
+
             {mobileShelfConfig
               .filter((config) => {
                 if (!config.enabled) return false;
@@ -2741,8 +2797,7 @@ function IndexScreen() {
                 if (!data) {
                   return null;
                 }
-                const shouldShow = data.loading || data.titles.length > 0;
-                if (!shouldShow) {
+                if (!data.loading && data.titles.length === 0) {
                   return null;
                 }
                 return (
@@ -2924,37 +2979,43 @@ function IndexScreen() {
           </View>
         )}
 
-        <View key={navigationKey}>
-          {desktopShelves.map((shelf, shelfIndex) => {
-            const isLandscape = shelf.cardLayout === 'landscape';
-            return (
-              <MemoizedDesktopShelf
-                key={shelf.key}
-                title={shelf.title}
-                cards={shelf.cards}
-                styles={desktopStyles!.styles}
-                cardWidth={isLandscape ? desktopStyles!.landscapeCardWidth : desktopStyles!.cardWidth}
-                cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
-                cardSpacing={desktopStyles!.cardSpacing}
-                shelfPadding={desktopStyles!.shelfPadding}
-                onCardSelect={handleCardSelect}
-                onShelfItemFocus={handleShelfItemFocus}
-                autoFocus={shelf.autoFocus && shelf.cards.length > 0}
-                collapseIfEmpty={shelf.collapseIfEmpty}
-                showEmptyState={shelf.showEmptyState}
-                shelfKey={shelf.key}
-                shelfIndex={shelfIndex}
-                registerShelfRef={registerShelfRef}
-                registerShelfFlatListRef={registerShelfFlatListRef}
-                isInitialLoad={isInitialLoadRef.current}
-                badgeVisibility={badgeVisibility}
-                watchStateIconStyle={watchStateIconStyle}
-                onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
-                cardLayout={shelf.cardLayout}
-              />
-            );
-          })}
-        </View>
+        {metadataProgress && metadataProgress.activeCount > 0 && (
+          <MetadataLoadingIndicator progress={metadataProgress} theme={theme} />
+        )}
+
+        <SpatialNavigationNode orientation="vertical">
+          <View key={navigationKey}>
+            {desktopShelves.map((shelf, shelfIndex) => {
+              const isLandscape = shelf.cardLayout === 'landscape';
+              const shelfCardWidth = isLandscape ? desktopStyles!.landscapeCardWidth : desktopStyles!.cardWidth;
+              const shelfItemSize = shelfCardWidth + desktopStyles!.cardSpacing;
+              const visibleItems = Math.floor((screenWidth - desktopStyles!.shelfPadding) / shelfItemSize);
+              return (
+                <MemoizedDesktopShelf
+                  key={shelf.key}
+                  title={shelf.title}
+                  cards={shelf.cards}
+                  styles={desktopStyles!.styles}
+                  cardWidth={shelfCardWidth}
+                  cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
+                  cardSpacing={desktopStyles!.cardSpacing}
+                  numberOfItemsVisibleOnScreen={Math.max(1, visibleItems)}
+                  onCardSelect={handleCardSelect}
+                  onShelfItemFocus={handleShelfItemFocus}
+                  autoFocus={shelf.autoFocus && shelf.cards.length > 0}
+                  collapseIfEmpty={shelf.collapseIfEmpty}
+                  showEmptyState={shelf.showEmptyState}
+                  shelfKey={shelf.key}
+                  shelfIndex={shelfIndex}
+                  registerShelfRef={registerShelfRef}
+                  badgeVisibility={badgeVisibility}
+                  watchStateIconStyle={watchStateIconStyle}
+                  cardLayout={shelf.cardLayout}
+                />
+              );
+            })}
+          </View>
+        </SpatialNavigationNode>
       </Animated.ScrollView>
       {!Platform.isTV && (
         <FloatingHero
@@ -3001,10 +3062,18 @@ function IndexScreen() {
     </View>
   );
 
+  const isSpatialNavActive = focused && !isMenuOpen && !profileSelectorVisible && !isVersionMismatchVisible;
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      {desktopContent}
+      {Platform.isTV ? (
+        <SpatialNavigationRoot isActive={isSpatialNavActive} onDirectionHandledWithoutMovement={handleDirectionWithoutMovement}>
+          {desktopContent}
+        </SpatialNavigationRoot>
+      ) : (
+        desktopContent
+      )}
     </>
   );
 }
@@ -3330,15 +3399,12 @@ type VirtualizedShelfProps = {
   shelfKey: string;
   shelfIndex: number;
   registerShelfRef: (key: string, ref: RNView | null) => void;
-  registerShelfFlatListRef: (key: string, ref: FlatList | null) => void;
-  isInitialLoad?: boolean;
   cardWidth: number;
   cardHeight: number;
   cardSpacing: number;
-  shelfPadding: number;
+  numberOfItemsVisibleOnScreen: number;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
-  onFirstItemTagChange?: (tag: number | null) => void; // Report first card's native tag (for drawer focus)
   cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait)
 };
 
@@ -3363,30 +3429,24 @@ function VirtualizedShelf({
   shelfKey,
   shelfIndex: _shelfIndex,
   registerShelfRef,
-  registerShelfFlatListRef,
   cardWidth,
   cardHeight,
   cardSpacing,
-  shelfPadding,
+  numberOfItemsVisibleOnScreen,
   badgeVisibility,
   watchStateIconStyle = 'colored',
-  onFirstItemTagChange,
   cardLayout = 'portrait',
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
   }
 
-  const { profileSelectorVisible } = useUserProfiles();
   // Compute which badges to show
   const showWatchState = badgeVisibility?.includes('watchState') ?? false;
   const showUnwatchedCount = badgeVisibility?.includes('unwatchedCount') ?? false;
   const containerRef = React.useRef<RNView | null>(null);
-  const flatListRef = React.useRef<FlatList>(null);
   const isEmpty = cards.length === 0;
   const shouldCollapse = Boolean(collapseIfEmpty && isEmpty);
-  // Track refs for non-TV platforms only
-  const cardRefsMap = React.useRef<Map<number, View | null>>(new Map());
   const lastItemIndexRef = React.useRef<number>(cards.length - 1);
   lastItemIndexRef.current = cards.length - 1;
 
@@ -3410,44 +3470,8 @@ function VirtualizedShelf({
     };
   }, [registerShelfRef, shelfKey]);
 
-  // Register FlatList ref for programmatic horizontal scrolling
-  React.useEffect(() => {
-    registerShelfFlatListRef(shelfKey, flatListRef.current);
-    return () => {
-      registerShelfFlatListRef(shelfKey, null);
-    };
-  }, [registerShelfFlatListRef, shelfKey]);
-
   // Calculate item size for virtualized list (card width + spacing)
   const itemSize = cardWidth + cardSpacing;
-
-  // TV scroll handler - snaps scroll position to card boundaries so cards are never cut off
-  const scrollToFocusedItem = React.useCallback(
-    (index: number) => {
-      if (!Platform.isTV || !flatListRef.current) return;
-
-      // Number of full cards to keep visible to the left of the focused item
-      const cardsToLeft = 2;
-
-      // Calculate target scroll position that aligns to card boundaries
-      const targetCardIndex = Math.max(0, index - cardsToLeft);
-      // Also cap so we don't scroll past where the last card would be at cardsToLeft position
-      const maxCardIndex = Math.max(0, cards.length - 1 - cardsToLeft);
-      const clampedIndex = Math.min(targetCardIndex, maxCardIndex);
-
-      const targetX = clampedIndex * itemSize;
-
-      flatListRef.current.scrollToOffset({
-        offset: targetX,
-        animated: true,
-      });
-    },
-    [cards.length, itemSize],
-  );
-
-  // Store scrollToFocusedItem in ref for stable access
-  const scrollToFocusedItemRef = React.useRef(scrollToFocusedItem);
-  scrollToFocusedItemRef.current = scrollToFocusedItem;
 
   // Stable context handlers that use refs - never recreated when cards change
   // Uses cardMapRef (ref) instead of cardMap (useMemo) to avoid recreation on card updates
@@ -3463,47 +3487,32 @@ function VirtualizedShelf({
           // Single consolidated callback handles: menu close, shelf tracking, scroll, hero update (debounced)
           callbacksRef.current.onShelfItemFocus(card, shelfKey, index);
         }
-        scrollToFocusedItemRef.current(index);
       },
     }),
     [shelfKey],
   );
 
-  // Render item callback for FlatList - uses stable handlers via shelfHandlers
-  // Uses memoized ShelfCardContent to prevent unnecessary re-renders
+  // Render item callback for SpatialNavigationVirtualizedList
   const renderItem = useCallback(
     ({ item, index }: { item: CardData; index: number }) => {
       const card = item;
       // Use stable key: for series with episode codes, use just the series ID
       const rawId = String(card.id ?? index);
       const cardKey = rawId.includes(':S') ? rawId.split(':S')[0] : rawId;
-      // First item gets autoFocus if shelf has autoFocus enabled (skip when profile selector is up)
-      const shouldAutoFocus = autoFocus && index === 0 && !profileSelectorVisible;
       // Check if this is the last item for spacing
       const isLastItem = index === lastItemIndexRef.current;
       // Use pre-computed release icon from card data
       const showReleaseStatus = Boolean(badgeVisibility?.includes('releaseStatus') && card.releaseIcon);
 
-      return (
-        <Pressable
-          ref={(ref) => {
-            cardRefsMap.current.set(index, ref);
-            // Report first card's native tag for drawer focus restoration
-            if (index === 0 && ref && onFirstItemTagChange) {
-              const tag = findNodeHandle(ref);
-              if (tag) onFirstItemTagChange(tag);
-            }
-          }}
-          onPress={() => shelfHandlers.onSelect(card.id)}
-          onFocus={() => shelfHandlers.onFocus(card.id, index)}
-          android_disableSound
-          hasTVPreferredFocus={shouldAutoFocus}
-          tvParallaxProperties={{ enabled: false }}>
-          {({ focused, pressed }) => (
+      const focusableView = (
+        <SpatialNavigationFocusableView
+          onSelect={() => shelfHandlers.onSelect(card.id)}
+          onFocus={() => shelfHandlers.onFocus(card.id, index)}>
+          {({ isFocused }: { isFocused: boolean }) => (
             <ShelfCardContent
               card={card}
               cardKey={cardKey}
-              isFocused={Platform.isTV ? focused : pressed}
+              isFocused={isFocused}
               isLastItem={isLastItem}
               showReleaseStatus={showReleaseStatus}
               showWatchState={showWatchState}
@@ -3513,10 +3522,17 @@ function VirtualizedShelf({
               cardLayout={cardLayout}
             />
           )}
-        </Pressable>
+        </SpatialNavigationFocusableView>
       );
+
+      // Wrap first card in DefaultFocus for auto-focus shelves
+      if (autoFocus && index === 0) {
+        return <DefaultFocus>{focusableView}</DefaultFocus>;
+      }
+
+      return focusableView;
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout, onFirstItemTagChange, profileSelectorVisible],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
   );
 
   // Calculate row height for the virtualized list container
@@ -3543,26 +3559,17 @@ function VirtualizedShelf({
           <Text style={styles.emptyCardText}>Nothing to show yet</Text>
         </View>
       ) : (
-        <TVFocusGuard trapFocus={['left', 'right']} style={{ height: rowHeight }}>
-          <FlatList
-            ref={flatListRef}
+        <View style={{ height: rowHeight }}>
+          <SpatialNavigationVirtualizedList
             data={cards}
             renderItem={renderItem}
-            keyExtractor={(item, index) => String(item.id ?? index)}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            scrollEnabled={true}
-            contentContainerStyle={{ paddingRight: shelfPadding }}
-            getItemLayout={(_, index) => ({
-              length: itemSize,
-              offset: itemSize * index,
-              index,
-            })}
-            initialNumToRender={13}
-            maxToRenderPerBatch={7}
-            windowSize={3}
+            itemSize={itemSize}
+            numberOfRenderedItems={numberOfItemsVisibleOnScreen + 4}
+            numberOfItemsVisibleOnScreen={numberOfItemsVisibleOnScreen}
+            orientation="horizontal"
+            scrollDuration={300}
           />
-        </TVFocusGuard>
+        </View>
       )}
     </View>
   );
@@ -3584,14 +3591,12 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.shelfKey === next.shelfKey &&
     prev.shelfIndex === next.shelfIndex &&
     prev.registerShelfRef === next.registerShelfRef &&
-    prev.registerShelfFlatListRef === next.registerShelfFlatListRef &&
-    prev.isInitialLoad === next.isInitialLoad &&
     prev.cardWidth === next.cardWidth &&
     prev.cardHeight === next.cardHeight &&
     prev.cardSpacing === next.cardSpacing &&
-    prev.shelfPadding === next.shelfPadding &&
+    prev.numberOfItemsVisibleOnScreen === next.numberOfItemsVisibleOnScreen &&
     prev.badgeVisibility === next.badgeVisibility &&
-    prev.onFirstItemTagChange === next.onFirstItemTagChange &&
+    prev.watchStateIconStyle === next.watchStateIconStyle &&
     prev.cardLayout === next.cardLayout
   );
 }

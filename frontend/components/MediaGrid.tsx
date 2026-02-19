@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 
 import {
   ActivityIndicator,
@@ -26,15 +26,6 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
 
-// Context for stable callbacks - avoids prop changes that defeat memoization
-interface MediaGridHandlers {
-  onItemPress: (itemId: string) => void;
-  onItemLongPress: (itemId: string) => void;
-  onRowFocus: (rowIndex: number) => void;
-  onItemFocus: (index: number) => void;
-}
-const MediaGridHandlersContext = React.createContext<MediaGridHandlers | null>(null);
-
 // Imperative handle for MediaGrid - allows parent to control scrolling
 export interface MediaGridHandle {
   scrollToTop: () => void;
@@ -54,9 +45,6 @@ interface MediaGridProps {
   badgeVisibility?: string[]; // Which badges to show on MediaItem cards
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   emptyMessage?: string; // Custom message when no items
-  useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigation (faster on Android TV)
-  useMinimalCards?: boolean; // Use ultra-simple cards for performance testing
-  minimalCardLevel?: number; // 0=minimal, 1=+image, 2=+gradient, 3=+text overlay
   onEndReached?: () => void; // Called when user scrolls near the end (for infinite scroll)
   loadingMore?: boolean; // Show loading indicator at the bottom for progressive loading
   hasMoreItems?: boolean; // Whether there are more items to load
@@ -65,112 +53,6 @@ interface MediaGridProps {
   listKey?: string; // Key suffix to force spatial navigation recalculation when list order changes
   cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait, landscape for continue watching)
 }
-
-// Static styles for MinimalCard - avoids object creation per render
-const minimalCardStyles = {
-  base: {
-    flex: 1,
-    aspectRatio: 2 / 3,
-    backgroundColor: '#2a1245',
-    borderRadius: 8,
-    overflow: 'hidden' as const,
-    borderWidth: 3,
-    borderColor: 'transparent',
-  },
-  focused: {
-    flex: 1,
-    aspectRatio: 2 / 3,
-    backgroundColor: '#2a1245',
-    borderRadius: 8,
-    overflow: 'hidden' as const,
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  image: { width: '100%' as const, height: '100%' as const, position: 'absolute' as const },
-  gradient: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, height: '50%' as const },
-  textContainer: {
-    position: 'absolute' as const,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 8,
-    alignItems: 'center' as const,
-  },
-  title: { color: '#fff', fontSize: 14, fontWeight: '600' as const, textAlign: 'center' as const },
-  year: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
-};
-
-// Optimized card for native focus mode - uses context for callbacks
-const MinimalCard = React.memo(
-  function MinimalCard({
-    item,
-    rowIndex,
-    itemIndex,
-    autoFocus,
-  }: {
-    item: DisplayTitle;
-    rowIndex: number;
-    itemIndex: number;
-    autoFocus?: boolean;
-  }) {
-    const handlers = React.useContext(MediaGridHandlersContext);
-
-    const handlePress = useCallback(() => {
-      handlers?.onItemPress(item.id);
-    }, [handlers, item.id]);
-
-    const handleLongPress = useCallback(() => {
-      handlers?.onItemLongPress(item.id);
-    }, [handlers, item.id]);
-
-    const handleFocus = useCallback(() => {
-      handlers?.onRowFocus(rowIndex);
-      handlers?.onItemFocus(itemIndex);
-    }, [handlers, rowIndex, itemIndex]);
-
-    return (
-      <Pressable
-        onPress={handlePress}
-        onLongPress={handleLongPress}
-        onFocus={handleFocus}
-        android_disableSound
-        hasTVPreferredFocus={autoFocus}
-        style={({ focused }) => (focused ? minimalCardStyles.focused : minimalCardStyles.base)}>
-        {item.poster?.url ? (
-          <CachedImage
-            source={item.poster.url}
-            style={minimalCardStyles.image}
-            contentFit="cover"
-            transition={0}
-            priority="low"
-            recyclingKey={item.id}
-          />
-        ) : null}
-
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.8)']}
-          style={minimalCardStyles.gradient}
-          pointerEvents="none"
-        />
-
-        <View style={minimalCardStyles.textContainer}>
-          <Text style={minimalCardStyles.title} numberOfLines={2}>
-            {item.name}
-          </Text>
-          {item.year ? <Text style={minimalCardStyles.year}>{item.year}</Text> : null}
-        </View>
-      </Pressable>
-    );
-  },
-  (prevProps, nextProps) =>
-    prevProps.item.id === nextProps.item.id &&
-    prevProps.item.name === nextProps.item.name &&
-    prevProps.item.poster?.url === nextProps.item.poster?.url &&
-    prevProps.item.year === nextProps.item.year &&
-    prevProps.rowIndex === nextProps.rowIndex &&
-    prevProps.itemIndex === nextProps.itemIndex &&
-    prevProps.autoFocus === nextProps.autoFocus,
-);
 
 const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: number = 0) => {
   const isCompact = theme.breakpoint === 'compact';
@@ -390,9 +272,6 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
     badgeVisibility,
     watchStateIconStyle,
     emptyMessage,
-    useNativeFocus = false,
-    useMinimalCards = false,
-    minimalCardLevel: _minimalCardLevel = 0,
     onEndReached,
     loadingMore = false,
     hasMoreItems = false,
@@ -458,40 +337,6 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
       [disableFocusScroll],
     );
 
-    // Native focus mode: refs and scroll handling
-    const nativeScrollViewRef = useRef<ScrollView>(null);
-    const nativeRowRefs = useRef<{ [key: string]: View | null }>({});
-    const _nativeRowHeightsRef = useRef<{ [key: string]: number }>({});
-
-    // Native focus scroll handler - keeps focused row at top
-    // ScrollView naturally clamps to content bounds, so no manual maxScroll needed
-    const scrollToRowNative = useCallback((rowIndex: number, _totalRows: number) => {
-      if (!Platform.isTV || !nativeScrollViewRef.current) {
-        return;
-      }
-
-      const rowKey = `native-row-${rowIndex}`;
-      const rowRef = nativeRowRefs.current[rowKey];
-
-      if (!rowRef) {
-        return;
-      }
-
-      // Measure the row position and scroll to put it at top
-      rowRef.measureLayout(
-        nativeScrollViewRef.current as any,
-        (_left, top) => {
-          const topOffset = 20; // Small padding from top
-          const targetY = Math.max(0, top - topOffset);
-
-          nativeScrollViewRef.current?.scrollTo({ y: targetY, animated: true });
-        },
-        () => {
-          // silently ignore failures
-        },
-      );
-    }, []);
-
     const keyExtractor = (item: DisplayTitle, index: number) => {
       if (item.uniqueKey) {
         return item.uniqueKey;
@@ -502,66 +347,6 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
       const fallback = item.name || 'item';
       return `${fallback}-${index}`;
     };
-
-    // Progressive rendering for native focus mode
-    const INITIAL_ROW_COUNT = 8;
-    const LOAD_MORE_ROWS = 4;
-    const [renderedRowCount, setRenderedRowCount] = useState(INITIAL_ROW_COUNT);
-
-    // Reset row count when items change
-    useEffect(() => {
-      setRenderedRowCount(INITIAL_ROW_COUNT);
-    }, [items.length]);
-
-    // Item lookup map for O(1) access
-    const itemMap = useMemo(() => {
-      const map = new Map<string, DisplayTitle>();
-      items.forEach((item) => map.set(item.id, item));
-      return map;
-    }, [items]);
-
-    // Scroll to row ref for use in handlers
-    const scrollToRowNativeRef = useRef(scrollToRowNative);
-    scrollToRowNativeRef.current = scrollToRowNative;
-
-    // Ref for onEndReached to use in gridHandlers without causing rerender
-    const onEndReachedRef = useRef(onEndReached);
-    onEndReachedRef.current = onEndReached;
-    const hasMoreItemsRef = useRef(hasMoreItems);
-    hasMoreItemsRef.current = hasMoreItems;
-    const loadingMoreRef = useRef(loadingMore);
-    loadingMoreRef.current = loadingMore;
-    const onItemFocusRef = useRef(onItemFocus);
-    onItemFocusRef.current = onItemFocus;
-
-    // Stable handlers via context
-    const gridHandlers = useMemo<MediaGridHandlers>(
-      () => ({
-        onItemPress: (itemId: string) => {
-          const item = itemMap.get(itemId);
-          if (item) onItemPress?.(item);
-        },
-        onItemLongPress: (itemId: string) => {
-          const item = itemMap.get(itemId);
-          if (item) onItemLongPress?.(item);
-        },
-        onRowFocus: (rowIndex: number) => {
-          scrollToRowNativeRef.current(rowIndex, 0);
-          // Load more rows if near the end
-          if (rowIndex >= renderedRowCount - 2) {
-            setRenderedRowCount((prev) => prev + LOAD_MORE_ROWS);
-          }
-          // Trigger onEndReached for progressive loading when near the end (5 rows early)
-          if (rowIndex >= renderedRowCount - 5 && hasMoreItemsRef.current && !loadingMoreRef.current) {
-            onEndReachedRef.current?.();
-          }
-        },
-        onItemFocus: (index: number) => {
-          onItemFocusRef.current?.(index);
-        },
-      }),
-      [itemMap, onItemPress, onItemLongPress, renderedRowCount],
-    );
 
     // Handle scroll to detect when user is near the end (defined at component level to follow hooks rules)
     const handleScroll = useCallback(
@@ -1009,76 +794,6 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
         rows.push(items.slice(i, i + columns));
       }
 
-      // Native focus mode: Use Pressable focus with a proper grid layout
-      // Programmatic scroll keeps focused row at top unless near bottom
-      // Uses progressive rendering and context for stable callbacks
-      if (useNativeFocus) {
-        // Progressive rendering - only render visible rows
-        const visibleRows = rows.slice(0, renderedRowCount);
-        const isAndroidDevice = Platform.OS === 'android';
-
-        return (
-          <MediaGridHandlersContext.Provider value={gridHandlers}>
-            <ScrollView
-              ref={nativeScrollViewRef}
-              style={styles.scrollView}
-              contentContainerStyle={styles.grid}
-              showsVerticalScrollIndicator={false}
-              scrollEnabled={!Platform.isTV}
-              onScroll={handleScroll}
-              scrollEventThrottle={100}
-              removeClippedSubviews={isAndroidDevice}>
-              {ListHeaderComponent}
-              {visibleRows.map((row, rowIndex) => (
-                <View
-                  key={`row-${rowIndex}`}
-                  ref={(ref) => {
-                    nativeRowRefs.current[`native-row-${rowIndex}`] = ref;
-                  }}
-                  style={styles.rowContainer}>
-                  <View style={[styles.gridRow, { marginHorizontal: -halfGap }]}>
-                    {row.map((item, colIndex) => {
-                      const index = rowIndex * columns + colIndex;
-                      const isFirstItem = index === 0;
-                      const isLeftmostColumn = colIndex === 0;
-                      return (
-                        <View
-                          key={keyExtractor(item, index)}
-                          style={[styles.itemWrapper, { width: `${100 / columns}%`, paddingHorizontal: halfGap }]}>
-                          {useMinimalCards ? (
-                            <MinimalCard
-                              item={item}
-                              rowIndex={rowIndex}
-                              itemIndex={index}
-                              autoFocus={defaultFocusFirstItem && isFirstItem}
-                            />
-                          ) : (
-                            <MediaItem
-                              title={item}
-                              onPress={() => onItemPress?.(item)}
-                              onFocus={() => {
-                                gridHandlers.onRowFocus(rowIndex);
-                                gridHandlers.onItemFocus(index);
-                              }}
-                              badgeVisibility={badgeVisibility}
-                              watchStateIconStyle={watchStateIconStyle}
-                              useNativeFocus={true}
-                              autoFocus={defaultFocusFirstItem && isFirstItem}
-                              trapLeftFocus={isLeftmostColumn}
-                            />
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              ))}
-              {LoadingMoreIndicator}
-            </ScrollView>
-          </MediaGridHandlersContext.Provider>
-        );
-      }
-
       // Key changes when row count or listKey changes, forcing spatial navigation to recalculate layout
       const gridKey = `grid-${rows.length}${listKey ? `-${listKey}` : ''}`;
 
@@ -1176,8 +891,6 @@ const MemoizedMediaGrid = React.memo(MediaGrid, (prevProps, nextProps) => {
     prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
     prevProps.badgeVisibility === nextProps.badgeVisibility &&
     prevProps.watchStateIconStyle === nextProps.watchStateIconStyle &&
-    prevProps.useNativeFocus === nextProps.useNativeFocus &&
-    prevProps.useMinimalCards === nextProps.useMinimalCards &&
     prevProps.loadingMore === nextProps.loadingMore &&
     prevProps.hasMoreItems === nextProps.hasMoreItems &&
     prevProps.listKey === nextProps.listKey &&

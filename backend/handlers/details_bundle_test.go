@@ -87,6 +87,10 @@ func (m *mockMetadataServiceDetailsBundle) ServePrequeuedTrailer(_ string, _ htt
 func (m *mockMetadataServiceDetailsBundle) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
 }
 
+func (m *mockMetadataServiceDetailsBundle) GetProgressSnapshot() metadatapkg.ProgressSnapshot {
+	return metadatapkg.ProgressSnapshot{}
+}
+
 type mockHistoryServiceDetailsBundle struct {
 	watchState       *models.SeriesWatchState
 	playbackProgress []models.PlaybackProgress

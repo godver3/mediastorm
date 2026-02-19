@@ -65,12 +65,6 @@ export default function ProfilesScreen() {
 
   const isProfileModalVisible = selectedProfile !== null;
 
-  // Refs for native focus management
-  const refreshButtonRef = useRef<View>(null);
-  const profileCardRefs = useRef<(View | null)[]>([]);
-  const colorSwatchRefs = useRef<(View | null)[]>([]);
-  const modalButtonRefs = useRef<(View | null)[]>([]);
-
   useEffect(() => {
     if (error) {
       showToast(error, { tone: 'danger', duration: 7000 });
@@ -319,122 +313,153 @@ export default function ProfilesScreen() {
       </FixedSafeAreaView>
     );
 
-    // Profile Actions Modal - outside SpatialNavigationRoot with raw Pressable for native focus
+    // Profile Actions Modal - uses SpatialNavigationRoot for focus management
     const profileModal = isProfileModalVisible && selectedProfile ? (
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContainer}>
-          <View style={styles.profileModalHeader}>
-            {selectedProfile.hasIcon ? (
-              <Image
-                source={{ uri: getIconUrl(selectedProfile.id) }}
-                style={styles.profileModalAvatar}
-                resizeMode="cover"
-              />
-            ) : (
-              <View
-                style={[
-                  styles.profileModalAvatar,
-                  selectedProfile.color && { backgroundColor: selectedProfile.color },
-                ]}>
-                <Text style={styles.profileModalAvatarText}>
-                  {selectedProfile.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
-            <Text style={styles.modalTitle}>{selectedProfile.name}</Text>
-          </View>
-
-          {!selectedProfile.hasIcon && (
-            <View style={styles.colorPickerSection}>
-              <Text style={styles.colorPickerLabel}>Profile Color</Text>
-              {/* First row of 4 colors */}
-              <View style={styles.colorPickerRow}>
-                {PROFILE_COLORS.slice(0, 4).map((color, colorIndex) => {
-                  const isSelected = selectedProfile.color === color.value;
-                  return (
-                    <Pressable
-                      key={color.value}
-                      onPress={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}
-                      android_disableSound
-                      hasTVPreferredFocus={colorIndex === 0}
-                      tvParallaxProperties={{ enabled: false }}
-                      style={({ focused }) => [
-                        styles.colorSwatch,
-                        { backgroundColor: color.value },
-                        focused && styles.colorSwatchFocused,
-                        isSelected && styles.colorSwatchSelected,
-                      ]}
-                    />
-                  );
-                })}
-              </View>
-              {/* Second row of 4 colors */}
-              <View style={styles.colorPickerRow}>
-                {PROFILE_COLORS.slice(4, 8).map((color) => {
-                  const isSelected = selectedProfile.color === color.value;
-                  return (
-                    <Pressable
-                      key={color.value}
-                      onPress={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}
-                      android_disableSound
-                      tvParallaxProperties={{ enabled: false }}
-                      style={({ focused }) => [
-                        styles.colorSwatch,
-                        { backgroundColor: color.value },
-                        focused && styles.colorSwatchFocused,
-                        isSelected && styles.colorSwatchSelected,
-                      ]}
-                    />
-                  );
-                })}
-              </View>
+      <SpatialNavigationRoot isActive={isProfileModalVisible}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.profileModalHeader}>
+              {selectedProfile.hasIcon ? (
+                <Image
+                  source={{ uri: getIconUrl(selectedProfile.id) }}
+                  style={styles.profileModalAvatar}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.profileModalAvatar,
+                    selectedProfile.color && { backgroundColor: selectedProfile.color },
+                  ]}>
+                  <Text style={styles.profileModalAvatarText}>
+                    {selectedProfile.name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              <Text style={styles.modalTitle}>{selectedProfile.name}</Text>
             </View>
-          )}
 
-          <View style={styles.modalButtonsContainer}>
-            <Pressable
-              onPress={() => withSelectGuard(() => {
-                void handleActivateProfile(selectedProfile.id);
-                handleCloseProfileActions();
-              })}
-              disabled={activeUserId === selectedProfile.id || pending === `activate:${selectedProfile.id}`}
-              android_disableSound
-              hasTVPreferredFocus={selectedProfile.hasIcon}
-              tvParallaxProperties={{ enabled: false }}
-              style={({ focused }) => [
-                styles.modalButton,
-                focused && styles.modalButtonFocused,
-                activeUserId === selectedProfile.id && { opacity: 0.5 },
-              ]}>
-              {({ focused }) => (
-                <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>
-                  {activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
-                </Text>
+            <SpatialNavigationNode orientation="vertical">
+              {!selectedProfile.hasIcon && (
+                <View style={styles.colorPickerSection}>
+                  <Text style={styles.colorPickerLabel}>Profile Color</Text>
+                  {/* First row of 4 colors */}
+                  <SpatialNavigationNode orientation="horizontal">
+                    <View style={styles.colorPickerRow}>
+                      {PROFILE_COLORS.slice(0, 4).map((color, colorIndex) => {
+                        const isColorSelected = selectedProfile.color === color.value;
+                        const swatchItem = (
+                          <SpatialNavigationFocusableView
+                            key={color.value}
+                            onSelect={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}>
+                            {({ isFocused }: { isFocused: boolean }) => (
+                              <View
+                                style={[
+                                  styles.colorSwatch,
+                                  { backgroundColor: color.value },
+                                  isFocused && styles.colorSwatchFocused,
+                                  isColorSelected && styles.colorSwatchSelected,
+                                ]}
+                              />
+                            )}
+                          </SpatialNavigationFocusableView>
+                        );
+                        return colorIndex === 0 && !selectedProfile.hasIcon
+                          ? <DefaultFocus key={color.value}>{swatchItem}</DefaultFocus>
+                          : swatchItem;
+                      })}
+                    </View>
+                  </SpatialNavigationNode>
+                  {/* Second row of 4 colors */}
+                  <SpatialNavigationNode orientation="horizontal">
+                    <View style={styles.colorPickerRow}>
+                      {PROFILE_COLORS.slice(4, 8).map((color) => {
+                        const isColorSelected = selectedProfile.color === color.value;
+                        return (
+                          <SpatialNavigationFocusableView
+                            key={color.value}
+                            onSelect={() => withSelectGuard(() => handleUpdateColor(selectedProfile.id, color.value))}>
+                            {({ isFocused }: { isFocused: boolean }) => (
+                              <View
+                                style={[
+                                  styles.colorSwatch,
+                                  { backgroundColor: color.value },
+                                  isFocused && styles.colorSwatchFocused,
+                                  isColorSelected && styles.colorSwatchSelected,
+                                ]}
+                              />
+                            )}
+                          </SpatialNavigationFocusableView>
+                        );
+                      })}
+                    </View>
+                  </SpatialNavigationNode>
+                </View>
               )}
-            </Pressable>
-            <Pressable
-              onPress={() => withSelectGuard(handleCloseProfileActions)}
-              android_disableSound
-              tvParallaxProperties={{ enabled: false }}
-              style={({ focused }) => [styles.modalButton, focused && styles.modalButtonFocused]}>
-              {({ focused }) => (
-                <Text style={[styles.modalButtonText, focused && styles.modalButtonTextFocused]}>Close</Text>
-              )}
-            </Pressable>
-          </View>
 
-          <View style={styles.adminInfoNote}>
-            <Ionicons
-              name="information-circle-outline"
-              size={responsiveSize(24, 18)}
-              color={theme.colors.text.muted}
-            />
-            <Text style={styles.adminInfoNoteText}>
-              To create, rename, set PIN, or delete profiles, use the Admin Web UI
-            </Text>
+              <View style={styles.modalButtonsContainer}>
+                {selectedProfile.hasIcon ? (
+                  <DefaultFocus>
+                    <SpatialNavigationFocusableView
+                      onSelect={() => withSelectGuard(() => {
+                        void handleActivateProfile(selectedProfile.id);
+                        handleCloseProfileActions();
+                      })}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[
+                          styles.modalButton,
+                          isFocused && styles.modalButtonFocused,
+                          activeUserId === selectedProfile.id && { opacity: 0.5 },
+                        ]}>
+                          <Text style={[styles.modalButtonText, isFocused && styles.modalButtonTextFocused]}>
+                            {activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  </DefaultFocus>
+                ) : (
+                  <SpatialNavigationFocusableView
+                    onSelect={() => withSelectGuard(() => {
+                      void handleActivateProfile(selectedProfile.id);
+                      handleCloseProfileActions();
+                    })}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[
+                        styles.modalButton,
+                        isFocused && styles.modalButtonFocused,
+                        activeUserId === selectedProfile.id && { opacity: 0.5 },
+                      ]}>
+                        <Text style={[styles.modalButtonText, isFocused && styles.modalButtonTextFocused]}>
+                          {activeUserId === selectedProfile.id ? 'Currently Active' : 'Set as Active'}
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+                <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleCloseProfileActions)}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.modalButton, isFocused && styles.modalButtonFocused]}>
+                      <Text style={[styles.modalButtonText, isFocused && styles.modalButtonTextFocused]}>Close</Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              </View>
+            </SpatialNavigationNode>
+
+            <View style={styles.adminInfoNote}>
+              <Ionicons
+                name="information-circle-outline"
+                size={responsiveSize(24, 18)}
+                color={theme.colors.text.muted}
+              />
+              <Text style={styles.adminInfoNoteText}>
+                To create, rename, set PIN, or delete profiles, use the Admin Web UI
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
+      </SpatialNavigationRoot>
     ) : null;
 
     return (

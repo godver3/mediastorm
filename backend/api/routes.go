@@ -212,6 +212,8 @@ func Register(
 	protected.HandleFunc("/metadata/trailers/prequeue/status", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/metadata/trailers/prequeue/serve", metadataHandler.TrailerPrequeueServe).Methods(http.MethodGet)
 	protected.HandleFunc("/metadata/trailers/prequeue/serve", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/metadata/progress", metadataHandler.GetProgress).Methods(http.MethodGet)
+	protected.HandleFunc("/metadata/progress", handleOptions).Methods(http.MethodOptions)
 
 	protected.HandleFunc("/indexers/search", indexerHandler.Search).Methods(http.MethodGet)
 	protected.HandleFunc("/indexers/search", indexerHandler.Options).Methods(http.MethodOptions)

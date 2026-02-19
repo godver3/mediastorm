@@ -10,7 +10,6 @@ import {
   DefaultFocus,
   SpatialNavigationFocusableView,
 } from '@/services/tv-navigation';
-import FocusablePressable from '@/components/FocusablePressable';
 import MarqueeText from '@/components/tv/MarqueeText';
 import { getSeasonLabel } from './utils';
 
@@ -80,19 +79,19 @@ export function SeasonSelector({ visible, onClose, seasons, onSeasonSelect, them
     <Modal transparent visible={visible} onRequestClose={onClose} animationType="fade">
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.backdrop}>
-          {/* Keep backdrop Pressable on TV as native focus anchor for spatial navigation */}
-          <Pressable style={styles.overlayPressable} onPress={onClose} />
+          {!Platform.isTV && <Pressable style={styles.overlayPressable} onPress={onClose} />}
           <View style={overlayStyle} pointerEvents="box-none">
             <View style={styles.container}>
               <View style={styles.header}>
                 <Text style={styles.title}>Select Season</Text>
                 {Platform.isTV ? (
-                  <FocusablePressable
-                    text="Close"
-                    onSelect={onClose}
-                    style={styles.closeButton}
-                    textStyle={styles.closeButtonText}
-                  />
+                  <SpatialNavigationFocusableView onSelect={onClose}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
                 ) : showMobileIOSCloseButton ? (
                   <Pressable
                     onPress={onClose}
@@ -114,46 +113,49 @@ export function SeasonSelector({ visible, onClose, seasons, onSeasonSelect, them
                     contentContainerStyle={styles.scrollContent}
                     scrollEnabled={!Platform.isTV}>
                     {seasons.map((season, index) => {
-                      const focusableItem = (
+                      const seasonContent = ({ isFocused }: { isFocused: boolean }) => (
+                        <View
+                          style={[styles.seasonItem, isFocused && styles.seasonItemFocused]}
+                          onLayout={(event) => {
+                            const { y, height } = event.nativeEvent.layout;
+                            handleItemLayout(index, y, height);
+                          }}>
+                          <View style={styles.seasonInfo}>
+                            <MarqueeText
+                              style={styles.seasonTitle}
+                              containerStyle={styles.seasonTitleContainer}
+                              focused={isFocused}
+                              speed={30}
+                              delay={400}>
+                              {getSeasonLabel(season.number, season.name)}
+                            </MarqueeText>
+                            {season.episodes && season.episodes.length > 0 && (
+                              <Text style={styles.seasonMeta}>
+                                {season.episodes.length} episode{season.episodes.length !== 1 ? 's' : ''}
+                              </Text>
+                            )}
+                          </View>
+                          <Ionicons
+                            name="chevron-forward"
+                            size={Platform.isTV ? 32 : 24}
+                            color={theme.colors.text.secondary}
+                          />
+                        </View>
+                      );
+
+                      const focusableItem = Platform.isTV ? (
                         <SpatialNavigationFocusableView
                           key={season.id}
-                          focusKey={`season-${season.id}`}
                           onSelect={() => handleSeasonPress(season)}
                           onFocus={() => handleItemFocus(index)}>
-                          {({ isFocused }: { isFocused: boolean }) => (
-                            <Pressable
-                              onPress={!Platform.isTV ? () => handleSeasonPress(season) : undefined}
-                              tvParallaxProperties={{ enabled: false }}>
-                              <View
-                                style={[styles.seasonItem, isFocused && styles.seasonItemFocused]}
-                                onLayout={(event) => {
-                                  const { y, height } = event.nativeEvent.layout;
-                                  handleItemLayout(index, y, height);
-                                }}>
-                                <View style={styles.seasonInfo}>
-                                  <MarqueeText
-                                    style={styles.seasonTitle}
-                                    containerStyle={styles.seasonTitleContainer}
-                                    focused={isFocused}
-                                    speed={30}
-                                    delay={400}>
-                                    {getSeasonLabel(season.number, season.name)}
-                                  </MarqueeText>
-                                  {season.episodes && season.episodes.length > 0 && (
-                                    <Text style={styles.seasonMeta}>
-                                      {season.episodes.length} episode{season.episodes.length !== 1 ? 's' : ''}
-                                    </Text>
-                                  )}
-                                </View>
-                                <Ionicons
-                                  name="chevron-forward"
-                                  size={Platform.isTV ? 32 : 24}
-                                  color={theme.colors.text.secondary}
-                                />
-                              </View>
-                            </Pressable>
-                          )}
+                          {seasonContent}
                         </SpatialNavigationFocusableView>
+                      ) : (
+                        <Pressable
+                          key={season.id}
+                          onPress={() => handleSeasonPress(season)}>
+                          {seasonContent({ isFocused: false })}
+                        </Pressable>
                       );
 
                       return index === 0 ? <DefaultFocus key={season.id}>{focusableItem}</DefaultFocus> : focusableItem;
@@ -228,9 +230,18 @@ const createStyles = (theme: NovaTheme) => {
     closeButton: {
       paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.md,
+      borderRadius: theme.radius.md,
+    },
+    closeButtonFocused: {
+      backgroundColor: theme.colors.accent.primary,
     },
     closeButtonText: {
+      ...theme.typography.body.md,
       fontSize: theme.typography.body.md.fontSize * 1.2,
+      color: theme.colors.text.primary,
+    },
+    closeButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     mobileCloseButton: {
       paddingHorizontal: theme.spacing.lg,

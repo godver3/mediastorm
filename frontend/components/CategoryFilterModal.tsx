@@ -1,6 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-native';
 
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -60,47 +66,9 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
   const onCloseRef = useRef(onClose);
   const removeInterceptorRef = useRef<(() => void) | null>(null);
 
-  // Refs for focus navigation on TV
-  const actionButtonRef = useRef<View>(null);
-  const closeButtonRef = useRef<View>(null);
-  const categoryRefs = useRef<Map<string, View | null>>(new Map());
-  const [actionButtonHandle, setActionButtonHandle] = useState<number | null>(null);
-  const [closeButtonHandle, setCloseButtonHandle] = useState<number | null>(null);
-  const [firstCategoryHandle, setFirstCategoryHandle] = useState<number | null>(null);
-  const [lastCategoryHandle, setLastCategoryHandle] = useState<number | null>(null);
-
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
-
-  // Set up focus handles when modal is visible
-  useEffect(() => {
-    if (visible && Platform.isTV) {
-      const timer = setTimeout(() => {
-        const actionHandle = actionButtonRef.current ? findNodeHandle(actionButtonRef.current) : null;
-        const closeHandle = closeButtonRef.current ? findNodeHandle(closeButtonRef.current) : null;
-        setActionButtonHandle(actionHandle);
-        setCloseButtonHandle(closeHandle);
-
-        // Get first and last category handles
-        if (categories.length > 0) {
-          const firstRef = categoryRefs.current.get(categories[0]);
-          const lastRef = categoryRefs.current.get(categories[categories.length - 1]);
-          setFirstCategoryHandle(firstRef ? findNodeHandle(firstRef) : null);
-          setLastCategoryHandle(lastRef ? findNodeHandle(lastRef) : null);
-        } else {
-          setFirstCategoryHandle(null);
-          setLastCategoryHandle(null);
-        }
-      }, 50);
-      return () => clearTimeout(timer);
-    } else {
-      setActionButtonHandle(null);
-      setCloseButtonHandle(null);
-      setFirstCategoryHandle(null);
-      setLastCategoryHandle(null);
-    }
-  }, [visible, categories]);
 
   // Register back interceptor to close modal when menu/back button is pressed on tvOS
   // Following the same pattern as TvModal for proper handling
@@ -167,108 +135,148 @@ export const CategoryFilterModal: React.FC<CategoryFilterModalProps> = ({
     return null;
   }
 
+  const modalContent = (
+    <View style={styles.modalContainer} focusable={false}>
+      <View style={styles.modalHeader} focusable={false}>
+        <Text style={styles.modalTitle}>Filter by Category</Text>
+        <Text style={styles.modalSubtitle}>
+          {selectedCategories.length === 0
+            ? 'All categories shown'
+            : `${selectedCategories.length} ${selectedCategories.length === 1 ? 'category' : 'categories'} selected`}
+        </Text>
+      </View>
+
+      {Platform.isTV ? (
+        <SpatialNavigationNode orientation="vertical">
+          <View style={styles.actionRow} focusable={false}>
+            <DefaultFocus>
+              <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleSelectAll)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.actionButton, isFocused && styles.actionButtonFocused]}>
+                    <Text style={[styles.actionButtonText, isFocused && styles.actionButtonTextFocused]}>
+                      {allSelected ? 'Clear All' : 'Select All'}
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            </DefaultFocus>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.categoriesList}>
+            <SpatialNavigationNode orientation="vertical">
+              {categories.map((category) => {
+                const isSelected = selectedCategories.includes(category);
+                return (
+                  <SpatialNavigationFocusableView
+                    key={category}
+                    onSelect={() => withSelectGuard(() => onToggleCategory(category))}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View
+                        style={[
+                          styles.categoryItem,
+                          isSelected && styles.categoryItemSelected,
+                          isFocused && styles.categoryItemFocused,
+                          isFocused && isSelected && styles.categoryItemFocusedSelected,
+                        ]}>
+                        <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
+                        <Text
+                          style={[
+                            styles.categoryText,
+                            isFocused && styles.categoryTextFocused,
+                            isSelected && styles.categoryTextSelected,
+                          ]}>
+                          {category}
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                );
+              })}
+            </SpatialNavigationNode>
+          </ScrollView>
+
+          <View style={styles.modalFooter} focusable={false}>
+            <SpatialNavigationFocusableView
+              onSelect={() =>
+                withSelectGuard(() => {
+                  if (removeInterceptorRef.current) {
+                    console.log('[CategoryFilterModal] Removing back interceptor (Close button pressed)');
+                    removeInterceptorRef.current();
+                    removeInterceptorRef.current = null;
+                  }
+                  onClose();
+                })
+              }>
+              {({ isFocused }: { isFocused: boolean }) => (
+                <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
+            </SpatialNavigationFocusableView>
+          </View>
+        </SpatialNavigationNode>
+      ) : (
+        <>
+          <View style={styles.actionRow} focusable={false}>
+            <Pressable
+              onPress={() => withSelectGuard(handleSelectAll)}
+              style={({ pressed }) => [styles.actionButton, pressed && { opacity: 0.7 }]}>
+              <Text style={styles.actionButtonText}>{allSelected ? 'Clear All' : 'Select All'}</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.categoriesList}>
+            {categories.map((category) => {
+              const isSelected = selectedCategories.includes(category);
+              return (
+                <Pressable
+                  key={category}
+                  onPress={() => withSelectGuard(() => onToggleCategory(category))}
+                  style={[
+                    styles.categoryItem,
+                    isSelected && styles.categoryItemSelected,
+                  ]}>
+                  <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
+                  <Text
+                    style={[
+                      styles.categoryText,
+                      isSelected && styles.categoryTextSelected,
+                    ]}>
+                    {category}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.modalFooter} focusable={false}>
+            <Pressable
+              onPress={() =>
+                withSelectGuard(() => {
+                  if (removeInterceptorRef.current) {
+                    removeInterceptorRef.current();
+                    removeInterceptorRef.current = null;
+                  }
+                  onClose();
+                })
+              }
+              style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.7 }]}>
+              <Text style={styles.closeButtonText}>Close</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.overlay} focusable={false}>
       {!Platform.isTV ? <Pressable style={styles.backdrop} onPress={onClose} /> : null}
-      <View style={styles.modalContainer} focusable={false}>
-        <View style={styles.modalHeader} focusable={false}>
-          <Text style={styles.modalTitle}>Filter by Category</Text>
-          <Text style={styles.modalSubtitle}>
-            {selectedCategories.length === 0
-              ? 'All categories shown'
-              : `${selectedCategories.length} ${selectedCategories.length === 1 ? 'category' : 'categories'} selected`}
-          </Text>
-        </View>
-
-        <View style={styles.actionRow} focusable={false}>
-          <Pressable
-            ref={actionButtonRef}
-            onPress={() => withSelectGuard(handleSelectAll)}
-            android_disableSound
-            hasTVPreferredFocus={true}
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={actionButtonHandle}
-            nextFocusDown={firstCategoryHandle ?? closeButtonHandle}
-            nextFocusLeft={actionButtonHandle}
-            nextFocusRight={actionButtonHandle}
-            style={({ focused }) => [styles.actionButton, focused && styles.actionButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.actionButtonText, focused && styles.actionButtonTextFocused]}>
-                {allSelected ? 'Clear All' : 'Select All'}
-              </Text>
-            )}
-          </Pressable>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.categoriesList}>
-          {categories.map((category, index) => {
-            const isSelected = selectedCategories.includes(category);
-            const isFirst = index === 0;
-            const isLast = index === categories.length - 1;
-            return (
-              <Pressable
-                key={category}
-                ref={(ref) => {
-                  if (ref) {
-                    categoryRefs.current.set(category, ref);
-                  }
-                }}
-                onPress={() => withSelectGuard(() => onToggleCategory(category))}
-                android_disableSound
-                tvParallaxProperties={{ enabled: false }}
-                {...(isFirst && { nextFocusUp: actionButtonHandle })}
-                {...(isLast && { nextFocusDown: closeButtonHandle })}
-                style={({ focused }) => [
-                  styles.categoryItem,
-                  isSelected && styles.categoryItemSelected,
-                  focused && styles.categoryItemFocused,
-                  focused && isSelected && styles.categoryItemFocusedSelected,
-                ]}>
-                {({ focused }) => (
-                  <>
-                    <View style={styles.checkbox}>{isSelected && <View style={styles.checkboxInner} />}</View>
-                    <Text
-                      style={[
-                        styles.categoryText,
-                        focused && styles.categoryTextFocused,
-                        isSelected && styles.categoryTextSelected,
-                      ]}>
-                      {category}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.modalFooter} focusable={false}>
-          <Pressable
-            ref={closeButtonRef}
-            onPress={() =>
-              withSelectGuard(() => {
-                // Explicitly remove back interceptor before closing
-                if (removeInterceptorRef.current) {
-                  console.log('[CategoryFilterModal] Removing back interceptor (Close button pressed)');
-                  removeInterceptorRef.current();
-                  removeInterceptorRef.current = null;
-                }
-                onClose();
-              })
-            }
-            android_disableSound
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={lastCategoryHandle ?? actionButtonHandle}
-            nextFocusDown={closeButtonHandle}
-            nextFocusLeft={closeButtonHandle}
-            nextFocusRight={closeButtonHandle}
-            style={({ focused }) => [styles.closeButton, focused && styles.closeButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
-            )}
-          </Pressable>
-        </View>
-      </View>
+      {Platform.isTV ? (
+        <SpatialNavigationRoot isActive={visible}>{modalContent}</SpatialNavigationRoot>
+      ) : (
+        modalContent
+      )}
     </View>
   );
 };

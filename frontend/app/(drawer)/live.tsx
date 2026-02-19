@@ -57,6 +57,13 @@ type LiveViewMode = 'list' | 'grid';
 // Storage key for persisting view mode preference
 const LIVE_VIEW_MODE_KEY = 'live_tv_view_mode';
 
+// Grid scale settings
+const LIVE_GRID_SCALE_KEY = 'live_tv_grid_scale';
+const GRID_SCALE_MIN = 0.6;
+const GRID_SCALE_MAX = 1.8;
+const GRID_SCALE_STEP = 0.2;
+const GRID_SCALE_DEFAULT = 1.0;
+
 // Spatial navigation header button for TV - matches TVActionButton styling
 const SpatialHeaderButton = ({
   text,
@@ -611,17 +618,24 @@ function LiveScreen() {
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
   const [viewMode, setViewMode] = useState<LiveViewMode>('list');
+  const [gridScale, setGridScale] = useState(GRID_SCALE_DEFAULT);
   const [isSelectionConfirmVisible, setIsSelectionConfirmVisible] = useState(false);
 
-  // Load saved view mode preference on mount
+  // Load saved view mode and grid scale preferences on mount
   useEffect(() => {
     AsyncStorage.getItem(LIVE_VIEW_MODE_KEY).then((saved) => {
       if (saved === 'list' || saved === 'grid') {
         setViewMode(saved);
       }
-    }).catch(() => {
-      // Ignore errors loading preference
-    });
+    }).catch(() => {});
+    AsyncStorage.getItem(LIVE_GRID_SCALE_KEY).then((saved) => {
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (!isNaN(parsed) && parsed >= GRID_SCALE_MIN && parsed <= GRID_SCALE_MAX) {
+          setGridScale(parsed);
+        }
+      }
+    }).catch(() => {});
   }, []);
 
   // Tablet grid configuration
@@ -1050,10 +1064,24 @@ function LiveScreen() {
   const handleToggleViewMode = useCallback(() => {
     setViewMode((prev) => {
       const newMode = prev === 'list' ? 'grid' : 'list';
-      AsyncStorage.setItem(LIVE_VIEW_MODE_KEY, newMode).catch(() => {
-        // Ignore errors saving preference
-      });
+      AsyncStorage.setItem(LIVE_VIEW_MODE_KEY, newMode).catch(() => {});
       return newMode;
+    });
+  }, []);
+
+  const handleGridScaleUp = useCallback(() => {
+    setGridScale((prev) => {
+      const next = Math.min(GRID_SCALE_MAX, Math.round((prev + GRID_SCALE_STEP) * 10) / 10);
+      AsyncStorage.setItem(LIVE_GRID_SCALE_KEY, String(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleGridScaleDown = useCallback(() => {
+    setGridScale((prev) => {
+      const next = Math.max(GRID_SCALE_MIN, Math.round((prev - GRID_SCALE_STEP) * 10) / 10);
+      AsyncStorage.setItem(LIVE_GRID_SCALE_KEY, String(next)).catch(() => {});
+      return next;
     });
   }, []);
 
@@ -1741,6 +1769,22 @@ function LiveScreen() {
           theme={theme}
           disabled={!isEPGStatusLoaded || !isEPGEnabled}
         />
+        <View style={viewMode === 'grid' ? undefined : { width: 0, overflow: 'hidden', opacity: 0 }}>
+          <SpatialHeaderButton
+            icon="remove-outline"
+            onSelect={handleGridScaleDown}
+            disabled={gridScale <= GRID_SCALE_MIN}
+            theme={theme}
+          />
+        </View>
+        <View style={viewMode === 'grid' ? undefined : { width: 0, overflow: 'hidden', opacity: 0 }}>
+          <SpatialHeaderButton
+            icon="add-outline"
+            onSelect={handleGridScaleUp}
+            disabled={gridScale >= GRID_SCALE_MAX}
+            theme={theme}
+          />
+        </View>
         {hasSavedSession && !isSelectionMode && (
           <SpatialHeaderButton
             text="Resume"
@@ -1857,6 +1901,7 @@ function LiveScreen() {
                     channels={[...favoriteChannels, ...regularChannels]}
                     onChannelSelect={handleChannelSelect}
                     favoriteChannelIds={new Set(favoriteChannels.map((c) => c.id))}
+                    gridScale={gridScale}
                   />
                 </View>
               ) : (
@@ -2161,295 +2206,216 @@ function LiveScreen() {
     </>
   );
 
-  // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus
-  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
-  // Use a ref-based key that increments each time modal opens to force remount and reset hasTVPreferredFocus
-  const modalKeyRef = useRef(0);
-  const wasModalVisibleRef = useRef(false);
-  if (isSelectionConfirmVisible && !wasModalVisibleRef.current) {
-    modalKeyRef.current += 1;
-  }
-  wasModalVisibleRef.current = isSelectionConfirmVisible;
-
-  // Refs for focus trapping within modal (up to 3 buttons)
-  const modalButton1Ref = useRef<View>(null);
-  const modalButton2Ref = useRef<View>(null);
-  const modalButton3Ref = useRef<View>(null);
-  const [modalButton1Handle, setModalButton1Handle] = useState<number | null>(null);
-  const [modalButton2Handle, setModalButton2Handle] = useState<number | null>(null);
-  const [modalButton3Handle, setModalButton3Handle] = useState<number | null>(null);
-
-  // Get node handles for focus trapping - use setTimeout to ensure refs are set after mount
-  // Check isMountedRef to prevent state updates during unmount which can cause infinite render loops
-  useEffect(() => {
-    if (isSelectionConfirmVisible) {
-      // Small delay to ensure refs are populated after modal mounts
-      const timer = setTimeout(() => {
-        if (!isMountedRef.current) return;
-        const handle1 = modalButton1Ref.current ? findNodeHandle(modalButton1Ref.current) : null;
-        const handle2 = modalButton2Ref.current ? findNodeHandle(modalButton2Ref.current) : null;
-        const handle3 = modalButton3Ref.current ? findNodeHandle(modalButton3Ref.current) : null;
-        setModalButton1Handle(handle1);
-        setModalButton2Handle(handle2);
-        setModalButton3Handle(handle3);
-      }, 50);
-      return () => clearTimeout(timer);
-    } else {
-      // Reset handles when modal closes - but not during unmount
-      if (isMountedRef.current) {
-        setModalButton1Handle(null);
-        setModalButton2Handle(null);
-        setModalButton3Handle(null);
-      }
-    }
-  }, [isSelectionConfirmVisible]);
-
+  // Selection Confirmation Modal - uses SpatialNavigationRoot for focus management
   const selectionConfirmModal = isSelectionConfirmVisible ? (
-    <View key={`modal-${modalKeyRef.current}`} style={styles.selectionModalOverlay} focusable={false}>
-      <View style={styles.tvModalContainer} focusable={false}>
-        <Text style={styles.tvModalTitle}>
-          {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
-        </Text>
-        <Text style={styles.tvModalSubtitle}>
-          {selectedChannels.length >= 2
-            ? `You have ${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected. Launch multiscreen or continue selecting?`
-            : selectedChannels.length === 1
-              ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
-              : 'No channels selected. Cancel selection mode?'}
-        </Text>
-        <View style={styles.tvModalActions} focusable={false}>
-          {/* Cancel - exits selection mode */}
-          <Pressable
-            ref={modalButton1Ref}
-            onPress={() => withSelectGuard(handleSelectionConfirmCancel)}
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={modalButton1Handle}
-            nextFocusDown={modalButton2Handle}
-            nextFocusLeft={modalButton1Handle}
-            nextFocusRight={modalButton1Handle}
-            style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
-                Cancel
-              </Text>
-            )}
-          </Pressable>
-          {/* Continue Selecting - just closes modal */}
-          <Pressable
-            ref={modalButton2Ref}
-            onPress={() => withSelectGuard(handleSelectionConfirmClose)}
-            hasTVPreferredFocus={selectedChannels.length < 2}
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={modalButton1Handle}
-            nextFocusDown={selectedChannels.length >= 2 ? modalButton3Handle : modalButton2Handle}
-            nextFocusLeft={modalButton2Handle}
-            nextFocusRight={modalButton2Handle}
-            style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
-                Continue Selecting
-              </Text>
-            )}
-          </Pressable>
-          {/* Launch - only when >= 2 channels selected */}
-          {selectedChannels.length >= 2 && (
-            <Pressable
-              ref={modalButton3Ref}
-              onPress={() => withSelectGuard(handleSelectionConfirmLaunch)}
-              hasTVPreferredFocus={true}
-              tvParallaxProperties={{ enabled: false }}
-              nextFocusUp={modalButton2Handle}
-              nextFocusDown={modalButton3Handle}
-              nextFocusLeft={modalButton3Handle}
-              nextFocusRight={modalButton3Handle}
-              style={({ focused }) => [styles.tvModalButton, focused && styles.tvModalButtonFocused]}>
-              {({ focused }) => (
-                <Text style={[styles.tvModalButtonText, focused && styles.tvModalButtonTextFocused]}>
-                  {`Launch (${selectedChannels.length})`}
-                </Text>
+    <SpatialNavigationRoot isActive={isSelectionConfirmVisible}>
+      <View style={styles.selectionModalOverlay} focusable={false}>
+        <View style={styles.tvModalContainer} focusable={false}>
+          <Text style={styles.tvModalTitle}>
+            {selectedChannels.length >= 2 ? 'Launch Multiscreen?' : 'Cancel Selection?'}
+          </Text>
+          <Text style={styles.tvModalSubtitle}>
+            {selectedChannels.length >= 2
+              ? `You have ${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected. Launch multiscreen or continue selecting?`
+              : selectedChannels.length === 1
+                ? 'You have 1 channel selected. Select at least 2 channels to launch multiscreen.'
+                : 'No channels selected. Cancel selection mode?'}
+          </Text>
+          <SpatialNavigationNode orientation="vertical">
+            <View style={styles.tvModalActions} focusable={false}>
+              {/* Cancel - exits selection mode */}
+              <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleSelectionConfirmCancel)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvModalButton, isFocused && styles.tvModalButtonFocused]}>
+                    <Text style={[styles.tvModalButtonText, isFocused && styles.tvModalButtonTextFocused]}>
+                      Cancel
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+              {/* Continue Selecting - just closes modal */}
+              {selectedChannels.length < 2 ? (
+                <DefaultFocus>
+                  <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleSelectionConfirmClose)}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.tvModalButton, isFocused && styles.tvModalButtonFocused]}>
+                        <Text style={[styles.tvModalButtonText, isFocused && styles.tvModalButtonTextFocused]}>
+                          Continue Selecting
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                </DefaultFocus>
+              ) : (
+                <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleSelectionConfirmClose)}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.tvModalButton, isFocused && styles.tvModalButtonFocused]}>
+                      <Text style={[styles.tvModalButtonText, isFocused && styles.tvModalButtonTextFocused]}>
+                        Continue Selecting
+                      </Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
               )}
-            </Pressable>
-          )}
+              {/* Launch - only when >= 2 channels selected */}
+              {selectedChannels.length >= 2 && (
+                <DefaultFocus>
+                  <SpatialNavigationFocusableView onSelect={() => withSelectGuard(handleSelectionConfirmLaunch)}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.tvModalButton, isFocused && styles.tvModalButtonFocused]}>
+                        <Text style={[styles.tvModalButtonText, isFocused && styles.tvModalButtonTextFocused]}>
+                          {`Launch (${selectedChannels.length})`}
+                        </Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                </DefaultFocus>
+              )}
+            </View>
+          </SpatialNavigationNode>
         </View>
       </View>
-    </View>
+    </SpatialNavigationRoot>
   ) : null;
 
-  // Text Filter Modal for tvOS - rendered outside SpatialNavigationRoot for native focus
-  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
-  // Refs for focus navigation between input and close button
-  const filterInputWrapperRef = useRef<View>(null);
-  const filterCloseButtonRef = useRef<View>(null);
-  const [filterInputHandle, setFilterInputHandle] = useState<number | null>(null);
-  const [filterCloseHandle, setFilterCloseHandle] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (isFilterActive && Platform.isTV) {
-      const timer = setTimeout(() => {
-        if (!isMountedRef.current) return;
-        const inputHandle = filterInputWrapperRef.current ? findNodeHandle(filterInputWrapperRef.current) : null;
-        const closeHandle = filterCloseButtonRef.current ? findNodeHandle(filterCloseButtonRef.current) : null;
-        setFilterInputHandle(inputHandle);
-        setFilterCloseHandle(closeHandle);
-      }, 50);
-      return () => clearTimeout(timer);
-    } else {
-      // Reset handles when filter closes - but not during unmount
-      if (isMountedRef.current) {
-        setFilterInputHandle(null);
-        setFilterCloseHandle(null);
-      }
-    }
-  }, [isFilterActive]);
-
+  // Text Filter Modal for tvOS - uses SpatialNavigationRoot for focus management
   const textFilterModal = Platform.isTV && isFilterActive ? (
-    <View style={styles.filterModalOverlay} focusable={false}>
-      <View style={styles.filterModalContainer} focusable={false}>
-        <View style={styles.filterModalHeader}>
-          <Text style={styles.filterModalTitle}>Filter Channels</Text>
-          <Text style={styles.filterModalSubtitle}>Search by channel name or program title</Text>
-        </View>
+    <SpatialNavigationRoot isActive={isFilterActive}>
+      <View style={styles.filterModalOverlay} focusable={false}>
+        <View style={styles.filterModalContainer} focusable={false}>
+          <View style={styles.filterModalHeader}>
+            <Text style={styles.filterModalTitle}>Filter Channels</Text>
+            <Text style={styles.filterModalSubtitle}>Search by channel name or program title</Text>
+          </View>
 
-        <View style={styles.filterModalInputContainer} focusable={false}>
-          <Pressable
-            ref={filterInputWrapperRef}
-            onPress={() => {
-              filterInputRef.current?.focus();
-            }}
-            hasTVPreferredFocus={true}
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={filterInputHandle}
-            nextFocusDown={filterCloseHandle}
-            nextFocusLeft={filterInputHandle}
-            nextFocusRight={filterInputHandle}
-            style={({ focused }) => [
-              styles.filterModalInputWrapper,
-              focused && styles.filterModalInputWrapperFocused,
-            ]}>
-            {({ focused: inputFocused }: { focused: boolean }) => (
-              <TextInput
-                ref={filterInputRef}
-                style={[styles.filterModalInput, inputFocused && styles.filterModalInputFocused]}
-                placeholder="Filter by channel or program..."
-                placeholderTextColor={theme.colors.text.muted}
-                {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
-                onChangeText={handleFilterChangeText}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                autoCorrect={false}
-                autoCapitalize="none"
-                autoComplete="off"
-                textContentType="none"
-                spellCheck={false}
-                clearButtonMode="never"
-                enablesReturnKeyAutomatically={false}
-                multiline={false}
-                numberOfLines={1}
-                underlineColorAndroid="transparent"
-                importantForAutofill="no"
-                disableFullscreenUI={true}
-                editable={true}
-                {...(Platform.OS === 'ios' &&
-                  Platform.isTV && {
-                    keyboardAppearance: 'dark',
-                  })}
-              />
-            )}
-          </Pressable>
-        </View>
+          <SpatialNavigationNode orientation="vertical">
+            <View style={styles.filterModalInputContainer} focusable={false}>
+              <DefaultFocus>
+                <SpatialNavigationFocusableView onSelect={() => filterInputRef.current?.focus()}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <Pressable
+                      android_disableSound
+                      tvParallaxProperties={{ enabled: false }}
+                      style={[
+                        styles.filterModalInputWrapper,
+                        isFocused && styles.filterModalInputWrapperFocused,
+                      ]}>
+                      <TextInput
+                        ref={filterInputRef}
+                        style={[styles.filterModalInput, isFocused && styles.filterModalInputFocused]}
+                        placeholder="Filter by channel or program..."
+                        placeholderTextColor={theme.colors.text.muted}
+                        {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
+                        onChangeText={handleFilterChangeText}
+                        onFocus={handleFocus}
+                        onBlur={handleBlur}
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        autoComplete="off"
+                        textContentType="none"
+                        spellCheck={false}
+                        clearButtonMode="never"
+                        enablesReturnKeyAutomatically={false}
+                        multiline={false}
+                        numberOfLines={1}
+                        underlineColorAndroid="transparent"
+                        importantForAutofill="no"
+                        disableFullscreenUI={true}
+                        editable={true}
+                        {...(Platform.OS === 'ios' &&
+                          Platform.isTV && {
+                            keyboardAppearance: 'dark',
+                          })}
+                      />
+                    </Pressable>
+                  )}
+                </SpatialNavigationFocusableView>
+              </DefaultFocus>
+            </View>
 
-        <View style={styles.filterModalFooter}>
-          <Pressable
-            ref={filterCloseButtonRef}
-            onPress={handleCloseFilter}
-            android_disableSound
-            tvParallaxProperties={{ enabled: false }}
-            nextFocusUp={filterInputHandle}
-            nextFocusDown={filterCloseHandle}
-            nextFocusLeft={filterCloseHandle}
-            nextFocusRight={filterCloseHandle}
-            style={({ focused }) => [styles.filterModalCloseButton, focused && styles.filterModalCloseButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.filterModalCloseButtonText, focused && styles.filterModalCloseButtonTextFocused]}>
-                Close
-              </Text>
-            )}
-          </Pressable>
+            <View style={styles.filterModalFooter}>
+              <SpatialNavigationFocusableView onSelect={handleCloseFilter}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.filterModalCloseButton, isFocused && styles.filterModalCloseButtonFocused]}>
+                    <Text style={[styles.filterModalCloseButtonText, isFocused && styles.filterModalCloseButtonTextFocused]}>
+                      Close
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
+          </SpatialNavigationNode>
         </View>
       </View>
-    </View>
+    </SpatialNavigationRoot>
   ) : null;
 
-  // Action Modal for TV - rendered outside SpatialNavigationRoot for native focus
-  // Uses same pattern as CategoryFilterModal (raw Pressable with focused render prop)
+  // Action Modal for TV - uses SpatialNavigationRoot for focus management
   const tvActionModal = Platform.isTV && isActionModalVisible ? (
-    <View style={styles.actionsOverlay}>
-      <View style={styles.tvActionModalContainer}>
-        <View style={styles.tvActionModalHeader}>
-          <Text style={styles.tvActionModalTitle}>{actionChannel?.name ?? 'Channel options'}</Text>
-          {actionChannel?.group ? (
-            <Text style={styles.tvActionModalSubtitle}>{actionChannel.group}</Text>
-          ) : null}
-        </View>
-        <View style={styles.tvActionModalButtons}>
-          <Pressable
-            onPress={handleActionPlay}
-            android_disableSound
-            hasTVPreferredFocus={true}
-            tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
-                Play channel
-              </Text>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={handleActionToggleFavorite}
-            android_disableSound
-            tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
-                {actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
-              </Text>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={handleActionHide}
-            android_disableSound
-            tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [
-              styles.tvActionModalButton,
-              styles.tvActionModalButtonDanger,
-              focused && styles.tvActionModalButtonFocused,
-              focused && styles.tvActionModalButtonDangerFocused,
-            ]}>
-            {({ focused }) => (
-              <Text
-                style={[
-                  styles.tvActionModalButtonText,
-                  styles.tvActionModalButtonDangerText,
-                  focused && styles.tvActionModalButtonTextFocused,
-                ]}>
-                Hide channel
-              </Text>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={handleCloseActionModal}
-            android_disableSound
-            tvParallaxProperties={{ enabled: false }}
-            style={({ focused }) => [styles.tvActionModalButton, focused && styles.tvActionModalButtonFocused]}>
-            {({ focused }) => (
-              <Text style={[styles.tvActionModalButtonText, focused && styles.tvActionModalButtonTextFocused]}>
-                Cancel
-              </Text>
-            )}
-          </Pressable>
+    <SpatialNavigationRoot isActive={isActionModalVisible}>
+      <View style={styles.actionsOverlay}>
+        <View style={styles.tvActionModalContainer}>
+          <View style={styles.tvActionModalHeader}>
+            <Text style={styles.tvActionModalTitle}>{actionChannel?.name ?? 'Channel options'}</Text>
+            {actionChannel?.group ? (
+              <Text style={styles.tvActionModalSubtitle}>{actionChannel.group}</Text>
+            ) : null}
+          </View>
+          <SpatialNavigationNode orientation="vertical">
+            <View style={styles.tvActionModalButtons}>
+              <DefaultFocus>
+                <SpatialNavigationFocusableView onSelect={handleActionPlay}>
+                  {({ isFocused }: { isFocused: boolean }) => (
+                    <View style={[styles.tvActionModalButton, isFocused && styles.tvActionModalButtonFocused]}>
+                      <Text style={[styles.tvActionModalButtonText, isFocused && styles.tvActionModalButtonTextFocused]}>
+                        Play channel
+                      </Text>
+                    </View>
+                  )}
+                </SpatialNavigationFocusableView>
+              </DefaultFocus>
+              <SpatialNavigationFocusableView onSelect={handleActionToggleFavorite}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvActionModalButton, isFocused && styles.tvActionModalButtonFocused]}>
+                    <Text style={[styles.tvActionModalButtonText, isFocused && styles.tvActionModalButtonTextFocused]}>
+                      {actionChannelIsFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+              <SpatialNavigationFocusableView onSelect={handleActionHide}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[
+                    styles.tvActionModalButton,
+                    styles.tvActionModalButtonDanger,
+                    isFocused && styles.tvActionModalButtonFocused,
+                    isFocused && styles.tvActionModalButtonDangerFocused,
+                  ]}>
+                    <Text
+                      style={[
+                        styles.tvActionModalButtonText,
+                        styles.tvActionModalButtonDangerText,
+                        isFocused && styles.tvActionModalButtonTextFocused,
+                      ]}>
+                      Hide channel
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+              <SpatialNavigationFocusableView onSelect={handleCloseActionModal}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvActionModalButton, isFocused && styles.tvActionModalButtonFocused]}>
+                    <Text style={[styles.tvActionModalButtonText, isFocused && styles.tvActionModalButtonTextFocused]}>
+                      Cancel
+                    </Text>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            </View>
+          </SpatialNavigationNode>
         </View>
       </View>
-    </View>
+    </SpatialNavigationRoot>
   ) : null;
 
   // Wrap in SpatialNavigationRoot for TV
@@ -3129,29 +3095,27 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       padding: theme.spacing.xl,
     },
     filterModalInputWrapper: {
+      backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.md,
       borderWidth: 2,
       borderColor: 'transparent',
     },
     filterModalInputWrapperFocused: {
       borderColor: theme.colors.accent.primary,
+      shadowColor: theme.colors.accent.primary,
+      shadowOpacity: 0.4,
+      shadowOffset: { width: 0, height: 4 },
+      shadowRadius: 12,
     },
     filterModalInput: {
       fontSize: theme.typography.body.lg.fontSize * tvScale(1.375, 1),
       color: theme.colors.text.primary,
       paddingHorizontal: theme.spacing.lg,
       paddingVertical: theme.spacing.md,
-      backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.md,
-      borderWidth: 2,
-      borderColor: 'transparent',
+      backgroundColor: 'transparent',
     },
     filterModalInputFocused: {
-      borderColor: theme.colors.accent.primary,
-      shadowColor: theme.colors.accent.primary,
-      shadowOpacity: 0.4,
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 12,
+      // Focus styling handled by filterModalInputWrapper
     },
     filterModalFooter: {
       padding: theme.spacing.xl,

@@ -616,6 +616,9 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     },
     moreOptionsItem: {
       width: '100%' as const,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: Platform.isTV ? theme.spacing.lg : theme.spacing.md,
       backgroundColor: 'rgba(255, 255, 255, 0.08)' as const,
       borderRadius: theme.radius.md,
       paddingVertical: Platform.isTV ? theme.spacing.xl : theme.spacing.md,
@@ -623,6 +626,10 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginBottom: Platform.isTV ? theme.spacing.lg : theme.spacing.md,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
+    },
+    moreOptionsItemFocused: {
+      backgroundColor: theme.colors.accent.primary,
+      borderColor: theme.colors.accent.primary,
     },
     moreOptionsFooter: {
       paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
@@ -634,9 +641,15 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     moreOptionsCancelButton: {
       paddingHorizontal: theme.spacing['2xl'],
       paddingVertical: theme.spacing.md,
+      borderRadius: theme.radius.md,
+      alignItems: 'center' as const,
+    },
+    moreOptionsCancelFocused: {
+      backgroundColor: theme.colors.accent.primary,
     },
     moreOptionsCancelButtonText: {
       fontSize: theme.typography.body.md.fontSize * tvScale,
+      color: theme.colors.text.secondary,
     },
   });
 };

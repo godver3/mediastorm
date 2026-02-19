@@ -177,6 +177,10 @@ func (m *mockMetadataServiceStartup) ServePrequeuedTrailer(_ string, _ http.Resp
 func (m *mockMetadataServiceStartup) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
 }
 
+func (m *mockMetadataServiceStartup) GetProgressSnapshot() metadatapkg.ProgressSnapshot {
+	return metadatapkg.ProgressSnapshot{}
+}
+
 type mockUserServiceStartup struct {
 	exists bool
 }

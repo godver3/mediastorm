@@ -1,8 +1,8 @@
-import { memo, useMemo, useRef, useEffect, useState } from 'react';
+import { memo, useMemo } from 'react';
 
 import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import { Image } from './Image';
-import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle, findNodeHandle } from 'react-native';
+import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Title } from '../services/api';
@@ -25,10 +25,6 @@ interface MediaItemProps {
   style?: StyleProp<ViewStyle>;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus, watchState, unwatchedCount
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style: colored (green/yellow) or white
-  useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigationFocusableView (faster on Android TV)
-  autoFocus?: boolean; // Give this item initial focus (only works with useNativeFocus)
-  nextFocusLeft?: number; // Native tag for left focus navigation (TV) - set to self to trap focus
-  trapLeftFocus?: boolean; // Prevent left focus navigation by setting nextFocusLeft to self (TV)
 }
 
 // Default badges to show when visibility array is not provided
@@ -397,34 +393,10 @@ const MediaItem = memo(function MediaItem({
   style,
   badgeVisibility,
   watchStateIconStyle,
-  useNativeFocus = false,
-  autoFocus = false,
-  nextFocusLeft,
-  trapLeftFocus = false,
 }: MediaItemProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const isCompact = theme.breakpoint === 'compact';
-
-  // Ref and state for trapping left focus (getting own native tag)
-  const pressableRef = useRef<View>(null);
-  const [selfTag, setSelfTag] = useState<number | null>(null);
-
-  // Get own native tag for trapping left focus
-  useEffect(() => {
-    if (!trapLeftFocus || !useNativeFocus) return;
-    // Small delay to ensure ref is assigned
-    const timer = setTimeout(() => {
-      if (pressableRef.current) {
-        const tag = findNodeHandle(pressableRef.current);
-        setSelfTag(tag);
-      }
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [trapLeftFocus, useNativeFocus]);
-
-  // Determine the nextFocusLeft value - explicit prop takes precedence, then selfTag if trapping
-  const effectiveNextFocusLeft = nextFocusLeft ?? (trapLeftFocus ? selfTag : undefined) ?? undefined;
 
   const handlePress = () => {
     onPress?.();
@@ -666,25 +638,7 @@ const MediaItem = memo(function MediaItem({
     </View>
   );
 
-  // TV/Desktop with native Pressable focus (faster on Android TV - no JS re-renders)
-  if (useNativeFocus) {
-    return (
-      <Pressable
-        ref={pressableRef}
-        onPress={handlePress}
-        onFocus={handleFocus}
-        android_disableSound
-        hasTVPreferredFocus={autoFocus}
-        nextFocusLeft={effectiveNextFocusLeft}
-        style={({ focused }) => [styles.container, style, focused && styles.containerFocused]}
-        accessibilityRole="button">
-        {/* Note: We pass false for isFocused since native handles visual focus via style prop */}
-        {renderTVContent(false)}
-      </Pressable>
-    );
-  }
-
-  // TV/Desktop with SpatialNavigationFocusableView (standard mode)
+  // TV/Desktop with SpatialNavigationFocusableView
   return (
     <SpatialNavigationFocusableView onSelect={handlePress} onFocus={handleFocus}>
       {({ isFocused }: { isFocused: boolean }) => (

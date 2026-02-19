@@ -784,15 +784,15 @@ func main() {
 
 	// Start background cache manager to warm trending data and custom lists
 	// on startup and refresh periodically (every 2 hours)
-	metadataService.SetCustomListURLsProvider(func() []string {
+	metadataService.SetCustomListInfoProvider(func() []metadata.CustomListInfo {
 		seen := make(map[string]bool)
-		var urls []string
+		var infos []metadata.CustomListInfo
 
-		addURL := func(u string) {
+		addList := func(u, name string) {
 			u = strings.TrimSpace(u)
 			if u != "" && !seen[u] {
 				seen[u] = true
-				urls = append(urls, u)
+				infos = append(infos, metadata.CustomListInfo{URL: u, Name: name})
 			}
 		}
 
@@ -800,7 +800,7 @@ func main() {
 		if globalCfg, err := cfgManager.Load(); err == nil {
 			for _, shelf := range globalCfg.HomeShelves.Shelves {
 				if shelf.Type == "mdblist" && shelf.Enabled {
-					addURL(shelf.ListURL)
+					addList(shelf.ListURL, shelf.Name)
 				}
 			}
 		}
@@ -810,13 +810,13 @@ func main() {
 			if us, err := userSettingsService.Get(userID); err == nil && us != nil {
 				for _, shelf := range us.HomeShelves.Shelves {
 					if shelf.Type == "mdblist" && shelf.Enabled {
-						addURL(shelf.ListURL)
+						addList(shelf.ListURL, shelf.Name)
 					}
 				}
 			}
 		}
 
-		return urls
+		return infos
 	})
 	metadataService.StartBackgroundCacheManager(2 * time.Hour)
 

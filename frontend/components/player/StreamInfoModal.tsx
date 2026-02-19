@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { useLockSpatialNavigation } from '@/services/tv-navigation';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -114,20 +119,6 @@ const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles>
 export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info, onClose }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-
-  // Lock spatial navigation when modal is visible to prevent dual focus system conflicts
-  const { lock, unlock } = useLockSpatialNavigation();
-  useEffect(() => {
-    if (!Platform.isTV) return;
-    if (visible) {
-      lock();
-    } else {
-      unlock();
-    }
-    return () => {
-      unlock();
-    };
-  }, [visible, lock, unlock]);
 
   // Build display values
   const mediaTitle = useMemo(() => {
@@ -387,47 +378,49 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     <View key={s.key}>{renderSection(s.title, s.content)}</View>
   ));
 
-  // TV version with native focus handling (spatial navigation is locked)
+  // TV version with spatial navigation
   const tvModalContent = (
     <View style={styles.modalContainer}>
       <View style={styles.tvModalHeader}>
         <Text style={styles.modalTitle}>Stream Information</Text>
       </View>
 
-      {/* Scrollable sections list with manual scroll on focus */}
-      <ScrollView
-        ref={tvScrollViewRef}
-        style={styles.tvListContainer}
-        contentContainerStyle={styles.tvListContent}
-        scrollEnabled={false}
-        showsVerticalScrollIndicator={false}>
-        {visibleSections.map((section, index) => (
-          <Pressable
-            key={section.key}
-            onFocus={() => handleSectionFocus(index)}
-            android_disableSound
-            hasTVPreferredFocus={index === 0}
-            tvParallaxProperties={{ enabled: false }}>
-            {({ focused: isFocused }) => (
-              <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
-                <Text style={styles.sectionTitle}>{section.title}</Text>
-                {section.content}
+      <SpatialNavigationNode orientation="vertical">
+        {/* Scrollable sections list with manual scroll on focus */}
+        <ScrollView
+          ref={tvScrollViewRef}
+          style={styles.tvListContainer}
+          contentContainerStyle={styles.tvListContent}
+          scrollEnabled={false}
+          showsVerticalScrollIndicator={false}>
+          {visibleSections.map((section, index) => {
+            const sectionItem = (
+              <SpatialNavigationFocusableView
+                key={section.key}
+                onFocus={() => handleSectionFocus(index)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
+                    <Text style={styles.sectionTitle}>{section.title}</Text>
+                    {section.content}
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            );
+            return index === 0 ? <DefaultFocus key={section.key}>{sectionItem}</DefaultFocus> : sectionItem;
+          })}
+        </ScrollView>
+
+        {/* Close button */}
+        <View style={styles.tvModalFooter}>
+          <SpatialNavigationFocusableView onSelect={handleClose}>
+            {({ isFocused }: { isFocused: boolean }) => (
+              <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
               </View>
             )}
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      {/* Close button */}
-      <View style={styles.tvModalFooter}>
-        <Pressable onPress={handleClose} android_disableSound tvParallaxProperties={{ enabled: false }}>
-          {({ focused: isFocused }) => (
-            <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-              <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-            </View>
-          )}
-        </Pressable>
-      </View>
+          </SpatialNavigationFocusableView>
+        </View>
+      </SpatialNavigationNode>
     </View>
   );
 
@@ -462,15 +455,16 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       onRequestClose={handleClose}
       supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
       hardwareAccelerated>
-      <View style={styles.overlay}>
-        <Pressable
-          style={styles.backdrop}
-          onPress={handleClose}
-          tvParallaxProperties={{ enabled: false }}
-          focusable={false}
-        />
-        {Platform.isTV ? tvModalContent : nonTvModalContent}
-      </View>
+      <SpatialNavigationRoot isActive={visible}>
+        <View style={styles.overlay}>
+          <Pressable
+            style={styles.backdrop}
+            onPress={handleClose}
+            focusable={false}
+          />
+          {Platform.isTV ? tvModalContent : nonTvModalContent}
+        </View>
+      </SpatialNavigationRoot>
     </Modal>
   );
 };

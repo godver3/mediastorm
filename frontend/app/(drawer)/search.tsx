@@ -780,6 +780,10 @@ export default function SearchScreen() {
                     <View
                       style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
                       pointerEvents={isMenuOpen ? 'none' : 'auto'}>
+                      <Pressable
+                        android_disableSound
+                        tvParallaxProperties={{ enabled: false }}
+                        style={[styles.searchInputBox, textInputFocused && styles.searchInputBoxFocused]}>
                       <View style={styles.searchInputContent}>
                         {!isCompact && (
                           <MaterialCommunityIcons
@@ -832,6 +836,7 @@ export default function SearchScreen() {
                           </Pressable>
                         ) : null}
                       </View>
+                      </Pressable>
                     </View>
                   )}
                 </SpatialNavigationFocusableView>
@@ -973,34 +978,16 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     searchInputWrapper: {
       justifyContent: 'center',
     },
-    searchInputContent: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: isCompact ? theme.spacing.sm : theme.spacing.lg,
-      backgroundColor: 'transparent',
-    },
     searchInputWrapperFocused: {
-      // No additional styling needed - focus handled by TextInput
+      // No additional styling needed - focus handled by searchInputBox
     },
-    searchIcon: {
-      color: theme.colors.text.secondary,
-      opacity: 0.9,
-    },
-    searchInput: {
-      flex: 1,
-      // Android TV renders larger than tvOS, so use smaller font size
-      fontSize: isCompact ? theme.typography.body.lg.fontSize : Platform.OS === 'android' ? 16 : 32,
-      color: theme.colors.text.primary,
-      paddingHorizontal: isCompact ? theme.spacing.md : Platform.OS === 'android' ? theme.spacing.sm : theme.spacing.lg,
-      paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
-      backgroundColor: theme.colors.background.surface,
+    searchInputBox: {
+      backgroundColor: theme.colors.background.elevated,
       borderRadius: theme.radius.md,
-      borderWidth: 3,
+      borderWidth: isCompact ? 2 : 3,
       borderColor: 'transparent',
-      // Android TV renders larger than tvOS, so use smaller minHeight
-      minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
     },
-    searchInputFocused: {
+    searchInputBoxFocused: {
       borderColor: theme.colors.accent.primary,
       ...(Platform.isTV && Platform.OS === 'ios'
         ? {
@@ -1015,6 +1002,29 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
             elevation: 8,
           }
         : null),
+    },
+    searchInputContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: isCompact ? theme.spacing.sm : theme.spacing.lg,
+    },
+    searchIcon: {
+      color: theme.colors.text.secondary,
+      opacity: 0.9,
+    },
+    searchInput: {
+      flex: 1,
+      // Android TV renders larger than tvOS, so use smaller font size
+      fontSize: isCompact ? theme.typography.body.lg.fontSize : Platform.OS === 'android' ? 16 : 32,
+      color: theme.colors.text.primary,
+      paddingHorizontal: isCompact ? theme.spacing.md : Platform.OS === 'android' ? theme.spacing.sm : theme.spacing.lg,
+      paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
+      backgroundColor: 'transparent',
+      // Android TV renders larger than tvOS, so use smaller minHeight
+      minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
+    },
+    searchInputFocused: {
+      // Focus styling handled by searchInputBox
     },
     clearButton: {
       width: isCompact ? 34 : 40,

@@ -136,6 +136,10 @@ func (f *fakeMetadataService) EnrichSearchCertifications(_ context.Context, _ []
 	// no-op in tests — certifications are pre-set on test data
 }
 
+func (f *fakeMetadataService) GetProgressSnapshot() metadata.ProgressSnapshot {
+	return metadata.ProgressSnapshot{}
+}
+
 // fakeUsersServiceForSearch implements usersServiceInterface for search handler tests.
 type fakeUsersServiceForSearch struct {
 	users map[string]models.User

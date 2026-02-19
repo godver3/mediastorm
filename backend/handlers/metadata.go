@@ -36,6 +36,8 @@ type metadataService interface {
 	PrequeueTrailer(videoURL string) (string, error)
 	GetTrailerPrequeueStatus(id string) (*metadatapkg.TrailerPrequeueItem, error)
 	ServePrequeuedTrailer(id string, w http.ResponseWriter, r *http.Request) error
+	// Progress tracking for long-running enrichment operations
+	GetProgressSnapshot() metadatapkg.ProgressSnapshot
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -832,6 +834,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		HideUnreleased: hideUnreleased,
 		HideWatched:    hideWatched,
 		UserID:         userID,
+		Label:          strings.TrimSpace(r.URL.Query().Get("name")),
 	}
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		opts.HistorySvc = h.HistoryService
@@ -851,4 +854,11 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// GetProgress returns a snapshot of active metadata enrichment progress.
+func (h *MetadataHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
+	snapshot := h.Service.GetProgressSnapshot()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(snapshot)
 }

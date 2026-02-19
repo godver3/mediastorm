@@ -302,3 +302,56 @@ func TestGetCustomListNoTranslationWhenUnavailable(t *testing.T) {
 func ptr[T any](v T) *T {
 	return &v
 }
+
+// TestProgressLifecycle verifies the start → increment → snapshot → cleanup cycle.
+func TestProgressLifecycle(t *testing.T) {
+	svc := &Service{progressTasks: make(map[string]*ProgressTask)}
+
+	// Initially empty
+	snap := svc.GetProgressSnapshot()
+	if snap.ActiveCount != 0 {
+		t.Fatalf("expected 0 active tasks, got %d", snap.ActiveCount)
+	}
+
+	// Start a task
+	cleanup := svc.startProgressTask("test-task", "Test Task", "fetching", 0)
+
+	snap = svc.GetProgressSnapshot()
+	if snap.ActiveCount != 1 {
+		t.Fatalf("expected 1 active task, got %d", snap.ActiveCount)
+	}
+	if snap.Tasks[0].ID != "test-task" || snap.Tasks[0].Phase != "fetching" {
+		t.Fatalf("unexpected task: %+v", snap.Tasks[0])
+	}
+
+	// Update phase
+	svc.updateProgressPhase("test-task", "enriching", 50)
+	snap = svc.GetProgressSnapshot()
+	if snap.Tasks[0].Phase != "enriching" || snap.Tasks[0].Total != 50 || snap.Tasks[0].Current != 0 {
+		t.Fatalf("unexpected after phase update: %+v", snap.Tasks[0])
+	}
+
+	// Increment several times
+	for i := 0; i < 10; i++ {
+		svc.incrementProgress("test-task")
+	}
+	snap = svc.GetProgressSnapshot()
+	if snap.Tasks[0].Current != 10 {
+		t.Fatalf("expected current=10, got %d", snap.Tasks[0].Current)
+	}
+
+	// Cleanup removes the task
+	cleanup()
+	snap = svc.GetProgressSnapshot()
+	if snap.ActiveCount != 0 {
+		t.Fatalf("expected 0 active tasks after cleanup, got %d", snap.ActiveCount)
+	}
+}
+
+// TestProgressIncrementNoTask verifies incrementProgress is safe when task doesn't exist.
+func TestProgressIncrementNoTask(t *testing.T) {
+	svc := &Service{progressTasks: make(map[string]*ProgressTask)}
+	// Should not panic
+	svc.incrementProgress("nonexistent")
+	svc.updateProgressPhase("nonexistent", "test", 10)
+}

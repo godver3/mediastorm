@@ -1,10 +1,10 @@
 /**
- * TV Cast Section - Horizontal scrollable cast gallery with D-pad focus support
- * Uses native React Native Pressable focus for proper TV navigation
+ * TV Cast Section - Horizontal scrollable cast gallery with spatial navigation
+ * Uses SpatialNavigationVirtualizedList for proper integration with spatial nav system
  */
 
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
@@ -12,14 +12,20 @@ import type { Credits, CastMember } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
 import MarqueeText from './MarqueeText';
-
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
+import {
+  SpatialNavigationFocusableView,
+  SpatialNavigationVirtualizedList,
+  SpatialNavigationNode,
+} from '@/services/tv-navigation';
 
 // Card dimensions - scaled for TV viewing distance
 const CARD_WIDTH = tvScale(170);
 const CARD_HEIGHT = tvScale(260);
 const PHOTO_HEIGHT = tvScale(195);
 const CARD_GAP = tvScale(18);
+
+// Calculate how many items fit on screen
+const ITEMS_VISIBLE = Math.max(1, Math.floor(1920 / (CARD_WIDTH + CARD_GAP)));
 
 interface TVCastSectionProps {
   credits: Credits | null | undefined;
@@ -75,7 +81,6 @@ const TVCastSection = memo(function TVCastSection({
 }: TVCastSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const flatListRef = useRef<FlatList<CastMember>>(null);
 
   // Get cast to display
   const castToShow = useMemo(() => {
@@ -83,55 +88,38 @@ const TVCastSection = memo(function TVCastSection({
     return credits.cast.slice(0, maxCast);
   }, [credits, maxCast]);
 
-  const handleItemFocus = useCallback(
-    (index: number) => {
+  const handleCastFocus = useCallback(
+    () => {
       onFocus?.();
-      flatListRef.current?.scrollToIndex({
-        index,
-        animated: true,
-        viewPosition: 0.3,
-      });
     },
     [onFocus],
   );
 
-  const getItemLayout = useCallback(
-    (_data: ArrayLike<CastMember> | null | undefined, index: number) => ({
-      length: CARD_WIDTH + CARD_GAP,
-      offset: (CARD_WIDTH + CARD_GAP) * index,
-      index,
-    }),
-    [],
-  );
-
   const renderCastCard = useCallback(
-    ({ item: actor, index }: { item: CastMember; index: number }) => {
+    ({ item: actor }: { item: CastMember }) => {
       return (
-        <Pressable
-          onFocus={() => handleItemFocus(index)}
-          onPress={() => onCastMemberPress?.(actor)}
-          android_disableSound
-          renderToHardwareTextureAndroid={true}
-        >
-          {({ focused }: { focused: boolean }) => (
-            <View style={[styles.card, focused && styles.cardFocused]}>
+        <SpatialNavigationFocusableView
+          onSelect={() => onCastMemberPress?.(actor)}
+          onFocus={handleCastFocus}>
+          {({ isFocused }: { isFocused: boolean }) => (
+            <View style={[styles.card, isFocused && styles.cardFocused]}>
               <CastPhoto profileUrl={actor.profileUrl} styles={styles} theme={theme} />
               <View style={styles.textContainer}>
-                <MarqueeText style={styles.actorName} focused={focused}>
+                <MarqueeText style={styles.actorName} focused={isFocused}>
                   {actor.name}
                 </MarqueeText>
                 {actor.character && (
-                  <MarqueeText style={styles.characterName} focused={focused}>
+                  <MarqueeText style={styles.characterName} focused={isFocused}>
                     {actor.character}
                   </MarqueeText>
                 )}
               </View>
             </View>
           )}
-        </Pressable>
+        </SpatialNavigationFocusableView>
       );
     },
-    [styles, theme, handleItemFocus, onCastMemberPress],
+    [styles, theme, handleCastFocus, onCastMemberPress],
   );
 
   // Render skeleton cards while loading
@@ -152,11 +140,6 @@ const TVCastSection = memo(function TVCastSection({
     );
   }, [styles]);
 
-  const keyExtractor = useCallback(
-    (actor: CastMember) => actor.name + actor.character,
-    [],
-  );
-
   if (!castToShow.length && !isLoading) {
     return null;
   }
@@ -167,26 +150,23 @@ const TVCastSection = memo(function TVCastSection({
       {isLoading ? (
         renderSkeletonCards()
       ) : (
-        <View style={styles.listContainer}>
-          <FlatList
-            ref={flatListRef}
-            data={castToShow}
-            renderItem={renderCastCard}
-            keyExtractor={keyExtractor}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            getItemLayout={getItemLayout}
-            ItemSeparatorComponent={ItemSeparator}
-            contentContainerStyle={styles.listContent}
-          />
-        </View>
+        <SpatialNavigationNode orientation="horizontal">
+          <View style={styles.listContainer}>
+            <SpatialNavigationVirtualizedList
+              data={castToShow}
+              renderItem={renderCastCard}
+              itemSize={CARD_WIDTH + CARD_GAP}
+              numberOfRenderedItems={ITEMS_VISIBLE + 4}
+              numberOfItemsVisibleOnScreen={ITEMS_VISIBLE}
+              orientation="horizontal"
+              scrollDuration={300}
+            />
+          </View>
+        </SpatialNavigationNode>
       )}
     </View>
   );
 });
-
-// Static separator component - avoids re-creation on each render
-const ItemSeparator = () => <View style={{ width: CARD_GAP }} />;
 
 const createStyles = (theme: NovaTheme) =>
   StyleSheet.create({
@@ -203,13 +183,6 @@ const createStyles = (theme: NovaTheme) =>
     listContainer: {
       height: CARD_HEIGHT + tvScale(8),
       paddingLeft: tvScale(48),
-    },
-    listContent: {
-      paddingRight: tvScale(48),
-    },
-    smallCastRow: {
-      flexDirection: 'row',
-      gap: CARD_GAP,
     },
     skeletonRow: {
       flexDirection: 'row',

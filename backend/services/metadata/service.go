@@ -48,7 +48,11 @@ type Service struct {
 	cacheStopCh      chan struct{}
 	cacheStatusMu    sync.RWMutex
 	cacheStatus      CacheManagerStatus
-	customListURLsFn func() []string // returns configured custom MDBList URLs
+	customListInfoFn func() []CustomListInfo // returns configured custom MDBList URLs with display names
+
+	// Progress tracking for long-running enrichment operations
+	progressMu    sync.RWMutex
+	progressTasks map[string]*ProgressTask
 }
 
 // CacheManagerStatus holds the current state of the background cache manager.
@@ -63,6 +67,22 @@ type CacheManagerStatus struct {
 	SeriesCached     int       `json:"seriesCached"`
 	CustomListsCached int      `json:"customListsCached"`
 	LastError        string    `json:"lastError,omitempty"`
+}
+
+// ProgressTask tracks the progress of a long-running metadata operation.
+type ProgressTask struct {
+	ID        string `json:"id"`        // "trending-movie", "trending-series", "custom-list:<url>"
+	Label     string `json:"label"`     // "Trending Movies", "My Custom List"
+	Phase     string `json:"phase"`     // "fetching", "enriching", "enriching-releases"
+	Current   int32  `json:"current"`   // items processed (updated atomically)
+	Total     int32  `json:"total"`     // total items (updated atomically)
+	StartedAt int64  `json:"startedAt"` // unix ms
+}
+
+// ProgressSnapshot is the response payload for the progress endpoint.
+type ProgressSnapshot struct {
+	Tasks       []ProgressTask `json:"tasks"`
+	ActiveCount int            `json:"activeCount"`
 }
 
 type inflightRequest struct {
@@ -106,6 +126,76 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		ttlHours:         ttlHours,
 		inflightRequests: make(map[string]*inflightRequest),
 		trailerPrequeue:  trailerMgr,
+		progressTasks:    make(map[string]*ProgressTask),
+	}
+}
+
+// startProgressTask registers a new progress task and returns a cleanup function
+// that removes it when the operation completes.
+func (s *Service) startProgressTask(id, label, phase string, total int) func() {
+	task := &ProgressTask{
+		ID:        id,
+		Label:     label,
+		Phase:     phase,
+		Total:     int32(total),
+		StartedAt: time.Now().UnixMilli(),
+	}
+	s.progressMu.Lock()
+	if s.progressTasks == nil {
+		s.progressTasks = make(map[string]*ProgressTask)
+	}
+	s.progressTasks[id] = task
+	s.progressMu.Unlock()
+	return func() {
+		s.progressMu.Lock()
+		delete(s.progressTasks, id)
+		s.progressMu.Unlock()
+	}
+}
+
+// updateProgressPhase changes the phase and resets the counter for a task.
+func (s *Service) updateProgressPhase(id, phase string, total int) {
+	s.progressMu.RLock()
+	task, ok := s.progressTasks[id]
+	s.progressMu.RUnlock()
+	if !ok {
+		return
+	}
+	atomic.StoreInt32(&task.Current, 0)
+	atomic.StoreInt32(&task.Total, int32(total))
+	// Phase is only written from the orchestrating goroutine, so no race.
+	task.Phase = phase
+}
+
+// incrementProgress atomically increments the Current counter for a task.
+func (s *Service) incrementProgress(id string) {
+	s.progressMu.RLock()
+	task, ok := s.progressTasks[id]
+	s.progressMu.RUnlock()
+	if !ok {
+		return
+	}
+	atomic.AddInt32(&task.Current, 1)
+}
+
+// GetProgressSnapshot returns a copy of all active progress tasks.
+func (s *Service) GetProgressSnapshot() ProgressSnapshot {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	tasks := make([]ProgressTask, 0, len(s.progressTasks))
+	for _, t := range s.progressTasks {
+		tasks = append(tasks, ProgressTask{
+			ID:        t.ID,
+			Label:     t.Label,
+			Phase:     t.Phase,
+			Current:   atomic.LoadInt32(&t.Current),
+			Total:     atomic.LoadInt32(&t.Total),
+			StartedAt: t.StartedAt,
+		})
+	}
+	return ProgressSnapshot{
+		Tasks:       tasks,
+		ActiveCount: len(tasks),
 	}
 }
 
@@ -183,11 +273,30 @@ func (s *Service) StopBackgroundCacheManager() {
 	}
 }
 
-// SetCustomListURLsProvider sets a function that returns all configured custom
-// MDBList URLs (from global settings and user shelves). Called before each
+// CustomListInfo holds a custom list URL and its user-configured display name.
+type CustomListInfo struct {
+	URL  string
+	Name string
+}
+
+// SetCustomListInfoProvider sets a function that returns all configured custom
+// MDBList lists (from global settings and user shelves). Called before each
 // warming cycle to pick up newly added lists.
+func (s *Service) SetCustomListInfoProvider(fn func() []CustomListInfo) {
+	s.customListInfoFn = fn
+}
+
+// SetCustomListURLsProvider is a convenience wrapper that accepts a URL-only provider.
+// Deprecated: use SetCustomListInfoProvider to include display names for progress tracking.
 func (s *Service) SetCustomListURLsProvider(fn func() []string) {
-	s.customListURLsFn = fn
+	s.customListInfoFn = func() []CustomListInfo {
+		urls := fn()
+		infos := make([]CustomListInfo, len(urls))
+		for i, u := range urls {
+			infos[i] = CustomListInfo{URL: u}
+		}
+		return infos
+	}
 }
 
 // GetCacheManagerStatus returns the current status of the background cache manager.
@@ -207,11 +316,11 @@ func (s *Service) GetCacheManagerStatus() CacheManagerStatus {
 		status.SeriesCached = len(series)
 	}
 	// Count cached custom lists
-	if s.customListURLsFn != nil {
-		urls := s.customListURLsFn()
+	if s.customListInfoFn != nil {
+		infos := s.customListInfoFn()
 		cached := 0
-		for _, url := range urls {
-			k := cacheKey("mdblist", "custom", "v4", url)
+		for _, info := range infos {
+			k := cacheKey("mdblist", "custom", "v4", info.URL)
 			var items []models.TrendingItem
 			if ok, _ := s.cache.get(k, &items); ok && len(items) > 0 {
 				cached++
@@ -268,14 +377,14 @@ func (s *Service) warmTrendingCache() {
 	}
 
 	// Warm custom MDBList lists
-	if s.customListURLsFn != nil {
-		urls := s.customListURLsFn()
-		if len(urls) > 0 {
-			log.Printf("[metadata] cache manager: warming %d custom lists", len(urls))
-			for _, url := range urls {
-				opts := CustomListOptions{Limit: 0, Offset: 0}
-				if _, _, _, err := s.GetCustomList(ctx, url, opts); err != nil {
-					log.Printf("[metadata] cache manager: custom list error url=%s: %v", url, err)
+	if s.customListInfoFn != nil {
+		infos := s.customListInfoFn()
+		if len(infos) > 0 {
+			log.Printf("[metadata] cache manager: warming %d custom lists", len(infos))
+			for _, info := range infos {
+				opts := CustomListOptions{Limit: 0, Offset: 0, Label: info.Name}
+				if _, _, _, err := s.GetCustomList(ctx, info.URL, opts); err != nil {
+					log.Printf("[metadata] cache manager: custom list error url=%s: %v", info.URL, err)
 				}
 			}
 		}
@@ -436,9 +545,13 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 
 	label := "series"
 	fetcher := s.getTrendingSeries
+	progressID := "trending-series"
+	progressLabel := "Trending TV"
 	if normalized == "movie" {
 		label = "movie"
 		fetcher = s.getRecentMovies
+		progressID = "trending-movie"
+		progressLabel = "Trending Movies"
 	}
 
 	// v4: MDBList-only (removed TMDB trending path)
@@ -467,6 +580,10 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 		}
 		return cached, nil
 	}
+
+	// Cold cache — register progress task for the full fetch+enrich pipeline
+	cleanup := s.startProgressTask(progressID, progressLabel, "fetching", 0)
+	defer cleanup()
 
 	items, err := fetcher()
 	if err != nil {
@@ -546,19 +663,22 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 	var enrichedCount int32
 	queued := 0
 
+	// Collect eligible items first, then set phase total before launching goroutines
+	type enrichJob struct {
+		idx    int
+		tmdbID int64
+	}
+	var jobs []enrichJob
 	for idx := range items {
-		if queued >= enrichLimit {
+		if len(jobs) >= enrichLimit {
 			break
 		}
-		// Skip non-movies
 		if items[idx].Title.MediaType != "movie" {
 			continue
 		}
-		// Skip if already has release data
 		if items[idx].Title.HomeRelease != nil || items[idx].Title.Theatrical != nil {
 			continue
 		}
-		// Resolve TMDB ID from IMDB ID if missing
 		tmdbID := items[idx].Title.TMDBID
 		if tmdbID <= 0 && items[idx].Title.IMDBID != "" {
 			tmdbID = s.getTMDBIDForIMDB(ctx, items[idx].Title.IMDBID)
@@ -569,8 +689,13 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 		if tmdbID <= 0 {
 			continue
 		}
+		jobs = append(jobs, enrichJob{idx: idx, tmdbID: tmdbID})
+	}
 
-		queued++
+	queued = len(jobs)
+	s.updateProgressPhase("trending-movie", "enriching-releases", queued)
+
+	for _, job := range jobs {
 		wg.Add(1)
 		go func(i int, tmdbID int64) {
 			defer wg.Done()
@@ -580,7 +705,8 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 			if s.enrichMovieReleases(ctx, &items[i].Title, tmdbID) {
 				atomic.AddInt32(&enrichedCount, 1)
 			}
-		}(idx, tmdbID)
+			s.incrementProgress("trending-movie")
+		}(job.idx, job.tmdbID)
 	}
 	wg.Wait()
 
@@ -598,19 +724,22 @@ func (s *Service) enrichTrendingTVContentRatings(ctx context.Context, items []mo
 	var enrichedCount int32
 	queued := 0
 
+	// Collect eligible items first, then set phase total before launching goroutines
+	type enrichJob struct {
+		idx    int
+		tmdbID int64
+	}
+	var jobs []enrichJob
 	for idx := range items {
-		if queued >= enrichLimit {
+		if len(jobs) >= enrichLimit {
 			break
 		}
-		// Skip non-series
 		if items[idx].Title.MediaType != "series" {
 			continue
 		}
-		// Skip if already has content rating
 		if items[idx].Title.Certification != "" {
 			continue
 		}
-		// Resolve TMDB ID from IMDB ID if missing
 		tmdbID := items[idx].Title.TMDBID
 		if tmdbID <= 0 && items[idx].Title.IMDBID != "" {
 			tmdbID = s.getTMDBIDForIMDBTV(ctx, items[idx].Title.IMDBID)
@@ -621,8 +750,13 @@ func (s *Service) enrichTrendingTVContentRatings(ctx context.Context, items []mo
 		if tmdbID <= 0 {
 			continue
 		}
+		jobs = append(jobs, enrichJob{idx: idx, tmdbID: tmdbID})
+	}
 
-		queued++
+	queued = len(jobs)
+	s.updateProgressPhase("trending-series", "enriching-releases", queued)
+
+	for _, job := range jobs {
 		wg.Add(1)
 		go func(i int, tmdbID int64) {
 			defer wg.Done()
@@ -632,7 +766,8 @@ func (s *Service) enrichTrendingTVContentRatings(ctx context.Context, items []mo
 			if s.enrichTVContentRating(ctx, &items[i].Title, tmdbID) {
 				atomic.AddInt32(&enrichedCount, 1)
 			}
-		}(idx, tmdbID)
+			s.incrementProgress("trending-series")
+		}(job.idx, job.tmdbID)
 	}
 	wg.Wait()
 
@@ -748,6 +883,7 @@ func (s *Service) getRecentMovies() ([]models.TrendingItem, error) {
 	}
 
 	// Enrich with TVDB data concurrently (10 parallel workers)
+	s.updateProgressPhase("trending-movie", "enriching", len(items))
 	const maxConcurrent = 10
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -759,6 +895,7 @@ func (s *Service) getRecentMovies() ([]models.TrendingItem, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			s.enrichMovieTVDB(&items[idx].Title, mdblistMovies[idx])
+			s.incrementProgress("trending-movie")
 		}(i)
 	}
 	wg.Wait()
@@ -1157,6 +1294,7 @@ func (s *Service) getTrendingSeries() ([]models.TrendingItem, error) {
 	}
 
 	// Enrich with TVDB data concurrently (10 parallel workers)
+	s.updateProgressPhase("trending-series", "enriching", len(items))
 	const maxConcurrent = 10
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -1168,6 +1306,7 @@ func (s *Service) getTrendingSeries() ([]models.TrendingItem, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			s.enrichSeriesTVDB(&items[idx].Title, mdblistTVShows[idx])
+			s.incrementProgress("trending-series")
 		}(i)
 	}
 	wg.Wait()
@@ -4198,6 +4337,7 @@ type CustomListOptions struct {
 	HideWatched    bool
 	UserID         string
 	HistorySvc     HistoryChecker // nil if hideWatched is false
+	Label          string         // optional display name for progress tracking (e.g. shelf name)
 }
 
 // cachedMovieExtended fetches TVDB movie extended data with file caching.
@@ -4628,6 +4768,26 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		return result, total, total, nil
 	}
 
+	// Register progress task for custom list enrichment
+	progressID := "custom-list:" + listURL
+	// Use caller-provided label (shelf name) if available, otherwise derive from URL
+	progressLabel := opts.Label
+	if progressLabel == "" {
+		progressLabel = "Custom List"
+		if parsed, err := url.Parse(listURL); err == nil {
+			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+			// MDBList URLs end with /json — use the segment before it
+			for i := len(parts) - 1; i >= 0; i-- {
+				if !strings.EqualFold(parts[i], "json") && parts[i] != "" {
+					progressLabel = parts[i]
+					break
+				}
+			}
+		}
+	}
+	cleanup := s.startProgressTask(progressID, progressLabel, "fetching", 0)
+	defer cleanup()
+
 	// Fetch raw items from MDBList API
 	rawItems, err := s.client.FetchMDBListCustom(listURL)
 	if err != nil {
@@ -4667,6 +4827,7 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		len(itemsToEnrich), filteredTotal, unfilteredTotal, opts.Offset, opts.Limit)
 
 	// Concurrent enrichment with worker pool
+	s.updateProgressPhase(progressID, "enriching", len(itemsToEnrich))
 	const maxConcurrentEnrich = 10
 	sem := make(chan struct{}, maxConcurrentEnrich)
 	var wg sync.WaitGroup
@@ -4679,6 +4840,7 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[idx] = s.enrichCustomListItem(ctx, it)
+			s.incrementProgress(progressID)
 		}(i, item)
 	}
 	wg.Wait()

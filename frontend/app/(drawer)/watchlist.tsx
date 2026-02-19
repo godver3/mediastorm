@@ -387,6 +387,7 @@ export default function WatchlistScreen() {
             offset,
             shelfConfig?.hideUnreleased,
             hideWatched,
+            shelfConfig?.name,
           );
           items = response.items;
           total = response.total;

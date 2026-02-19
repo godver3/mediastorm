@@ -10,7 +10,6 @@ import {
   DefaultFocus,
   SpatialNavigationFocusableView,
 } from '@/services/tv-navigation';
-import FocusablePressable from '@/components/FocusablePressable';
 import { getSeasonLabel, isEpisodeUnreleased } from './utils';
 
 interface EpisodeSelectorProps {
@@ -90,18 +89,18 @@ export function EpisodeSelector({
     <Modal transparent visible={visible} onRequestClose={onClose} animationType="fade">
       <SpatialNavigationRoot isActive={visible}>
         <View style={styles.backdrop}>
-          {/* Keep backdrop Pressable on TV as native focus anchor for spatial navigation */}
-          <Pressable style={styles.overlayPressable} onPress={onClose} />
+          {!Platform.isTV && <Pressable style={styles.overlayPressable} onPress={onClose} />}
           <View style={overlayStyle} pointerEvents="box-none">
             <View style={styles.container}>
               <View style={styles.header}>
                 {Platform.isTV ? (
-                  <FocusablePressable
-                    text="Back"
-                    onSelect={onBack}
-                    style={styles.backButton}
-                    textStyle={styles.backButtonText}
-                  />
+                  <SpatialNavigationFocusableView onSelect={onBack}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.backButton, isFocused && styles.backButtonFocused]}>
+                        <Text style={[styles.backButtonText, isFocused && styles.backButtonTextFocused]}>Back</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
                 ) : (
                   <Pressable onPress={onBack} style={styles.backButtonIcon}>
                     <Ionicons name="chevron-back" size={28} color={theme.colors.text.primary} />
@@ -109,12 +108,13 @@ export function EpisodeSelector({
                 )}
                 <Text style={styles.title}>{getSeasonLabel(season.number, season.name)}</Text>
                 {Platform.isTV ? (
-                  <FocusablePressable
-                    text="Close"
-                    onSelect={onClose}
-                    style={styles.closeButton}
-                    textStyle={styles.closeButtonText}
-                  />
+                  <SpatialNavigationFocusableView onSelect={onClose}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
                 ) : showMobileIOSCloseButton ? (
                   <Pressable
                     onPress={onClose}
@@ -135,93 +135,97 @@ export function EpisodeSelector({
                   {season.episodes &&
                     season.episodes.map((episode, index) => {
                       const watched = isEpisodeWatched(episode);
-                      const focusableItem = (
+
+                      const episodeContent = ({ isFocused }: { isFocused: boolean }) => (
+                        <View
+                          style={[
+                            styles.episodeItem,
+                            watched && styles.episodeItemWatched,
+                            isFocused && styles.episodeItemFocused,
+                          ]}
+                          onLayout={(event) => {
+                            const { y, height } = event.nativeEvent.layout;
+                            handleItemLayout(index, y, height);
+                          }}>
+                          <View style={styles.episodeInfo}>
+                            <View style={styles.episodeHeader}>
+                              <Text style={styles.episodeNumber}>
+                                E{String(episode.episodeNumber).padStart(2, '0')}
+                              </Text>
+                              {watched ? (
+                                <View style={styles.watchedBadge}>
+                                  <Ionicons
+                                    name="checkmark-circle"
+                                    size={Platform.isTV ? 24 : 16}
+                                    color={theme.colors.accent.primary}
+                                  />
+                                </View>
+                              ) : isEpisodeUnreleased(episode.airedDate) ? (
+                                <View style={styles.watchedBadge}>
+                                  <Ionicons
+                                    name="time"
+                                    size={Platform.isTV ? 24 : 16}
+                                    color={theme.colors.status.warning}
+                                  />
+                                </View>
+                              ) : null}
+                            </View>
+                            {episode.name && (
+                              <Text style={styles.episodeTitle} numberOfLines={2}>
+                                {episode.name}
+                              </Text>
+                            )}
+                            {episode.overview && (
+                              <Text style={styles.episodeOverview} numberOfLines={2}>
+                                {episode.overview}
+                              </Text>
+                            )}
+                            <View style={styles.episodeMeta}>
+                              {episode.runtimeMinutes && (
+                                <Text style={styles.episodeMetaText}>{episode.runtimeMinutes}m</Text>
+                              )}
+                              {episode.airedDate && (
+                                <Text style={styles.episodeMetaText}>
+                                  {new Date(episode.airedDate).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  })}
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+                          {episode.image?.url ? (
+                            <Image
+                              source={{ uri: episode.image.url }}
+                              style={styles.episodeImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={styles.episodeImagePlaceholder}>
+                              <Ionicons
+                                name="film-outline"
+                                size={Platform.isTV ? 32 : 24}
+                                color={theme.colors.text.muted}
+                              />
+                            </View>
+                          )}
+                        </View>
+                      );
+
+                      const focusableItem = Platform.isTV ? (
                         <SpatialNavigationFocusableView
                           key={episode.id}
-                          focusKey={`episode-${episode.id}`}
                           onSelect={() => handleEpisodePress(episode)}
                           onFocus={() => handleItemFocus(index)}>
-                          {({ isFocused }: { isFocused: boolean }) => (
-                            <Pressable
-                              onPress={!Platform.isTV ? () => handleEpisodePress(episode) : undefined}
-                              tvParallaxProperties={{ enabled: false }}>
-                              <View
-                                style={[
-                                  styles.episodeItem,
-                                  watched && styles.episodeItemWatched,
-                                  isFocused && styles.episodeItemFocused,
-                                ]}
-                                onLayout={(event) => {
-                                  const { y, height } = event.nativeEvent.layout;
-                                  handleItemLayout(index, y, height);
-                                }}>
-                                <View style={styles.episodeInfo}>
-                                  <View style={styles.episodeHeader}>
-                                    <Text style={styles.episodeNumber}>
-                                      E{String(episode.episodeNumber).padStart(2, '0')}
-                                    </Text>
-                                    {watched ? (
-                                      <View style={styles.watchedBadge}>
-                                        <Ionicons
-                                          name="checkmark-circle"
-                                          size={Platform.isTV ? 24 : 16}
-                                          color={theme.colors.accent.primary}
-                                        />
-                                      </View>
-                                    ) : isEpisodeUnreleased(episode.airedDate) ? (
-                                      <View style={styles.watchedBadge}>
-                                        <Ionicons
-                                          name="time"
-                                          size={Platform.isTV ? 24 : 16}
-                                          color={theme.colors.status.warning}
-                                        />
-                                      </View>
-                                    ) : null}
-                                  </View>
-                                  {episode.name && (
-                                    <Text style={styles.episodeTitle} numberOfLines={2}>
-                                      {episode.name}
-                                    </Text>
-                                  )}
-                                  {episode.overview && (
-                                    <Text style={styles.episodeOverview} numberOfLines={2}>
-                                      {episode.overview}
-                                    </Text>
-                                  )}
-                                  <View style={styles.episodeMeta}>
-                                    {episode.runtimeMinutes && (
-                                      <Text style={styles.episodeMetaText}>{episode.runtimeMinutes}m</Text>
-                                    )}
-                                    {episode.airedDate && (
-                                      <Text style={styles.episodeMetaText}>
-                                        {new Date(episode.airedDate).toLocaleDateString('en-US', {
-                                          month: 'short',
-                                          day: 'numeric',
-                                          year: 'numeric',
-                                        })}
-                                      </Text>
-                                    )}
-                                  </View>
-                                </View>
-                                {episode.image?.url ? (
-                                  <Image
-                                    source={{ uri: episode.image.url }}
-                                    style={styles.episodeImage}
-                                    resizeMode="cover"
-                                  />
-                                ) : (
-                                  <View style={styles.episodeImagePlaceholder}>
-                                    <Ionicons
-                                      name="film-outline"
-                                      size={Platform.isTV ? 32 : 24}
-                                      color={theme.colors.text.muted}
-                                    />
-                                  </View>
-                                )}
-                              </View>
-                            </Pressable>
-                          )}
+                          {episodeContent}
                         </SpatialNavigationFocusableView>
+                      ) : (
+                        <Pressable
+                          key={episode.id}
+                          onPress={() => handleEpisodePress(episode)}>
+                          {episodeContent({ isFocused: false })}
+                        </Pressable>
                       );
 
                       return index === 0 ? (
@@ -300,9 +304,18 @@ const createStyles = (theme: NovaTheme) => {
     backButton: {
       paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.md,
+      borderRadius: theme.radius.md,
+    },
+    backButtonFocused: {
+      backgroundColor: theme.colors.accent.primary,
     },
     backButtonText: {
+      ...theme.typography.body.md,
       fontSize: theme.typography.body.md.fontSize * 1.2,
+      color: theme.colors.text.primary,
+    },
+    backButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     backButtonIcon: {
       padding: theme.spacing.sm,
@@ -310,9 +323,18 @@ const createStyles = (theme: NovaTheme) => {
     closeButton: {
       paddingHorizontal: theme.spacing.xl,
       paddingVertical: theme.spacing.md,
+      borderRadius: theme.radius.md,
+    },
+    closeButtonFocused: {
+      backgroundColor: theme.colors.accent.primary,
     },
     closeButtonText: {
+      ...theme.typography.body.md,
       fontSize: theme.typography.body.md.fontSize * 1.2,
+      color: theme.colors.text.primary,
+    },
+    closeButtonTextFocused: {
+      color: theme.colors.text.inverse,
     },
     mobileCloseButton: {
       paddingHorizontal: theme.spacing.lg,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, type AppStateStatus, findNodeHandle, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, type AppStateStatus, Image, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -7,7 +7,12 @@ import { usePathname } from 'expo-router';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import type { UserProfile } from '@/services/api';
 import type { NovaTheme } from '@/theme';
@@ -50,8 +55,11 @@ const createStyles = (theme: NovaTheme) => {
       marginBottom: responsiveSize(40, 24),
     },
     grid: {
+      alignItems: 'center',
+      gap: responsiveSize(36, 16),
+    },
+    gridRow: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
       justifyContent: 'center',
       gap: responsiveSize(36, 16),
     },
@@ -160,28 +168,7 @@ export const ProfileSelectorModal: React.FC = () => {
   const hasMultipleUsers = users.length > 1;
   const isPinModalUp = !!pendingPinUserId;
 
-  // Focus trapping: track native handles for each profile card so directional
-  // navigation can't escape the grid (same pattern as remove-from-CW modal).
-  const firstCardRef = useRef<View>(null);
-  const cardRefs = useRef<(View | null)[]>([]);
-  const [cardHandles, setCardHandles] = useState<(number | null)[]>([]);
-  const [focusGeneration, setFocusGeneration] = useState(0);
-
-  // Resolve native handles when the grid becomes visible
   const showGrid = visible && !isPinModalUp && !loading && hasMultipleUsers;
-  useEffect(() => {
-    if (!showGrid || !Platform.isTV) return;
-    const timer = setTimeout(() => {
-      const handles = cardRefs.current.map((ref) => (ref ? findNodeHandle(ref) : null));
-      setCardHandles(handles);
-    }, 50);
-    // Force remount of first card to re-trigger hasTVPreferredFocus
-    const focusTimer = setTimeout(() => {
-      console.log('[ProfileSelector] Forcing focus remount');
-      setFocusGeneration((g) => g + 1);
-    }, 400);
-    return () => { clearTimeout(timer); clearTimeout(focusTimer); };
-  }, [showGrid, users]);
 
   // Register with context immediately so refresh() knows to skip auto-PIN.
   useEffect(() => {
@@ -302,35 +289,80 @@ export const ProfileSelectorModal: React.FC = () => {
         {/* Hide the profile grid while PIN modal is showing on top,
             but keep the blur overlay so there's no visual gap. */}
         {showGrid && (
-          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} autoFocus>
-            <View style={styles.container} focusable={false}>
-              <Text style={styles.title}>Who's watching?</Text>
-              <View style={styles.grid} focusable={false}>
-                {users.map((user, index) => {
-                  const selfHandle = cardHandles[index] ?? undefined;
-                  const leftHandle = index > 0 ? (cardHandles[index - 1] ?? undefined) : selfHandle;
-                  const rightHandle = index < users.length - 1 ? (cardHandles[index + 1] ?? undefined) : selfHandle;
-                  return (
-                    <ProfileCard
-                      key={index === 0 ? `${user.id}-${focusGeneration}` : user.id}
-                      ref={(ref) => { cardRefs.current[index] = ref; if (index === 0) firstCardRef.current = ref; }}
-                      user={user}
-                      isActive={user.id === activeUserId}
-                      styles={styles}
-                      onSelect={handleSelectProfile}
-                      hasTVPreferredFocus={index === 0}
-                      nextFocusUp={selfHandle}
-                      nextFocusDown={selfHandle}
-                      nextFocusLeft={leftHandle}
-                      nextFocusRight={rightHandle}
-                    />
-                  );
-                })}
-              </View>
-            </View>
-          </TVFocusGuard>
+          <SpatialNavigationRoot isActive={showGrid}>
+            <ProfileGrid
+              users={users}
+              activeUserId={activeUserId}
+              onSelect={handleSelectProfile}
+              styles={styles}
+            />
+          </SpatialNavigationRoot>
         )}
       </BlurView>
+    </View>
+  );
+};
+
+// TV grid card width (180) + gap (36) = 216 per slot.
+// Container: maxWidth 960, padding 64*2 = usable ~832. → 4 per row on TV.
+// Mobile: single row wraps natively; spatial nav is inactive.
+const TV_CARD_SLOT = responsiveSize(180 + 36, 90 + 16);
+const TV_CONTAINER_PADDING = responsiveSize(64 * 2, 28 * 2);
+const TV_CONTAINER_MAX = responsiveSize(960, 400);
+
+interface ProfileGridProps {
+  users: UserProfile[];
+  activeUserId: string | null;
+  onSelect: (id: string) => void;
+  styles: ReturnType<typeof createStyles>;
+}
+
+const ProfileGrid: React.FC<ProfileGridProps> = ({ users, activeUserId, onSelect, styles }) => {
+  const { width: screenWidth } = useWindowDimensions();
+  const containerWidth = Math.min(TV_CONTAINER_MAX, screenWidth) - TV_CONTAINER_PADDING;
+  const itemsPerRow = Math.max(1, Math.floor((containerWidth + responsiveSize(36, 16)) / TV_CARD_SLOT));
+
+  const rows = useMemo(() => {
+    const result: UserProfile[][] = [];
+    for (let i = 0; i < users.length; i += itemsPerRow) {
+      result.push(users.slice(i, i + itemsPerRow));
+    }
+    return result;
+  }, [users, itemsPerRow]);
+
+  let globalIndex = 0;
+
+  return (
+    <View style={styles.container} focusable={false}>
+      <Text style={styles.title}>Who's watching?</Text>
+      <SpatialNavigationNode orientation="vertical">
+        <View style={styles.grid} focusable={false}>
+          {rows.map((row, rowIndex) => (
+            <SpatialNavigationNode key={rowIndex} orientation="horizontal">
+              <View style={styles.gridRow} focusable={false}>
+                {row.map((user) => {
+                  const idx = globalIndex++;
+                  const card = (
+                    <SpatialNavigationFocusableView
+                      key={user.id}
+                      onSelect={() => onSelect(user.id)}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <ProfileCard
+                          user={user}
+                          isActive={user.id === activeUserId}
+                          isFocused={isFocused}
+                          styles={styles}
+                        />
+                      )}
+                    </SpatialNavigationFocusableView>
+                  );
+                  return idx === 0 ? <DefaultFocus key={user.id}>{card}</DefaultFocus> : card;
+                })}
+              </View>
+            </SpatialNavigationNode>
+          ))}
+        </View>
+      </SpatialNavigationNode>
     </View>
   );
 };
@@ -338,65 +370,36 @@ export const ProfileSelectorModal: React.FC = () => {
 interface ProfileCardProps {
   user: UserProfile;
   isActive: boolean;
+  isFocused: boolean;
   styles: ReturnType<typeof createStyles>;
-  onSelect: (id: string) => void;
-  hasTVPreferredFocus?: boolean;
-  nextFocusUp?: number;
-  nextFocusDown?: number;
-  nextFocusLeft?: number;
-  nextFocusRight?: number;
 }
 
-const ProfileCard = React.forwardRef<View, ProfileCardProps>(
-  ({ user, isActive, styles, onSelect, hasTVPreferredFocus, nextFocusUp, nextFocusDown, nextFocusLeft, nextFocusRight }, ref) => {
-    const theme = useTheme();
-    const { getIconUrl } = useUserProfiles();
+const ProfileCard: React.FC<ProfileCardProps> = ({ user, isActive, isFocused, styles }) => {
+  const theme = useTheme();
+  const { getIconUrl } = useUserProfiles();
 
-    const handleSelect = useCallback(() => {
-      onSelect(user.id);
-    }, [onSelect, user.id]);
+  const pinIconSize = responsiveSize(18, 12);
 
-    const pinIconSize = responsiveSize(18, 12);
-
-    return (
-      <Pressable
-        ref={ref}
-        onPress={handleSelect}
-        android_disableSound
-        hasTVPreferredFocus={hasTVPreferredFocus}
-        tvParallaxProperties={{ enabled: false }}
-        nextFocusUp={nextFocusUp}
-        nextFocusDown={nextFocusDown}
-        nextFocusLeft={nextFocusLeft}
-        nextFocusRight={nextFocusRight}
-        style={({ focused, pressed }) => [
-          styles.profileCard,
-          focused && styles.profileCardFocused,
-          pressed && !Platform.isTV && { opacity: 0.7 },
-        ]}>
-        {({ focused }) => (
-          <>
-            <View style={styles.avatarWrapper}>
-              {user.hasIcon ? (
-                <Image source={{ uri: getIconUrl(user.id) }} style={styles.avatarImage} resizeMode="cover" />
-              ) : (
-                <View style={[styles.avatar, user.color ? { backgroundColor: user.color } : undefined]}>
-                  <Text style={styles.avatarText}>{user.name.charAt(0).toUpperCase()}</Text>
-                </View>
-              )}
-              {user.hasPin && (
-                <View style={styles.pinBadge}>
-                  <Ionicons name="lock-closed" size={pinIconSize} color={theme.colors.text.muted} />
-                </View>
-              )}
-            </View>
-            <Text style={[styles.profileName, focused && styles.profileNameFocused]}>{user.name}</Text>
-            {isActive && <View style={styles.activeIndicator} />}
-          </>
+  return (
+    <View style={[styles.profileCard, isFocused && styles.profileCardFocused]}>
+      <View style={styles.avatarWrapper}>
+        {user.hasIcon ? (
+          <Image source={{ uri: getIconUrl(user.id) }} style={styles.avatarImage} resizeMode="cover" />
+        ) : (
+          <View style={[styles.avatar, user.color ? { backgroundColor: user.color } : undefined]}>
+            <Text style={styles.avatarText}>{user.name.charAt(0).toUpperCase()}</Text>
+          </View>
         )}
-      </Pressable>
-    );
-  },
-);
+        {user.hasPin && (
+          <View style={styles.pinBadge}>
+            <Ionicons name="lock-closed" size={pinIconSize} color={theme.colors.text.muted} />
+          </View>
+        )}
+      </View>
+      <Text style={[styles.profileName, isFocused && styles.profileNameFocused]}>{user.name}</Text>
+      {isActive && <View style={styles.activeIndicator} />}
+    </View>
+  );
+};
 
 export default ProfileSelectorModal;

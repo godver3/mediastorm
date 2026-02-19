@@ -39,6 +39,7 @@ interface EPGGridProps {
   channels: LiveChannel[];
   onChannelSelect: (channel: LiveChannel) => void;
   favoriteChannelIds: Set<string>;
+  gridScale?: number; // Scale multiplier for grid dimensions (default: 1.0)
 }
 
 /**
@@ -49,6 +50,7 @@ export const EPGGrid = ({
   channels,
   onChannelSelect,
   favoriteChannelIds,
+  gridScale = 1.0,
 }: EPGGridProps) => {
   const theme = useTheme();
   const isTV = Platform.isTV;
@@ -91,7 +93,7 @@ export const EPGGrid = ({
       scrollView as unknown as number,
       (_left, top) => {
         // Scroll so the row is near the top with some padding
-        const targetY = Math.max(0, top - ROW_HEIGHT);
+        const targetY = Math.max(0, top - Math.round(ROW_HEIGHT * gridScale));
         scrollView.scrollTo({ y: targetY, animated: true });
       },
       () => {
@@ -113,15 +115,15 @@ export const EPGGrid = ({
     rowRefs.current[channelId] = ref;
   }, []);
 
-  // Fixed channel width
-  const channelWidth = CHANNEL_COLUMN_WIDTH;
+  // Apply grid scale to dimensions
+  const channelWidth = Math.round(CHANNEL_COLUMN_WIDTH * gridScale);
 
   // Calculate available width for time slots (screen width minus channel column and padding)
   const availableWidth = windowWidth - channelWidth - (CONTAINER_PADDING * 2);
 
   // Calculate grid width - time slot width is dynamic to fill available space
   const totalSlots = (gridState.timeWindowHours * 60) / EPG_GRID_SLOT_MINUTES;
-  const timeSlotWidth = Math.floor(availableWidth / totalSlots);
+  const timeSlotWidth = Math.floor((availableWidth * gridScale) / totalSlots);
   const gridContentWidth = totalSlots * timeSlotWidth;
 
   // Total width
@@ -157,7 +159,7 @@ export const EPGGrid = ({
   );
 
 
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const styles = useMemo(() => createStyles(theme, gridScale), [theme, gridScale]);
 
   if (!isEnabled) {
     return (
@@ -226,6 +228,7 @@ export const EPGGrid = ({
                     registerRef={(ref) => registerRowRef(channel.id, ref)}
                     theme={theme}
                     isTV={isTV}
+                    gridScale={gridScale}
                   />
                 ))}
               </SpatialNavigationNode>
@@ -243,6 +246,7 @@ export const EPGGrid = ({
                   onPress={() => handleChannelPress(channel)}
                   theme={theme}
                   isTV={isTV}
+                  gridScale={gridScale}
                 />
               ))
             )}
@@ -273,6 +277,7 @@ interface EPGRowProps {
   registerRef?: (ref: RNView | null) => void;
   theme: NovaTheme;
   isTV: boolean;
+  gridScale: number;
 }
 
 const EPGRow = React.memo(function EPGRow({
@@ -288,8 +293,10 @@ const EPGRow = React.memo(function EPGRow({
   registerRef,
   theme,
   isTV,
+  gridScale,
 }: EPGRowProps) {
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const styles = useMemo(() => createStyles(theme, gridScale), [theme, gridScale]);
+  const iconScale = 1 + (gridScale - 1) * 1.75;
   const rowRef = useRef<RNView>(null);
 
   // Register ref with parent for scroll tracking
@@ -311,7 +318,7 @@ const EPGRow = React.memo(function EPGRow({
           />
         ) : (
           <View style={styles.channelLogoPlaceholder}>
-            <Ionicons name="tv-outline" size={18} color={theme.colors.text.muted} />
+            <Ionicons name="tv-outline" size={Math.round(18 * iconScale)} color={theme.colors.text.muted} />
           </View>
         )}
         <Text style={styles.channelName} numberOfLines={1}>
@@ -320,7 +327,7 @@ const EPGRow = React.memo(function EPGRow({
         {isFavorite && (
           <Ionicons
             name="star"
-            size={12}
+            size={Math.round(12 * iconScale)}
             color={theme.colors.status.warning}
             style={styles.favoriteIcon}
           />
@@ -334,6 +341,7 @@ const EPGRow = React.memo(function EPGRow({
               program={program}
               theme={theme}
               timeSlotWidth={timeSlotWidth}
+              gridScale={gridScale}
             />
           ))
         ) : (
@@ -371,10 +379,11 @@ interface ProgramCellProps {
   program: GridProgram;
   theme: NovaTheme;
   timeSlotWidth: number;
+  gridScale: number;
 }
 
-const ProgramCell = React.memo(function ProgramCell({ program, theme, timeSlotWidth }: ProgramCellProps) {
-  const styles = useMemo(() => createStyles(theme), [theme]);
+const ProgramCell = React.memo(function ProgramCell({ program, theme, timeSlotWidth, gridScale }: ProgramCellProps) {
+  const styles = useMemo(() => createStyles(theme, gridScale), [theme, gridScale]);
 
   // Calculate position based on slot width
   const leftPosition = Math.round((program.gridStartMinutes / EPG_GRID_SLOT_MINUTES) * timeSlotWidth);
@@ -393,7 +402,7 @@ const ProgramCell = React.memo(function ProgramCell({ program, theme, timeSlotWi
       program.isCurrent && styles.programCellCurrent,
       { width: cellWidth, left: leftPosition + 2 }
     ]}>
-      <Text style={styles.programTitle} numberOfLines={1}>{program.title}</Text>
+      <Text style={styles.programTitle} numberOfLines={2}>{program.title}</Text>
       {program.episode && (
         <Text style={styles.programEpisode} numberOfLines={1}>{program.episode}</Text>
       )}
@@ -406,8 +415,10 @@ const ProgramCell = React.memo(function ProgramCell({ program, theme, timeSlotWi
   );
 });
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme, scale: number = 1.0) => {
+  // Text and icons scale more aggressively than grid dimensions
+  const ts = 1 + (scale - 1) * 1.75;
+  return StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: theme.colors.background.base,
@@ -440,6 +451,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     navDate: {
       ...theme.typography.title.md,
+      fontSize: Math.round(theme.typography.title.md.fontSize * ts),
+      lineHeight: Math.round(theme.typography.title.md.lineHeight * ts),
       color: theme.colors.text.primary,
     },
 
@@ -454,7 +467,7 @@ const createStyles = (theme: NovaTheme) =>
     // Header
     headerRow: {
       flexDirection: 'row',
-      height: HEADER_HEIGHT,
+      height: Math.round(HEADER_HEIGHT * scale),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border.subtle,
     },
@@ -471,14 +484,15 @@ const createStyles = (theme: NovaTheme) =>
     },
     timeSlotText: {
       ...theme.typography.label.md,
-      fontSize: 12,
+      fontSize: Math.round(12 * ts),
+      lineHeight: Math.round(16 * ts),
       color: theme.colors.text.secondary,
     },
 
     // Row
     row: {
       flexDirection: 'row',
-      height: ROW_HEIGHT,
+      height: Math.round(ROW_HEIGHT * scale),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border.subtle,
     },
@@ -497,20 +511,21 @@ const createStyles = (theme: NovaTheme) =>
       overflow: 'hidden',
     },
     channelLogo: {
-      width: 32,
-      height: 24,
+      width: Math.round(32 * ts),
+      height: Math.round(24 * ts),
       flexShrink: 0,
     },
     channelLogoPlaceholder: {
-      width: 32,
-      height: 24,
+      width: Math.round(32 * ts),
+      height: Math.round(24 * ts),
       justifyContent: 'center',
       alignItems: 'center',
       flexShrink: 0,
     },
     channelName: {
       ...theme.typography.label.md,
-      fontSize: 12,
+      fontSize: Math.round(12 * ts),
+      lineHeight: Math.round(16 * ts),
       color: theme.colors.text.primary,
       flex: 1,
     },
@@ -537,7 +552,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     noDataText: {
       ...theme.typography.label.md,
-      fontSize: 12,
+      fontSize: Math.round(12 * ts),
+      lineHeight: Math.round(16 * ts),
       color: theme.colors.text.muted,
     },
     programCell: {
@@ -559,13 +575,15 @@ const createStyles = (theme: NovaTheme) =>
     },
     programTitle: {
       ...theme.typography.label.md,
-      fontSize: 12,
+      fontSize: Math.round(12 * ts),
+      lineHeight: Math.round(16 * ts),
       color: theme.colors.text.primary,
       fontWeight: '500',
     },
     programEpisode: {
       ...theme.typography.label.md,
-      fontSize: 10,
+      fontSize: Math.round(10 * ts),
+      lineHeight: Math.round(14 * ts),
       color: theme.colors.text.muted,
       marginTop: 1,
     },
@@ -608,5 +626,6 @@ const createStyles = (theme: NovaTheme) =>
       color: theme.colors.text.primary,
     },
   });
+};
 
 export default EPGGrid;

@@ -278,6 +278,20 @@ export interface TrailerPrequeueResponse {
   fileSize?: number;
 }
 
+export interface MetadataProgressTask {
+  id: string;
+  label: string;
+  phase: string;
+  current: number;
+  total: number;
+  startedAt: number;
+}
+
+export interface MetadataProgressSnapshot {
+  tasks: MetadataProgressTask[];
+  activeCount: number;
+}
+
 export interface NZBResult {
   title: string;
   indexer: string;
@@ -1263,6 +1277,7 @@ class ApiService {
     offset?: number,
     hideUnreleased?: boolean,
     hideWatched?: boolean,
+    name?: string,
   ): Promise<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ url: listUrl });
     if (userId) {
@@ -1279,6 +1294,9 @@ class ApiService {
     }
     if (hideWatched) {
       params.set('hideWatched', 'true');
+    }
+    if (name) {
+      params.set('name', name);
     }
     return this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/lists/custom?${params.toString()}`,
@@ -1483,6 +1501,11 @@ class ApiService {
   // Check status of a prequeued trailer download
   async getTrailerPrequeueStatus(id: string): Promise<TrailerPrequeueResponse> {
     return this.request<TrailerPrequeueResponse>(`/metadata/trailers/prequeue/status?id=${encodeURIComponent(id)}`);
+  }
+
+  // Get metadata enrichment progress snapshot
+  async getMetadataProgress(): Promise<MetadataProgressSnapshot> {
+    return this.request<MetadataProgressSnapshot>('/metadata/progress');
   }
 
   // Get URL to serve a prequeued trailer (for video player)
