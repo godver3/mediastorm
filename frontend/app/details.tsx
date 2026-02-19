@@ -1259,7 +1259,6 @@ export default function DetailsScreen() {
   const sectionPositionsRef = useRef<Record<string, number>>({});
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
-  const tvActionsScrollY = useRef<number | null>(null);
 
   const scrollToSection = useCallback(
     (sectionKey: string, animated = true) => {
@@ -1270,8 +1269,9 @@ export default function DetailsScreen() {
       // Other sections sit near the top with a small inset.
       const getSectionViewportOffset = (key: string): number => {
         if (key === 'actions') {
-          // Place action row ~80% down the screen (bottom area)
-          return Math.round(windowHeight * 0.75);
+          // Place action row near the bottom of the screen (higher value = lower on screen)
+          const actionsRatio = isAndroidTVPlatform ? 0.85 : 0.88;
+          return Math.round(windowHeight * actionsRatio) + (isAndroidTVPlatform ? 10 : -30);
         }
         // Episodes, cast, similar — small offset from top so heading is visible
         return Math.round(windowHeight * 0.12);
@@ -1321,18 +1321,11 @@ export default function DetailsScreen() {
       if (currentTVFocusAreaRef.current === area) return;
       // Capture the actions scroll position before leaving
       if (currentTVFocusAreaRef.current === 'actions' && area !== 'actions') {
-        tvActionsScrollY.current = tvScrollY.value;
         trailersHook.dismissTrailerAutoPlay();
       }
       currentTVFocusAreaRef.current = area;
       if (area === 'actions') {
-        if (tvActionsScrollY.current != null) {
-          // Restore saved actions scroll position
-          tvScrollViewRef.current?.scrollTo({ y: tvActionsScrollY.current, animated: true });
-        } else {
-          // First focus on actions — scroll to show the action row
-          scrollToSection('actions');
-        }
+        scrollToSection('actions');
       } else {
         scrollToSection(area);
       }
@@ -1367,7 +1360,7 @@ export default function DetailsScreen() {
   // Invalidate section position cache when content height changes significantly
   const lastTVContentHeightRef = useRef(0);
   const handleTVContentSizeChange = useCallback((_width: number, height: number) => {
-    if (Platform.isTV && Math.abs(height - lastTVContentHeightRef.current) > 100) {
+    if (Platform.isTV && height !== lastTVContentHeightRef.current) {
       sectionPositionsRef.current = {};
     }
     lastTVContentHeightRef.current = height;
@@ -2501,7 +2494,10 @@ export default function DetailsScreen() {
                         onScroll={tvScrollHandler}
                         onContentSizeChange={handleTVContentSizeChange}
                         scrollEventThrottle={16}
-                        scrollEnabled={true}>
+                        scrollEnabled={false}
+                        bounces={false}
+                        overScrollMode="never"
+                        decelerationRate="fast">
                         {/* Fixed height spacer */}
                         <View style={{ height: tvSpacerHeight }} />
                         {/* Content area with gradient background */}
