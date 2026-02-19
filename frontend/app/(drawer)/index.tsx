@@ -2871,12 +2871,28 @@ function IndexScreen() {
             end={{ x: 0, y: 1 }}
             style={desktopStyles?.styles.tvBackgroundOverlay}
           />
-          {/* Left edge fade to background base */}
+          {/* Left edge fade — horizontal base layer */}
           <LinearGradient
-            colors={['#0b0b0f', 'rgba(11,11,15,0.3)', 'rgba(11,11,15,0.1)', 'transparent']}
-            locations={[0, 0.08, 0.25, 0.5]}
+            colors={['#0b0b0f', 'rgba(11,11,15,0.5)', 'rgba(11,11,15,0.15)', 'rgba(11,11,15,0.03)', 'transparent']}
+            locations={[0, 0.12, 0.35, 0.6, 1.0]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
+            style={desktopStyles?.styles.tvBackgroundOverlay}
+          />
+          {/* Top-left corner fade */}
+          <LinearGradient
+            colors={['#0b0b0f', 'rgba(11,11,15,0.6)', 'rgba(11,11,15,0.15)', 'transparent']}
+            locations={[0, 0.2, 0.45, 0.75]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0.6, y: 0.6 }}
+            style={desktopStyles?.styles.tvBackgroundOverlay}
+          />
+          {/* Bottom-left corner fade */}
+          <LinearGradient
+            colors={['#0b0b0f', 'rgba(11,11,15,0.7)', 'rgba(11,11,15,0.25)', 'rgba(11,11,15,0.05)', 'transparent']}
+            locations={[0, 0.15, 0.4, 0.6, 0.85]}
+            start={{ x: 0, y: 1 }}
+            end={{ x: 0.55, y: 0 }}
             style={desktopStyles?.styles.tvBackgroundOverlay}
           />
         </View>
