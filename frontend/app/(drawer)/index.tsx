@@ -2854,14 +2854,16 @@ function IndexScreen() {
       importantForAccessibility={isMenuOpen ? 'no-hide-descendants' : 'auto'}>
       {/* Full-screen background art for TV — crossfades as user navigates between items */}
       {Platform.isTV && focusedDesktopCard && (
-        <Animated.View style={[desktopStyles?.styles.tvBackgroundArt, heroContentAnimStyle]} pointerEvents="none">
-          <Image
-            source={enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            transition={500}
-          />
-          {/* Bottom fade to background base */}
+        <View style={desktopStyles?.styles.tvBackgroundArt} pointerEvents="none">
+          <Animated.View style={[StyleSheet.absoluteFill, heroContentAnimStyle]}>
+            <Image
+              source={enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              transition={500}
+            />
+          </Animated.View>
+          {/* Bottom fade to background base — kept outside animated view so edges stay smooth during transitions */}
           <LinearGradient
             colors={['transparent', 'rgba(11,11,15,0.1)', 'rgba(11,11,15,0.45)', '#0b0b0f']}
             locations={[0, 0.6, 0.85, 1]}
@@ -2877,7 +2879,7 @@ function IndexScreen() {
             end={{ x: 1, y: 0 }}
             style={desktopStyles?.styles.tvBackgroundOverlay}
           />
-        </Animated.View>
+        </View>
       )}
       {Platform.isTV && (
         <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
