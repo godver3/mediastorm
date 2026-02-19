@@ -17,11 +17,10 @@ const PAN_GRID_COLUMNS = 5; // Number of columns in the grid (more = more sensit
 const PAN_EMIT_INTERVAL = 30; // ms between emitting consecutive key events
 const PAN_THROTTLE_DELAY = 30; // ms throttle for pan event processing
 
-// Key hold acceleration constants
-const ACCEL_START_DELAY = 400; // ms before acceleration kicks in
-const ACCEL_BASE_INTERVAL = 80; // ms between acceleration checks
-const ACCEL_MAX_MULTIPLIER = 5; // max events to emit at once
-const ACCEL_RAMP_EVENTS = 8; // number of events to reach max multiplier
+// Dedup window for directional keys (ms). Must be wide enough to absorb
+// the keydown+keyup pair that TV platforms fire for a single press, but
+// narrow enough not to swallow rapid discrete taps.
+const DIRECTIONAL_DEDUP_WINDOW = 80;
 
 import { BackInterceptor, RemoteControlManagerInterface } from './RemoteControlManager.interface';
 import { SupportedKeys } from './SupportedKeys';
@@ -145,11 +144,6 @@ class RemoteControlManager implements RemoteControlManagerInterface {
   private panOrientation: 'x' | 'y' | undefined = undefined;
   private panLastIndex = 0;
   private panThrottleWait = false;
-
-  // Key hold acceleration state
-  private accelKey?: SupportedKeys;
-  private accelStartTime = 0;
-  private accelEventCount = 0;
 
   constructor() {
     if (isTvEnvironment()) {
@@ -417,68 +411,15 @@ class RemoteControlManager implements RemoteControlManagerInterface {
 
     // Skip deduplication for Back button to ensure all back presses are handled
     if (key === SupportedKeys.Back) {
-      this.accelKey = undefined; // Reset acceleration on non-directional key
       this.lastEmittedKey = key;
       this.lastEmittedAt = now;
       return true;
     }
 
-    // For directional keys, implement acceleration when held
-    if (this.isDirectionalKey(key)) {
-      const timeSinceLastEmit = now - this.lastEmittedAt;
-      const isSameKey = this.lastEmittedKey === key;
-      const isHeld = isSameKey && timeSinceLastEmit < 200; // Consider "held" if within 200ms
-
-      if (isHeld && this.accelKey === key) {
-        // Key is being held - check dedup
-        if (timeSinceLastEmit < ACCEL_BASE_INTERVAL) {
-          return false;
-        }
-
-        const holdDuration = now - this.accelStartTime;
-
-        if (holdDuration < ACCEL_START_DELAY) {
-          // Before acceleration kicks in, emit single event
-          this.lastEmittedKey = key;
-          this.lastEmittedAt = now;
-          return true;
-        } else {
-          // Acceleration active - emit multiple events
-          this.accelEventCount++;
-          const progress = Math.min(this.accelEventCount / ACCEL_RAMP_EVENTS, 1);
-          const multiplier = Math.round(1 + progress * (ACCEL_MAX_MULTIPLIER - 1));
-
-          // Emit extra events (multiplier - 1 extra, since we return true for the first one)
-          for (let i = 1; i < multiplier; i++) {
-            setTimeout(() => {
-              this.eventEmitter.emit('keyDown', key);
-            }, i * 10); // Small stagger to allow focus updates
-          }
-
-          this.lastEmittedKey = key;
-          this.lastEmittedAt = now;
-          return true;
-        }
-      } else {
-        // New key or key changed - reset acceleration
-        this.accelKey = key;
-        this.accelStartTime = now;
-        this.accelEventCount = 0;
-
-        // Apply normal dedup for first press
-        if (isSameKey && timeSinceLastEmit < 50) {
-          return false;
-        }
-      }
-
-      this.lastEmittedKey = key;
-      this.lastEmittedAt = now;
-      return true;
-    }
-
-    // Non-directional, non-back keys: reset acceleration and use normal dedup
-    this.accelKey = undefined;
-    const dedupWindow = 50;
+    // Directional keys use a wider dedup window to absorb the keydown+keyup
+    // pair that TV platforms fire for a single button press.
+    // No acceleration — TV platforms don't generate repeat events on hold.
+    const dedupWindow = this.isDirectionalKey(key) ? DIRECTIONAL_DEDUP_WINDOW : 50;
 
     if (this.lastEmittedKey === key && now - this.lastEmittedAt < dedupWindow) {
       return false;
