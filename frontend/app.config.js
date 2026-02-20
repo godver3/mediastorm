@@ -29,6 +29,7 @@ module.exports = ({ config }) => {
     './plugins/with-ksplayer', // KSPlayer native player for iOS/tvOS
     './plugins/with-large-heap', // Increase Android heap limit for video playback
     './plugins/with-exoplayer-keep-resources', // Preserve ExoPlayer resources during shrinking
+    '@kesha-antonov/react-native-background-downloader',
     [
       'expo-build-properties',
       {

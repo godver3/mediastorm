@@ -353,11 +353,19 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 		log.Printf("[debrid-playback] download link is internal reference, will be resolved at stream time: %s", downloadURL)
 	}
 
+	// Use the actual selected file size from the torrent info rather than the scraper-reported size.
+	// For pack results, candidate.SizeBytes is the total pack size (e.g. 6.5GB for a season),
+	// while the individual episode file is a different size (e.g. 6.9GB for one episode in higher quality).
+	resolvedFileSize := preferredFileSize(info.Files, selection, candidate.SizeBytes)
+	if resolvedFileSize != candidate.SizeBytes {
+		log.Printf("[debrid-playback] using actual file size %d bytes (scraper reported %d bytes)", resolvedFileSize, candidate.SizeBytes)
+	}
+
 	resolution := &models.PlaybackResolution{
 		QueueID:       0, // Debrid doesn't use queues
 		WebDAVPath:    webdavPath,
 		HealthStatus:  "cached",
-		FileSize:      candidate.SizeBytes,
+		FileSize:      resolvedFileSize,
 		SourceNZBPath: downloadURL, // Store the actual download URL here
 	}
 
@@ -479,11 +487,16 @@ func (s *PlaybackService) completeResolution(
 		log.Printf("[debrid-playback] download link is internal reference, will be resolved at stream time: %s", downloadURL)
 	}
 
+	resolvedFileSize := preferredFileSize(info.Files, selection, candidate.SizeBytes)
+	if resolvedFileSize != candidate.SizeBytes {
+		log.Printf("[debrid-playback] using actual file size %d bytes (scraper reported %d bytes)", resolvedFileSize, candidate.SizeBytes)
+	}
+
 	resolution := &models.PlaybackResolution{
 		QueueID:       0,
 		WebDAVPath:    webdavPath,
 		HealthStatus:  "cached",
-		FileSize:      candidate.SizeBytes,
+		FileSize:      resolvedFileSize,
 		SourceNZBPath: downloadURL,
 	}
 
@@ -506,6 +519,25 @@ func detectArchiveExtension(downloadURL string) string {
 	default:
 		return ""
 	}
+}
+
+// preferredFileSize returns the byte size of the preferred file from the torrent's file list.
+// Falls back to the candidate's scraper-reported size if the preferred file can't be found.
+// This is important for pack results where candidate.SizeBytes is the total pack size,
+// but the actual selected file is much smaller (or a different size).
+func preferredFileSize(files []File, selection *mediaFileSelection, fallback int64) int64 {
+	if selection == nil || selection.PreferredID == "" {
+		return fallback
+	}
+	for _, f := range files {
+		if fmt.Sprintf("%d", f.ID) == selection.PreferredID {
+			if f.Bytes > 0 {
+				return f.Bytes
+			}
+			return fallback
+		}
+	}
+	return fallback
 }
 
 func logSelectedFileDetails(files []File, selection *mediaFileSelection) {

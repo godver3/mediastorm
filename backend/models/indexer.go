@@ -23,4 +23,5 @@ type NZBResult struct {
 	Attributes   map[string]string  `json:"attributes,omitempty"`
 	ServiceType  ContentServiceType `json:"serviceType,omitempty"`
 	EpisodeCount int                `json:"episodeCount,omitempty"` // Number of episodes in pack (0 if not a pack)
+	SizePerFile  bool               `json:"sizePerFile,omitempty"`  // True when sizeBytes is per-file (Stremio scrapers), false when total pack
 }

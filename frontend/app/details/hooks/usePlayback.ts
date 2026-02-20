@@ -22,10 +22,12 @@ import {
   initiatePlayback,
   isHealthFailureError,
   isTimeoutError,
+  launchNativePlayer,
 } from '../playback';
 import { buildEpisodeQuery, formatUnreleasedMessage, isEpisodeUnreleased, padNumber } from '../utils';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { downloadManager } from '@/services/downloadManager';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -1041,6 +1043,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
           titleId,
           imdbId,
           tvdbId,
+          seriesIdentifier,
           ...(() => {
             const offset = pendingStartOffsetRef.current;
             if (offset !== null) {
@@ -2395,6 +2398,32 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
     }
     dismissTrailerAutoPlay();
     console.log(`[usePlayback ${instanceId}] handleWatchNow called - titleId: ${titleId}, title: ${title}`);
+
+    // Check for local downloaded file — skip streaming entirely
+    const episodeForLocal = activeEpisode || nextUpEpisode;
+    const localUri = downloadManager.getLocalFileUri(titleId, episodeForLocal?.seasonNumber, episodeForLocal?.episodeNumber);
+    if (localUri) {
+      console.log(`[usePlayback ${instanceId}] Playing local file: ${localUri}`);
+      const localPlayAction = async () => {
+        await launchNativePlayer(localUri, headerImage, title, router, {
+          mediaType: episodeForLocal ? 'episode' : 'movie',
+          seriesTitle: isSeries ? title : undefined,
+          seasonNumber: episodeForLocal?.seasonNumber,
+          episodeNumber: episodeForLocal?.episodeNumber,
+          episodeName: episodeForLocal?.name,
+          titleId,
+          imdbId,
+          tvdbId,
+          seriesIdentifier,
+          userId: activeUserId || undefined,
+          ...(pendingStartOffsetRef.current != null ? { startOffset: pendingStartOffsetRef.current } : {}),
+          useNativePlayer: true,
+        });
+      };
+      await checkAndShowResumeModal(localPlayAction);
+      return;
+    }
+
     const playAction = async () => {
       console.log(`[usePlayback ${instanceId}] playAction executing - titleId: ${titleId}`);
       const episodeToPlay = activeEpisode || nextUpEpisode;
@@ -2443,6 +2472,13 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
     titleId,
     isSelectBlocked,
     dismissTrailerAutoPlay,
+    headerImage,
+    router,
+    mediaType,
+    isSeries,
+    imdbId,
+    tvdbId,
+    activeUserId,
   ]);
 
   // =========================================================================

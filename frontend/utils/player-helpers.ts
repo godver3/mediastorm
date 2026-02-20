@@ -41,6 +41,7 @@ export interface PlayerParams extends Record<string, any> {
   titleId?: string;
   imdbId?: string;
   tvdbId?: string;
+  seriesIdentifier?: string; // Series-level ID for progress tracking (titleId stripped of episode suffix)
   preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
   subtitleDebug?: string; // Enable subtitle sync debug overlay
   shuffleMode?: string; // Random episode playback mode

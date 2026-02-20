@@ -3,6 +3,7 @@
  */
 
 import FocusablePressable from '@/components/FocusablePressable';
+import { Ionicons } from '@expo/vector-icons';
 import { useUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import {
   apiService,
@@ -63,6 +64,8 @@ interface ManualSelectionProps {
   healthChecks: Record<string, ManualResultHealthState>;
   onClose: () => void;
   onSelect: (result: NZBResult, trackOverrides?: ManualTrackOverrides) => void;
+  onDownload?: (result: NZBResult) => void;
+  downloadOnly?: boolean;
   onCheckHealth: (result: NZBResult) => void;
   theme: NovaTheme;
   isWebTouch: boolean;
@@ -81,6 +84,8 @@ export const ManualSelection = ({
   healthChecks,
   onClose,
   onSelect,
+  onDownload,
+  downloadOnly,
   onCheckHealth,
   theme,
   isWebTouch,
@@ -559,6 +564,7 @@ export const ManualSelection = ({
 
   // TV: Render the tracks side panel for the focused item
   const renderTvTracksSidePanel = useCallback(() => {
+    if (downloadOnly) return null;
     if (!tvFocusedKey) {
       return (
         <View style={styles.tvTracksSidePanel}>
@@ -750,7 +756,7 @@ export const ManualSelection = ({
         </View>
       </SpatialNavigationNode>
     );
-  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides, setAudioTrackOverride, setSubtitleTrackOverride]);
+  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref, trackOverrides, setAudioTrackOverride, setSubtitleTrackOverride, downloadOnly]);
 
   const renderManualResultContent = useCallback(
     (result: NZBResult, isFocused: boolean) => {
@@ -786,7 +792,7 @@ export const ManualSelection = ({
                   : 'Checking Usenet health…';
             break;
           case 'healthy': {
-            const actionText = Platform.isTV ? 'Select to play' : 'Tap to play';
+            const actionText = downloadOnly ? 'Tap to download' : Platform.isTV ? 'Select to play' : 'Tap to play';
             statusLabel = serviceType === 'debrid' ? `Cached • ${actionText}` : `Healthy • ${actionText}`;
             break;
           }
@@ -851,12 +857,12 @@ export const ManualSelection = ({
             <Text style={[metaStyles, styles.manualResultDescription]}>{result.attributes!.raw_description}</Text>
             <View style={styles.statusRow}>
               {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
-              {tracksLoading && !Platform.isTV && (
+              {!downloadOnly && tracksLoading && !Platform.isTV && (
                 <Text style={[styles.tracksLoadingText, isFocused && styles.tracksButtonTextFocused]}>
                   Loading tracks…
                 </Text>
               )}
-              {hasTracks && !Platform.isTV && (
+              {!downloadOnly && hasTracks && !Platform.isTV && (
                 <Pressable
                   onPress={(e) => {
                     e.stopPropagation();
@@ -869,8 +875,19 @@ export const ManualSelection = ({
                   </Text>
                 </Pressable>
               )}
+              {downloadOnly && onDownload && healthState?.state === 'healthy' && !Platform.isTV && (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onDownload(result);
+                  }}
+                  hitSlop={8}
+                  style={styles.downloadButton}>
+                  <Ionicons name="download-outline" size={18} color={theme.colors.accent.primary} />
+                </Pressable>
+              )}
             </View>
-            {isExpanded &&
+            {!downloadOnly && isExpanded &&
               hasTracks &&
               renderTrackPanel(
                 healthState?.debridDetails?.audioTracks,
@@ -890,19 +907,23 @@ export const ManualSelection = ({
             <Text style={metaStyles}>
               {result.indexer} •{' '}
               {result.episodeCount && result.episodeCount > 0
-                ? `${formatFileSize(Math.floor(result.sizeBytes / result.episodeCount))}/ep (${formatFileSize(result.sizeBytes)})`
-                : formatFileSize(result.sizeBytes)}
+                ? result.sizePerFile
+                  ? `${formatFileSize(result.sizeBytes)}/ep`
+                  : `${formatFileSize(Math.floor(result.sizeBytes / result.episodeCount))}/ep (${formatFileSize(result.sizeBytes)})`
+                : result.sizePerFile
+                  ? `${formatFileSize(result.sizeBytes)}/ep`
+                  : formatFileSize(result.sizeBytes)}
               {serviceType === 'usenet' && result.publishDate ? ` • ${formatPublishDate(result.publishDate)}` : ''}
             </Text>
           </View>
           <View style={styles.statusRow}>
             {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
-            {tracksLoading && !Platform.isTV && (
+            {!downloadOnly && tracksLoading && !Platform.isTV && (
               <Text style={[styles.tracksLoadingText, isFocused && styles.tracksButtonTextFocused]}>
                 Loading tracks…
               </Text>
             )}
-            {hasTracks && !Platform.isTV && (
+            {!downloadOnly && hasTracks && !Platform.isTV && (
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation();
@@ -915,8 +936,19 @@ export const ManualSelection = ({
                 </Text>
               </Pressable>
             )}
+              {downloadOnly && onDownload && healthState?.state === 'healthy' && !Platform.isTV && (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onDownload(result);
+                  }}
+                  hitSlop={8}
+                  style={styles.downloadButton}>
+                  <Ionicons name="download-outline" size={18} color={theme.colors.accent.primary} />
+                </Pressable>
+              )}
           </View>
-          {isExpanded &&
+          {!downloadOnly && isExpanded &&
             hasTracks &&
             renderTrackPanel(
               healthState?.debridDetails?.audioTracks,
@@ -927,7 +959,7 @@ export const ManualSelection = ({
         </View>
       );
     },
-    [healthChecks, styles, demoMode, expandedTracks, toggleTracks, renderTrackPanel, trackOverrides],
+    [healthChecks, styles, demoMode, expandedTracks, toggleTracks, renderTrackPanel, trackOverrides, onDownload, downloadOnly, theme],
   );
 
   if (!visible) {
@@ -1018,10 +1050,15 @@ export const ManualSelection = ({
                               return;
                             }
 
-                            // Second tap: play if healthy
+                            // Second tap: play (or download) if healthy
                             if (isHealthy) {
-                              console.log('[ManualSelection] Selecting healthy result:', result.title, 'trackOverrides:', trackOverrides[key]);
-                              onSelect(result, trackOverrides[key]);
+                              if (downloadOnly && onDownload) {
+                                console.log('[ManualSelection] Downloading healthy result:', result.title);
+                                onDownload(result);
+                              } else {
+                                console.log('[ManualSelection] Selecting healthy result:', result.title, 'trackOverrides:', trackOverrides[key]);
+                                onSelect(result, trackOverrides[key]);
+                              }
                             } else {
                               console.log(
                                 '[ManualSelection] Result not healthy, cannot select. State:',
@@ -1096,9 +1133,13 @@ export const ManualSelection = ({
                           return;
                         }
 
-                        // Second tap: play if healthy
+                        // Second tap: play (or download) if healthy
                         if (isHealthy) {
-                          onSelect(result, trackOverrides[key]);
+                          if (downloadOnly && onDownload) {
+                            onDownload(result);
+                          } else {
+                            onSelect(result, trackOverrides[key]);
+                          }
                         }
                       };
 
@@ -1425,6 +1466,13 @@ const createManualSelectionStyles = (theme: NovaTheme) => {
       paddingVertical: theme.spacing.xs,
       borderRadius: theme.radius.sm,
       backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    },
+    downloadButton: {
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+      marginLeft: theme.spacing.xs,
     },
     tracksButtonText: {
       ...theme.typography.caption.sm,

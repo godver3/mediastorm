@@ -13,7 +13,7 @@ import { isTablet } from '@/theme/tokens/tvScale';
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
 import { useUserProfiles } from './UserProfilesContext';
 
-type TabKey = 'index' | 'search' | 'watchlist' | 'live' | 'profiles' | 'settings';
+type TabKey = 'index' | 'search' | 'watchlist' | 'live' | 'profiles' | 'downloads' | 'settings';
 
 type TabItem = {
   key: TabKey;
@@ -22,7 +22,8 @@ type TabItem = {
   route: string;
 };
 
-const BASE_TAB_HEIGHT = 56;
+const BASE_TAB_HEIGHT = 52;
+const TAB_ICON_SIZE = 20;
 
 const TAB_ITEMS: TabItem[] = [
   { key: 'index', label: 'Home', icon: 'home-variant', route: '/(drawer)' },
@@ -30,6 +31,7 @@ const TAB_ITEMS: TabItem[] = [
   { key: 'watchlist', label: 'Watchlist', icon: 'playlist-star', route: '/(drawer)/watchlist' },
   { key: 'live', label: 'Live', icon: 'television-play', route: '/(drawer)/live' },
   { key: 'profiles', label: 'Profiles', icon: 'account-multiple', route: '/(drawer)/profiles' },
+  { key: 'downloads', label: 'Downloads', icon: 'download', route: '/(drawer)/downloads' },
   { key: 'settings', label: 'Settings', icon: 'cog', route: '/(drawer)/settings' },
 ];
 
@@ -60,6 +62,10 @@ const getActiveTabFromPath = (pathname: string | null): TabKey | undefined => {
 
   if (pathname.startsWith('/(drawer)/profiles')) {
     return 'profiles';
+  }
+
+  if (pathname.startsWith('/(drawer)/downloads')) {
+    return 'downloads';
   }
 
   if (pathname.startsWith('/(drawer)/settings')) {
@@ -131,9 +137,9 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
                 <Image
                   source={{ uri: getIconUrl(activeUser.id) }}
                   style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: 12,
+                    width: TAB_ICON_SIZE,
+                    height: TAB_ICON_SIZE,
+                    borderRadius: TAB_ICON_SIZE / 2,
                     borderWidth: isActive ? 2 : 0,
                     borderColor: theme.colors.accent.primary,
                   }}
@@ -141,16 +147,16 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
               ) : (
                 <View
                   style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: 12,
+                    width: TAB_ICON_SIZE,
+                    height: TAB_ICON_SIZE,
+                    borderRadius: TAB_ICON_SIZE / 2,
                     backgroundColor: activeUser.color || theme.colors.background.elevated,
                     justifyContent: 'center',
                     alignItems: 'center',
                     borderWidth: isActive ? 2 : 0,
                     borderColor: theme.colors.accent.primary,
                   }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff' }}>
                     {activeUser.name.charAt(0).toUpperCase()}
                   </Text>
                 </View>
@@ -158,7 +164,7 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
             ) : (
               <MaterialCommunityIcons
                 name={item.icon}
-                size={24}
+                size={TAB_ICON_SIZE}
                 color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
               />
             )}
@@ -200,11 +206,14 @@ const createStyles = (theme: NovaTheme, bottomInset: number) => {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: theme.spacing.xs,
+      gap: 2,
       paddingVertical: theme.spacing.xs,
+      paddingHorizontal: 1,
     },
     tabLabel: {
-      ...theme.typography.caption.sm,
+      fontSize: 10,
+      lineHeight: 13,
+      fontWeight: '500' as const,
       color: theme.colors.text.muted,
     },
     tabLabelActive: {

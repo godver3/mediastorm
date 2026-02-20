@@ -543,6 +543,7 @@ export const launchNativePlayer = async (
     titleId?: string;
     imdbId?: string;
     tvdbId?: string;
+    seriesIdentifier?: string; // Series-level ID for progress tracking
     debugPlayer?: boolean;
     shuffleMode?: boolean;
     preExtractedSubtitles?: string; // JSON stringified SubtitleSessionInfo[]
@@ -585,6 +586,7 @@ export const launchNativePlayer = async (
     titleId,
     imdbId,
     tvdbId,
+    seriesIdentifier,
     debugPlayer,
     shuffleMode,
     preExtractedSubtitles,
@@ -647,6 +649,7 @@ export const launchNativePlayer = async (
       ...(titleId ? { titleId } : {}),
       ...(imdbId ? { imdbId } : {}),
       ...(tvdbId ? { tvdbId } : {}),
+      ...(seriesIdentifier ? { seriesIdentifier } : {}),
       ...(shuffleMode ? { shuffleMode: '1' } : {}),
       ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
       ...(passthroughName ? { passthroughName } : {}),
@@ -683,6 +686,7 @@ export const initiatePlayback = async (
     titleId?: string;
     imdbId?: string;
     tvdbId?: string;
+    seriesIdentifier?: string;
     startOffset?: number;
     debugPlayer?: boolean;
     onExternalPlayerLaunch?: () => void; // Callback to hide loading screen when launching external player

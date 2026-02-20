@@ -81,6 +81,7 @@ import { usePlayback } from './details/hooks/usePlayback';
 import { useEpisodeManager } from './details/hooks/useEpisodeManager';
 import { useWatchActions } from './details/hooks/useWatchActions';
 import { useManualSelectFlow } from './details/hooks/useManualSelectFlow';
+import { useDownloads } from '@/components/DownloadsContext';
 
 const SELECTION_TOAST_ID = 'details-nzb-status';
 
@@ -493,6 +494,7 @@ export default function DetailsScreen() {
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
   const [episodeSelectorVisible, setEpisodeSelectorVisible] = useState(false);
   const [moreOptionsVisible, setMoreOptionsVisible] = useState(false);
+  const [manualSelectDownloadOnly, setManualSelectDownloadOnly] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
@@ -956,6 +958,60 @@ export default function DetailsScreen() {
     dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
     abortControllerRef: playback.abortControllerRef,
   });
+
+  // ===== Downloads =====
+  const { startDownload } = useDownloads();
+
+  const handleDownloadResult = useCallback(async (result: import('@/services/api').NZBResult) => {
+    if (!titleId) return;
+    manualSelect.closeManualPicker();
+    showToast('Resolving stream for download...', { tone: 'info', duration: 3000 });
+    try {
+      // Inject episode context for debrid pack selection (packs have targetSeason but no targetEpisode)
+      const ep = activeEpisode || nextUpEpisode;
+      const resolveResult = ep ? {
+        ...result,
+        attributes: {
+          ...(result.attributes || {}),
+          targetSeason: result.attributes?.targetSeason || String(ep.seasonNumber),
+          targetEpisode: result.attributes?.targetEpisode || String(ep.episodeNumber),
+          targetEpisodeCode: result.attributes?.targetEpisodeCode ||
+            `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
+        },
+      } : result;
+      const resolution = await apiService.resolvePlayback(resolveResult);
+      if (!resolution.webdavPath) {
+        showToast('Could not resolve stream path', { tone: 'danger', duration: 3000 });
+        return;
+      }
+      await startDownload({
+        titleId,
+        mediaType: ep ? 'episode' : 'movie',
+        title: ep ? `${title} S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}` : title,
+        posterUrl: headerImage,
+        streamPath: resolution.webdavPath,
+        fileSize: result.serviceType === 'debrid'
+          ? (resolution.fileSize || result.sizeBytes || 0)   // debrid: provider knows actual file size
+          : (result.sizeBytes || resolution.fileSize || 0),  // usenet: indexer size > NZB-parsed size
+        seriesTitle: isSeries ? title : undefined,
+        seasonNumber: ep?.seasonNumber,
+        episodeNumber: ep?.episodeNumber,
+        episodeName: ep?.name,
+        imdbId: imdbId || undefined,
+        tvdbId: tvdbId || undefined,
+        seriesIdentifier: seriesIdentifier || undefined,
+      });
+      showToast('Download started', { tone: 'success', duration: 2000 });
+    } catch (err: any) {
+      showToast(err?.message || 'Download failed', { tone: 'danger', duration: 3000 });
+    }
+  }, [titleId, activeEpisode, nextUpEpisode, title, headerImage, isSeries, startDownload, showToast, manualSelect, imdbId, tvdbId, seriesIdentifier]);
+
+  const handleMenuDownload = useCallback(() => {
+    setMoreOptionsVisible(false);
+    setManualSelectDownloadOnly(true);
+    manualSelect.handleManualSelect();
+  }, [manualSelect]);
 
   // ===== Focus effect: consume next episode from playback navigation =====
   useFocusEffect(
@@ -2215,7 +2271,7 @@ export default function DetailsScreen() {
         <FocusablePressable focusKey="watch-now-mobile" icon="play" onSelect={playback.handleWatchNow} style={styles.iconActionButton} loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} showReadyPip={playback.prequeueReady} badge={(() => { if (isSeries) return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined; return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined; })()} />
         <FocusablePressable focusKey="manual-selection-mobile" icon="search" onSelect={manualSelect.handleManualSelect} style={styles.iconActionButton} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} />
         {isSeries && <FocusablePressable focusKey="watch-management-mobile" icon="checkmark-done" onSelect={() => watchActions.setBulkWatchModalVisible(true)} style={styles.iconActionButton} />}
-        {(isSeries || isInContinueWatching) && <FocusablePressable focusKey="more-options-mobile" icon="ellipsis-vertical" accessibilityLabel="More options" onSelect={() => setMoreOptionsVisible(true)} style={styles.iconActionButton} />}
+        {(isMobile || isSeries || isInContinueWatching) && <FocusablePressable focusKey="more-options-mobile" icon="ellipsis-vertical" accessibilityLabel="More options" onSelect={() => setMoreOptionsVisible(true)} style={styles.iconActionButton} />}
         <FocusablePressable focusKey="watchlist-toggle-mobile" icon={watchActions.isWatchlisted ? 'bookmark' : 'bookmark-outline'} onSelect={watchActions.handleToggleWatchlist} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatchlisted && styles.watchlistActionButtonActive]} />
         {!isSeries && <FocusablePressable focusKey="watch-state-toggle-mobile" icon={watchActions.isWatched ? 'eye' : 'eye-outline'} accessibilityLabel={watchActions.watchStateButtonLabel} onSelect={watchActions.handleToggleWatched} loading={watchActions.watchlistBusy} style={[styles.iconActionButton, watchActions.isWatched && styles.watchStateButtonActive]} disabled={watchActions.watchlistBusy} />}
         {(trailersLoading || hasAvailableTrailer) && <FocusablePressable focusKey="watch-trailer-mobile" icon="videocam" accessibilityLabel={trailerButtonLabel} onSelect={handleWatchTrailer} loading={trailersLoading} style={styles.iconActionButton} disabled={trailerButtonDisabled} />}
@@ -2584,9 +2640,11 @@ export default function DetailsScreen() {
         error={manualSelect.manualError}
         results={manualSelect.manualResults}
         healthChecks={manualHealthChecks}
-        onClose={manualSelect.closeManualPicker}
+        onClose={() => { setManualSelectDownloadOnly(false); manualSelect.closeManualPicker(); }}
         onSelect={manualSelect.handleManualSelection}
         onCheckHealth={checkManualHealth}
+        onDownload={isMobile ? handleDownloadResult : undefined}
+        downloadOnly={manualSelectDownloadOnly}
         theme={theme}
         isWebTouch={isWebTouch}
         isMobile={isMobile}
@@ -2652,6 +2710,17 @@ export default function DetailsScreen() {
                     );
                     return !isSeries ? <DefaultFocus>{removeCWItem}</DefaultFocus> : removeCWItem;
                   })()
+                )}
+                {isMobile && (
+                  <SpatialNavigationFocusableView
+                    onSelect={handleMenuDownload}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
+                        <Ionicons name="download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                        <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
                 )}
                 <SpatialNavigationFocusableView
                   onSelect={() => setMoreOptionsVisible(false)}>

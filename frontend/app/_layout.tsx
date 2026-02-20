@@ -38,6 +38,7 @@ import { StartupDataProvider } from '../components/StartupDataContext';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
+import { DownloadsProvider } from '../components/DownloadsContext';
 import { WatchStatusProvider } from '../components/WatchStatusContext';
 import { MovieReleasesProvider } from '../components/MovieReleasesContext';
 import { NovaThemeProvider } from '../theme';
@@ -97,6 +98,7 @@ function AuthGate() {
           <MultiscreenProvider>
             <MovieReleasesProvider>
               <WatchlistProvider>
+                <DownloadsProvider>
                 <WatchStatusProvider>
                   <ContinueWatchingProvider>
                     <MenuProvider>
@@ -151,6 +153,7 @@ function AuthGate() {
                     </MenuProvider>
                   </ContinueWatchingProvider>
                 </WatchStatusProvider>
+                </DownloadsProvider>
               </WatchlistProvider>
             </MovieReleasesProvider>
           </MultiscreenProvider>

@@ -304,6 +304,7 @@ export interface NZBResult {
   attributes?: Record<string, string>;
   serviceType?: 'usenet' | 'debrid';
   episodeCount?: number; // Number of episodes in pack (0 if not a pack)
+  sizePerFile?: boolean; // True when sizeBytes is per-file (Stremio scrapers), false when total pack
 }
 
 export interface NZBHealthCheck {

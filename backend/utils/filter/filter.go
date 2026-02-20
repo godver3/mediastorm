@@ -329,6 +329,12 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 				isPack := isCompletePack || (len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0) || isMultiEpisodePack
 				effectiveSizeGB := sizeGB
 
+				// Stremio-based scrapers (Torrentio, Comet, AIOStreams) report per-file
+				// size via fileIdx, so sizeBytes is already per-episode. Indexer-based
+				// scrapers (Zilean, Jackett, Nyaa) report full pack size.
+				_, hasFileIndex := result.Attributes["fileIndex"]
+				isSingleEpisode := len(parsed.Episodes) == 1
+
 				if isPack {
 					var episodeCount int
 					if isMultiEpisodePack {
@@ -340,16 +346,38 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 						episodeCount = getPackEpisodeCount(parsed.Seasons, isCompletePack, opts.EpisodeResolver, opts.TotalSeriesEpisodes)
 					}
 					if episodeCount > 0 {
-						effectiveSizeGB = sizeGB / float64(episodeCount)
-						result.EpisodeCount = episodeCount // Pass to frontend for display
-						log.Printf("[filter] Pack detected: %q - %.2f GB / %d episodes = %.2f GB per episode",
-							result.Title, sizeGB, episodeCount, effectiveSizeGB)
+						if hasFileIndex {
+							// Scraper reported a specific file index — sizeBytes is already per-file
+							result.EpisodeCount = episodeCount
+							result.SizePerFile = true
+							log.Printf("[filter] Pack with per-file size: %q - %.2f GB per file (scraper provides fileIndex), %d episodes",
+								result.Title, sizeGB, episodeCount)
+						} else {
+							// Scraper reported total pack size — divide to get per-episode
+							effectiveSizeGB = sizeGB / float64(episodeCount)
+							result.EpisodeCount = episodeCount // Pass to frontend for display
+							log.Printf("[filter] Pack detected: %q - %.2f GB / %d episodes = %.2f GB per episode",
+								result.Title, sizeGB, episodeCount, effectiveSizeGB)
+						}
 					} else {
-						// Complete pack but no season info and no metadata - skip size filter
-						log.Printf("[filter] Complete pack %q with unknown episode count - skipping size filter", result.Title)
-						// Don't apply size filter for packs we can't estimate
-						effectiveSizeGB = 0
+						if hasFileIndex {
+							// Per-file scraper, pack with unknown episode count — still per-file
+							result.SizePerFile = true
+							log.Printf("[filter] Pack with per-file size (unknown ep count): %q - %.2f GB per file",
+								result.Title, sizeGB)
+						} else {
+							// Complete pack but no season info and no metadata - skip size filter
+							log.Printf("[filter] Complete pack %q with unknown episode count - skipping size filter", result.Title)
+							effectiveSizeGB = 0
+						}
 					}
+				} else if hasFileIndex && !isSingleEpisode {
+					// Stremio scraper with fileIndex but title didn't parse as a pack
+					// (e.g., "Show + OVAs [BD]" with no S01 pattern). Since the title
+					// doesn't identify a single episode, the size is likely per-file.
+					result.SizePerFile = true
+					log.Printf("[filter] Per-file size (ambiguous title): %q - %.2f GB per file (scraper provides fileIndex, no single episode in title)",
+						result.Title, sizeGB)
 				}
 
 				if effectiveSizeGB > opts.MaxSizeEpisodeGB {

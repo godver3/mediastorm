@@ -135,6 +135,7 @@ export default function PlayerScreen() {
     titleId: titleIdParam,
     imdbId: imdbIdParam,
     tvdbId: tvdbIdParam,
+    seriesIdentifier: seriesIdentifierParam,
     shuffleMode: shuffleModeParam,
     preExtractedSubtitles: preExtractedSubtitlesParam,
     subtitleDebug: subtitleDebugParam,
@@ -377,6 +378,10 @@ export default function PlayerScreen() {
   const tvdbId = useMemo(() => {
     return Array.isArray(tvdbIdParam) ? tvdbIdParam[0] : tvdbIdParam;
   }, [tvdbIdParam]);
+
+  const seriesIdentifier = useMemo(() => {
+    return Array.isArray(seriesIdentifierParam) ? seriesIdentifierParam[0] : seriesIdentifierParam;
+  }, [seriesIdentifierParam]);
 
   const shuffleMode = useMemo(() => {
     const raw = Array.isArray(shuffleModeParam) ? shuffleModeParam[0] : shuffleModeParam;
@@ -1583,11 +1588,12 @@ export default function PlayerScreen() {
   );
 
   // Build media item ID based on type using stable identifiers
+  // Must match the pattern in usePlayback.ts getItemIdForProgress() and checkResumeProgress.ts
   const mediaItemId = useMemo(() => {
     if (mediaType === 'episode') {
-      // For episodes, build ID from series identifier and episode numbers
-      // Priority: titleId > imdbId > tvdbId
-      const seriesId = titleId || imdbId || tvdbId;
+      // For episodes, use seriesIdentifier (titleId stripped of episode suffix) to match details page
+      // Fallback: titleId > imdbId > tvdbId
+      const seriesId = seriesIdentifier || titleId || imdbId || tvdbId;
       if (seriesId && seasonNumber && episodeNumber) {
         // Format: seriesId:S01E02
         const seasonStr = seasonNumber.toString().padStart(2, '0');
@@ -1599,7 +1605,7 @@ export default function PlayerScreen() {
     }
     // For movies, use titleId > imdbId > tvdbId > sourcePath
     return titleId || imdbId || tvdbId || sourcePath || title || 'unknown';
-  }, [mediaType, titleId, imdbId, tvdbId, seasonNumber, episodeNumber, sourcePath, title]);
+  }, [mediaType, seriesIdentifier, titleId, imdbId, tvdbId, seasonNumber, episodeNumber, sourcePath, title]);
 
   // Memoize media info to prevent hook recreation on every render
   const mediaInfo = useMemo(() => {
