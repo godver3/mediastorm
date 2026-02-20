@@ -453,6 +453,7 @@ func main() {
 	// Create scheduler service for background tasks
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	schedulerService.SetEPGService(epgService)
+	schedulerService.SetHistoryService(historyService)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
 	// Register admin UI routes

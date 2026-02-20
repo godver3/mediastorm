@@ -5492,6 +5492,7 @@ func (h *AdminUIHandler) TraktImportHistory(w http.ResponseWriter, r *http.Reque
 	successCount := 0
 	errorCount := 0
 	var errors []string
+	var historyUpdates []models.WatchHistoryUpdate
 
 	watched := true
 	for _, item := range req.Items {
@@ -5549,13 +5550,17 @@ func (h *AdminUIHandler) TraktImportHistory(w http.ResponseWriter, r *http.Reque
 			historyItem.Year = item.Year
 		}
 
-		_, err := h.historyService.UpdateWatchHistory(req.ProfileID, historyItem)
-		if err != nil {
-			errorCount++
-			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
-		} else {
-			successCount++
-		}
+		historyUpdates = append(historyUpdates, historyItem)
+	}
+
+	// Use ImportWatchHistory (no scrobble) to avoid creating duplicate watch events
+	// on Trakt when importing items that already came from Trakt.
+	imported, err := h.historyService.ImportWatchHistory(req.ProfileID, historyUpdates)
+	if err != nil {
+		errorCount = len(historyUpdates)
+		errors = append(errors, err.Error())
+	} else {
+		successCount = imported
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -5627,6 +5632,7 @@ func (h *AdminUIHandler) PlexImportHistory(w http.ResponseWriter, r *http.Reques
 	successCount := 0
 	errorCount := 0
 	var errors []string
+	var historyUpdates []models.WatchHistoryUpdate
 
 	watched := true
 	for _, item := range req.Items {
@@ -5692,13 +5698,17 @@ func (h *AdminUIHandler) PlexImportHistory(w http.ResponseWriter, r *http.Reques
 			historyItem.Year = item.Year
 		}
 
-		_, err := h.historyService.UpdateWatchHistory(req.ProfileID, historyItem)
-		if err != nil {
-			errorCount++
-			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
-		} else {
-			successCount++
-		}
+		historyUpdates = append(historyUpdates, historyItem)
+	}
+
+	// Use ImportWatchHistory (no scrobble) to avoid creating duplicate watch events
+	// when importing from an external source.
+	imported, err := h.historyService.ImportWatchHistory(req.ProfileID, historyUpdates)
+	if err != nil {
+		errorCount = len(historyUpdates)
+		errors = append(errors, err.Error())
+	} else {
+		successCount = imported
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -15,6 +15,7 @@ import (
 	"novastream/models"
 	"novastream/services/backup"
 	"novastream/services/epg"
+	"novastream/services/history"
 	"novastream/services/plex"
 	"novastream/services/trakt"
 	"novastream/services/watchlist"
@@ -28,6 +29,7 @@ type Service struct {
 	watchlistService *watchlist.Service
 	epgService       *epg.Service
 	backupService    *backup.Service
+	historyService   *history.Service
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -243,6 +245,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executePlaylistRefresh(task)
 	case config.ScheduledTaskTypeBackup:
 		result, err = s.executeBackup(task)
+	case config.ScheduledTaskTypeTraktHistorySync:
+		result, err = s.executeTraktHistorySync(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -369,6 +373,13 @@ func (s *Service) SetBackupService(backupService *backup.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.backupService = backupService
+}
+
+// SetHistoryService sets the history service for scheduled history sync tasks.
+func (s *Service) SetHistoryService(historyService *history.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.historyService = historyService
 }
 
 // executePlexWatchlistSync syncs a Plex watchlist to/from a profile
@@ -1635,4 +1646,438 @@ func (s *Service) executeBackup(task config.ScheduledTask) (SyncResult, error) {
 
 	log.Printf("[scheduler] %s", msg)
 	return SyncResult{Count: 1, Message: msg}, nil
+}
+
+// executeTraktHistorySync syncs watch history between Trakt and local
+func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	historySvc := s.historyService
+	s.mu.RUnlock()
+
+	if historySvc == nil {
+		return SyncResult{}, errors.New("history service not configured")
+	}
+
+	traktAccountID := task.Config["traktAccountId"]
+	profileID := task.Config["profileId"]
+
+	if traktAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing traktAccountId or profileId in task config")
+	}
+
+	syncDirection := task.Config["syncDirection"]
+	if syncDirection == "" {
+		syncDirection = "trakt_to_local"
+	}
+	dryRun := task.Config["dryRun"] == "true"
+
+	if dryRun {
+		log.Printf("[scheduler] DRY RUN mode enabled for trakt history sync")
+	}
+
+	// Load settings to get Trakt account
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	traktAccount := settings.Trakt.GetAccountByID(traktAccountID)
+	if traktAccount == nil {
+		return SyncResult{}, errors.New("trakt account not found")
+	}
+
+	if traktAccount.AccessToken == "" {
+		return SyncResult{}, errors.New("trakt account not authenticated")
+	}
+
+	// Update client with account credentials
+	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
+
+	// Check token expiry and refresh if needed
+	if time.Now().Unix() >= traktAccount.ExpiresAt {
+		log.Printf("[scheduler] Trakt token expired, refreshing...")
+		tokenResp, err := s.traktClient.RefreshAccessToken(traktAccount.RefreshToken)
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("refresh trakt token: %w", err)
+		}
+		traktAccount.AccessToken = tokenResp.AccessToken
+		traktAccount.RefreshToken = tokenResp.RefreshToken
+		traktAccount.ExpiresAt = tokenResp.CreatedAt + int64(tokenResp.ExpiresIn)
+		settings.Trakt.UpdateAccount(*traktAccount)
+		if err := s.configManager.Save(settings); err != nil {
+			log.Printf("[scheduler] Warning: failed to save refreshed Trakt token: %v", err)
+		}
+	}
+
+	switch syncDirection {
+	case "trakt_to_local":
+		return s.syncTraktHistoryToLocal(task, traktAccount, profileID, dryRun)
+	case "local_to_trakt":
+		return s.syncLocalHistoryToTrakt(task, traktAccount, profileID, dryRun)
+	case "bidirectional":
+		return s.syncHistoryBidirectional(task, traktAccount, profileID, dryRun)
+	default:
+		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", syncDirection)
+	}
+}
+
+// syncTraktHistoryToLocal imports watch history from Trakt into local
+func (s *Service) syncTraktHistoryToLocal(task config.ScheduledTask, traktAccount *config.TraktAccount, profileID string, dryRun bool) (SyncResult, error) {
+	result := SyncResult{DryRun: dryRun}
+
+	s.mu.RLock()
+	historySvc := s.historyService
+	s.mu.RUnlock()
+
+	// Determine incremental cursor: lastRunAt - 5min safety buffer
+	var since time.Time
+	if task.LastRunAt != nil {
+		since = task.LastRunAt.Add(-5 * time.Minute)
+	}
+
+	log.Printf("[scheduler] Fetching Trakt watch history since=%v", since)
+
+	items, err := s.traktClient.GetWatchHistorySince(traktAccount.AccessToken, since)
+	if err != nil {
+		return result, fmt.Errorf("fetch trakt history: %w", err)
+	}
+
+	log.Printf("[scheduler] Fetched %d Trakt history items", len(items))
+
+	// Deduplicate Trakt history items by mediaType:itemID, keeping only the most
+	// recent watch per item. Trakt returns items in reverse chronological order
+	// (newest first), so the first occurrence of each key is the most recent.
+	watched := true
+	seen := make(map[string]bool)
+	var updates []models.WatchHistoryUpdate
+
+	for _, item := range items {
+		update := s.traktHistoryItemToUpdate(item, &watched)
+		if update == nil {
+			continue
+		}
+
+		key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(update.ItemID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if dryRun {
+			name := ""
+			if item.Movie != nil {
+				name = item.Movie.Title
+			} else if item.Show != nil && item.Episode != nil {
+				name = fmt.Sprintf("%s S%02dE%02d", item.Show.Title, item.Episode.Season, item.Episode.Number)
+			}
+			result.ToAdd = append(result.ToAdd, config.DryRunItem{
+				Name:      name,
+				MediaType: update.MediaType,
+				ID:        update.ItemID,
+			})
+			continue
+		}
+
+		updates = append(updates, *update)
+	}
+
+	log.Printf("[scheduler] %d unique items after dedup (from %d Trakt history entries)", len(seen), len(items))
+
+	if dryRun {
+		result.Count = len(result.ToAdd)
+		return result, nil
+	}
+
+	if len(updates) > 0 {
+		imported, err := historySvc.ImportWatchHistory(profileID, updates)
+		if err != nil {
+			return result, fmt.Errorf("import watch history: %w", err)
+		}
+		result.Count = imported
+		log.Printf("[scheduler] Imported %d/%d unique items from Trakt history", imported, len(updates))
+	}
+
+	return result, nil
+}
+
+// syncLocalHistoryToTrakt exports local watch history to Trakt
+func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccount *config.TraktAccount, profileID string, dryRun bool) (SyncResult, error) {
+	result := SyncResult{DryRun: dryRun}
+
+	s.mu.RLock()
+	historySvc := s.historyService
+	s.mu.RUnlock()
+
+	// Get all local watch history for this profile
+	items, err := historySvc.ListWatchHistory(profileID)
+	if err != nil {
+		return result, fmt.Errorf("list local history: %w", err)
+	}
+
+	// Filter to items watched since last run (with 5min safety buffer)
+	var since time.Time
+	if task.LastRunAt != nil {
+		since = task.LastRunAt.Add(-5 * time.Minute)
+	}
+
+	// Fetch existing Trakt history to avoid creating duplicate watch events.
+	// Trakt's AddToHistory creates a NEW event each call — it is not idempotent.
+	traktItems, err := s.traktClient.GetWatchHistorySince(traktAccount.AccessToken, since)
+	if err != nil {
+		return result, fmt.Errorf("fetch trakt history for dedup: %w", err)
+	}
+
+	// Build a set of items already on Trakt, keyed by mediaType:itemID
+	watched := true
+	alreadyOnTrakt := make(map[string]bool)
+	for _, ti := range traktItems {
+		update := s.traktHistoryItemToUpdate(ti, &watched)
+		if update != nil {
+			key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(update.ItemID)
+			alreadyOnTrakt[key] = true
+		}
+	}
+	log.Printf("[scheduler] Found %d unique items already on Trakt history", len(alreadyOnTrakt))
+
+	// Group episodes by show for batch API call
+	type showKey struct {
+		tvdbID int
+	}
+	showEpisodes := make(map[showKey][]trakt.SyncEpisode)
+	showIDs := make(map[showKey]trakt.SyncIDs)
+	var movies []trakt.SyncMovie
+	exported := 0
+	skipped := 0
+
+	for _, item := range items {
+		if !item.Watched {
+			continue
+		}
+
+		// Skip items before the incremental cursor
+		if !since.IsZero() && item.WatchedAt.Before(since) {
+			continue
+		}
+
+		// Skip items already on Trakt to avoid duplicate watch events
+		localKey := strings.ToLower(item.MediaType) + ":" + strings.ToLower(item.ItemID)
+		if alreadyOnTrakt[localKey] {
+			skipped++
+			continue
+		}
+
+		if item.MediaType == "movie" {
+			var tmdbID, tvdbID int
+			var imdbID string
+			if item.ExternalIDs != nil {
+				if id, ok := item.ExternalIDs["tmdb"]; ok {
+					tmdbID, _ = strconv.Atoi(id)
+				}
+				if id, ok := item.ExternalIDs["tvdb"]; ok {
+					tvdbID, _ = strconv.Atoi(id)
+				}
+				if id, ok := item.ExternalIDs["imdb"]; ok {
+					imdbID = id
+				}
+			}
+			if tmdbID == 0 && tvdbID == 0 && imdbID == "" {
+				continue
+			}
+
+			if dryRun {
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{
+					Name:      item.Name,
+					MediaType: "movie",
+					ID:        item.ItemID,
+				})
+				exported++
+				continue
+			}
+
+			movies = append(movies, trakt.SyncMovie{
+				WatchedAt: item.WatchedAt.UTC().Format(time.RFC3339),
+				IDs: trakt.SyncIDs{
+					TMDB: tmdbID,
+					TVDB: tvdbID,
+					IMDB: imdbID,
+				},
+			})
+			exported++
+		} else if item.MediaType == "episode" {
+			var tvdbID int
+			if item.ExternalIDs != nil {
+				if id, ok := item.ExternalIDs["tvdb"]; ok {
+					tvdbID, _ = strconv.Atoi(id)
+				}
+			}
+			if tvdbID == 0 || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+				continue
+			}
+
+			if dryRun {
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{
+					Name:      fmt.Sprintf("%s S%02dE%02d", item.SeriesName, item.SeasonNumber, item.EpisodeNumber),
+					MediaType: "episode",
+					ID:        item.ItemID,
+				})
+				exported++
+				continue
+			}
+
+			sk := showKey{tvdbID: tvdbID}
+			showEpisodes[sk] = append(showEpisodes[sk], trakt.SyncEpisode{
+				Number:    item.EpisodeNumber,
+				WatchedAt: item.WatchedAt.UTC().Format(time.RFC3339),
+			})
+			if _, exists := showIDs[sk]; !exists {
+				showIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
+			}
+			exported++
+		}
+	}
+
+	log.Printf("[scheduler] Local→Trakt: %d to export, %d skipped (already on Trakt)", exported, skipped)
+
+	if dryRun {
+		result.Count = exported
+		return result, nil
+	}
+
+	// Build SyncShow batch structure
+	var shows []trakt.SyncShow
+	for sk, episodes := range showEpisodes {
+		// Group episodes by season
+		seasonEps := make(map[int][]trakt.SyncEpisode)
+		for _, ep := range episodes {
+			// Find the season number from the local items
+			for _, item := range items {
+				if item.MediaType == "episode" && item.EpisodeNumber == ep.Number {
+					if item.ExternalIDs != nil {
+						if id, ok := item.ExternalIDs["tvdb"]; ok {
+							tvdbID, _ := strconv.Atoi(id)
+							if tvdbID == sk.tvdbID {
+								seasonEps[item.SeasonNumber] = append(seasonEps[item.SeasonNumber], ep)
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+
+		var seasons []trakt.SyncSeason
+		for seasonNum, eps := range seasonEps {
+			seasons = append(seasons, trakt.SyncSeason{
+				Number:   seasonNum,
+				Episodes: eps,
+			})
+		}
+
+		shows = append(shows, trakt.SyncShow{
+			IDs:     showIDs[sk],
+			Seasons: seasons,
+		})
+	}
+
+	if len(movies) > 0 || len(shows) > 0 {
+		syncReq := trakt.SyncHistoryRequest{
+			Movies: movies,
+			Shows:  shows,
+		}
+		resp, err := s.traktClient.AddToHistory(traktAccount.AccessToken, syncReq)
+		if err != nil {
+			return result, fmt.Errorf("add to trakt history: %w", err)
+		}
+		log.Printf("[scheduler] Synced to Trakt: %d movies, %d episodes added", resp.Added.Movies, resp.Added.Episodes)
+	}
+
+	result.Count = exported
+	return result, nil
+}
+
+// syncHistoryBidirectional syncs watch history in both directions
+func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccount *config.TraktAccount, profileID string, dryRun bool) (SyncResult, error) {
+	// Run Trakt → Local first
+	toLocalResult, err := s.syncTraktHistoryToLocal(task, traktAccount, profileID, dryRun)
+	if err != nil {
+		return toLocalResult, fmt.Errorf("trakt to local: %w", err)
+	}
+
+	// Then Local → Trakt
+	toTraktResult, err := s.syncLocalHistoryToTrakt(task, traktAccount, profileID, dryRun)
+	if err != nil {
+		return toTraktResult, fmt.Errorf("local to trakt: %w", err)
+	}
+
+	// Combine results
+	combined := SyncResult{
+		Count:  toLocalResult.Count + toTraktResult.Count,
+		DryRun: dryRun,
+		ToAdd:  append(toLocalResult.ToAdd, toTraktResult.ToAdd...),
+	}
+	return combined, nil
+}
+
+// traktHistoryItemToUpdate converts a Trakt HistoryItem to a WatchHistoryUpdate.
+// Returns nil if the item can't be mapped (missing IDs).
+func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool) *models.WatchHistoryUpdate {
+	update := &models.WatchHistoryUpdate{
+		Watched:   watched,
+		WatchedAt: item.WatchedAt,
+	}
+
+	if item.Type == "movie" && item.Movie != nil {
+		ids := trakt.IDsToMap(item.Movie.IDs)
+
+		// Prefer TMDB > IMDB > TVDB as itemID
+		var itemID string
+		if tmdbID, ok := ids["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := ids["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		} else if tvdbID, ok := ids["tvdb"]; ok && tvdbID != "" {
+			itemID = tvdbID
+		}
+		if itemID == "" {
+			return nil
+		}
+
+		update.MediaType = "movie"
+		update.ItemID = itemID
+		update.Name = item.Movie.Title
+		update.Year = item.Movie.Year
+		update.ExternalIDs = ids
+	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
+		showIDs := trakt.IDsToMap(item.Show.IDs)
+
+		// Build episode-specific composite ID: tmdb:tv:SHOWID:s01e02
+		var seriesID, itemID string
+		if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
+			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
+			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
+		} else if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
+			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
+			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
+		} else if imdbID, ok := showIDs["imdb"]; ok && imdbID != "" {
+			seriesID = fmt.Sprintf("imdb:%s", imdbID)
+			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Episode.Season, item.Episode.Number)
+		}
+		if itemID == "" {
+			return nil
+		}
+
+		update.MediaType = "episode"
+		update.ItemID = itemID
+		update.Name = item.Episode.Title
+		update.Year = item.Show.Year
+		update.ExternalIDs = showIDs
+		update.SeriesID = seriesID
+		update.SeriesName = item.Show.Title
+		update.SeasonNumber = item.Episode.Season
+		update.EpisodeNumber = item.Episode.Number
+	} else {
+		return nil
+	}
+
+	return update
 }
