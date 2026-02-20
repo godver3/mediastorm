@@ -754,3 +754,197 @@ func TestBulkUpdateWatchHistoryClearsProgressWhenMarkingUnwatched(t *testing.T) 
 		t.Fatalf("expected playback progress to be cleared when marking as unwatched, got %d items", len(progressItems))
 	}
 }
+
+// Mock TraktScrobbler that records calls
+type mockTraktScrobbler struct {
+	movieCalls   int
+	episodeCalls int
+}
+
+func (m *mockTraktScrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error {
+	m.movieCalls++
+	return nil
+}
+
+func (m *mockTraktScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+	m.episodeCalls++
+	return nil
+}
+
+func (m *mockTraktScrobbler) IsEnabled() bool {
+	return true
+}
+
+func (m *mockTraktScrobbler) IsEnabledForUser(userID string) bool {
+	return true
+}
+
+func TestImportWatchHistory_NoScrobble(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	scrobbler := &mockTraktScrobbler{}
+	svc.SetTraktScrobbler(scrobbler)
+
+	watched := true
+	updates := []models.WatchHistoryUpdate{
+		{
+			MediaType:     "movie",
+			ItemID:        "tmdb:movie:550",
+			Name:          "Fight Club",
+			Year:          1999,
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			ExternalIDs:   map[string]string{"tmdb": "550", "imdb": "tt0137523"},
+		},
+		{
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:1399:s01e01",
+			Name:          "Winter Is Coming",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			SeriesID:      "tmdb:tv:1399",
+			SeriesName:    "Game of Thrones",
+			ExternalIDs:   map[string]string{"tvdb": "121361"},
+		},
+	}
+
+	imported, err := svc.ImportWatchHistory("user-1", updates)
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+	if imported != 2 {
+		t.Fatalf("expected 2 imported, got %d", imported)
+	}
+
+	// Verify scrobbler was never called
+	if scrobbler.movieCalls != 0 {
+		t.Fatalf("expected 0 movie scrobble calls, got %d", scrobbler.movieCalls)
+	}
+	if scrobbler.episodeCalls != 0 {
+		t.Fatalf("expected 0 episode scrobble calls, got %d", scrobbler.episodeCalls)
+	}
+
+	// Verify items were actually recorded
+	history, err := svc.ListWatchHistory("user-1")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history items, got %d", len(history))
+	}
+}
+
+func TestImportWatchHistory_MostRecentWins(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	watched := true
+	newerTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	olderTime := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Import with newer timestamp first
+	_, err = svc.ImportWatchHistory("user-1", []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:550",
+			Name:        "Fight Club (Newer)",
+			Year:        1999,
+			Watched:     &watched,
+			WatchedAt:   newerTime,
+			ExternalIDs: map[string]string{"tmdb": "550"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() first error = %v", err)
+	}
+
+	// Try to import with older timestamp — should be skipped
+	imported, err := svc.ImportWatchHistory("user-1", []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:550",
+			Name:        "Fight Club (Older)",
+			Year:        1999,
+			Watched:     &watched,
+			WatchedAt:   olderTime,
+			ExternalIDs: map[string]string{"tmdb": "550"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() second error = %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("expected 0 imported (older item should be skipped), got %d", imported)
+	}
+
+	// Verify the newer name is still there
+	history, err := svc.ListWatchHistory("user-1")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(history))
+	}
+	if history[0].Name != "Fight Club (Newer)" {
+		t.Fatalf("expected name 'Fight Club (Newer)', got %q", history[0].Name)
+	}
+}
+
+func TestImportWatchHistory_Dedup(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	watched := true
+	watchedAt := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	updates := []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:550",
+			Name:        "Fight Club",
+			Year:        1999,
+			Watched:     &watched,
+			WatchedAt:   watchedAt,
+			ExternalIDs: map[string]string{"tmdb": "550"},
+		},
+	}
+
+	// First import
+	imported, err := svc.ImportWatchHistory("user-1", updates)
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() first error = %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("expected 1 imported on first run, got %d", imported)
+	}
+
+	// Second import with same data — should return 0 (equal timestamps skipped)
+	imported, err = svc.ImportWatchHistory("user-1", updates)
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() second error = %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("expected 0 imported on re-run (dedup), got %d", imported)
+	}
+
+	// Verify still only 1 item
+	history, err := svc.ListWatchHistory("user-1")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history item after dedup, got %d", len(history))
+	}
+}

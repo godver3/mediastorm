@@ -30,7 +30,8 @@
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
                 Register Trakt accounts and link them to profiles. Each profile can have its own Trakt account for scrobbling.
-                Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get Client ID and Secret.
+                Scrobbling is one-way &mdash; it pushes to Trakt when an item is completed or marked as watched. To pull watch history from Trakt (e.g. items watched in other apps), create a <strong style="color: var(--text-secondary);">Trakt History Sync</strong> scheduled task below.
+                <br>Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get Client ID and Secret.
             </p>
 
             <!-- Trakt Accounts List -->
@@ -99,8 +100,8 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Link each profile to a Trakt account. When a profile watches content, it will sync to their linked Trakt account.
-                <br><strong style="color: var(--text-secondary);">Note:</strong> Syncing only occurs if the linked Trakt account has scrobbling enabled (toggle above).
+                Link each profile to a Trakt account. When a profile watches content, it will automatically scrobble to their linked Trakt account if scrobbling is enabled (one-way push).
+                To sync history in the other direction (e.g. items watched in other apps), use a <strong style="color: var(--text-secondary);">Trakt History Sync</strong> scheduled task.
             </p>
             <div id="profileTraktLinkingList">
                 <!-- Profile linking rows will be rendered here -->
@@ -231,6 +232,7 @@
                         <select id="newTaskType" class="form-select" onchange="onTaskTypeChange()">
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
+                            <option value="trakt_history_sync">Trakt History Sync</option>
                             <option value="backup">System Backup</option>
                         </select>
                     </div>
@@ -292,6 +294,36 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="newTaskTraktProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Trakt History Sync specific config -->
+                    <div id="traktHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Trakt Account</label>
+                            <select id="newTaskHistoryTraktAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Trakt account to sync history from</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="newTaskHistorySyncDirection" class="form-select">
+                                <option value="trakt_to_local" selected>Trakt → Local (Import from Trakt)</option>
+                                <option value="local_to_trakt">Local → Trakt (Export to Trakt)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                            <small class="text-muted">Direction of watch history sync</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskHistoryProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -392,6 +424,7 @@
                         <select id="editTaskType" class="form-select" disabled>
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
+                            <option value="trakt_history_sync">Trakt History Sync</option>
                             <option value="backup">System Backup</option>
                         </select>
                         <small class="text-muted">Task type cannot be changed</small>
@@ -450,6 +483,34 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="editTaskTraktProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Trakt History Sync specific config (edit) -->
+                    <div id="editTraktHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Trakt Account</label>
+                            <select id="editTaskHistoryTraktAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="editTaskHistorySyncDirection" class="form-select">
+                                <option value="trakt_to_local">Trakt → Local (Import from Trakt)</option>
+                                <option value="local_to_trakt">Local → Trakt (Export to Trakt)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskHistoryProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -3535,6 +3596,12 @@
                     const listType = task.config.listType || 'watchlist';
                     const listTypeLabels = { watchlist: 'Watchlist', collection: 'Collection', favorites: 'Favorites', custom: 'Custom' };
                     listTypeLabel = listTypeLabels[listType] || listType;
+                } else if (task.type === 'trakt_history_sync') {
+                    const traktAccount = traktAccounts.find(a => a.id === task.config.traktAccountId);
+                    if (traktAccount) accountName = traktAccount.name || traktAccount.username || 'Trakt Account';
+                    accountSource = 'Trakt';
+                    const dirLabels = { trakt_to_local: 'Import', local_to_trakt: 'Export', bidirectional: 'Bidirectional' };
+                    listTypeLabel = dirLabels[task.config.syncDirection] || 'Import';
                 }
                 const profile = userProfiles.find(p => p.id === task.config.profileId);
                 if (profile) profileName = profile.name || 'Profile';
@@ -3647,6 +3714,7 @@
         switch (type) {
             case 'plex_watchlist_sync': return 'Plex Watchlist';
             case 'trakt_list_sync': return 'Trakt List';
+            case 'trakt_history_sync': return 'Trakt History';
             case 'backup': return 'System Backup';
             default: return type;
         }
@@ -3763,6 +3831,7 @@
         const taskType = document.getElementById('newTaskType').value;
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
         const traktConfig = document.getElementById('traktListSyncConfig');
+        const traktHistoryConfig = document.getElementById('traktHistorySyncConfig');
         const backupConfig = document.getElementById('backupConfig');
         const syncOptions = document.getElementById('syncOptionsConfig');
         const syncDirection = document.getElementById('newTaskSyncDirection');
@@ -3770,7 +3839,17 @@
         // Show/hide config sections based on task type
         plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
         traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
+        traktHistoryConfig.style.display = taskType === 'trakt_history_sync' ? 'block' : 'none';
         backupConfig.style.display = taskType === 'backup' ? 'block' : 'none';
+
+        // Populate Trakt accounts for history sync
+        if (taskType === 'trakt_history_sync') {
+            const historyTraktSelect = document.getElementById('newTaskHistoryTraktAccount');
+            const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
+            historyTraktSelect.innerHTML = connectedTraktAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
+            ).join('');
+        }
 
         // Update sync direction labels based on task type
         if (taskType === 'plex_watchlist_sync') {
@@ -3788,8 +3867,10 @@
         }
 
         // Show sync options and dry run for any sync-type task (not for backup)
+        // But hide generic sync options for trakt_history_sync (it has its own direction control)
         const isSyncTask = taskType.includes('sync');
-        syncOptions.style.display = isSyncTask ? 'block' : 'none';
+        const isHistorySync = taskType === 'trakt_history_sync';
+        syncOptions.style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
     }
 
@@ -3907,19 +3988,33 @@
                     return;
                 }
             }
+        } else if (taskType === 'trakt_history_sync') {
+            config.traktAccountId = document.getElementById('newTaskHistoryTraktAccount').value;
+            config.profileId = document.getElementById('newTaskHistoryProfile').value;
+            config.syncDirection = document.getElementById('newTaskHistorySyncDirection').value;
+
+            if (!config.traktAccountId || !config.profileId) {
+                showToast('Please select a Trakt account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'backup') {
             config.retentionDays = String(parseInt(document.getElementById('newBackupRetentionDays').value) || 30);
             config.retentionCount = String(parseInt(document.getElementById('newBackupRetentionCount').value) || 10);
         }
 
-        // Add sync options for sync-type tasks
-        if (taskType.includes('sync')) {
+        // Add sync options for sync-type tasks (but not trakt_history_sync which has its own direction)
+        if (taskType.includes('sync') && taskType !== 'trakt_history_sync') {
             config.syncDirection = document.getElementById('newTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('newTaskDeleteBehavior').value;
             if (config.syncDirection === 'bidirectional') {
                 config.conflictResolution = document.getElementById('newTaskConflictResolution').value;
             }
             // Add dry run option
+            if (document.getElementById('newTaskDryRun').checked) {
+                config.dryRun = 'true';
+            }
+        } else if (taskType === 'trakt_history_sync') {
+            // Add dry run option for history sync
             if (document.getElementById('newTaskDryRun').checked) {
                 config.dryRun = 'true';
             }
@@ -4057,6 +4152,7 @@
         // Hide all config sections first
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editTraktListSyncConfig').style.display = 'none';
+        document.getElementById('editTraktHistorySyncConfig').style.display = 'none';
         document.getElementById('editBackupConfig').style.display = 'none';
 
         // Set config values for Plex watchlist sync
@@ -4085,6 +4181,22 @@
             }
         }
 
+        // Set config values for Trakt history sync
+        if (task.type === 'trakt_history_sync' && task.config) {
+            document.getElementById('editTaskHistoryTraktAccount').value = task.config.traktAccountId || '';
+            document.getElementById('editTaskHistoryProfile').value = task.config.profileId || '';
+            document.getElementById('editTaskHistorySyncDirection').value = task.config.syncDirection || 'trakt_to_local';
+            document.getElementById('editTraktHistorySyncConfig').style.display = 'block';
+
+            // Populate Trakt accounts for history sync edit
+            const historyTraktSelect = document.getElementById('editTaskHistoryTraktAccount');
+            const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
+            historyTraktSelect.innerHTML = connectedTraktAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
+            ).join('');
+            historyTraktSelect.value = task.config.traktAccountId || '';
+        }
+
         // Set config values for backup task
         if (task.type === 'backup') {
             document.getElementById('editBackupConfig').style.display = 'block';
@@ -4110,11 +4222,12 @@
             `;
         }
 
-        // Set sync options for sync-type tasks
+        // Set sync options for sync-type tasks (but not trakt_history_sync which has its own controls)
         const isSyncTask = task.type.includes('sync');
-        document.getElementById('editSyncOptionsConfig').style.display = isSyncTask ? 'block' : 'none';
+        const isHistorySync = task.type === 'trakt_history_sync';
+        document.getElementById('editSyncOptionsConfig').style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
 
-        if (isSyncTask && task.config) {
+        if (isSyncTask && !isHistorySync && task.config) {
             document.getElementById('editTaskSyncDirection').value = task.config.syncDirection || 'source_to_target';
             document.getElementById('editTaskDeleteBehavior').value = task.config.deleteBehavior || 'additive';
             document.getElementById('editTaskConflictResolution').value = task.config.conflictResolution || 'source_wins';
@@ -4123,6 +4236,8 @@
             // Show/hide conflict resolution based on sync direction
             const conflictGroup = document.getElementById('editConflictResolutionGroup');
             conflictGroup.style.display = (task.config.syncDirection === 'bidirectional') ? 'block' : 'none';
+        } else if (isHistorySync && task.config) {
+            document.getElementById('editTaskDryRun').checked = task.config.dryRun === 'true';
         }
 
         // Show dry run option for sync tasks
@@ -4225,19 +4340,33 @@
                     return;
                 }
             }
+        } else if (taskType === 'trakt_history_sync') {
+            config.traktAccountId = document.getElementById('editTaskHistoryTraktAccount').value;
+            config.profileId = document.getElementById('editTaskHistoryProfile').value;
+            config.syncDirection = document.getElementById('editTaskHistorySyncDirection').value;
+
+            if (!config.traktAccountId || !config.profileId) {
+                showToast('Please select a Trakt account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'backup') {
             config.retentionDays = String(parseInt(document.getElementById('editBackupRetentionDays').value) || 30);
             config.retentionCount = String(parseInt(document.getElementById('editBackupRetentionCount').value) || 10);
         }
 
-        // Add sync options for sync-type tasks
-        if (taskType.includes('sync')) {
+        // Add sync options for sync-type tasks (but not trakt_history_sync which has its own controls)
+        if (taskType.includes('sync') && taskType !== 'trakt_history_sync') {
             config.syncDirection = document.getElementById('editTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('editTaskDeleteBehavior').value;
             if (config.syncDirection === 'bidirectional') {
                 config.conflictResolution = document.getElementById('editTaskConflictResolution').value;
             }
             // Add dry run option
+            if (document.getElementById('editTaskDryRun').checked) {
+                config.dryRun = 'true';
+            }
+        } else if (taskType === 'trakt_history_sync') {
+            // Add dry run option for history sync
             if (document.getElementById('editTaskDryRun').checked) {
                 config.dryRun = 'true';
             }

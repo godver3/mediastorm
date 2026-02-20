@@ -474,6 +474,7 @@ const (
 	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
 	ScheduledTaskTypePlaylistRefresh   ScheduledTaskType = "playlist_refresh"
 	ScheduledTaskTypeBackup            ScheduledTaskType = "backup"
+	ScheduledTaskTypeTraktHistorySync  ScheduledTaskType = "trakt_history_sync"
 )
 
 // BackupRetentionSettings controls how backups are automatically cleaned up

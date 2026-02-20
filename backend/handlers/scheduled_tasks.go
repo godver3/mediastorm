@@ -122,6 +122,29 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate config for Trakt history sync
+	if req.Type == config.ScheduledTaskTypeTraktHistorySync {
+		if req.Config == nil || req.Config["traktAccountId"] == "" || req.Config["profileId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Trakt history sync requires traktAccountId and profileId in config",
+			})
+			return
+		}
+		// Default syncDirection to trakt_to_local
+		if req.Config["syncDirection"] == "" {
+			req.Config["syncDirection"] = "trakt_to_local"
+		} else if req.Config["syncDirection"] != "trakt_to_local" && req.Config["syncDirection"] != "local_to_trakt" && req.Config["syncDirection"] != "bidirectional" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Invalid sync direction. Must be trakt_to_local, local_to_trakt, or bidirectional",
+			})
+			return
+		}
+	}
+
 	task := config.ScheduledTask{
 		ID:         uuid.New().String(),
 		Type:       req.Type,

@@ -1619,6 +1619,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	}
 
 	progressCleared := false
+	wasAlreadyWatched := item.Watched
 
 	// Update fields
 	if update.Name != "" {
@@ -1683,9 +1684,10 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	// Get scrobbler reference while holding lock (safe since we have write lock)
 	scrobbler := s.traktScrobbler
 
-	// Scrobble to Trakt if marking as watched
-	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
-	if update.Watched != nil && *update.Watched {
+	// Only scrobble if the watched state actually changed from unwatched to watched.
+	// This prevents duplicate Trakt history entries when an already-watched item
+	// is updated again (e.g. metadata refresh, redundant API calls).
+	if update.Watched != nil && *update.Watched && !wasAlreadyWatched {
 		s.doScrobble(scrobbler, userID, item)
 	}
 
@@ -1716,6 +1718,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 	results := make([]models.WatchHistoryItem, 0, len(updates))
+	wasAlreadyWatched := make([]bool, 0, len(updates))
 	now := time.Now().UTC()
 	progressCleared := false
 
@@ -1733,6 +1736,8 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 				Watched:   false,
 			}
 		}
+
+		wasAlreadyWatched = append(wasAlreadyWatched, item.Watched)
 
 		// Update fields
 		if update.Name != "" {
@@ -1802,15 +1807,130 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 	// Get scrobbler reference while holding lock (safe since we have write lock)
 	scrobbler := s.traktScrobbler
 
-	// Scrobble items that were marked as watched
-	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
+	// Only scrobble items whose watched state actually changed from unwatched to watched.
+	// This prevents duplicate Trakt history entries on redundant bulk updates.
 	for i, update := range updates {
-		if update.Watched != nil && *update.Watched {
+		if update.Watched != nil && *update.Watched && !wasAlreadyWatched[i] {
 			s.doScrobble(scrobbler, userID, results[i])
 		}
 	}
 
 	return results, nil
+}
+
+// ImportWatchHistory writes items to watch history without scrobbling back to Trakt.
+// This is used by the scheduled Trakt history sync to avoid creating duplicates.
+// "Most recent wins" — won't overwrite a local item that has a newer WatchedAt.
+// Returns the count of items that were actually newly recorded.
+func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistoryUpdate) (int, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return 0, ErrUserIDRequired
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	perUser := s.ensureWatchHistoryUserLocked(userID)
+	now := time.Now().UTC()
+	progressCleared := false
+	imported := 0
+
+	for _, update := range updates {
+		normalizedItemID := strings.ToLower(update.ItemID)
+		key := makeWatchKey(update.MediaType, normalizedItemID)
+		existing, exists := perUser[key]
+
+		// "Most recent wins" — skip if local item has a newer WatchedAt
+		if exists && existing.Watched {
+			incomingTime := update.WatchedAt
+			if incomingTime.IsZero() {
+				incomingTime = now
+			}
+			if existing.WatchedAt.After(incomingTime) {
+				continue
+			}
+			// Same timestamp means already recorded
+			if existing.WatchedAt.Equal(incomingTime) {
+				continue
+			}
+		}
+
+		item := existing
+		if !exists {
+			item = models.WatchHistoryItem{
+				ID:        key,
+				MediaType: strings.ToLower(update.MediaType),
+				ItemID:    normalizedItemID,
+				Watched:   false,
+			}
+		}
+
+		// Update fields
+		if update.Name != "" {
+			item.Name = update.Name
+		}
+		if update.Year > 0 {
+			item.Year = update.Year
+		}
+		if update.Watched != nil {
+			item.Watched = *update.Watched
+			if *update.Watched {
+				if !update.WatchedAt.IsZero() {
+					item.WatchedAt = update.WatchedAt.UTC()
+				} else {
+					item.WatchedAt = now
+				}
+			}
+			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
+				progressCleared = true
+			}
+		}
+		if update.ExternalIDs != nil {
+			item.ExternalIDs = update.ExternalIDs
+		}
+		if update.SeasonNumber > 0 {
+			item.SeasonNumber = update.SeasonNumber
+		}
+		if update.EpisodeNumber > 0 {
+			item.EpisodeNumber = update.EpisodeNumber
+		}
+		if update.SeriesID != "" {
+			item.SeriesID = update.SeriesID
+		}
+		if update.SeriesName != "" {
+			item.SeriesName = update.SeriesName
+		}
+
+		perUser[key] = item
+
+		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
+			if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
+				progressCleared = true
+			}
+		}
+
+		imported++
+	}
+
+	if imported > 0 {
+		if err := s.saveWatchHistoryLocked(); err != nil {
+			return 0, err
+		}
+	}
+
+	if progressCleared {
+		if err := s.savePlaybackProgressLocked(); err != nil {
+			return 0, err
+		}
+	}
+
+	// Invalidate continue watching cache for this user
+	delete(s.continueWatchingCache, userID)
+
+	// NOTE: No scrobbling — this method is specifically for importing from external sources
+
+	return imported, nil
 }
 
 func (s *Service) ensureWatchHistoryUserLocked(userID string) map[string]models.WatchHistoryItem {

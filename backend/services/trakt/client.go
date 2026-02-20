@@ -403,6 +403,60 @@ func (c *Client) GetAllWatchHistory(accessToken string) ([]HistoryItem, error) {
 	return allItems, nil
 }
 
+// GetWatchHistorySince retrieves watch history since the given time (all pages).
+// If since is zero, fetches all history (same as GetAllWatchHistory).
+func (c *Client) GetWatchHistorySince(accessToken string, since time.Time) ([]HistoryItem, error) {
+	var allItems []HistoryItem
+	page := 1
+	limit := 100
+
+	for {
+		url := traktAPIBaseURL + "/users/me/history"
+		url += fmt.Sprintf("?page=%d&limit=%d", page, limit)
+		if !since.IsZero() {
+			url += "&start_at=" + since.UTC().Format(time.RFC3339)
+		}
+
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		c.setTraktHeaders(req, accessToken)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("trakt api request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("trakt history failed: %s - %s", resp.Status, string(respBody))
+		}
+
+		totalCount := 0
+		if totalHeader := resp.Header.Get("X-Pagination-Item-Count"); totalHeader != "" {
+			totalCount, _ = strconv.Atoi(totalHeader)
+		}
+
+		var items []HistoryItem
+		if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+
+		allItems = append(allItems, items...)
+
+		if len(allItems) >= totalCount || len(items) == 0 {
+			break
+		}
+
+		page++
+	}
+
+	return allItems, nil
+}
+
 // IDsToMap converts IDs struct to a map for compatibility with watchlist service
 func IDsToMap(ids IDs) map[string]string {
 	result := make(map[string]string)
