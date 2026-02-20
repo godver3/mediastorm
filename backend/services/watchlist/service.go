@@ -161,6 +161,12 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 			item.ExternalIDs = copyIDs
 		}
 	}
+	if len(input.Genres) > 0 {
+		item.Genres = append([]string{}, input.Genres...)
+	}
+	if input.RuntimeMinutes != 0 {
+		item.RuntimeMinutes = input.RuntimeMinutes
+	}
 
 	// Update sync tracking fields if provided
 	if strings.TrimSpace(input.SyncSource) != "" {

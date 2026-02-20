@@ -16,6 +16,8 @@ interface UseWatchActionsParams {
   posterUrl: string;
   backdropUrl: string;
   externalIds: Record<string, string> | undefined;
+  genres?: string[];
+  runtimeMinutes?: number;
   activeUserId: string | null;
 
   // From context providers
@@ -28,6 +30,8 @@ interface UseWatchActionsParams {
     posterUrl?: string;
     backdropUrl?: string;
     externalIds?: Record<string, string>;
+    genres?: string[];
+    runtimeMinutes?: number;
   }) => Promise<unknown>;
   removeFromWatchlist: (mediaType: string, titleId: string) => Promise<void>;
   getItem: (mediaType: string, titleId: string) => unknown;
@@ -104,6 +108,8 @@ export function useWatchActions(params: UseWatchActionsParams): WatchActionsResu
     posterUrl,
     backdropUrl,
     externalIds,
+    genres,
+    runtimeMinutes,
     activeUserId,
     addToWatchlist,
     removeFromWatchlist,
@@ -164,6 +170,8 @@ export function useWatchActions(params: UseWatchActionsParams): WatchActionsResu
           posterUrl,
           backdropUrl,
           externalIds,
+          genres,
+          runtimeMinutes,
         });
       }
     } catch (err) {
@@ -175,7 +183,7 @@ export function useWatchActions(params: UseWatchActionsParams): WatchActionsResu
     }
   }, [
     dismissTrailerAutoPlay, addToWatchlist, backdropUrl, canToggleWatchlist,
-    description, externalIds, isWatchlisted, mediaType, posterUrl,
+    description, externalIds, genres, runtimeMinutes, isWatchlisted, mediaType, posterUrl,
     removeFromWatchlist, title, titleId, watchlistBusy, yearNumber,
   ]);
 

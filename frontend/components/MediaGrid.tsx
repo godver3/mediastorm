@@ -24,7 +24,7 @@ import MediaItem, { getMovieReleaseIcon } from './MediaItem';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
-type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[] };
+type DisplayTitle = Title & { uniqueKey?: string; collagePosters?: string[]; cardSubtitle?: string };
 
 // Imperative handle for MediaGrid - allows parent to control scrolling
 export interface MediaGridHandle {
@@ -211,6 +211,13 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
       color: theme.colors.text.secondary,
       textAlign: 'center',
       zIndex: 1,
+    },
+    cardSubtitle: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.accent.primary,
+      textAlign: 'center',
+      zIndex: 1,
+      fontWeight: '600',
     },
     placeholder: {
       flex: 1,
@@ -488,6 +495,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                       end={{ x: 0.5, y: 1 }}
                       style={styles.cardTextGradient}
                     />
+                    {item.cardSubtitle ? <Text style={styles.cardSubtitle}>{item.cardSubtitle}</Text> : null}
                     <Text style={styles.cardTitle} numberOfLines={2}>
                       {item.name}
                     </Text>

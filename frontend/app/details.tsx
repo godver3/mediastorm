@@ -922,6 +922,8 @@ export default function DetailsScreen() {
     posterUrl: posterUrl || '',
     backdropUrl: backdropUrl || '',
     externalIds,
+    genres: detailsGenres,
+    runtimeMinutes: movieDetails?.runtimeMinutes,
     activeUserId,
     addToWatchlist,
     removeFromWatchlist,

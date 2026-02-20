@@ -525,6 +525,8 @@ export interface WatchlistItem {
   backdropUrl?: string;
   addedAt: string;
   externalIds?: Record<string, string>;
+  genres?: string[];
+  runtimeMinutes?: number;
 }
 
 export interface WatchlistUpsertPayload {
@@ -536,6 +538,8 @@ export interface WatchlistUpsertPayload {
   posterUrl?: string;
   backdropUrl?: string;
   externalIds?: Record<string, string>;
+  genres?: string[];
+  runtimeMinutes?: number;
 }
 
 export interface WatchlistStateUpdate {

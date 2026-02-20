@@ -127,6 +127,69 @@ func TestServiceIsolatesUsers(t *testing.T) {
 	}
 }
 
+func TestServiceAddOrUpdateGenresAndRuntime(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("expected service, got error: %v", err)
+	}
+
+	added, err := svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:             "456",
+		MediaType:      "movie",
+		Name:           "Genre Movie",
+		Year:           2025,
+		Genres:         []string{"Action", "Comedy"},
+		RuntimeMinutes: 120,
+	})
+	if err != nil {
+		t.Fatalf("failed to add item: %v", err)
+	}
+
+	if len(added.Genres) != 2 || added.Genres[0] != "Action" || added.Genres[1] != "Comedy" {
+		t.Fatalf("expected genres [Action Comedy], got %v", added.Genres)
+	}
+	if added.RuntimeMinutes != 120 {
+		t.Fatalf("expected runtimeMinutes 120, got %d", added.RuntimeMinutes)
+	}
+
+	// Update with new genres — should replace
+	updated, err := svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "456",
+		MediaType: "movie",
+		Genres:    []string{"Drama"},
+	})
+	if err != nil {
+		t.Fatalf("failed to update item: %v", err)
+	}
+	if len(updated.Genres) != 1 || updated.Genres[0] != "Drama" {
+		t.Fatalf("expected genres [Drama] after update, got %v", updated.Genres)
+	}
+	// RuntimeMinutes should be preserved (not zeroed out)
+	if updated.RuntimeMinutes != 120 {
+		t.Fatalf("expected runtimeMinutes to be preserved as 120, got %d", updated.RuntimeMinutes)
+	}
+
+	// Verify persistence across reload
+	reloaded, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to reload service: %v", err)
+	}
+	items, err := reloaded.List(models.DefaultUserID)
+	if err != nil {
+		t.Fatalf("list after reload returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item after reload, got %d", len(items))
+	}
+	if len(items[0].Genres) != 1 || items[0].Genres[0] != "Drama" {
+		t.Fatalf("expected genres to survive reload, got %v", items[0].Genres)
+	}
+	if items[0].RuntimeMinutes != 120 {
+		t.Fatalf("expected runtimeMinutes to survive reload, got %d", items[0].RuntimeMinutes)
+	}
+}
+
 func TestServiceLoadsLegacyFormat(t *testing.T) {
 	dir := t.TempDir()
 	legacyItems := []models.WatchlistItem{{

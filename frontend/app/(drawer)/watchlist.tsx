@@ -6,6 +6,7 @@ import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
+import { CategoryFilterModal } from '@/components/CategoryFilterModal';
 import { apiService, type Title, type TrendingItem, type PersonDetails, type WatchStatusItem, type SeriesWatchState } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import {
@@ -25,7 +26,7 @@ import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View }
 import { isTablet, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
-type WatchlistTitle = Title & { uniqueKey?: string };
+type WatchlistTitle = Title & { uniqueKey?: string; addedAt?: string; genres?: string[]; runtimeMinutes?: number };
 
 // Number of items to load per batch for progressive loading
 const INITIAL_LOAD_COUNT = 30;
@@ -464,19 +465,21 @@ export default function WatchlistScreen() {
     return null;
   }, [isExploreMode, isPersonMode, isCollectionMode, watchlistError, personError, collectionError, needsProgressiveLoading, exploreError]);
 
-  // Cache years for watchlist items missing year data
+  // Cache years and metadata (genres, runtime) for watchlist items missing data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
+  const [watchlistMetadata, setWatchlistMetadata] = useState<Map<string, { genres?: string[]; runtimeMinutes?: number }>>(new Map());
   // Track which IDs we've already queued for year fetching (prevents re-fetch cascade)
   const fetchedYearIdsRef = useRef<Set<string>>(new Set());
 
-  // Fetch missing year data for watchlist items
+  // Fetch missing year/genre/runtime data for watchlist items
   useEffect(() => {
     if (!items || items.length === 0) {
       return;
     }
 
-    const fetchMissingYears = async () => {
-      const updates = new Map<string, number>();
+    const fetchMissingData = async () => {
+      const yearUpdates = new Map<string, number>();
+      const metaUpdates = new Map<string, { genres?: string[]; runtimeMinutes?: number }>();
       const seriesToFetch: Array<{
         id: string;
         tvdbId?: string;
@@ -491,14 +494,13 @@ export default function WatchlistScreen() {
       }> = [];
 
       for (const item of items) {
-        // Skip if we already have the year (either from API or cached)
-        if (item.year && item.year > 0) {
-          continue;
-        }
-        // Use ref to check (not state) to prevent re-fetch cascade
-        if (fetchedYearIdsRef.current.has(item.id)) {
-          continue;
-        }
+        const needsYear = !(item.year && item.year > 0);
+        const needsGenres = !item.genres || item.genres.length === 0;
+        const needsRuntime = !item.runtimeMinutes;
+
+        // Skip if we have all data or already queued
+        if (!needsYear && !needsGenres && !needsRuntime) continue;
+        if (fetchedYearIdsRef.current.has(item.id)) continue;
 
         const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
 
@@ -547,11 +549,15 @@ export default function WatchlistScreen() {
             const query = seriesToFetch[i];
 
             if (result.details?.title.year && result.details.title.year > 0) {
-              updates.set(query.id, result.details.title.year);
+              yearUpdates.set(query.id, result.details.title.year);
+            }
+            const genres = result.details?.title.genres;
+            if (genres && genres.length > 0) {
+              metaUpdates.set(query.id, { genres });
             }
           }
         } catch (fetchError) {
-          console.warn('Failed to batch fetch series years:', fetchError);
+          console.warn('Failed to batch fetch series details:', fetchError);
         }
       }
 
@@ -564,20 +570,46 @@ export default function WatchlistScreen() {
             name: movie.name,
           });
           if (details?.year && details.year > 0) {
-            updates.set(movie.id, details.year);
+            yearUpdates.set(movie.id, details.year);
+          }
+          const meta: { genres?: string[]; runtimeMinutes?: number } = {};
+          if (details?.genres && details.genres.length > 0) meta.genres = details.genres;
+          if (details?.runtimeMinutes) meta.runtimeMinutes = details.runtimeMinutes;
+          if (Object.keys(meta).length > 0) {
+            metaUpdates.set(movie.id, meta);
           }
         } catch (fetchError) {
-          console.warn(`Failed to fetch movie year for ${movie.name}:`, fetchError);
+          console.warn(`Failed to fetch movie details for ${movie.name}:`, fetchError);
         }
       }
 
-      if (updates.size > 0) {
-        setWatchlistYears((prev) => new Map([...prev, ...updates]));
+      if (yearUpdates.size > 0) {
+        setWatchlistYears((prev) => new Map([...prev, ...yearUpdates]));
+      }
+      if (metaUpdates.size > 0) {
+        setWatchlistMetadata((prev) => new Map([...prev, ...metaUpdates]));
+      }
+
+      // Fire-and-forget: persist backfilled metadata to backend so future loads have it
+      if (activeUserId && (yearUpdates.size > 0 || metaUpdates.size > 0)) {
+        for (const item of items) {
+          const year = yearUpdates.get(item.id);
+          const meta = metaUpdates.get(item.id);
+          if (!year && !meta) continue;
+          apiService.addToWatchlist(activeUserId, {
+            id: item.id,
+            mediaType: item.mediaType,
+            name: item.name,
+            ...(year ? { year } : {}),
+            ...(meta?.genres ? { genres: meta.genres } : {}),
+            ...(meta?.runtimeMinutes ? { runtimeMinutes: meta.runtimeMinutes } : {}),
+          }).catch(() => { /* silent */ });
+        }
       }
     };
 
-    void fetchMissingYears();
-  }, [items]); // Removed watchlistYears from deps - using ref instead
+    void fetchMissingData();
+  }, [items, activeUserId]); // Removed watchlistYears from deps - using ref instead
 
   // Track which movie IDs we've already fetched releases for (avoids re-fetching on re-renders)
   const fetchedReleaseIdsRef = useRef<Set<string>>(new Set());
@@ -678,7 +710,7 @@ export default function WatchlistScreen() {
   ]);
 
   const watchlistTitles = useMemo(() => {
-    const baseTitles = mapWatchlistToTitles(items, watchlistYears);
+    const baseTitles = mapWatchlistToTitles(items, watchlistYears, watchlistMetadata);
     // Merge cached release data for movies
     const titlesWithReleases = baseTitles.map((title) => {
       if (title.mediaType === 'movie') {
@@ -693,11 +725,9 @@ export default function WatchlistScreen() {
       }
       return title;
     });
-    // Enrich with watch status if badge is enabled
-    return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
-      : titlesWithReleases;
-  }, [items, watchlistYears, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+    // Always enrich with watch status on watchlist page (needed for watch status filter + badge)
+    return enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems);
+  }, [items, watchlistYears, watchlistMetadata, movieReleases, isWatched, watchStatusItems, continueWatchingItems]);
 
   // Map continue watching items to titles
   const continueWatchingTitles = useMemo((): WatchlistTitle[] => {
@@ -845,17 +875,114 @@ export default function WatchlistScreen() {
   }, [navigation, tabTitle]);
 
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
+  const [watchStatusFilter, setWatchStatusFilter] = useState<'all' | 'none' | 'partial' | 'complete'>('all');
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [genreFilterVisible, setGenreFilterVisible] = useState(false);
+  const [sortBy, setSortBy] = useState<'added' | 'name' | 'year' | 'duration'>('added');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const filteredTitles = useMemo(() => {
-    if (filter === 'all') return allTitles;
-    return allTitles.filter((title) => title.mediaType === filter);
-  }, [filter, allTitles]);
+  // Mobile dropdown visibility
+  const [sortDropdownVisible, setSortDropdownVisible] = useState(false);
+  const [watchStatusDropdownVisible, setWatchStatusDropdownVisible] = useState(false);
+
+  // Compute available genres from all items (not filtered items)
+  const availableGenres = useMemo(() => {
+    const genreSet = new Set<string>();
+    allTitles.forEach((t) => t.genres?.forEach((g) => genreSet.add(g)));
+    return Array.from(genreSet).sort();
+  }, [allTitles]);
+
+  const handleToggleGenre = useCallback((genre: string) => {
+    setSelectedGenres((prev) =>
+      prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre],
+    );
+  }, []);
+
+  const handleSortSelect = useCallback((sort: 'added' | 'name' | 'year' | 'duration') => {
+    setSortBy((prev) => {
+      if (prev === sort) {
+        setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortDirection(sort === 'name' ? 'asc' : 'desc');
+      }
+      return sort;
+    });
+  }, []);
+
+  const watchStatusLabel = useMemo(() => {
+    switch (watchStatusFilter) {
+      case 'none': return 'Unwatched';
+      case 'partial': return 'Watching';
+      case 'complete': return 'Watched';
+      default: return 'Status';
+    }
+  }, [watchStatusFilter]);
+
+  const watchStatusIcon = useMemo((): keyof typeof Ionicons.glyphMap => {
+    switch (watchStatusFilter) {
+      case 'none': return 'eye-off-outline';
+      case 'partial': return 'play-outline';
+      case 'complete': return 'checkmark-circle-outline';
+      default: return 'eye-outline';
+    }
+  }, [watchStatusFilter]);
+
+  const sortLabel = useMemo(() => {
+    const labels: Record<string, string> = { added: 'Added', name: 'Name', year: 'Year', duration: 'Duration' };
+    const arrow = sortDirection === 'asc' ? '\u2191' : '\u2193';
+    return `${labels[sortBy]} ${arrow}`;
+  }, [sortBy, sortDirection]);
+
+  const filteredAndSortedTitles = useMemo(() => {
+    let result = allTitles;
+    if (filter !== 'all') result = result.filter((t) => t.mediaType === filter);
+    if (watchStatusFilter !== 'all') result = result.filter((t) => (t as WatchlistTitle & { watchState?: string }).watchState === watchStatusFilter);
+    if (selectedGenres.length > 0) result = result.filter((t) => t.genres?.some((g) => selectedGenres.includes(g)));
+    const sorted = [...result];
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case 'added': cmp = ((a as WatchlistTitle).addedAt ?? '').localeCompare((b as WatchlistTitle).addedAt ?? ''); break;
+        case 'name': cmp = a.name.localeCompare(b.name); break;
+        case 'year': cmp = (a.year || 0) - (b.year || 0); break;
+        case 'duration': cmp = ((a as WatchlistTitle).runtimeMinutes || 0) - ((b as WatchlistTitle).runtimeMinutes || 0); break;
+      }
+      return sortDirection === 'desc' ? -cmp : cmp;
+    });
+    // When sorting by duration, show runtime as card subtitle
+    if (sortBy === 'duration') {
+      return sorted.map((item) => {
+        const mins = (item as WatchlistTitle).runtimeMinutes;
+        if (!mins) return item;
+        const hrs = Math.floor(mins / 60);
+        const m = mins % 60;
+        const label = hrs > 0 ? `${hrs}h ${m}m` : `${m}m`;
+        return { ...item, cardSubtitle: label };
+      });
+    }
+    return sorted;
+  }, [allTitles, filter, watchStatusFilter, selectedGenres, sortBy, sortDirection]);
 
   const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
     [
       { key: 'all', label: 'All', icon: 'grid-outline' },
       { key: 'movie', label: 'Movies', icon: 'film-outline' },
       { key: 'series', label: 'TV Shows', icon: 'tv-outline' },
+    ];
+
+  const watchStatusOptions: Array<{ key: 'all' | 'none' | 'partial' | 'complete'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
+    [
+      { key: 'none', label: 'Unwatched', icon: 'eye-off-outline' },
+      { key: 'partial', label: 'Watching', icon: 'play-outline' },
+      { key: 'complete', label: 'Watched', icon: 'checkmark-circle-outline' },
+    ];
+
+  const sortOptions: Array<{ key: 'added' | 'name' | 'year' | 'duration'; label: string; icon: keyof typeof Ionicons.glyphMap }> =
+    [
+      { key: 'added', label: 'Added', icon: 'time-outline' },
+      { key: 'name', label: 'Name', icon: 'text-outline' },
+      { key: 'year', label: 'Year', icon: 'calendar-outline' },
+      { key: 'duration', label: 'Duration', icon: 'hourglass-outline' },
     ];
 
   // Person header component for ListHeaderComponent (scrolls with grid)
@@ -1032,8 +1159,12 @@ export default function WatchlistScreen() {
     if (filter === 'series') {
       return isExploreMode ? 'No TV shows in this list' : 'No TV shows in your watchlist';
     }
+    // If other filters are active (watch status, genre) and produced no results
+    if (watchStatusFilter !== 'all' || selectedGenres.length > 0) {
+      return 'No items match your filters';
+    }
     return isExploreMode ? 'No items in this list' : 'Your watchlist is empty';
-  }, [filter, allTitles.length, isExploreMode, pageTitle]);
+  }, [filter, watchStatusFilter, selectedGenres.length, allTitles.length, isExploreMode, pageTitle]);
 
   // Number of columns based on device type and orientation
   // Mobile: 2, Tablet portrait: 4, Tablet landscape: 6, TV: 6
@@ -1046,7 +1177,7 @@ export default function WatchlistScreen() {
   }, [isLandscape]);
 
   return (
-    <SpatialNavigationRoot isActive={isActive && !bioModalVisible} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <SpatialNavigationRoot isActive={isActive && !bioModalVisible && !genreFilterVisible && !sortDropdownVisible && !watchStatusDropdownVisible} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
@@ -1056,33 +1187,150 @@ export default function WatchlistScreen() {
               <Text style={styles.title}>{pageTitle}</Text>
             </View>
 
-            {/* Filter buttons row - hidden in collection mode and person mode */}
-            {!isCollectionMode && !isPersonMode && (
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.filtersRow}>
-                  {filterOptions.map((option, index) => {
-                    const button = (
+            {/* Filter + Sort controls - hidden in collection mode and person mode */}
+            {!isCollectionMode && !isPersonMode && (Platform.isTV ? (
+              /* TV: expanded spatial navigation buttons in two rows */
+              <>
+                <SpatialNavigationNode orientation="horizontal">
+                  <View style={styles.filtersRow}>
+                    {filterOptions.map((option, index) => {
+                      const button = (
+                        <SpatialFilterButton
+                          key={option.key}
+                          label={option.label}
+                          icon={option.icon}
+                          isActive={filter === option.key}
+                          onSelect={() => setFilter(option.key)}
+                          theme={theme}
+                        />
+                      );
+                      return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
+                    })}
+                    {availableGenres.length > 0 && (
+                      <SpatialFilterButton
+                        label={selectedGenres.length > 0 ? `Genres (${selectedGenres.length})` : 'Genres'}
+                        icon="pricetags-outline"
+                        isActive={selectedGenres.length > 0}
+                        onSelect={() => setGenreFilterVisible(true)}
+                        theme={theme}
+                      />
+                    )}
+                    {watchStatusOptions.map((option) => (
                       <SpatialFilterButton
                         key={option.key}
                         label={option.label}
                         icon={option.icon}
-                        isActive={filter === option.key}
-                        onSelect={() => setFilter(option.key)}
+                        isActive={watchStatusFilter === option.key}
+                        onSelect={() => setWatchStatusFilter((prev) => prev === option.key ? 'all' : option.key)}
                         theme={theme}
                       />
-                    );
-                    // Give first filter button default focus
-                    return index === 0 ? <DefaultFocus key={option.key}>{button}</DefaultFocus> : button;
-                  })}
+                    ))}
+                  </View>
+                </SpatialNavigationNode>
+                <SpatialNavigationNode orientation="horizontal">
+                  <View style={styles.filtersRow}>
+                    <Text style={styles.sortLabelInline}>Sort:</Text>
+                    {sortOptions.map((option) => {
+                      const isActive = sortBy === option.key;
+                      const arrow = isActive ? (sortDirection === 'asc' ? ' \u2191' : ' \u2193') : '';
+                      return (
+                        <SpatialFilterButton
+                          key={option.key}
+                          label={`${option.label}${arrow}`}
+                          icon={option.icon}
+                          isActive={isActive}
+                          onSelect={() => handleSortSelect(option.key)}
+                          theme={theme}
+                        />
+                      );
+                    })}
+                    <Text style={styles.filteredCountTV}>
+                      {filteredAndSortedTitles.length !== allTitles.length
+                        ? `${filteredAndSortedTitles.length} of ${allTitles.length}`
+                        : `${allTitles.length} items`}
+                    </Text>
+                  </View>
+                </SpatialNavigationNode>
+              </>
+            ) : (
+              /* Mobile/Tablet: two compact rows */
+              <>
+                {/* Row 1: Media type chips */}
+                <View style={styles.compactFilterRow}>
+                  {filterOptions.map((option) => (
+                    <Pressable
+                      key={option.key}
+                      onPress={() => setFilter(option.key)}
+                      style={[styles.compactChip, filter === option.key && styles.compactChipActive]}>
+                      <Ionicons
+                        name={option.icon}
+                        size={16}
+                        color={filter === option.key ? theme.colors.accent.primary : theme.colors.text.secondary}
+                      />
+                      <Text style={[styles.compactChipText, filter === option.key && styles.compactChipTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  ))}
                 </View>
-              </SpatialNavigationNode>
-            )}
+
+                {/* Row 2: Sort + Genres + Watch Status + Count */}
+                <View style={styles.compactFilterRow}>
+                  {/* Sort dropdown button */}
+                  <Pressable onPress={() => setSortDropdownVisible(true)} style={[styles.compactIconBtn, styles.compactIconBtnWithLabel]}>
+                    <Ionicons name="swap-vertical" size={16} color={theme.colors.text.secondary} />
+                    <Text style={styles.compactIconBtnLabel}>{sortLabel}</Text>
+                  </Pressable>
+
+                  {/* Genre filter button */}
+                  {availableGenres.length > 0 && (
+                    <Pressable
+                      onPress={() => setGenreFilterVisible(true)}
+                      style={[styles.compactIconBtn, selectedGenres.length > 0 && styles.compactIconBtnActive]}>
+                      <Ionicons
+                        name="pricetags-outline"
+                        size={16}
+                        color={selectedGenres.length > 0 ? theme.colors.accent.primary : theme.colors.text.secondary}
+                      />
+                      {selectedGenres.length > 0 ? (
+                        <View style={styles.filterBadge}>
+                          <Text style={styles.filterBadgeText}>{selectedGenres.length}</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.compactIconBtnLabel}>Genres</Text>
+                      )}
+                    </Pressable>
+                  )}
+
+                  {/* Watch status dropdown button */}
+                  <Pressable
+                    onPress={() => setWatchStatusDropdownVisible(true)}
+                    style={[styles.compactIconBtn, watchStatusFilter !== 'all' && styles.compactIconBtnActive]}>
+                    <Ionicons
+                      name={watchStatusIcon}
+                      size={16}
+                      color={watchStatusFilter !== 'all' ? theme.colors.accent.primary : theme.colors.text.secondary}
+                    />
+                    <Text style={watchStatusFilter !== 'all' ? styles.compactIconBtnLabelActive : styles.compactIconBtnLabel}>
+                      {watchStatusLabel}
+                    </Text>
+                  </Pressable>
+
+                  {/* Filtered count */}
+                  <Text style={styles.filteredCount}>
+                    {filteredAndSortedTitles.length !== allTitles.length
+                      ? `${filteredAndSortedTitles.length} of ${allTitles.length}`
+                      : `${allTitles.length}`}
+                  </Text>
+                </View>
+              </>
+            ))}
 
             {/* Grid content - hide title in collection/person mode since page title already shows it */}
             <MediaGrid
               ref={mediaGridRef}
               title={isCollectionMode || isPersonMode ? '' : pageTitle}
-              items={filteredTitles}
+              items={filteredAndSortedTitles}
               loading={loading}
               error={error}
               onItemPress={handleTitlePress}
@@ -1101,6 +1349,81 @@ export default function WatchlistScreen() {
           </SpatialNavigationNode>
         </View>
       </FixedSafeAreaView>
+
+      {/* Genre Filter Modal */}
+      <CategoryFilterModal
+        visible={genreFilterVisible}
+        onClose={() => setGenreFilterVisible(false)}
+        categories={availableGenres}
+        selectedCategories={selectedGenres}
+        onToggleCategory={handleToggleGenre}
+        onSelectAll={() => setSelectedGenres([...availableGenres])}
+        onClearAll={() => setSelectedGenres([])}
+      />
+
+      {/* Sort Dropdown Modal (mobile only) */}
+      {sortDropdownVisible && !Platform.isTV && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setSortDropdownVisible(false)}>
+          <Pressable style={styles.dropdownOverlay} onPress={() => setSortDropdownVisible(false)}>
+            <View style={styles.dropdownCard}>
+              <Text style={styles.dropdownTitle}>Sort by</Text>
+              {sortOptions.map((option) => {
+                const isActive = sortBy === option.key;
+                const arrow = isActive ? (sortDirection === 'asc' ? ' \u2191' : ' \u2193') : '';
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => { handleSortSelect(option.key); setSortDropdownVisible(false); }}
+                    style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}>
+                    <Ionicons
+                      name={option.icon}
+                      size={18}
+                      color={isActive ? theme.colors.accent.primary : theme.colors.text.secondary}
+                    />
+                    <Text style={[styles.dropdownItemText, isActive && styles.dropdownItemTextActive]}>
+                      {option.label}{arrow}
+                    </Text>
+                    {isActive && (
+                      <Ionicons name="checkmark" size={18} color={theme.colors.accent.primary} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Modal>
+      )}
+
+      {/* Watch Status Dropdown Modal (mobile only) */}
+      {watchStatusDropdownVisible && !Platform.isTV && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setWatchStatusDropdownVisible(false)}>
+          <Pressable style={styles.dropdownOverlay} onPress={() => setWatchStatusDropdownVisible(false)}>
+            <View style={styles.dropdownCard}>
+              <Text style={styles.dropdownTitle}>Watch Status</Text>
+              <Pressable
+                onPress={() => { setWatchStatusFilter('all'); setWatchStatusDropdownVisible(false); }}
+                style={[styles.dropdownItem, watchStatusFilter === 'all' && styles.dropdownItemActive]}>
+                <Ionicons name="eye-outline" size={18} color={watchStatusFilter === 'all' ? theme.colors.accent.primary : theme.colors.text.secondary} />
+                <Text style={[styles.dropdownItemText, watchStatusFilter === 'all' && styles.dropdownItemTextActive]}>All</Text>
+                {watchStatusFilter === 'all' && <Ionicons name="checkmark" size={18} color={theme.colors.accent.primary} />}
+              </Pressable>
+              {watchStatusOptions.map((option) => {
+                const isActive = watchStatusFilter === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => { setWatchStatusFilter(option.key); setWatchStatusDropdownVisible(false); }}
+                    style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}>
+                    <Ionicons name={option.icon} size={18} color={isActive ? theme.colors.accent.primary : theme.colors.text.secondary} />
+                    <Text style={[styles.dropdownItemText, isActive && styles.dropdownItemTextActive]}>{option.label}</Text>
+                    {isActive && <Ionicons name="checkmark" size={18} color={theme.colors.accent.primary} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Modal>
+      )}
 
       {/* Biography Modal - scrollable content with close button */}
       {bioModalVisible && (
@@ -1181,6 +1504,140 @@ const createStyles = (theme: NovaTheme) => {
       flexWrap: 'wrap',
       gap: theme.spacing.lg,
       marginBottom: theme.spacing.lg,
+      alignItems: 'center',
+    },
+    sortLabelInline: {
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * tvScale,
+      lineHeight: theme.typography.label.md.lineHeight * tvScale,
+      color: theme.colors.text.muted,
+      marginRight: Platform.isTV ? -theme.spacing.xs : -theme.spacing.xs,
+    },
+    // Mobile compact filter bar
+    compactFilterRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    compactChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 1.5,
+      borderColor: 'transparent',
+    },
+    compactChipActive: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary + '15',
+    },
+    compactChipText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+    },
+    compactChipTextActive: {
+      color: theme.colors.accent.primary,
+      fontWeight: '600',
+    },
+    compactIconBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 1.5,
+      borderColor: 'transparent',
+    },
+    compactIconBtnWithLabel: {},
+    compactIconBtnActive: {
+      borderColor: theme.colors.accent.primary,
+      backgroundColor: theme.colors.accent.primary + '15',
+    },
+    compactIconBtnLabel: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+    },
+    compactIconBtnLabelActive: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.accent.primary,
+      fontWeight: '600',
+    },
+    filterBadge: {
+      backgroundColor: theme.colors.accent.primary,
+      borderRadius: 8,
+      minWidth: 16,
+      height: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    filterBadgeText: {
+      color: theme.colors.text.inverse,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    filteredCount: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      marginLeft: 'auto' as const,
+    },
+    filteredCountTV: {
+      ...theme.typography.label.md,
+      fontSize: theme.typography.label.md.fontSize * tvScale,
+      lineHeight: theme.typography.label.md.lineHeight * tvScale,
+      color: theme.colors.text.muted,
+      marginLeft: 'auto' as const,
+    },
+    // Sort dropdown (mobile)
+    dropdownOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.spacing.xl,
+    },
+    dropdownCard: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.lg,
+      width: '80%',
+      maxWidth: 300,
+      padding: theme.spacing.md,
+      borderWidth: 1,
+      borderColor: theme.colors.border.subtle,
+    },
+    dropdownTitle: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.secondary,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+    },
+    dropdownItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.md,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
+      borderRadius: theme.radius.sm,
+    },
+    dropdownItemActive: {
+      backgroundColor: theme.colors.accent.primary + '15',
+    },
+    dropdownItemText: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      flex: 1,
+    },
+    dropdownItemTextActive: {
+      color: theme.colors.accent.primary,
+      fontWeight: '600',
     },
     personHeader: {
       marginBottom: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,

@@ -18,6 +18,7 @@ interface MediaItemProps {
     watchState?: 'none' | 'partial' | 'complete'; // Series: no episodes, some, all (excluding specials)
     unwatchedCount?: number; // Number of unwatched episodes
     collagePosters?: string[]; // For explore cards - 4 posters for 2x2 collage
+    cardSubtitle?: string; // Optional subtitle shown above title on card
   };
   onPress?: () => void;
   onLongPress?: () => void;
@@ -255,6 +256,26 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.caption.sm,
       color: theme.colors.text.secondary,
       textAlign: 'center',
+      zIndex: 1,
+    },
+    subtitleCompact: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.accent.primary,
+      textAlign: 'center',
+      fontWeight: '600',
+      zIndex: 1,
+    },
+    subtitleTV: {
+      ...theme.typography.body.sm,
+      ...(isTV
+        ? {
+            fontSize: Math.round(theme.typography.body.sm.fontSize * 1.25 * tvTextScale),
+            lineHeight: Math.round(theme.typography.body.sm.lineHeight * 1.25 * tvTextScale),
+          }
+        : null),
+      color: theme.colors.accent.primary,
+      textAlign: 'center',
+      fontWeight: '600',
       zIndex: 1,
     },
     yearPlaceholder: {
@@ -514,6 +535,7 @@ const MediaItem = memo(function MediaItem({
                 end={{ x: 0.5, y: 1 }}
                 style={styles.textGradient}
               />
+              {title.cardSubtitle ? <Text style={styles.subtitleCompact}>{title.cardSubtitle}</Text> : null}
               <Text style={styles.titleCompact} numberOfLines={2}>
                 {title.name}
               </Text>
@@ -629,6 +651,7 @@ const MediaItem = memo(function MediaItem({
             end={{ x: 0.5, y: 1 }}
             style={styles.textGradient}
           />
+          {title.cardSubtitle ? <Text style={styles.subtitleTV}>{title.cardSubtitle}</Text> : null}
           <Text style={styles.titleTV} numberOfLines={2}>
             {title.name}
           </Text>

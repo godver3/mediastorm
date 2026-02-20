@@ -1,9 +1,17 @@
 import type { Title, WatchlistItem } from './api';
 
+export type WatchlistMappedTitle = Title & {
+  uniqueKey: string;
+  addedAt?: string;
+  genres?: string[];
+  runtimeMinutes?: number;
+};
+
 export function mapWatchlistToTitles(
   items: WatchlistItem[],
   cachedYears?: Map<string, number>,
-): Array<Title & { uniqueKey: string }> {
+  cachedMetadata?: Map<string, { genres?: string[]; runtimeMinutes?: number }>,
+): WatchlistMappedTitle[] {
   if (!items) {
     return [];
   }
@@ -18,6 +26,7 @@ export function mapWatchlistToTitles(
   };
 
   return items.map((item) => {
+    const cached = cachedMetadata?.get(item.id);
     const title: Title = {
       id: item.id,
       name: item.name,
@@ -34,6 +43,12 @@ export function mapWatchlistToTitles(
       network: undefined,
     };
 
-    return { ...title, uniqueKey: `${item.mediaType}:${item.id}` };
+    return {
+      ...title,
+      uniqueKey: `${item.mediaType}:${item.id}`,
+      addedAt: item.addedAt,
+      genres: item.genres ?? cached?.genres,
+      runtimeMinutes: item.runtimeMinutes ?? cached?.runtimeMinutes,
+    };
   });
 }

@@ -74,6 +74,76 @@ func TestWatchlistAddAndList(t *testing.T) {
 	}
 }
 
+func TestWatchlistAddWithGenresAndRuntime(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create watchlist service: %v", err)
+	}
+
+	userSvc, err := users.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create users service: %v", err)
+	}
+
+	allUsers := userSvc.ListAll()
+	if len(allUsers) == 0 {
+		t.Fatalf("expected at least one user to be created")
+	}
+	userID := allUsers[0].ID
+
+	h := handlers.NewWatchlistHandler(svc, userSvc, false)
+
+	body := models.WatchlistUpsert{
+		ID:             "m2",
+		MediaType:      "movie",
+		Name:           "Genre Movie",
+		Genres:         []string{"Action", "Sci-Fi"},
+		RuntimeMinutes: 148,
+	}
+	payload, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/users/"+userID+"/watchlist", bytes.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"userID": userID})
+	rec := httptest.NewRecorder()
+	h.Add(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var item models.WatchlistItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &item); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(item.Genres) != 2 || item.Genres[0] != "Action" || item.Genres[1] != "Sci-Fi" {
+		t.Fatalf("expected genres [Action Sci-Fi], got %v", item.Genres)
+	}
+	if item.RuntimeMinutes != 148 {
+		t.Fatalf("expected runtimeMinutes 148, got %d", item.RuntimeMinutes)
+	}
+
+	// Verify via list
+	reqList := httptest.NewRequest(http.MethodGet, "/api/users/"+userID+"/watchlist", nil)
+	reqList = mux.SetURLVars(reqList, map[string]string{"userID": userID})
+	recList := httptest.NewRecorder()
+	h.List(recList, reqList)
+
+	var items []models.WatchlistItem
+	if err := json.Unmarshal(recList.Body.Bytes(), &items); err != nil {
+		t.Fatalf("failed to decode list response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if len(items[0].Genres) != 2 {
+		t.Fatalf("expected genres to persist in list, got %v", items[0].Genres)
+	}
+	if items[0].RuntimeMinutes != 148 {
+		t.Fatalf("expected runtimeMinutes to persist in list, got %d", items[0].RuntimeMinutes)
+	}
+}
+
 func TestWatchlistUpdateAndRemove(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := watchlist.NewService(dir)
