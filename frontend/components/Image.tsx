@@ -176,7 +176,7 @@ export function Image({
   }
 
   const sourceUrl =
-    typeof source === 'string' ? source : typeof source === 'object' && 'uri' in source ? source.uri : '';
+    typeof source === 'string' ? source : source != null && typeof source === 'object' && 'uri' in source ? source.uri : '';
 
   // Convert to proxy URL if image proxy is enabled (for TMDB images on TV)
   const targetWidth = extractWidthFromStyle(style);
@@ -207,6 +207,13 @@ export function Image({
     }
     onError?.();
   }, [sourceUrl, finalSource, onError]);
+
+  // Bail for empty URLs — avoids RN's "source.uri should not be an empty string"
+  // warning and the wasted render cycle that comes with it.
+  // Placed after all hooks to satisfy React's rules of hooks.
+  if (!sourceUrl && typeof source !== 'number') {
+    return <View style={style} />;
+  }
 
   if (hasExpoImage && ExpoImageModule) {
     const ExpoImage = ExpoImageModule.Image;

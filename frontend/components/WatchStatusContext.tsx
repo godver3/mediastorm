@@ -18,10 +18,16 @@ interface WatchStatusContextValue {
 
 const WatchStatusContext = createContext<WatchStatusContextValue | undefined>(undefined);
 
+interface WSState {
+  items: WatchStatusItem[];
+  loading: boolean;
+  error: string | null;
+}
+
+const INITIAL_WS_STATE: WSState = { items: [], loading: false, error: null };
+
 export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [items, setItems] = useState<WatchStatusItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<WSState>(INITIAL_WS_STATE);
   const { activeUser } = useUserProfiles();
   const { startupData, ready: startupReady } = useStartupData();
   const hydratedFromStartup = useRef(false);
@@ -36,29 +42,24 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const refresh = useCallback(async () => {
     if (!activeUser?.id) {
-      setItems([]);
+      setState({ items: [], loading: false, error: null });
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
       const watchStatus = await apiService.getWatchStatus(activeUser.id);
-      setItems(watchStatus || []);
+      setState({ items: watchStatus || [], loading: false, error: null });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load watch status';
       console.error('Failed to fetch watch status:', err);
 
       // Handle auth errors gracefully
-      if (message.includes('401') || message.includes('AUTH_INVALID_PIN')) {
-        setError('Authentication failed');
-      } else {
-        setError(message);
-      }
-      setItems([]);
-    } finally {
-      setLoading(false);
+      const errorMsg = message.includes('401') || message.includes('AUTH_INVALID_PIN')
+        ? 'Authentication failed'
+        : message;
+      setState({ items: [], loading: false, error: errorMsg });
     }
   }, [activeUser?.id]);
 
@@ -69,9 +70,7 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
     // Hydrate from startup bundle if available (avoids separate HTTP request)
     if (startupData?.watchHistory && !hydratedFromStartup.current) {
-      setItems(startupData.watchHistory || []);
-      setLoading(false);
-      setError(null);
+      setState({ items: startupData.watchHistory || [], loading: false, error: null });
       hydratedFromStartup.current = true;
       return;
     }
@@ -88,18 +87,18 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const isWatched = useCallback(
     (mediaType: string, id: string): boolean => {
       const key = makeKey(mediaType, id);
-      const item = items.find((i) => makeKey(i.mediaType, i.itemId) === key);
+      const item = state.items.find((i) => makeKey(i.mediaType, i.itemId) === key);
       return item?.watched ?? false;
     },
-    [items],
+    [state.items],
   );
 
   const getItem = useCallback(
     (mediaType: string, id: string): WatchStatusItem | undefined => {
       const key = makeKey(mediaType, id);
-      return items.find((i) => makeKey(i.mediaType, i.itemId) === key);
+      return state.items.find((i) => makeKey(i.mediaType, i.itemId) === key);
     },
-    [items],
+    [state.items],
   );
 
   const toggleWatchStatus = useCallback(
@@ -111,16 +110,16 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         const updatedItem = await apiService.toggleWatchStatus(activeUser.id, mediaType, id, metadata);
 
-        setItems((prev) => {
+        setState((prev) => {
           const key = makeKey(mediaType, id);
-          const existingIndex = prev.findIndex((i) => makeKey(i.mediaType, i.itemId) === key);
+          const existingIndex = prev.items.findIndex((i) => makeKey(i.mediaType, i.itemId) === key);
 
           if (existingIndex >= 0) {
-            const updated = [...prev];
+            const updated = [...prev.items];
             updated[existingIndex] = updatedItem;
-            return updated;
+            return { ...prev, items: updated };
           } else {
-            return [updatedItem, ...prev];
+            return { ...prev, items: [updatedItem, ...prev.items] };
           }
         });
       } catch (err) {
@@ -141,16 +140,16 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         const updatedItem = await apiService.updateWatchStatus(activeUser.id, update);
 
-        setItems((prev) => {
+        setState((prev) => {
           const key = makeKey(update.mediaType, update.itemId);
-          const existingIndex = prev.findIndex((i) => makeKey(i.mediaType, i.itemId) === key);
+          const existingIndex = prev.items.findIndex((i) => makeKey(i.mediaType, i.itemId) === key);
 
           if (existingIndex >= 0) {
-            const updated = [...prev];
+            const updated = [...prev.items];
             updated[existingIndex] = updatedItem;
-            return updated;
+            return { ...prev, items: updated };
           } else {
-            return [updatedItem, ...prev];
+            return { ...prev, items: [updatedItem, ...prev.items] };
           }
         });
       } catch (err) {
@@ -171,9 +170,9 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         await apiService.removeWatchStatus(activeUser.id, mediaType, id);
 
-        setItems((prev) => {
+        setState((prev) => {
           const key = makeKey(mediaType, id);
-          return prev.filter((i) => makeKey(i.mediaType, i.itemId) !== key);
+          return { ...prev, items: prev.items.filter((i) => makeKey(i.mediaType, i.itemId) !== key) };
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to remove watch status';
@@ -193,8 +192,8 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         const updatedItems = await apiService.bulkUpdateWatchStatus(activeUser.id, updates);
 
-        setItems((prev) => {
-          const updated = [...prev];
+        setState((prev) => {
+          const updated = [...prev.items];
 
           updatedItems.forEach((updatedItem) => {
             const key = makeKey(updatedItem.mediaType, updatedItem.itemId);
@@ -207,7 +206,7 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
           });
 
-          return updated;
+          return { ...prev, items: updated };
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to bulk update watch status';
@@ -221,9 +220,9 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   // Memoize context value to prevent unnecessary consumer re-renders
   const value = useMemo<WatchStatusContextValue>(
     () => ({
-      items,
-      loading,
-      error,
+      items: state.items,
+      loading: state.loading,
+      error: state.error,
       isWatched,
       getItem,
       toggleWatchStatus,
@@ -232,18 +231,7 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       removeWatchStatus,
       refresh,
     }),
-    [
-      items,
-      loading,
-      error,
-      isWatched,
-      getItem,
-      toggleWatchStatus,
-      updateWatchStatus,
-      bulkUpdateWatchStatus,
-      removeWatchStatus,
-      refresh,
-    ],
+    [state, isWatched, getItem, toggleWatchStatus, updateWatchStatus, bulkUpdateWatchStatus, removeWatchStatus, refresh],
   );
 
   return <WatchStatusContext.Provider value={value}>{children}</WatchStatusContext.Provider>;

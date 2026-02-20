@@ -44,10 +44,16 @@ const isAuthError = (err: unknown) => {
   return candidate.code === 'AUTH_INVALID_PIN' || candidate.status === 401;
 };
 
+interface CWState {
+  items: SeriesWatchState[];
+  loading: boolean;
+  error: string | null;
+}
+
+const INITIAL_CW_STATE: CWState = { items: [], loading: true, error: null };
+
 export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [items, setItems] = useState<SeriesWatchState[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<CWState>(INITIAL_CW_STATE);
   const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
   const { startupData, ready: startupReady } = useStartupData();
@@ -56,14 +62,13 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
   const refresh = useCallback(
     async (options?: { silent?: boolean }) => {
       if (!activeUserId) {
-        setItems([]);
-        setLoading(false);
+        setState({ items: [], loading: false, error: null });
         return;
       }
 
       // Only set loading state if not silent refresh
       if (!options?.silent) {
-        setLoading(true);
+        setState((prev) => ({ ...prev, loading: true }));
       }
       try {
         console.log('[ContinueWatching] refresh() called', { silent: options?.silent, source: new Error().stack?.split('\n')[2]?.trim() });
@@ -153,18 +158,16 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
           };
         });
 
-        setItems(normaliseItems(itemsWithProgress));
-        setError(null);
+        setState({ items: normaliseItems(itemsWithProgress), loading: false, error: null });
       } catch (err) {
         const message = formatError(err);
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to load continue watching:', err);
-        setError(message);
-        setItems([]);
+        setState({ items: [], loading: false, error: message });
       } finally {
-        // Only clear loading state if not silent refresh
+        // Only clear loading state if not silent refresh (already handled in success/error)
         if (!options?.silent) {
-          setLoading(false);
+          setState((prev) => ({ ...prev, loading: false }));
         }
       }
     },
@@ -176,8 +179,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
       return;
     }
     if (!activeUserId) {
-      setItems([]);
-      setLoading(false);
+      setState({ items: [], loading: false, error: null });
       hydratedFromStartup.current = false;
       return;
     }
@@ -186,9 +188,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
     // are already computed), so we just set items directly — no JS-side processing.
     if (startupData?.continueWatching && !hydratedFromStartup.current) {
       console.log('[ContinueWatching] Hydrating from startup bundle');
-      setItems(normaliseItems(startupData.continueWatching));
-      setLoading(false);
-      setError(null);
+      setState({ items: normaliseItems(startupData.continueWatching), loading: false, error: null });
       hydratedFromStartup.current = true;
       return;
     }
@@ -218,7 +218,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
         return response;
       } catch (err) {
         const message = formatError(err);
-        setError(message);
+        setState((prev) => ({ ...prev, error: message }));
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to record episode watch:', err);
         throw err;
@@ -233,10 +233,10 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
       try {
         await apiService.hideFromContinueWatching(userId, seriesId);
         // Optimistically remove item from local state
-        setItems((prev) => prev.filter((item) => item.seriesId !== seriesId));
+        setState((prev) => ({ ...prev, items: prev.items.filter((item) => item.seriesId !== seriesId) }));
       } catch (err) {
         const message = formatError(err);
-        setError(message);
+        setState((prev) => ({ ...prev, error: message }));
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to hide from continue watching:', err);
         throw err;
@@ -247,16 +247,14 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
 
   const value = useMemo<ContinueWatchingContextValue>(
     () => ({
-      items,
-      // Only use own loading state - don't cascade userLoading changes to all consumers
-      // This prevents re-renders when UserProfilesContext.loading changes
-      loading,
-      error,
+      items: state.items,
+      loading: state.loading,
+      error: state.error,
       refresh,
       recordEpisodeWatch,
       hideFromContinueWatching,
     }),
-    [items, loading, error, refresh, recordEpisodeWatch, hideFromContinueWatching],
+    [state, refresh, recordEpisodeWatch, hideFromContinueWatching],
   );
 
   return <ContinueWatchingContext.Provider value={value}>{children}</ContinueWatchingContext.Provider>;

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, startTransition, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { apiService, type Title } from '@/services/api';
 
 type ReleaseData = {
@@ -39,7 +39,9 @@ export const MovieReleasesProvider: React.FC<{ children: React.ReactNode }> = ({
     if (__DEV__) {
       console.log(`[MovieReleasesContext] Flushing ${updates.size} release updates to state`);
     }
-    setReleases((prev) => new Map([...prev, ...updates]));
+    startTransition(() => {
+      setReleases((prev) => new Map([...prev, ...updates]));
+    });
   }, []);
 
   // Queue release updates and schedule debounced flush

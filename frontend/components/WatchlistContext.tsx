@@ -55,10 +55,16 @@ const isAuthError = (err: unknown) => {
   return candidate.code === 'AUTH_INVALID_PIN' || candidate.status === 401;
 };
 
+interface WLState {
+  items: WatchlistItem[];
+  loading: boolean;
+  error: string | null;
+}
+
+const INITIAL_WL_STATE: WLState = { items: [], loading: true, error: null };
+
 export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [items, setItems] = useState<WatchlistItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<WLState>(INITIAL_WL_STATE);
   const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
   const { startupData, ready: startupReady } = useStartupData();
@@ -74,29 +80,26 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const refresh = useCallback(
     async (options?: { silent?: boolean }) => {
       if (!activeUserId) {
-        setItems([]);
-        setLoading(false);
+        setState({ items: [], loading: false, error: null });
         return;
       }
 
       // Only set loading state if not silent refresh
       if (!options?.silent) {
-        setLoading(true);
+        setState((prev) => ({ ...prev, loading: true }));
       }
       try {
         const response = await apiService.getWatchlist(activeUserId);
-        setItems(normaliseItems(response));
-        setError(null);
+        setState({ items: normaliseItems(response), loading: false, error: null });
       } catch (err) {
         const message = errorMessage(err);
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to load watchlist:', err);
-        setError(message);
-        setItems([]);
+        setState({ items: [], loading: false, error: message });
       } finally {
-        // Only clear loading state if not silent refresh
+        // Only clear loading state if not silent refresh (already handled in success/error)
         if (!options?.silent) {
-          setLoading(false);
+          setState((prev) => ({ ...prev, loading: false }));
         }
       }
     },
@@ -108,16 +111,13 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     if (!activeUserId) {
-      setItems([]);
-      setLoading(false);
+      setState({ items: [], loading: false, error: null });
       hydratedFromStartup.current = false;
       return;
     }
     // Hydrate from startup bundle if available (avoids separate HTTP request)
     if (startupData?.watchlist && !hydratedFromStartup.current) {
-      setItems(normaliseItems(startupData.watchlist));
-      setLoading(false);
-      setError(null);
+      setState({ items: normaliseItems(startupData.watchlist), loading: false, error: null });
       hydratedFromStartup.current = true;
       return;
     }
@@ -137,16 +137,15 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const userId = requireUserId();
         const response = await apiService.addToWatchlist(userId, payload);
         const item = { ...response, mediaType: response.mediaType.toLowerCase() };
-        setItems((current) => {
+        setState((prev) => {
           const key = toKey(item.mediaType, item.id);
-          const withoutItem = current.filter((existing) => toKey(existing.mediaType, existing.id) !== key);
-          return [item, ...withoutItem];
+          const withoutItem = prev.items.filter((existing) => toKey(existing.mediaType, existing.id) !== key);
+          return { ...prev, items: [item, ...withoutItem], error: null };
         });
-        setError(null);
         return item;
       } catch (err) {
         const message = errorMessage(err);
-        setError(message);
+        setState((prev) => ({ ...prev, error: message }));
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to add to watchlist:', err);
         throw err;
@@ -161,18 +160,18 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const userId = requireUserId();
         const response = await apiService.updateWatchlistState(userId, mediaType, id, update);
         const item = { ...response, mediaType: response.mediaType.toLowerCase() };
-        setItems((current) => {
+        setState((prev) => {
           const key = toKey(item.mediaType, item.id);
-          const next = current.map((existing) => (toKey(existing.mediaType, existing.id) === key ? item : existing));
+          const next = prev.items.map((existing) => (toKey(existing.mediaType, existing.id) === key ? item : existing));
           if (!next.some((existing) => toKey(existing.mediaType, existing.id) === key)) {
             next.unshift(item);
           }
-          return next;
+          return { ...prev, items: next };
         });
         return item;
       } catch (err) {
         const message = errorMessage(err);
-        setError(message);
+        setState((prev) => ({ ...prev, error: message }));
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to update watchlist state:', err);
         throw err;
@@ -186,10 +185,13 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const userId = requireUserId();
         await apiService.removeFromWatchlist(userId, mediaType, id);
-        setItems((current) => current.filter((item) => toKey(item.mediaType, item.id) !== toKey(mediaType, id)));
+        setState((prev) => ({
+          ...prev,
+          items: prev.items.filter((item) => toKey(item.mediaType, item.id) !== toKey(mediaType, id)),
+        }));
       } catch (err) {
         const message = errorMessage(err);
-        setError(message);
+        setState((prev) => ({ ...prev, error: message }));
         const log = isAuthError(err) ? console.warn : console.error;
         log('Failed to remove from watchlist:', err);
         throw err;
@@ -199,17 +201,15 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   const value = useMemo<WatchlistContextValue>(() => {
-    const index = new Map(items.map((item) => [toKey(item.mediaType, item.id), item]));
+    const index = new Map(state.items.map((item) => [toKey(item.mediaType, item.id), item]));
 
     const isInWatchlist = (mediaType: string, id: string) => index.has(toKey(mediaType, id));
     const getItem = (mediaType: string, id: string) => index.get(toKey(mediaType, id));
 
     return {
-      items,
-      // Only use own loading state - don't cascade userLoading changes to all consumers
-      // This prevents re-renders when UserProfilesContext.loading changes
-      loading,
-      error,
+      items: state.items,
+      loading: state.loading,
+      error: state.error,
       refresh,
       addToWatchlist,
       removeFromWatchlist,
@@ -217,7 +217,7 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isInWatchlist,
       getItem,
     };
-  }, [items, loading, error, refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState]);
+  }, [state, refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState]);
 
   return <WatchlistContext.Provider value={value}>{children}</WatchlistContext.Provider>;
 };

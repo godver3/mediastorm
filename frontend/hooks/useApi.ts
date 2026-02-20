@@ -29,6 +29,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debouncedValue;
 }
 
+interface TrendingState {
+  data: TrendingItem[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
 // Hook for trending movies
 export function useTrendingMovies(
   userId?: string | null,
@@ -38,9 +44,7 @@ export function useTrendingMovies(
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const { startupData, ready: startupReady } = useStartupData();
-  const [data, setData] = useState<TrendingItem[] | null>(null);
-  const [loading, setLoading] = useState(enabled);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<TrendingState>({ data: null, loading: enabled, error: null });
   const [refreshToken, setRefreshToken] = useState(0);
   const hydratedFromStartup = useRef(false);
 
@@ -51,16 +55,14 @@ export function useTrendingMovies(
 
   useEffect(() => {
     if (!isReady || !enabled) {
-      setLoading(false);
+      setState((prev) => ({ ...prev, loading: false }));
       return;
     }
 
     // Hydrate from startup bundle if available (avoids separate HTTP request)
     if (startupData?.trendingMovies && !hydratedFromStartup.current && refreshToken === 0) {
       console.log('[useTrendingMovies] Hydrating from startup bundle');
-      setData(startupData.trendingMovies.items);
-      setLoading(false);
-      setError(null);
+      setState({ data: startupData.trendingMovies.items, loading: false, error: null });
       hydratedFromStartup.current = true;
       return;
     }
@@ -73,8 +75,7 @@ export function useTrendingMovies(
     let cancelled = false;
     const fetchData = async () => {
       try {
-        setLoading(true);
-        setError(null);
+        setState((prev) => ({ ...prev, loading: true, error: null }));
         console.log('[useTrendingMovies] Fetching with userId:', userId, 'hideUnreleased:', hideUnreleased, 'hideWatched:', hideWatched);
         // Without limit, getTrendingMovies returns TrendingItem[]
         const result = await apiService.getTrendingMovies(
@@ -95,15 +96,11 @@ export function useTrendingMovies(
           const first = items[0];
           console.log('[useTrendingMovies] First item:', first.title.name, 'certification:', first.title.certification);
         }
-        setData(items);
+        setState({ data: items, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
         console.error('[useTrendingMovies] Error:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch trending movies');
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        setState((prev) => ({ ...prev, loading: false, error: err instanceof Error ? err.message : 'Failed to fetch trending movies' }));
       }
     };
 
@@ -117,7 +114,7 @@ export function useTrendingMovies(
   }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
-  return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);
+  return useMemo(() => ({ data: state.data, loading: state.loading, error: state.error, refetch }), [state, refetch]);
 }
 
 // Hook for trending TV shows
@@ -129,9 +126,7 @@ export function useTrendingTVShows(
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const { startupData, ready: startupReady } = useStartupData();
-  const [data, setData] = useState<TrendingItem[] | null>(null);
-  const [loading, setLoading] = useState(enabled);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<TrendingState>({ data: null, loading: enabled, error: null });
   const [refreshToken, setRefreshToken] = useState(0);
   const hydratedFromStartup = useRef(false);
 
@@ -142,16 +137,14 @@ export function useTrendingTVShows(
 
   useEffect(() => {
     if (!isReady || !enabled) {
-      setLoading(false);
+      setState((prev) => ({ ...prev, loading: false }));
       return;
     }
 
     // Hydrate from startup bundle if available (avoids separate HTTP request)
     if (startupData?.trendingSeries && !hydratedFromStartup.current && refreshToken === 0) {
       console.log('[useTrendingTVShows] Hydrating from startup bundle');
-      setData(startupData.trendingSeries.items);
-      setLoading(false);
-      setError(null);
+      setState({ data: startupData.trendingSeries.items, loading: false, error: null });
       hydratedFromStartup.current = true;
       return;
     }
@@ -164,8 +157,7 @@ export function useTrendingTVShows(
     let cancelled = false;
     const fetchData = async () => {
       try {
-        setLoading(true);
-        setError(null);
+        setState((prev) => ({ ...prev, loading: true, error: null }));
         console.log('[useTrendingTVShows] Fetching with userId:', userId, 'hideUnreleased:', hideUnreleased, 'hideWatched:', hideWatched);
         const result = await apiService.getTrendingTVShows(
           userId ?? undefined,
@@ -181,14 +173,10 @@ export function useTrendingTVShows(
         // With limit, getTrendingTVShows returns { items, total } — extract items
         const items = Array.isArray(result) ? result : (result as { items: TrendingItem[] }).items;
         console.log('[useTrendingTVShows] Received', items.length, 'items');
-        setData(items);
+        setState({ data: items, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        setState((prev) => ({ ...prev, loading: false, error: err instanceof Error ? err.message : 'Failed to fetch trending TV shows' }));
       }
     };
 
@@ -202,7 +190,7 @@ export function useTrendingTVShows(
   }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
-  return useMemo(() => ({ data, loading, error, refetch }), [data, loading, error, refetch]);
+  return useMemo(() => ({ data: state.data, loading: state.loading, error: state.error, refetch }), [state, refetch]);
 }
 
 // Helper to deduplicate and sort search results
