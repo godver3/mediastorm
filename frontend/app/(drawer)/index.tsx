@@ -593,7 +593,7 @@ function IndexScreen() {
     error: continueWatchingError,
     refresh: refreshContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisible, profileChangeGeneration } =
+  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisibleRef, profileChangeGeneration } =
     useUserProfiles();
   const {
     data: trendingMovies,
@@ -629,8 +629,10 @@ function IndexScreen() {
   );
 
   const pageRef = React.useRef<RNView | null>(null);
-  // Track initial load to skip scroll animations on first render
+  // Track initial load to skip scroll animations and defer hero enrichment
   const isInitialLoadRef = React.useRef(true);
+  // Flips once after initial load period to trigger deferred hero enrichment
+  const [heroEnrichReady, setHeroEnrichReady] = useState(!Platform.isTV);
   // Track focus transitions to detect navigation returns vs initial load vs dep-change re-runs.
   // wasFocusedRef tracks the previous value of `focused` so we only detect actual false→true
   // transitions as "return from navigation," not effect re-runs from dep changes while focused.
@@ -640,11 +642,13 @@ function IndexScreen() {
   const hasAuthFailureRef = React.useRef(false);
   const previousSettingsLoadedAtRef = React.useRef<number | null>(null);
 
-  // Custom list data storage (for MDBList shelves)
-  const [customListData, setCustomListData] = useState<Record<string, TrendingItem[]>>({});
-  const [customListTotals, setCustomListTotals] = useState<Record<string, number>>({});
-  const [customListUnfilteredTotals, setCustomListUnfilteredTotals] = useState<Record<string, number>>({});
-  const [customListLoading, setCustomListLoading] = useState<Record<string, boolean>>({});
+  // Custom list data storage (for MDBList shelves) — batched to reduce render cascades
+  const [customListState, setCustomListState] = useState<{
+    data: Record<string, TrendingItem[]>;
+    totals: Record<string, number>;
+    unfilteredTotals: Record<string, number>;
+    loading: Record<string, boolean>;
+  }>({ data: {}, totals: {}, unfilteredTotals: {}, loading: {} });
   const fetchedListUrlsRef = React.useRef<Set<string>>(new Set());
 
   // Debug: Log data source changes
@@ -743,44 +747,68 @@ function IndexScreen() {
     // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
     const timer = setTimeout(() => {
       const fetchCustomLists = async () => {
-        for (const shelf of customShelves) {
-          if (!shelf.listUrl) continue;
-          // Use shelf's configured limit if set, otherwise use default
+        // Build array of shelves that need fetching
+        const shelvesToFetch = customShelves.filter((shelf) => {
+          if (!shelf.listUrl) return false;
           const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
-          // Create cache key that includes URL, limit, hideUnreleased, hideWatched, and userId so changes trigger re-fetch
           const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}:${hideWatched}:${activeUserId ?? ''}`;
-          // Skip if we've already fetched this URL with these parameters
-          if (fetchedListUrlsRef.current.has(cacheKey)) continue;
-
+          if (fetchedListUrlsRef.current.has(cacheKey)) return false;
           fetchedListUrlsRef.current.add(cacheKey);
-          startTransition(() => {
-            setCustomListLoading((prev) => ({ ...prev, [shelf.id]: true }));
-          });
+          return true;
+        });
 
-          try {
+        if (shelvesToFetch.length === 0) return;
+
+        // Mark all shelves loading in a single state update
+        startTransition(() => {
+          setCustomListState((prev) => {
+            const loading = { ...prev.loading };
+            for (const shelf of shelvesToFetch) loading[shelf.id] = true;
+            return { ...prev, loading };
+          });
+        });
+
+        // Fetch all shelves in parallel
+        const results = await Promise.allSettled(
+          shelvesToFetch.map(async (shelf) => {
+            const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
             const { items, total, unfilteredTotal } = await apiService.getCustomList(
-              shelf.listUrl,
-              activeUserId ?? undefined, // userId for hideWatched filtering
+              shelf.listUrl!,
+              activeUserId ?? undefined,
               itemLimit,
-              undefined, // offset
+              undefined,
               shelf.hideUnreleased,
               hideWatched,
-              shelf.name, // shelf name for progress label
+              shelf.name,
             );
-            startTransition(() => {
-              setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
-              setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
-              // Store unfilteredTotal for explore card logic (falls back to total if not filtering)
-              setCustomListUnfilteredTotals((prev) => ({ ...prev, [shelf.id]: unfilteredTotal ?? total }));
-            });
-          } catch (err) {
-            console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, err);
-          } finally {
-            startTransition(() => {
-              setCustomListLoading((prev) => ({ ...prev, [shelf.id]: false }));
-            });
-          }
-        }
+            return { shelfId: shelf.id, items, total, unfilteredTotal: unfilteredTotal ?? total };
+          }),
+        );
+
+        // Apply all results in a single state update
+        startTransition(() => {
+          setCustomListState((prev) => {
+            const data = { ...prev.data };
+            const totals = { ...prev.totals };
+            const unfilteredTotals = { ...prev.unfilteredTotals };
+            const loading = { ...prev.loading };
+
+            for (let i = 0; i < results.length; i++) {
+              const shelf = shelvesToFetch[i];
+              const result = results[i];
+              if (result.status === 'fulfilled') {
+                data[shelf.id] = result.value.items;
+                totals[shelf.id] = result.value.total;
+                unfilteredTotals[shelf.id] = result.value.unfilteredTotal;
+              } else {
+                console.warn(`Failed to fetch custom list for shelf ${shelf.id}:`, result.reason);
+              }
+              loading[shelf.id] = false;
+            }
+
+            return { data, totals, unfilteredTotals, loading };
+          });
+        });
       };
 
       void fetchCustomLists();
@@ -903,10 +931,7 @@ function IndexScreen() {
     shelfRefs.current[key] = ref;
   }, []);
 
-  const MemoizedDesktopShelf = useMemo(
-    () => React.memo(DesktopShelf, areDesktopShelfPropsEqual),
-    [DesktopShelf, areDesktopShelfPropsEqual],
-  );
+  // VirtualizedShelf is memoized at module level (MemoizedShelf) — no useMemo needed here.
 
   useEffect(() => {
     if (__DEV__ && Platform.OS === 'ios') {
@@ -1021,14 +1046,11 @@ function IndexScreen() {
         // Called when screen loses focus - clear caches to free memory
         if (Platform.isTV) {
           // Clear custom list data (can be refetched when returning)
-          setCustomListData({});
-          setCustomListTotals({});
-          setCustomListUnfilteredTotals({});
+          setCustomListState({ data: {}, totals: {}, unfilteredTotals: {}, loading: {} });
           fetchedListUrlsRef.current.clear();
 
           // Clear overview caches (will be refetched as needed)
-          setSeriesOverviews(new Map());
-          setWatchlistYears(new Map());
+          setSecondaryData({ overviews: new Map(), years: new Map() });
 
           if (__DEV__) {
             console.log('[IndexPage] Cleared caches on blur to free memory');
@@ -1103,15 +1125,20 @@ function IndexScreen() {
         }, 50);
       }
 
-      // Mark initial load as complete
+      // Mark initial load as complete for scroll animations (fast)
       if (isInitialLoadRef.current) {
         setTimeout(() => {
           isInitialLoadRef.current = false;
         }, 150);
+        // Defer hero enrichment until after secondary fetches complete
+        setTimeout(() => {
+          setHeroEnrichReady(true);
+        }, SECONDARY_FETCH_DELAY_MS + 500);
       }
     } else if (Platform.isTV) {
       // No shelves with cards - mark initial load complete anyway
       isInitialLoadRef.current = false;
+      setHeroEnrichReady(true);
     }
 
     // Only refresh if we have backend ready and no auth failure
@@ -1191,11 +1218,13 @@ function IndexScreen() {
     [userSettings?.display?.watchStateIconStyle, settings?.display?.watchStateIconStyle],
   );
 
-  // Cache series overviews for continue watching items
-  const [seriesOverviews, setSeriesOverviews] = useState<Map<string, string>>(new Map());
-
-  // Cache years for watchlist items missing year data
-  const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
+  // Cache series overviews + watchlist years in single state to avoid double renders
+  const [secondaryData, setSecondaryData] = useState<{
+    overviews: Map<string, string>;
+    years: Map<string, number>;
+  }>({ overviews: new Map(), years: new Map() });
+  const seriesOverviews = secondaryData.overviews;
+  const watchlistYears = secondaryData.years;
   // Track which IDs we've already queued for year fetching (prevents re-fetch cascade)
   const fetchedYearIdsRef = useRef<Set<string>>(new Set());
 
@@ -1240,17 +1269,19 @@ function IndexScreen() {
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
   }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, startupData?.continueWatchingTotal]);
 
+  // Merged: fetch series overviews + missing watchlist years in a single effect
+  // Both are deferred by SECONDARY_FETCH_DELAY_MS and update secondaryData in one startTransition
   useEffect(() => {
-    if (!continueWatchingItems || continueWatchingItems.length === 0) {
-      return;
-    }
-    if (KILL_SERIES_OVERVIEWS) { console.log('[KILL] Series overviews disabled'); return; }
     // Don't fire until startup bundle has settled to avoid duplicate fetches
     if (!startupReady) return;
+    const hasOverviewWork = continueWatchingItems && continueWatchingItems.length > 0 && !KILL_SERIES_OVERVIEWS;
+    const hasYearWork = watchlistItems && watchlistItems.length > 0 && !KILL_WATCHLIST_YEARS;
+    if (!hasOverviewWork && !hasYearWork) return;
 
     // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
     const timer = setTimeout(() => {
-      const fetchOverviews = async () => {
+      const fetchOverviews = async (): Promise<Map<string, string>> => {
+        if (!hasOverviewWork) return new Map();
         const updates = new Map<string, string>();
         const queriesToFetch: Array<{
           seriesId: string;
@@ -1261,56 +1292,30 @@ function IndexScreen() {
           year?: number;
         }> = [];
 
-        for (const item of continueWatchingItems) {
-          // Skip if we already have the overview
-          if (seriesOverviews.has(item.seriesId)) {
-            continue;
-          }
-
-          // Check if series is in watchlist first (fast path)
+        for (const item of continueWatchingItems!) {
+          if (seriesOverviews.has(item.seriesId)) continue;
           const watchlistItem = watchlistItems?.find((w) => w.id === item.seriesId);
           if (watchlistItem?.overview) {
             updates.set(item.seriesId, watchlistItem.overview);
             continue;
           }
-
-          // Extract identifiers from seriesId
-          // Format could be: "tvdb:123456", "tvdb:series:123456", "tmdb:tv:123456", etc.
           const tvdbMatch = item.seriesId.match(/tvdb:(?:series:)?(\d+)/);
           const tmdbMatch = item.seriesId.match(/tmdb:(?:tv:)?(\d+)/);
           const tvdbId = tvdbMatch ? tvdbMatch[1] : undefined;
           const tmdbId = tmdbMatch ? tmdbMatch[1] : undefined;
-
           if (tvdbId || tmdbId) {
-            queriesToFetch.push({
-              seriesId: item.seriesId,
-              tvdbId,
-              tmdbId,
-              titleId: item.seriesId,
-              name: item.seriesTitle,
-              year: item.year,
-            });
+            queriesToFetch.push({ seriesId: item.seriesId, tvdbId, tmdbId, titleId: item.seriesId, name: item.seriesTitle, year: item.year });
           }
         }
 
-        // Batch fetch all queries in a single request
         if (queriesToFetch.length > 0) {
           try {
             const batchResponse = await apiService.batchSeriesDetails(
-              queriesToFetch.map((q) => ({
-                tvdbId: q.tvdbId,
-                tmdbId: q.tmdbId,
-                titleId: q.titleId,
-                name: q.name,
-                year: q.year,
-              })),
+              queriesToFetch.map((q) => ({ tvdbId: q.tvdbId, tmdbId: q.tmdbId, titleId: q.titleId, name: q.name, year: q.year })),
             );
-
-            // Process results
             for (let i = 0; i < batchResponse.results.length; i++) {
               const result = batchResponse.results[i];
               const query = queriesToFetch[i];
-
               if (result.details?.title.overview) {
                 updates.set(query.seriesId, result.details.title.overview);
               } else if (result.error) {
@@ -1321,107 +1326,43 @@ function IndexScreen() {
             console.warn('Failed to batch fetch series overviews:', error);
           }
         }
-
-        if (updates.size > 0) {
-          startTransition(() => {
-            setSeriesOverviews((prev) => capMapSize(new Map([...prev, ...updates]), MAX_SERIES_OVERVIEWS_CACHE));
-          });
-        }
+        return updates;
       };
 
-      void fetchOverviews();
-    }, SECONDARY_FETCH_DELAY_MS);
-
-    return () => clearTimeout(timer);
-  }, [continueWatchingItems, watchlistItems, startupReady]);
-
-  // Fetch missing year data for watchlist items
-  // Uses ref to track already-fetched IDs to prevent re-fetch cascade
-  useEffect(() => {
-    if (!watchlistItems || watchlistItems.length === 0) {
-      return;
-    }
-    if (KILL_WATCHLIST_YEARS) { console.log('[KILL] Watchlist years disabled'); return; }
-    // Don't fire until startup bundle has settled to avoid duplicate fetches
-    if (!startupReady) return;
-
-    // Defer until home screen has painted — see SECONDARY_FETCH_DELAY_MS comment
-    const timer = setTimeout(() => {
-      const fetchMissingYears = async () => {
+      const fetchMissingYears = async (): Promise<Map<string, number>> => {
+        if (!hasYearWork) return new Map();
         const updates = new Map<string, number>();
-        const seriesToFetch: Array<{
-          id: string;
-          tvdbId?: string;
-          tmdbId?: string;
-          name: string;
-        }> = [];
-        const moviesToFetch: Array<{
-          id: string;
-          imdbId?: string;
-          tmdbId?: string;
-          name: string;
-        }> = [];
+        const seriesToFetch: Array<{ id: string; tvdbId?: string; tmdbId?: string; name: string }> = [];
+        const moviesToFetch: Array<{ id: string; imdbId?: string; tmdbId?: string; name: string }> = [];
 
-        for (const item of watchlistItems) {
-          // Skip if we already have the year (either from API or cached)
-          if (item.year && item.year > 0) {
-            continue;
-          }
-          // Use ref to check (not state) to prevent re-fetch cascade
-          if (fetchedYearIdsRef.current.has(item.id)) {
-            continue;
-          }
-
+        for (const item of watchlistItems!) {
+          if (item.year && item.year > 0) continue;
+          if (fetchedYearIdsRef.current.has(item.id)) continue;
           const isSeries = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
-
           if (isSeries) {
-            seriesToFetch.push({
-              id: item.id,
-              tvdbId: item.externalIds?.tvdb,
-              tmdbId: item.externalIds?.tmdb,
-              name: item.name,
-            });
+            seriesToFetch.push({ id: item.id, tvdbId: item.externalIds?.tvdb, tmdbId: item.externalIds?.tmdb, name: item.name });
           } else {
-            moviesToFetch.push({
-              id: item.id,
-              imdbId: item.externalIds?.imdb,
-              tmdbId: item.externalIds?.tmdb,
-              name: item.name,
-            });
+            moviesToFetch.push({ id: item.id, imdbId: item.externalIds?.imdb, tmdbId: item.externalIds?.tmdb, name: item.name });
           }
         }
 
-        // Mark all IDs as queued BEFORE fetching to prevent duplicate fetches
-        for (const series of seriesToFetch) {
-          fetchedYearIdsRef.current.add(series.id);
-        }
-        for (const movie of moviesToFetch) {
-          fetchedYearIdsRef.current.add(movie.id);
-        }
+        for (const s of seriesToFetch) fetchedYearIdsRef.current.add(s.id);
+        for (const m of moviesToFetch) fetchedYearIdsRef.current.add(m.id);
 
-        if (seriesToFetch.length === 0 && moviesToFetch.length === 0) {
-          return;
-        }
+        if (seriesToFetch.length === 0 && moviesToFetch.length === 0) return updates;
 
         if (DEBUG_INDEX_RENDERS) {
           console.log(`[IndexPage] Fetching years for ${seriesToFetch.length} series, ${moviesToFetch.length} movies`);
         }
 
-        // Batch fetch series details
         if (seriesToFetch.length > 0) {
           try {
             const batchResponse = await apiService.batchSeriesDetails(
-              seriesToFetch.map((q) => ({
-                tvdbId: q.tvdbId,
-                tmdbId: q.tmdbId,
-                name: q.name,
-              })),
+              seriesToFetch.map((q) => ({ tvdbId: q.tvdbId, tmdbId: q.tmdbId, name: q.name })),
             );
-
             for (let i = 0; i < batchResponse.results.length; i++) {
               const result = batchResponse.results[i];
               const query = seriesToFetch[i];
-
               if (result.details?.title.year && result.details.title.year > 0) {
                 updates.set(query.id, result.details.title.year);
               }
@@ -1431,7 +1372,6 @@ function IndexScreen() {
           }
         }
 
-        // Fetch movie details in parallel (no batch API for movies)
         if (moviesToFetch.length > 0) {
           const movieResults = await Promise.allSettled(
             moviesToFetch.map(async (movie) => {
@@ -1449,19 +1389,29 @@ function IndexScreen() {
             }
           }
         }
-
-        if (updates.size > 0) {
-          startTransition(() => {
-            setWatchlistYears((prev) => capMapSize(new Map([...prev, ...updates]), MAX_WATCHLIST_YEARS_CACHE));
-          });
-        }
+        return updates;
       };
 
-      void fetchMissingYears();
+      // Run both fetches in parallel, then apply all results in a single state update
+      void (async () => {
+        const [overviewUpdates, yearUpdates] = await Promise.all([fetchOverviews(), fetchMissingYears()]);
+        if (overviewUpdates.size > 0 || yearUpdates.size > 0) {
+          startTransition(() => {
+            setSecondaryData((prev) => ({
+              overviews: overviewUpdates.size > 0
+                ? capMapSize(new Map([...prev.overviews, ...overviewUpdates]), MAX_SERIES_OVERVIEWS_CACHE)
+                : prev.overviews,
+              years: yearUpdates.size > 0
+                ? capMapSize(new Map([...prev.years, ...yearUpdates]), MAX_WATCHLIST_YEARS_CACHE)
+                : prev.years,
+            }));
+          });
+        }
+      })();
     }, SECONDARY_FETCH_DELAY_MS);
 
     return () => clearTimeout(timer);
-  }, [watchlistItems, startupReady]);
+  }, [continueWatchingItems, watchlistItems, startupReady]);
 
   // Queue release data fetches for movies when releaseStatus badge is enabled
   // Uses MovieReleasesContext which handles batching, deduplication, and persistence
@@ -1495,7 +1445,7 @@ function IndexScreen() {
       }
 
       // From custom lists
-      for (const items of Object.values(customListData)) {
+      for (const items of Object.values(customListState.data)) {
         for (const item of items) {
           if (
             item.title.mediaType === 'movie' &&
@@ -1545,7 +1495,7 @@ function IndexScreen() {
     return () => clearTimeout(timer);
   }, [
     trendingMovies,
-    customListData,
+    customListState.data,
     continueWatchingItems,
     watchlistItems,
     badgeVisibility,
@@ -1583,12 +1533,12 @@ function IndexScreen() {
   // Generate cards for each custom list shelf
   const customListCards = useMemo(() => {
     const result: Record<string, CardData[]> = {};
-    for (const [shelfId, items] of Object.entries(customListData)) {
+    for (const [shelfId, items] of Object.entries(customListState.data)) {
       const allCards = mapTrendingToCards(items, movieReleases);
       const shelf = customShelves.find((s) => s.id === shelfId);
       // Use filtered total for display, unfiltered total for explore card decision
-      const filteredTotal = customListTotals[shelfId] ?? allCards.length;
-      const unfilteredTotal = customListUnfilteredTotals[shelfId] ?? filteredTotal;
+      const filteredTotal = customListState.totals[shelfId] ?? allCards.length;
+      const unfilteredTotal = customListState.unfilteredTotals[shelfId] ?? filteredTotal;
       // Use shelf's configured limit if set, otherwise use filtered total
       const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : filteredTotal;
 
@@ -1611,12 +1561,12 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves]);
+  }, [customListState, movieReleases, exploreCardPosition, customShelves]);
 
   // Generate titles for each custom list shelf (mobile)
   const customListTitles = useMemo(() => {
     const result: Record<string, (Title & { uniqueKey: string; collagePosters?: string[] })[]> = {};
-    for (const [shelfId, items] of Object.entries(customListData)) {
+    for (const [shelfId, items] of Object.entries(customListState.data)) {
       const titlesWithReleases = items.map((item) => {
         // Merge cached release data for movies
         const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
@@ -1633,8 +1583,8 @@ function IndexScreen() {
         : titlesWithReleases;
       const shelf = customShelves.find((s) => s.id === shelfId);
       // Use filtered total for display, unfiltered total for explore card decision
-      const filteredTotal = customListTotals[shelfId] ?? allTitles.length;
-      const unfilteredTotal = customListUnfilteredTotals[shelfId] ?? filteredTotal;
+      const filteredTotal = customListState.totals[shelfId] ?? allTitles.length;
+      const unfilteredTotal = customListState.unfilteredTotals[shelfId] ?? filteredTotal;
       // Use shelf's configured limit if set, otherwise use filtered total
       const shelfLimit = shelf?.limit && shelf.limit > 0 ? shelf.limit : filteredTotal;
 
@@ -1674,7 +1624,7 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [customListState, movieReleases, exploreCardPosition, customShelves, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
@@ -1853,10 +1803,11 @@ function IndexScreen() {
   }, [trendingTVShows, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
-  const [enrichedHeroData, setEnrichedHeroData] = useState<EnrichedHeroData | null>(null);
+  const [enrichedHeroState, setEnrichedHeroState] = useState<{ data: EnrichedHeroData | null; loading: boolean }>({ data: null, loading: false });
+  const enrichedHeroData = enrichedHeroState.data;
+  const enrichedLoading = enrichedHeroState.loading;
   const enrichedCacheRef = useRef<Map<string, EnrichedHeroData>>(new Map());
   const enrichedAbortRef = useRef<AbortController | null>(null);
-  const [enrichedLoading, setEnrichedLoading] = useState(false);
   const heroContentOpacity = useSharedValue(0);
   const heroContentAnimStyle = useAnimatedStyle(() => ({
     opacity: heroContentOpacity.value,
@@ -1878,7 +1829,7 @@ function IndexScreen() {
   // TV: detect boundary presses (left at first card → open menu)
   const { reportFocusIndex } = useTVFocusBoundary({
     onBoundaryReached: (dir) => {
-      if (dir === 'left' && !isMenuOpen && !profileSelectorVisible) openMenu();
+      if (dir === 'left' && !isMenuOpen && !profileSelectorVisibleRef.current) openMenu();
     },
   });
   // heroImageDimensions removed — now computed inline in TVHero component
@@ -1886,11 +1837,11 @@ function IndexScreen() {
   // Spatial navigation: left-at-edge opens menu (same pattern as settings/watchlist)
   const handleDirectionWithoutMovement = useCallback(
     (direction: string) => {
-      if (direction === 'left' && !isMenuOpen && !profileSelectorVisible) {
+      if (direction === 'left' && !isMenuOpen && !profileSelectorVisibleRef.current) {
         openMenu();
       }
     },
-    [isMenuOpen, profileSelectorVisible, openMenu],
+    [isMenuOpen, openMenu],
   );
 
   // Version mismatch modal state
@@ -1973,8 +1924,7 @@ function IndexScreen() {
   // Fetch enriched hero data (logo, ratings, genres) when focused card changes on TV
   useEffect(() => {
     if (!Platform.isTV || !focusedDesktopCard) {
-      setEnrichedHeroData(null);
-      setEnrichedLoading(false);
+      setEnrichedHeroState({ data: null, loading: false });
       return;
     }
 
@@ -1982,8 +1932,12 @@ function IndexScreen() {
 
     // Skip explore cards
     if (String(focusedDesktopCard.id).startsWith(EXPLORE_CARD_ID_PREFIX)) {
-      setEnrichedHeroData(null);
-      setEnrichedLoading(false);
+      setEnrichedHeroState({ data: null, loading: false });
+      return;
+    }
+
+    // Defer enrichment during initial load (startup) — will trigger after secondary fetches complete
+    if (isInitialLoadRef.current) {
       return;
     }
 
@@ -1992,14 +1946,12 @@ function IndexScreen() {
     // Check cache first — instant, no loading flash
     const cached = enrichedCacheRef.current.get(cacheKey);
     if (cached) {
-      setEnrichedHeroData(cached);
-      setEnrichedLoading(false);
+      setEnrichedHeroState({ data: cached, loading: false });
       return;
     }
 
     // Mark loading — hero content hidden until fetch completes
-    setEnrichedHeroData(null);
-    setEnrichedLoading(true);
+    setEnrichedHeroState({ data: null, loading: true });
 
     // Abort previous in-flight fetch
     enrichedAbortRef.current?.abort();
@@ -2058,14 +2010,13 @@ function IndexScreen() {
         }
 
         if (!controller.signal.aborted) {
-          setEnrichedHeroData(enriched);
-          setEnrichedLoading(false);
+          setEnrichedHeroState({ data: enriched, loading: false });
         }
       } catch (err) {
         // Fetch failed — show fallback title/year/overview
         if (!controller.signal.aborted) {
           console.log('[HeroEnrich] Failed to fetch details:', err);
-          setEnrichedLoading(false);
+          setEnrichedHeroState((prev) => ({ ...prev, loading: false }));
         }
       }
     };
@@ -2075,7 +2026,7 @@ function IndexScreen() {
     return () => {
       controller.abort();
     };
-  }, [focusedDesktopCard]);
+  }, [focusedDesktopCard, heroEnrichReady]);
 
   // Animate hero content opacity — instant hide when loading, smooth fade in when ready
   useEffect(() => {
@@ -2231,6 +2182,15 @@ function IndexScreen() {
     heroScrollRef.current?.scrollTo({ x: mobileHeroIndex * heroSnapInterval, animated: false });
   }, [heroSnapInterval]); // Only trigger on dimension changes, not index changes
 
+  // Refs for volatile data used in navigation callbacks — keeps callback identity
+  // stable so React.memo on shelves isn't defeated by every context update.
+  const continueWatchingItemsRef = useRef(continueWatchingItems);
+  continueWatchingItemsRef.current = continueWatchingItems;
+  const watchlistItemsRef = useRef(watchlistItems);
+  watchlistItemsRef.current = watchlistItems;
+  const seriesOverviewsRef = useRef(seriesOverviews);
+  seriesOverviewsRef.current = seriesOverviews;
+
   const handleCardSelect = useCallback(
     (card: CardData) => {
       const _navStart = Date.now();
@@ -2243,17 +2203,22 @@ function IndexScreen() {
         return;
       }
 
+      // Read volatile data from refs (always current, no callback recreation)
+      const cwItems = continueWatchingItemsRef.current;
+      const wlItems = watchlistItemsRef.current;
+      const overviews = seriesOverviewsRef.current;
+
       // Check if this is a continue watching item
       // For series: ID format is "tmdb:tv:127235:S03E09" (has episode code)
       // For movies: ID format is just "tmdb:movie:1571470" (no episode code)
       const isContinueWatchingSeries =
         card.mediaType === 'series' && typeof card.id === 'string' && card.id.includes(':S');
       const isContinueWatchingMovie =
-        card.mediaType === 'movie' && continueWatchingItems?.some((state) => state.seriesId === String(card.id));
+        card.mediaType === 'movie' && cwItems?.some((state) => state.seriesId === String(card.id));
       const isContinueWatching = isContinueWatchingSeries || isContinueWatchingMovie;
 
       const metadata = isContinueWatchingSeries
-        ? continueWatchingItems?.find((state) => {
+        ? cwItems?.find((state) => {
             // Card ID format: "tmdb:tv:127235:S03E09"
             // Series ID format: "tmdb:tv:127235"
             // Remove the episode code (":S03E09") from the end
@@ -2261,13 +2226,13 @@ function IndexScreen() {
             return state.seriesId === cardIdWithoutEpisode;
           })
         : isContinueWatchingMovie
-          ? continueWatchingItems?.find((state) => state.seriesId === String(card.id))
+          ? cwItems?.find((state) => state.seriesId === String(card.id))
           : null;
 
       // Try to find series overview from card (pre-fetched), cache, watchlist, or fallback to card description
       const seriesId = metadata?.seriesId ?? String(card.id ?? '');
-      const cachedOverview = seriesOverviews.get(seriesId);
-      const watchlistItem = watchlistItems?.find((item) => item.id === seriesId);
+      const cachedOverview = overviews.get(seriesId);
+      const watchlistItem = wlItems?.find((item) => item.id === seriesId);
       // Prioritize: card.seriesOverview (pre-fetched) > cached > watchlist > card.description (episode info - least preferred)
       const seriesOverview = card.seriesOverview ?? cachedOverview ?? watchlistItem?.overview;
 
@@ -2300,7 +2265,7 @@ function IndexScreen() {
       });
       console.log(`[NAV TIMING] handleCardSelect router.push returned at +${Date.now() - _navStart}ms`);
     },
-    [router, continueWatchingItems, watchlistItems, seriesOverviews],
+    [router],
   );
 
   const handleTitlePress = useCallback(
@@ -2315,6 +2280,8 @@ function IndexScreen() {
         return;
       }
 
+      const cwItems = continueWatchingItemsRef.current;
+
       // For TV shows, check if there's continue watching progress to use
       const isTVShow = item.mediaType === 'series' || item.mediaType === 'tv' || item.mediaType === 'show';
       let initialSeason = '';
@@ -2322,7 +2289,7 @@ function IndexScreen() {
 
       if (isTVShow && item.id) {
         // Check if this show has continue watching data
-        const continueWatchingMetadata = continueWatchingItems?.find((state) => state.seriesId === item.id);
+        const continueWatchingMetadata = cwItems?.find((state) => state.seriesId === item.id);
         if (continueWatchingMetadata?.nextEpisode) {
           initialSeason = String(continueWatchingMetadata.nextEpisode.seasonNumber ?? '');
           initialEpisode = String(continueWatchingMetadata.nextEpisode.episodeNumber ?? '');
@@ -2355,14 +2322,15 @@ function IndexScreen() {
       });
       console.log(`[NAV TIMING] handleTitlePress router.push returned at +${Date.now() - _navStart}ms`);
     },
-    [router, continueWatchingItems],
+    [router],
   );
 
   const handleContinueWatchingPress = useCallback(
     (item: Title) => {
       const _navStart = Date.now();
       console.log(`[NAV TIMING] handleContinueWatchingPress fired at ${_navStart} for "${item.name}" (${item.id})`);
-      const metadata = continueWatchingItems?.find((state) => state.seriesId === item.id);
+      const cwItems = continueWatchingItemsRef.current;
+      const metadata = cwItems?.find((state) => state.seriesId === item.id);
       if (!metadata || !metadata.nextEpisode) {
         handleTitlePress(item);
         return;
@@ -2393,7 +2361,7 @@ function IndexScreen() {
         },
       });
     },
-    [continueWatchingItems, handleTitlePress, router],
+    [handleTitlePress, router],
   );
 
   // Consolidated focus handler - called when any shelf card receives focus
@@ -2431,7 +2399,7 @@ function IndexScreen() {
       heroContentOpacity.value = withTiming(0, { duration: debounceMs });
       focusDebounceRef.current = setTimeout(() => {
         // Batch both updates in same render so content swaps while invisible
-        setEnrichedLoading(true);
+        setEnrichedHeroState((prev) => ({ ...prev, loading: true }));
         setFocusedDesktopCard(card);
       }, debounceMs);
     },
@@ -2532,7 +2500,7 @@ function IndexScreen() {
           cards: customListCards[config.id] ?? [],
           autoFocus: false,
           collapseIfEmpty: true,
-          showEmptyState: customListLoading[config.id] ?? true,
+          showEmptyState: customListState.loading[config.id] ?? true,
         };
       }
     }
@@ -2581,7 +2549,7 @@ function IndexScreen() {
     watchlistCards,
     watchlistLoading,
     customListCards,
-    customListLoading,
+    customListState.loading,
     isKidsCuratedMode,
     kidsAllowedShelves,
   ]);
@@ -2675,7 +2643,7 @@ function IndexScreen() {
       if (config.type === 'mdblist' && config.listUrl) {
         mobileShelfDataMap[config.id] = {
           titles: customListTitles[config.id] ?? [],
-          loading: customListLoading[config.id],
+          loading: customListState.loading[config.id],
           onItemPress: handleTitlePress,
         };
       }
@@ -3009,7 +2977,7 @@ function IndexScreen() {
               const shelfItemSize = shelfCardWidth + desktopStyles!.cardSpacing;
               const visibleItems = Math.floor((screenWidth - desktopStyles!.shelfPadding) / shelfItemSize);
               return (
-                <MemoizedDesktopShelf
+                <MemoizedShelf
                   key={shelf.key}
                   title={shelf.title}
                   cards={shelf.cards}
@@ -3080,7 +3048,7 @@ function IndexScreen() {
     </View>
   );
 
-  const isSpatialNavActive = focused && !isMenuOpen && !profileSelectorVisible && !isVersionMismatchVisible;
+  const isSpatialNavActive = focused && !isMenuOpen && !profileSelectorVisibleRef.current && !isVersionMismatchVisible;
 
   return (
     <>
@@ -3426,9 +3394,6 @@ type VirtualizedShelfProps = {
   cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait)
 };
 
-// Alias for backwards compatibility
-type DesktopShelfProps = VirtualizedShelfProps;
-
 // Type for shelf card handlers passed through context
 type ShelfCardHandlers = {
   onSelect: (cardId: string | number) => void;
@@ -3593,31 +3558,29 @@ function VirtualizedShelf({
   );
 }
 
-// Alias for backwards compatibility
-const DesktopShelf = VirtualizedShelf;
-
-function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfProps) {
-  return (
-    prev.title === next.title &&
-    prev.cards === next.cards &&
-    prev.styles === next.styles &&
-    prev.onCardSelect === next.onCardSelect &&
-    prev.onShelfItemFocus === next.onShelfItemFocus &&
-    prev.autoFocus === next.autoFocus &&
-    prev.collapseIfEmpty === next.collapseIfEmpty &&
-    prev.showEmptyState === next.showEmptyState &&
-    prev.shelfKey === next.shelfKey &&
-    prev.shelfIndex === next.shelfIndex &&
-    prev.registerShelfRef === next.registerShelfRef &&
-    prev.cardWidth === next.cardWidth &&
-    prev.cardHeight === next.cardHeight &&
-    prev.cardSpacing === next.cardSpacing &&
-    prev.numberOfItemsVisibleOnScreen === next.numberOfItemsVisibleOnScreen &&
-    prev.badgeVisibility === next.badgeVisibility &&
-    prev.watchStateIconStyle === next.watchStateIconStyle &&
-    prev.cardLayout === next.cardLayout
-  );
-}
+// Module-level memoized shelf — skips re-render when props are shallowly equal.
+// Previously this was created inside IndexScreen via useMemo, which re-ran the
+// memo wrapper creation on every IndexScreen render (defeating the purpose).
+const MemoizedShelf = React.memo(VirtualizedShelf, (prev, next) => (
+  prev.title === next.title &&
+  prev.cards === next.cards &&
+  prev.styles === next.styles &&
+  prev.onCardSelect === next.onCardSelect &&
+  prev.onShelfItemFocus === next.onShelfItemFocus &&
+  prev.autoFocus === next.autoFocus &&
+  prev.collapseIfEmpty === next.collapseIfEmpty &&
+  prev.showEmptyState === next.showEmptyState &&
+  prev.shelfKey === next.shelfKey &&
+  prev.shelfIndex === next.shelfIndex &&
+  prev.registerShelfRef === next.registerShelfRef &&
+  prev.cardWidth === next.cardWidth &&
+  prev.cardHeight === next.cardHeight &&
+  prev.cardSpacing === next.cardSpacing &&
+  prev.numberOfItemsVisibleOnScreen === next.numberOfItemsVisibleOnScreen &&
+  prev.badgeVisibility === next.badgeVisibility &&
+  prev.watchStateIconStyle === next.watchStateIconStyle &&
+  prev.cardLayout === next.cardLayout
+));
 
 function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
   const heroMin = 280;

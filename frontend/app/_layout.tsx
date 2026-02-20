@@ -1,6 +1,12 @@
+// Initialize why-did-you-render before any component imports (dev only)
+import '../wdyr';
+
 // Initialize logger first to capture all console output
 import { logger } from '../services/logger';
 logger.init();
+
+import { startupTiming } from '../services/startup-timing';
+startupTiming.mark('imports_start');
 
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -41,6 +47,9 @@ import { hasTouchSupport, useTVLayout } from '@/theme/tokens/tvScale';
 import LoginScreen from './login';
 
 import ConfigureRemoteControl from './configureRemoteControl';
+import { DevPerfOverlay } from '../components/DevPerfOverlay';
+
+startupTiming.mark('imports_done');
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -51,6 +60,7 @@ SplashScreen.preventAutoHideAsync();
  */
 function AuthGate() {
   const { isAuthenticated, isLoading } = useAuth();
+  startupTiming.mark(isLoading ? 'AuthGate_loading' : `AuthGate_resolved(authenticated=${isAuthenticated})`);
 
   // Show loading indicator while checking stored auth
   if (isLoading) {
@@ -178,6 +188,7 @@ const fallbackSafeAreaMetrics =
     : null;
 
 export default function RootLayout() {
+  startupTiming.mark('RootLayout_render');
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     // Preload icon fonts to prevent layout shift when icons render
@@ -222,6 +233,7 @@ export default function RootLayout() {
     }
 
     if (loaded || error) {
+      startupTiming.mark('fonts_loaded');
       setAppIsReady(true);
       if (error) {
         console.warn(`Error in loading fonts: ${error}`);
@@ -276,6 +288,8 @@ export default function RootLayout() {
 
   const onLayoutRootView = useCallback(async () => {
     if (appIsReady) {
+      startupTiming.mark('splash_hide');
+      startupTiming.end();
       await SplashScreen.hideAsync();
     }
   }, [appIsReady]);
@@ -296,6 +310,7 @@ export default function RootLayout() {
               </AuthProvider>
             </BackendSettingsProvider>
           </UpdateChecker>
+          {/* <DevPerfOverlay /> */}
         </View>
       </SafeAreaProvider>
     </GestureHandlerRootView>

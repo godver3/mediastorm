@@ -41,8 +41,8 @@ interface UserProfilesContextValue {
   isInitialPinCheck: boolean;
   // Profile selector suppresses automatic PIN prompt on initial load
   setProfileSelectorActive: (active: boolean) => void;
-  // Whether the profile selector overlay is currently visible (used by pages to deactivate spatial nav)
-  profileSelectorVisible: boolean;
+  // Whether the profile selector overlay is currently visible (ref — does not trigger re-renders)
+  profileSelectorVisibleRef: React.MutableRefObject<boolean>;
   setProfileSelectorVisible: (visible: boolean) => void;
   // Increments on every successful PIN verification (used by profile selector to dismiss)
   pinVerifiedGeneration: number;
@@ -98,7 +98,10 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const activeUserIdRef = useRef<Nullable<string>>(null);
   const usersRef = useRef<UserProfile[]>([]);
   const profileSelectorActiveRef = useRef(false);
-  const [profileSelectorVisible, setProfileSelectorVisible] = useState(false);
+  const profileSelectorVisibleRef = useRef(false);
+  const setProfileSelectorVisible = useCallback((visible: boolean) => {
+    profileSelectorVisibleRef.current = visible;
+  }, []);
   const { backendUrl, isReady, loadUserSettings, isBackendReachable } = useBackendSettings();
 
   const findUser = useCallback(
@@ -158,16 +161,18 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
         } else {
           setActiveUserId(nextId);
           activeUserIdRef.current = nextId;
-          await persistActiveUserId(nextId);
-          // Update client registration with the selected profile
+          void persistActiveUserId(nextId);
+          // Fire-and-forget client registration — don't block setLoading(false)
           if (nextId && nextUser) {
-            try {
-              const payload = await getClientRegistrationPayload();
-              await apiService.registerClient({ ...payload, userId: nextId });
-              console.log('[UserProfiles] Client registered with profile:', nextUser.name);
-            } catch (err) {
-              console.warn('[UserProfiles] Failed to update client profile:', err);
-            }
+            void (async () => {
+              try {
+                const payload = await getClientRegistrationPayload();
+                await apiService.registerClient({ ...payload, userId: nextId });
+                console.log('[UserProfiles] Client registered with profile:', nextUser.name);
+              } catch (err) {
+                console.warn('[UserProfiles] Failed to update client profile:', err);
+              }
+            })();
           }
         }
       } catch (err) {
@@ -426,7 +431,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       cancelPinEntry,
       isInitialPinCheck,
       setProfileSelectorActive,
-      profileSelectorVisible,
+      profileSelectorVisibleRef,
       setProfileSelectorVisible,
       pinVerifiedGeneration,
       profileChangeGeneration,
@@ -456,7 +461,6 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     cancelPinEntry,
     isInitialPinCheck,
     setProfileSelectorActive,
-    profileSelectorVisible,
     setProfileSelectorVisible,
     pinVerifiedGeneration,
     profileChangeGeneration,

@@ -15,7 +15,7 @@ const GRACE_POLLS = 5;
  * grace period. This lets the UI show progress that outlasts the startup fetch.
  * Errors are silently swallowed — progress is supplementary UX.
  */
-export function useMetadataProgress(enabled: boolean): MetadataProgressSnapshot | null {
+export function useMetadataProgress(enabled: boolean, initialDelayMs = 0): MetadataProgressSnapshot | null {
   const [snapshot, setSnapshot] = useState<MetadataProgressSnapshot | null>(null);
   const enabledRef = useRef(enabled);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -70,11 +70,14 @@ export function useMetadataProgress(enabled: boolean): MetadataProgressSnapshot 
       }
     };
 
-    void poll();
-    timerRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    const initialTimer = setTimeout(() => {
+      void poll();
+      timerRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    }, initialDelayMs);
 
     return () => {
       cancelled = true;
+      clearTimeout(initialTimer);
       stopTimer();
     };
   }, []); // Mount-only — self-terminates via enabledRef + activeCount

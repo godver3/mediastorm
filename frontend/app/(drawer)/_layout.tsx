@@ -15,6 +15,7 @@ import { useMenuContext } from '../../components/MenuContext';
 import { TVBackground } from '../../components/TVBackground';
 import { useUserProfiles } from '../../components/UserProfilesContext';
 import { useShouldUseTabs } from '../../hooks/useShouldUseTabs';
+import { useMemoryMonitor } from '../../hooks/useMemoryMonitor';
 
 // Tabs that should remain accessible when backend is unreachable
 const ALWAYS_ACCESSIBLE_TABS = ['index', 'settings'];
@@ -25,9 +26,12 @@ export default function DrawerLayout() {
   const { isOpen: isMenuOpen, closeMenu } = useMenuContext();
   const insets = useSafeAreaInsets();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
-  const { activeUser, getIconUrl, profileSelectorVisible } = useUserProfiles();
+  const { activeUser, getIconUrl, profileSelectorVisibleRef } = useUserProfiles();
 
   const shouldUseTabs = useShouldUseTabs();
+
+  // Monitor memory usage in dev mode (logs every 15s)
+  useMemoryMonitor('DrawerLayout', 15000, __DEV__);
 
   // Backend is considered available if reachable OR still loading initially
   const isBackendAvailable = isBackendReachable || (settingsLoading && !settingsReady);
@@ -67,23 +71,24 @@ export default function DrawerLayout() {
     }, []),
   );
 
-  // Close the drawer when profile selector is visible so it's not
-  // lingering behind the overlay.
+  // Close the drawer when profile selector becomes visible so it's not
+  // lingering behind the overlay. Check ref in a menu-state-driven effect.
   useEffect(() => {
-    if (profileSelectorVisible && isMenuOpen) {
+    if (profileSelectorVisibleRef.current && isMenuOpen) {
       closeMenu();
     }
-  }, [profileSelectorVisible, isMenuOpen, closeMenu]);
+  }, [isMenuOpen, closeMenu]);
 
-  // On tvOS, disable menu key handling when drawer is open or profile selector
-  // is visible so the Menu button minimizes the app instead of being captured.
+  // On tvOS, disable menu key handling when drawer is open so the Menu
+  // button minimizes the app instead of being captured. Profile selector
+  // handles its own tvOS menu key state independently.
   useEffect(() => {
     if (Platform.OS !== 'ios' || !Platform.isTV) {
       return;
     }
 
-    RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen && !profileSelectorVisible);
-  }, [isMenuOpen, profileSelectorVisible]);
+    RemoteControlManager.setTvMenuKeyEnabled(!isMenuOpen);
+  }, [isMenuOpen]);
 
   if (shouldUseTabs) {
     return (
