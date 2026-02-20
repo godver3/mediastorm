@@ -55,6 +55,7 @@
     "expo-location": "~19.0.8",
     "expo-modules-core": "~3.0.29",
     "expo-navigation-bar": "^5.0.10",
+    "expo-network": "~8.0.8",
     "expo-router": "~6.0.23",
     "expo-screen-orientation": "~9.0.8",
     "expo-splash-screen": "~31.0.13",

@@ -14,6 +14,10 @@ import {
 
 interface DownloadsContextValue {
   items: DownloadItem[];
+  wifiOnly: boolean;
+  setWifiOnly: (value: boolean) => void;
+  maxWorkers: number;
+  setMaxWorkers: (value: number) => void;
   startDownload: (params: StartDownloadParams) => Promise<string>;
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
@@ -25,6 +29,10 @@ interface DownloadsContextValue {
 
 const NOOP_CONTEXT: DownloadsContextValue = {
   items: [],
+  wifiOnly: false,
+  setWifiOnly: () => {},
+  maxWorkers: 1,
+  setMaxWorkers: () => {},
   startDownload: async () => '',
   pauseDownload: async () => {},
   resumeDownload: async () => {},
@@ -44,13 +52,28 @@ const isMobile = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platfo
 
 export const DownloadsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<DownloadItem[]>([]);
+  const [wifiOnly, setWifiOnlyState] = useState(false);
+  const [maxWorkers, setMaxWorkersState] = useState(1);
 
   useEffect(() => {
     if (!isMobile) return;
 
-    downloadManager.initialize();
+    downloadManager.initialize().then(() => {
+      setWifiOnlyState(downloadManager.getWifiOnly());
+      setMaxWorkersState(downloadManager.getMaxWorkers());
+    });
     const unsubscribe = downloadManager.subscribe(setItems);
     return unsubscribe;
+  }, []);
+
+  const setWifiOnly = useCallback((value: boolean) => {
+    setWifiOnlyState(value);
+    downloadManager.setWifiOnly(value);
+  }, []);
+
+  const setMaxWorkers = useCallback((value: number) => {
+    setMaxWorkersState(value);
+    downloadManager.setMaxWorkers(value);
   }, []);
 
   const startDownload = useCallback(async (params: StartDownloadParams) => {
@@ -95,6 +118,10 @@ export const DownloadsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isMobile
         ? {
             items,
+            wifiOnly,
+            setWifiOnly,
+            maxWorkers,
+            setMaxWorkers,
             startDownload,
             pauseDownload,
             resumeDownload,
@@ -104,7 +131,7 @@ export const DownloadsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             getLocalFileUri,
           }
         : NOOP_CONTEXT,
-    [items, startDownload, pauseDownload, resumeDownload, cancelDownload, deleteDownload, getDownloadForTitle, getLocalFileUri],
+    [items, wifiOnly, setWifiOnly, maxWorkers, setMaxWorkers, startDownload, pauseDownload, resumeDownload, cancelDownload, deleteDownload, getDownloadForTitle, getLocalFileUri],
   );
 
   return <DownloadsContext.Provider value={value}>{children}</DownloadsContext.Provider>;

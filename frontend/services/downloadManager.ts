@@ -22,6 +22,22 @@ import {
 } from '@kesha-antonov/react-native-background-downloader';
 import { apiService } from './api';
 
+// Lazy-load expo-network — native module may not be compiled in yet.
+// Falls back gracefully: assumes WiFi if module unavailable.
+let _Network: typeof import('expo-network') | null = null;
+let _networkLoaded = false;
+const getNetwork = (): typeof import('expo-network') | null => {
+  if (!_networkLoaded) {
+    _networkLoaded = true;
+    try {
+      _Network = require('expo-network');
+    } catch {
+      console.warn('[DownloadManager] expo-network native module not available — wifi-only check disabled');
+    }
+  }
+  return _Network;
+};
+
 const generateId = (): string => {
   const hex = '0123456789abcdef';
   let id = '';
@@ -85,6 +101,8 @@ type Listener = (items: DownloadItem[]) => void;
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = 'strmr.downloads';
+const WIFI_ONLY_KEY = 'strmr.downloads.wifiOnly';
+const MAX_WORKERS_KEY = 'strmr.downloads.maxWorkers';
 const isMobile = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
 
 // ---------------------------------------------------------------------------
@@ -121,6 +139,10 @@ class DownloadManager {
   private tasks = new Map<string, DownloadTask>();
   private initialized = false;
   private initializing: Promise<void> | null = null;
+  private wifiOnly = false;
+  private maxWorkers = 1;
+  private networkSubscription: { remove: () => void } | null = null;
+  private _wifiChangePending = false;
 
   // -------------------------------------------------------------------------
   // Init
@@ -173,8 +195,27 @@ class DownloadManager {
         this.items = verified;
       }
 
+      // Load preferences
+      const wifiOnlyRaw = await AsyncStorage.getItem(WIFI_ONLY_KEY);
+      this.wifiOnly = wifiOnlyRaw === 'true';
+      const maxWorkersRaw = await AsyncStorage.getItem(MAX_WORKERS_KEY);
+      this.maxWorkers = maxWorkersRaw ? Math.min(3, Math.max(1, parseInt(maxWorkersRaw, 10) || 1)) : 1;
+
       // Re-attach to background tasks that survived app termination
       await this._reattachExistingTasks();
+
+      // Listen for network changes — pause on WiFi loss, resume on WiFi reconnect
+      const net = getNetwork();
+      if (net) {
+        this.networkSubscription = net.addNetworkStateListener((state) => {
+          if (this.wifiOnly && state.type !== net.NetworkStateType.WIFI) {
+            const active = this.items.filter((i) => i.status === 'downloading');
+            for (const item of active) this._suspendForWifi(item);
+          } else {
+            this._processQueue();
+          }
+        });
+      }
 
       await this.persist();
     } catch (err) {
@@ -182,6 +223,7 @@ class DownloadManager {
     }
     this.initialized = true;
     this.notify();
+    this._processQueue();
   }
 
   private async _reattachExistingTasks(): Promise<void> {
@@ -454,17 +496,97 @@ class DownloadManager {
   }
 
   // -------------------------------------------------------------------------
-  // Queue processing (1 concurrent download)
+  // Wi-Fi only preference
+  // -------------------------------------------------------------------------
+
+  getWifiOnly(): boolean {
+    return this.wifiOnly;
+  }
+
+  async setWifiOnly(value: boolean): Promise<void> {
+    this.wifiOnly = value;
+    AsyncStorage.setItem(WIFI_ONLY_KEY, String(value));
+
+    // Coalesce rapid toggles — only the last one takes effect
+    if (this._wifiChangePending) return;
+    this._wifiChangePending = true;
+
+    // Yield to let any further synchronous toggles update this.wifiOnly first
+    await new Promise((r) => setTimeout(r, 150));
+    this._wifiChangePending = false;
+
+    await this._enforceNetworkPolicy();
+  }
+
+  private async _enforceNetworkPolicy(): Promise<void> {
+    if (this.wifiOnly) {
+      const onWifi = await this._isOnWifi();
+      if (!onWifi) {
+        const active = this.items.filter((i) => i.status === 'downloading');
+        for (const item of active) await this._suspendForWifi(item);
+        if (active.length > 0) return;
+      }
+    }
+    this.notify();
+    this._processQueue();
+  }
+
+  /** Stop active download and return it to pending so _processQueue picks it up first. */
+  private async _suspendForWifi(item: DownloadItem): Promise<void> {
+    const task = this.tasks.get(item.id);
+    if (task) {
+      try { await task.stop(); } catch { /* ignore */ }
+      this.tasks.delete(item.id);
+    }
+    item.status = 'pending';
+    await this.persist();
+    this.notify();
+  }
+
+  getMaxWorkers(): number {
+    return this.maxWorkers;
+  }
+
+  async setMaxWorkers(value: number): Promise<void> {
+    this.maxWorkers = Math.min(3, Math.max(1, value));
+    await AsyncStorage.setItem(MAX_WORKERS_KEY, String(this.maxWorkers));
+    this.notify();
+    this._processQueue();
+  }
+
+  private async _isOnWifi(): Promise<boolean> {
+    const net = getNetwork();
+    if (!net) return true; // native module unavailable — allow download
+    try {
+      const state = await net.getNetworkStateAsync();
+      return state.type === net.NetworkStateType.WIFI;
+    } catch {
+      return true; // allow download if we can't determine network type
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Queue processing (up to maxWorkers concurrent downloads)
   // -------------------------------------------------------------------------
 
   private _processQueue(): void {
-    const active = this.items.find((i) => i.status === 'downloading');
-    if (active) return; // already one active
+    const activeCount = this.items.filter((i) => i.status === 'downloading').length;
+    const slots = this.maxWorkers - activeCount;
+    if (slots <= 0) return;
 
-    const next = this.items.find((i) => i.status === 'pending');
-    if (!next) return;
+    const pending = this.items.filter((i) => i.status === 'pending').slice(0, slots);
+    if (pending.length === 0) return;
 
-    this._startDownloading(next);
+    if (this.wifiOnly) {
+      this._isOnWifi().then((onWifi) => {
+        if (onWifi) {
+          for (const item of pending) this._startDownloading(item);
+        }
+      });
+      return;
+    }
+
+    for (const item of pending) this._startDownloading(item);
   }
 
   private _startDownloading(item: DownloadItem): void {

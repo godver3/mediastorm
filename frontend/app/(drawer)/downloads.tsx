@@ -8,7 +8,7 @@ import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { launchNativePlayer } from '../details/playback';
 import { ResumePlaybackModal } from '../details/resume-modal';
 import { buildItemIdForProgress, checkResumeProgress } from '../details/checkResumeProgress';
@@ -185,7 +185,7 @@ export default function DownloadsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { items, pauseDownload, resumeDownload, deleteDownload } = useDownloads();
+  const { items, wifiOnly, setWifiOnly, maxWorkers, setMaxWorkers, pauseDownload, resumeDownload, deleteDownload } = useDownloads();
   const { activeUserId } = useUserProfiles();
   const { settings, userSettings } = useBackendSettings();
 
@@ -315,6 +315,35 @@ export default function DownloadsScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Downloads</Text>
       </View>
+      <View style={styles.settingsRow}>
+        <Text style={styles.settingsLabel}>Wi-Fi Only</Text>
+        <Switch
+          value={wifiOnly}
+          onValueChange={setWifiOnly}
+          trackColor={{ false: theme.colors.background.elevated, true: theme.colors.accent.primary }}
+          thumbColor={theme.colors.text.primary}
+        />
+      </View>
+      <View style={styles.settingsRow}>
+        <Text style={styles.settingsLabel}>Simultaneous Downloads</Text>
+        <View style={styles.stepper}>
+          <Pressable
+            style={[styles.stepperButton, maxWorkers <= 1 && styles.stepperButtonDisabled]}
+            onPress={() => maxWorkers > 1 && setMaxWorkers(maxWorkers - 1)}
+            hitSlop={8}
+          >
+            <Ionicons name="remove" size={18} color={maxWorkers <= 1 ? theme.colors.text.disabled : theme.colors.text.primary} />
+          </Pressable>
+          <Text style={styles.stepperValue}>{maxWorkers}</Text>
+          <Pressable
+            style={[styles.stepperButton, maxWorkers >= 3 && styles.stepperButtonDisabled]}
+            onPress={() => maxWorkers < 3 && setMaxWorkers(maxWorkers + 1)}
+            hitSlop={8}
+          >
+            <Ionicons name="add" size={18} color={maxWorkers >= 3 ? theme.colors.text.disabled : theme.colors.text.primary} />
+          </Pressable>
+        </View>
+      </View>
       {allItems.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="cloud-download-outline" size={64} color={theme.colors.text.disabled} />
@@ -362,6 +391,39 @@ const createStyles = (theme: NovaTheme) =>
     headerTitle: {
       ...theme.typography.title.lg,
       color: theme.colors.text.primary,
+    },
+    settingsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: theme.spacing.lg,
+      paddingVertical: theme.spacing.sm,
+    },
+    settingsLabel: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.secondary,
+    },
+    stepper: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    stepperButton: {
+      width: 30,
+      height: 30,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.background.elevated,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    stepperButtonDisabled: {
+      opacity: 0.4,
+    },
+    stepperValue: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.primary,
+      minWidth: 16,
+      textAlign: 'center',
     },
     list: {
       paddingHorizontal: theme.spacing.md,
