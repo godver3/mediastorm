@@ -17,6 +17,7 @@ const (
 
 var (
 	reSeasonEpisode      = regexp.MustCompile(`(?i)\bS?(\d{1,2})[xE](\d{1,2})\b`)
+	reSeasonOnly         = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonEpisodeWords = regexp.MustCompile(`(?i)\bseason\s+(\d{1,2})\s*(?:episode|ep)\s*(\d{1,2})\b`)
 	reYear               = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	stopTokens           = map[string]struct{}{
@@ -102,6 +103,16 @@ func ParseQuery(raw string) ParsedQuery {
 			parsed.Episode = episode
 		}
 		if parsed.Season > 0 && parsed.Episode > 0 {
+			parsed.MediaType = MediaTypeSeries
+			parsed.HasSeasonMatch = true
+			candidate = removeSubstring(candidate, match[0])
+		}
+	} else if match := reSeasonOnly.FindStringSubmatch(lower); len(match) == 2 {
+		// Season-only query (e.g. "Show S01") — default episode to 1 so
+		// Stremio scrapers can build a valid stream ID (imdbid:season:episode).
+		if season, err := strconv.Atoi(match[1]); err == nil && season > 0 {
+			parsed.Season = season
+			parsed.Episode = 1
 			parsed.MediaType = MediaTypeSeries
 			parsed.HasSeasonMatch = true
 			candidate = removeSubstring(candidate, match[0])

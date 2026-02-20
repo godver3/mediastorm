@@ -39,8 +39,11 @@ export interface ManualSelectFlowResult {
   manualVisible: boolean;
   setManualVisible: React.Dispatch<React.SetStateAction<boolean>>;
   manualLoading: boolean;
+  setManualLoading: React.Dispatch<React.SetStateAction<boolean>>;
   manualError: string | null;
+  setManualError: React.Dispatch<React.SetStateAction<string | null>>;
   manualResults: NZBResult[];
+  setManualResults: React.Dispatch<React.SetStateAction<NZBResult[]>>;
 
   handleManualSelect: () => Promise<void>;
   handleEpisodeLongPress: (episode: SeriesEpisode) => Promise<void>;
@@ -216,8 +219,11 @@ export function useManualSelectFlow(params: UseManualSelectFlowParams): ManualSe
     manualVisible,
     setManualVisible,
     manualLoading,
+    setManualLoading,
     manualError,
+    setManualError,
     manualResults,
+    setManualResults,
     handleManualSelect,
     handleEpisodeLongPress,
     handleManualSelection,

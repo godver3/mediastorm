@@ -40,6 +40,15 @@ func TestParseQuery(t *testing.T) {
 			wantType:    MediaTypeSeries,
 		},
 		{
+			name:        "season-only query defaults episode to 1",
+			query:       "56 Days S01",
+			wantTitle:   "56 Days",
+			wantYear:    0,
+			wantSeason:  1,
+			wantEpisode: 1,
+			wantType:    MediaTypeSeries,
+		},
+		{
 			name:        "fallback retains tokens",
 			query:       "Dune Part Two",
 			wantTitle:   "Dune Part Two",

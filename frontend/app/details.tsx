@@ -68,7 +68,7 @@ import { SeriesEpisodes } from './details/series-episodes';
 import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
-import { formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, isMovieUnreleased, toStringParam } from './details/utils';
+import { buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, isMovieUnreleased, toStringParam } from './details/utils';
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
@@ -495,6 +495,8 @@ export default function DetailsScreen() {
   const [episodeSelectorVisible, setEpisodeSelectorVisible] = useState(false);
   const [moreOptionsVisible, setMoreOptionsVisible] = useState(false);
   const [manualSelectDownloadOnly, setManualSelectDownloadOnly] = useState(false);
+  const [seasonDownloadMode, setSeasonDownloadMode] = useState(false);
+  const [seasonDownloadTarget, setSeasonDownloadTarget] = useState<SeriesSeason | null>(null);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [collapsedHeight, setCollapsedHeight] = useState(0);
   const [expandedHeight, setExpandedHeight] = useState(0);
@@ -1012,6 +1014,98 @@ export default function DetailsScreen() {
     setManualSelectDownloadOnly(true);
     manualSelect.handleManualSelect();
   }, [manualSelect]);
+
+  const handleMenuDownloadSeason = useCallback(() => {
+    setMoreOptionsVisible(false);
+    setSeasonDownloadMode(true);
+    setSeasonSelectorVisible(true);
+  }, []);
+
+  const handleSeasonDownloadSearch = useCallback(async (season: SeriesSeason) => {
+    setSeasonSelectorVisible(false);
+    setSeasonDownloadTarget(season);
+
+    // Open manual selection in loading state
+    manualSelect.setManualVisible(true);
+    manualSelect.setManualError(null);
+    manualSelect.setManualResults([]);
+    manualSelect.setManualLoading(true);
+    setManualSelectDownloadOnly(true);
+
+    try {
+      const query = buildSeasonQuery(title, season.number);
+      const results = await playback.fetchIndexerResults({ query, limit: 50 });
+      manualSelect.setManualResults(results);
+      if (!results || results.length === 0) {
+        manualSelect.setManualError('No results found for this season.');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to search for season packs.';
+      manualSelect.setManualError(message);
+    } finally {
+      manualSelect.setManualLoading(false);
+    }
+  }, [title, manualSelect, playback]);
+
+  const handleSeasonDownloadResult = useCallback(async (result: import('@/services/api').NZBResult) => {
+    if (!titleId || !seasonDownloadTarget) return;
+    manualSelect.closeManualPicker();
+
+    const episodes = seasonDownloadTarget.episodes;
+    if (!episodes || episodes.length === 0) {
+      showToast('No episodes found for this season', { tone: 'danger', duration: 3000 });
+      return;
+    }
+
+    showToast(`Queuing ${episodes.length} episodes for download...`, { tone: 'info', duration: 3000 });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const ep of episodes) {
+      try {
+        const epCode = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`;
+        const resolveResult = {
+          ...result,
+          attributes: {
+            ...(result.attributes || {}),
+            targetSeason: String(ep.seasonNumber),
+            targetEpisode: String(ep.episodeNumber),
+            targetEpisodeCode: epCode,
+          },
+        };
+        const resolution = await apiService.resolvePlayback(resolveResult);
+        if (!resolution.webdavPath) {
+          failCount++;
+          continue;
+        }
+        await startDownload({
+          titleId,
+          mediaType: 'episode',
+          title: `${title} ${epCode}`,
+          posterUrl: headerImage,
+          streamPath: resolution.webdavPath,
+          fileSize: resolution.fileSize || result.sizeBytes || 0,
+          seriesTitle: title,
+          seasonNumber: ep.seasonNumber,
+          episodeNumber: ep.episodeNumber,
+          episodeName: ep.name,
+          imdbId: imdbId || undefined,
+          tvdbId: tvdbId || undefined,
+          seriesIdentifier: seriesIdentifier || undefined,
+        });
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (failCount === 0) {
+      showToast(`${successCount} episodes queued for download`, { tone: 'success', duration: 3000 });
+    } else {
+      showToast(`${successCount} queued, ${failCount} failed`, { tone: successCount > 0 ? 'info' : 'danger', duration: 4000 });
+    }
+  }, [titleId, seasonDownloadTarget, title, headerImage, startDownload, showToast, manualSelect, imdbId, tvdbId, seriesIdentifier]);
 
   // ===== Focus effect: consume next episode from playback navigation =====
   useFocusEffect(
@@ -2640,10 +2734,10 @@ export default function DetailsScreen() {
         error={manualSelect.manualError}
         results={manualSelect.manualResults}
         healthChecks={manualHealthChecks}
-        onClose={() => { setManualSelectDownloadOnly(false); manualSelect.closeManualPicker(); }}
+        onClose={() => { setManualSelectDownloadOnly(false); setSeasonDownloadMode(false); setSeasonDownloadTarget(null); manualSelect.closeManualPicker(); }}
         onSelect={manualSelect.handleManualSelection}
         onCheckHealth={checkManualHealth}
-        onDownload={isMobile ? handleDownloadResult : undefined}
+        onDownload={isMobile ? (seasonDownloadMode ? handleSeasonDownloadResult : handleDownloadResult) : undefined}
         downloadOnly={manualSelectDownloadOnly}
         theme={theme}
         isWebTouch={isWebTouch}
@@ -2655,9 +2749,9 @@ export default function DetailsScreen() {
       />
       <SeasonSelector
         visible={seasonSelectorVisible}
-        onClose={() => setSeasonSelectorVisible(false)}
-        seasons={episodeManager.seasons}
-        onSeasonSelect={isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect}
+        onClose={() => { setSeasonDownloadMode(false); setSeasonDownloadTarget(null); setSeasonSelectorVisible(false); }}
+        seasons={seasonDownloadMode ? episodeManager.seasons.filter(s => s.number > 0) : episodeManager.seasons}
+        onSeasonSelect={seasonDownloadMode ? handleSeasonDownloadSearch : (isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect)}
         theme={theme}
       />
       {/* More Options Menu */}
@@ -2718,6 +2812,17 @@ export default function DetailsScreen() {
                       <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
                         <Ionicons name="download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
                         <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download</Text>
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+                {isMobile && isSeries && (
+                  <SpatialNavigationFocusableView
+                    onSelect={handleMenuDownloadSeason}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
+                        <Ionicons name="cloud-download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                        <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download Season</Text>
                       </View>
                     )}
                   </SpatialNavigationFocusableView>
