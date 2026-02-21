@@ -14,6 +14,7 @@ export const DRAWER_ROUTES = [
   '/live',
   '/profiles',
   '/settings',
+  '/lists',
   '/explore',
   '/tv',
   '/modal-test',
