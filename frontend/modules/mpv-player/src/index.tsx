@@ -59,6 +59,10 @@ export interface SubtitleStyle {
   bottomMargin?: number;
 }
 
+export interface SubtitleTextEvent {
+  text: string;
+}
+
 export interface MpvPlayerProps {
   source?: MpvPlayerSource;
   paused?: boolean;
@@ -81,6 +85,7 @@ export interface MpvPlayerProps {
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
   onDebugLog?: (data: DebugLogEvent) => void;
+  onSubtitleText?: (data: SubtitleTextEvent) => void;
 }
 
 export interface MpvPlayerRef {
@@ -112,6 +117,7 @@ interface NativeMpvPlayerProps {
   onTracksChanged?: (event: NativeSyntheticEvent<TracksEvent>) => void;
   onBuffering?: (event: NativeSyntheticEvent<BufferingEvent>) => void;
   onDebugLog?: (event: NativeSyntheticEvent<DebugLogEvent>) => void;
+  onSubtitleText?: (event: NativeSyntheticEvent<SubtitleTextEvent>) => void;
 }
 
 // Only load native component on Android - cache to prevent double registration on hot reload
@@ -160,6 +166,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     onTracksChanged,
     onBuffering,
     onDebugLog,
+    onSubtitleText,
   } = props;
 
   const nativeRef = useRef<any>(null);
@@ -237,6 +244,13 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     [onDebugLog]
   );
 
+  const handleSubtitleText = useCallback(
+    (event: NativeSyntheticEvent<SubtitleTextEvent>) => {
+      onSubtitleText?.(event.nativeEvent);
+    },
+    [onSubtitleText]
+  );
+
   if (!NativeMpvPlayerView) {
     console.log('[MpvPlayer] Native view not available on this platform');
     return null;
@@ -266,6 +280,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
       onDebugLog={handleDebugLog}
+      onSubtitleText={handleSubtitleText}
     />
   );
 });

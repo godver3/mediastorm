@@ -100,6 +100,7 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
             .put("onTracksChanged", MapBuilder.of("registrationName", "onTracksChanged"))
             .put("onBuffering", MapBuilder.of("registrationName", "onBuffering"))
             .put("onDebugLog", MapBuilder.of("registrationName", "onDebugLog"))
+            .put("onSubtitleText", MapBuilder.of("registrationName", "onSubtitleText"))
             .build()
     }
 

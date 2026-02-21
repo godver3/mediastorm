@@ -134,21 +134,24 @@ class MpvPlayerView(context: ThemedReactContext) :
             MPVLib.setOptionString("vd-lavc-film-grain", "cpu")
 
             if (isHDR) {
-                // HDR passthrough: use gpu-next (Vulkan) for proper HDR surface support,
-                // falling back to gpu (OpenGL ES) if Vulkan is unavailable.
-                // target-colorspace-hint tells mpv to signal the display about the
-                // content's color space so Android switches HDMI output to HDR mode.
-                MPVLib.setOptionString("vo", "gpu-next,gpu")
+                // HDR mode: try mediacodec_embed first for true HDR passthrough
+                // (MediaCodec outputs directly to SurfaceView, preserving HDR metadata
+                // for Android's display pipeline → auto HDMI HDR switching).
+                // Falls back to gpu-next/gpu if mediacodec_embed isn't available.
+                MPVLib.setOptionString("vo", "mediacodec_embed,gpu-next,gpu")
                 MPVLib.setOptionString("gpu-context", "android")
                 MPVLib.setOptionString("hwdec", "mediacodec")
+                // Hint mpv to signal the display about content color space.
+                // Works with mediacodec_embed natively; on gpu-next, depends on
+                // EGL BT.2020/PQ extension support (not available on all devices).
                 MPVLib.setOptionString("target-colorspace-hint", "yes")
-                // Avoid tone-mapping — output PQ/BT.2020 directly for the display to handle
-                MPVLib.setOptionString("target-trc", "pq")
-                MPVLib.setOptionString("target-prim", "bt.2020")
-                MPVLib.setOptionString("target-peak", "10000")
-                MPVLib.setOptionString("tone-mapping", "clip")
-                MPVLib.setOptionString("hdr-compute-peak", "no")
-                Log.i(TAG, "MPV configured for HDR passthrough (vo=gpu-next,gpu)")
+                // Do NOT force target-trc/target-prim — let mpv auto-negotiate.
+                // If the display accepts HDR (via hint or mediacodec_embed), mpv
+                // outputs PQ/BT.2020 natively. If not, it tonemaps to SDR.
+                MPVLib.setOptionString("tone-mapping", "mobius")
+                MPVLib.setOptionString("tone-mapping-param", "0.5")
+                MPVLib.setOptionString("hdr-compute-peak", "yes")
+                Log.i(TAG, "MPV configured for HDR (vo=mediacodec_embed,gpu-next,gpu)")
             } else {
                 // Video output: GPU with Android OpenGL ES context
                 MPVLib.setOptionString("vo", "gpu")
@@ -217,7 +220,7 @@ class MpvPlayerView(context: ThemedReactContext) :
             context.applicationContext.registerComponentCallbacks(this)
 
             initialized = true
-            val voMode = if (isHDR) "gpu-next,gpu (HDR)" else "gpu"
+            val voMode = if (isHDR) "mediacodec_embed,gpu-next,gpu (HDR)" else "gpu"
             Log.d(TAG, "MPV initialized (vo=$voMode, RAM=${totalMb}MB, lowRam=$isLowRamDevice, cache: $demuxerMax / $demuxerBack)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize MPV", e)
@@ -290,7 +293,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         MPVLib.attachSurface(holder.surface)
         MPVLib.setOptionString("force-window", "yes")
         if (isHDR) {
-            MPVLib.setOptionString("vo", "gpu-next,gpu")
+            MPVLib.setOptionString("vo", "mediacodec_embed,gpu-next,gpu")
         } else {
             MPVLib.setOptionString("vo", "gpu")
         }
@@ -743,6 +746,9 @@ class MpvPlayerView(context: ThemedReactContext) :
                     } else {
                         emitDebugLog("sub-text: (cleared)")
                     }
+                    // Emit subtitle text for RN overlay rendering (needed when
+                    // mediacodec_embed is active since mpv OSD can't render subs)
+                    emitSubtitleText(value)
                 }
             }
         }
@@ -760,7 +766,14 @@ class MpvPlayerView(context: ThemedReactContext) :
             msg.contains("sub", ignoreCase = true) ||
             msg.contains("font", ignoreCase = true) ||
             msg.contains("ass", ignoreCase = true)
-        if (level <= 20 || isSubRelated) {
+        val isHdrRelated = prefix == "vo" || prefix == "vd" || prefix == "cplayer" ||
+            prefix == "hwdec" || prefix == "display" ||
+            msg.contains("hdr", ignoreCase = true) ||
+            msg.contains("colorspace", ignoreCase = true) ||
+            msg.contains("mediacodec", ignoreCase = true) ||
+            msg.contains("vulkan", ignoreCase = true) ||
+            msg.contains("gpu-next", ignoreCase = true)
+        if (level <= 20 || isSubRelated || (isHDR && isHdrRelated)) {
             mainHandler.post {
                 emitDebugLog("mpv[$prefix/$level]: $msg")
             }
@@ -777,10 +790,14 @@ class MpvPlayerView(context: ThemedReactContext) :
                 val subVis = try { MPVLib.getPropertyString("sub-visibility") } catch (_: Exception) { "error" }
                 val currentVo = try { MPVLib.getPropertyString("current-vo") } catch (_: Exception) { "error" }
                 val subText = try { MPVLib.getPropertyString("sub-text") } catch (_: Exception) { "n/a" }
+                val hwdecCurrent = try { MPVLib.getPropertyString("hwdec-current") } catch (_: Exception) { "n/a" }
+                val videoColorParams = try { MPVLib.getPropertyString("video-params/primaries") } catch (_: Exception) { "n/a" }
+                val videoColorTrc = try { MPVLib.getPropertyString("video-params/gamma") } catch (_: Exception) { "n/a" }
                 currentDuration = duration
                 mainHandler.post {
                     fileLoaded = true
-                    emitDebugLog("FILE_LOADED: ${width}x${height}, dur=$duration, sid=$sid, sub-visibility=$subVis, vo=$currentVo, tracksAvailable=$tracksAvailable, pendingSub=$pendingSubtitleTrack")
+                    emitDebugLog("FILE_LOADED: ${width}x${height}, dur=$duration, sid=$sid, sub-visibility=$subVis, vo=$currentVo, hwdec=$hwdecCurrent, tracksAvailable=$tracksAvailable, pendingSub=$pendingSubtitleTrack")
+                    emitDebugLog("FILE_LOADED: color=$videoColorParams/$videoColorTrc, isHDR=$isHDR")
                     emitDebugLog("FILE_LOADED: sub-text=${if (subText.isNullOrEmpty()) "(empty)" else "\"${subText.take(60)}\""}")
                     emitLoad(duration, width, height)
 
@@ -928,6 +945,13 @@ class MpvPlayerView(context: ThemedReactContext) :
             putBoolean("buffering", buffering)
         }
         emitEvent("onBuffering", data)
+    }
+
+    private fun emitSubtitleText(text: String) {
+        val data = Arguments.createMap().apply {
+            putString("text", text)
+        }
+        emitEvent("onSubtitleText", data)
     }
 
     private fun emitDebugLog(message: String) {
