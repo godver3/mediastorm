@@ -3445,12 +3445,12 @@ func (s *Service) GetAICustomRecommendations(ctx context.Context, query string) 
 
 // GetAISurprise returns a single random movie/show recommendation via Gemini AI.
 // Not cached — each call produces a different result.
-func (s *Service) GetAISurprise(ctx context.Context, decade string) (*models.TrendingItem, error) {
+func (s *Service) GetAISurprise(ctx context.Context, decade, mediaType string) (*models.TrendingItem, error) {
 	if s.gemini == nil || !s.gemini.isConfigured() {
 		return nil, fmt.Errorf("gemini api key not configured")
 	}
 
-	recs, err := s.gemini.getSurpriseRecommendation(ctx, decade)
+	recs, err := s.gemini.getSurpriseRecommendation(ctx, decade, mediaType)
 	if err != nil {
 		return nil, fmt.Errorf("gemini surprise: %w", err)
 	}

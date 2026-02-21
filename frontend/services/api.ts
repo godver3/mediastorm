@@ -1491,9 +1491,12 @@ class ApiService {
     );
   }
 
-  async getAISurprise(decade?: string): Promise<TrendingItem> {
-    const params = decade ? `?decade=${encodeURIComponent(decade)}` : '';
-    return this.request<TrendingItem>(`/recommendations/surprise${params}`);
+  async getAISurprise(decade?: string, mediaType?: string): Promise<TrendingItem> {
+    const searchParams = new URLSearchParams();
+    if (decade) searchParams.set('decade', decade);
+    if (mediaType) searchParams.set('mediaType', mediaType);
+    const qs = searchParams.toString();
+    return this.request<TrendingItem>(`/recommendations/surprise${qs ? `?${qs}` : ''}`);
   }
 
   async getPersonDetails(personId: number): Promise<PersonDetails> {

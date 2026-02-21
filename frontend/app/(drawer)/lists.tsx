@@ -68,6 +68,7 @@ export default function ListsScreen() {
   const [aiQuery, setAiQuery] = useState('');
   const [surpriseLoading, setSurpriseLoading] = useState(false);
   const [selectedDecade, setSelectedDecade] = useState<string | null>(null);
+  const [selectedMediaType, setSelectedMediaType] = useState<'any' | 'movie' | 'show'>('any');
 
   // Handle left navigation at edge to open menu
   const onDirectionHandledWithoutMovement = useCallback(
@@ -148,7 +149,7 @@ export default function ListsScreen() {
     if (surpriseLoading) return;
     setSurpriseLoading(true);
     try {
-      const item = await apiService.getAISurprise(selectedDecade ?? undefined);
+      const item = await apiService.getAISurprise(selectedDecade ?? undefined, selectedMediaType !== 'any' ? selectedMediaType : undefined);
       const t = item.title;
       router.push({
         pathname: '/details',
@@ -168,7 +169,7 @@ export default function ListsScreen() {
     } finally {
       setSurpriseLoading(false);
     }
-  }, [surpriseLoading, router, selectedDecade]);
+  }, [surpriseLoading, router, selectedDecade, selectedMediaType]);
 
   const renderCard = useCallback(
     (
@@ -366,24 +367,41 @@ export default function ListsScreen() {
                 {surpriseLoading ? 'Loading...' : 'Surprise Me'}
               </Text>
             </Pressable>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.decadeChips}>
-              {['Any', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'].map((d) => {
-                const isAny = d === 'Any';
-                const isSelected = isAny ? selectedDecade === null : selectedDecade === d;
+            <View style={styles.decadeChips}>
+              {(['any', 'movie', 'show'] as const).map((t) => {
+                const label = t === 'any' ? 'Any' : t === 'movie' ? 'Movie' : 'Show';
+                const isSelected = selectedMediaType === t;
                 return (
                   <Pressable
-                    key={d}
+                    key={t}
                     style={[styles.decadeChip, isSelected && styles.decadeChipSelected]}
-                    onPress={() => setSelectedDecade(isAny ? null : d)}
+                    onPress={() => setSelectedMediaType(t)}
                   >
                     <Text style={[styles.decadeChipText, isSelected && styles.decadeChipTextSelected]}>
-                      {d}
+                      {label}
                     </Text>
                   </Pressable>
                 );
               })}
-            </ScrollView>
+            </View>
           </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.decadeChips} style={styles.decadeRow}>
+            {['Any', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'].map((d) => {
+              const isAny = d === 'Any';
+              const isSelected = isAny ? selectedDecade === null : selectedDecade === d;
+              return (
+                <Pressable
+                  key={d}
+                  style={[styles.decadeChip, isSelected && styles.decadeChipSelected]}
+                  onPress={() => setSelectedDecade(isAny ? null : d)}
+                >
+                  <Text style={[styles.decadeChipText, isSelected && styles.decadeChipTextSelected]}>
+                    {d}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       ),
     });
@@ -524,6 +542,9 @@ const createStyles = (theme: NovaTheme) =>
       flexDirection: 'row',
       gap: 6,
       paddingRight: theme.spacing.xl,
+    },
+    decadeRow: {
+      marginTop: 8,
     },
     decadeChip: {
       paddingHorizontal: 14,

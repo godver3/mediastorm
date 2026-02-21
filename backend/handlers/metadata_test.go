@@ -160,7 +160,7 @@ func (f *fakeMetadataService) GetAICustomRecommendations(_ context.Context, _ st
 	return nil, nil
 }
 
-func (f *fakeMetadataService) GetAISurprise(_ context.Context, _ string) (*models.TrendingItem, error) {
+func (f *fakeMetadataService) GetAISurprise(_ context.Context, _ string, _ string) (*models.TrendingItem, error) {
 	return nil, nil
 }
 
