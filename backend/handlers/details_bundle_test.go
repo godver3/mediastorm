@@ -51,7 +51,7 @@ func (m *mockMetadataServiceDetailsBundle) GetAISimilar(_ context.Context, _ str
 func (m *mockMetadataServiceDetailsBundle) GetAICustomRecommendations(_ context.Context, _ string) ([]models.TrendingItem, error) {
 	return nil, nil
 }
-func (m *mockMetadataServiceDetailsBundle) GetAISurprise(_ context.Context, _ string) (*models.TrendingItem, error) {
+func (m *mockMetadataServiceDetailsBundle) GetAISurprise(_ context.Context, _ string, _ string) (*models.TrendingItem, error) {
 	return nil, nil
 }
 func (m *mockMetadataServiceDetailsBundle) Trailers(_ context.Context, _ models.TrailerQuery) (*models.TrailerResponse, error) {

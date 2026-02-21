@@ -456,7 +456,7 @@ Example format:
 
 // getSurpriseRecommendation asks Gemini for a single random movie/show recommendation.
 // Uses high temperature and randomized prompt elements to avoid repetitive answers.
-func (c *geminiClient) getSurpriseRecommendation(ctx context.Context, preferredDecade string) ([]GeminiRecommendation, error) {
+func (c *geminiClient) getSurpriseRecommendation(ctx context.Context, preferredDecade, preferredMediaType string) ([]GeminiRecommendation, error) {
 	if !c.isConfigured() {
 		return nil, errors.New("gemini api key not configured")
 	}
@@ -481,15 +481,30 @@ func (c *geminiClient) getSurpriseRecommendation(ctx context.Context, preferredD
 		decade = decades[(now/7)%int64(len(decades))]
 	}
 
-	prompt := fmt.Sprintf(`Pick exactly 1 random movie or TV show recommendation. Be creative and surprising — do NOT pick an obvious or mainstream choice. Surprise the user with something unexpected and excellent.
+	// Determine media type constraint for prompt
+	var mediaTypeConstraint, mediaTypeExample string
+	switch preferredMediaType {
+	case "movie":
+		mediaTypeConstraint = "movie (NOT a TV show)"
+		mediaTypeExample = "movie"
+	case "show":
+		mediaTypeConstraint = "TV show (NOT a movie)"
+		mediaTypeExample = "series"
+	default:
+		mediaTypeConstraint = "movie or TV show"
+		mediaTypeExample = "movie"
+	}
+
+	prompt := fmt.Sprintf(`Pick exactly 1 random %s recommendation. Be creative and surprising — do NOT pick an obvious or mainstream choice. Surprise the user with something unexpected and excellent.
 
 Constraints:
 - It should be %s from the %s
+- It MUST be a %s
 - It must be a real title available on TMDB (The Movie Database)
 - Do NOT pick the same title you would normally default to — think outside the box
 
 Respond with ONLY a JSON array containing exactly 1 object, no other text:
-[{"title": "exact TMDB title", "year": 1234, "mediaType": "movie"}]`, vibe, decade)
+[{"title": "exact TMDB title", "year": 1234, "mediaType": "%s"}]`, mediaTypeConstraint, vibe, decade, mediaTypeConstraint, mediaTypeExample)
 
 	c.throttleMu.Lock()
 	since := time.Since(c.lastRequest)

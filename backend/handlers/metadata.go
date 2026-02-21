@@ -30,7 +30,7 @@ type metadataService interface {
 	GetAIRecommendations(context.Context, []string, []string, string) ([]models.TrendingItem, error)
 	GetAISimilar(context.Context, string, string) ([]models.TrendingItem, error)
 	GetAICustomRecommendations(context.Context, string) ([]models.TrendingItem, error)
-	GetAISurprise(context.Context, string) (*models.TrendingItem, error)
+	GetAISurprise(context.Context, string, string) (*models.TrendingItem, error)
 	PersonDetails(context.Context, int64) (*models.PersonDetails, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
@@ -1068,7 +1068,8 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 // GetAISurprise returns a single random movie/show recommendation.
 func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) {
 	decade := strings.TrimSpace(r.URL.Query().Get("decade"))
-	item, err := h.Service.GetAISurprise(r.Context(), decade)
+	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
+	item, err := h.Service.GetAISurprise(r.Context(), decade, mediaType)
 	if err != nil {
 		log.Printf("[metadata] ai surprise error: %v", err)
 		w.Header().Set("Content-Type", "application/json")

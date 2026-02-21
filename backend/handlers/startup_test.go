@@ -158,7 +158,7 @@ func (m *mockMetadataServiceStartup) GetAISimilar(context.Context, string, strin
 func (m *mockMetadataServiceStartup) GetAICustomRecommendations(context.Context, string) ([]models.TrendingItem, error) {
 	return nil, nil
 }
-func (m *mockMetadataServiceStartup) GetAISurprise(context.Context, string) (*models.TrendingItem, error) {
+func (m *mockMetadataServiceStartup) GetAISurprise(context.Context, string, string) (*models.TrendingItem, error) {
 	return nil, nil
 }
 func (m *mockMetadataServiceStartup) PersonDetails(context.Context, int64) (*models.PersonDetails, error) {
