@@ -1452,7 +1452,7 @@ export default function WatchlistScreen() {
             {/* Grid content - hide title in collection/person mode since page title already shows it */}
             <MediaGrid
               ref={mediaGridRef}
-              title={isCollectionMode || isPersonMode ? '' : pageTitle}
+              title=""
               items={filteredAndSortedTitles}
               loading={loading}
               error={error}

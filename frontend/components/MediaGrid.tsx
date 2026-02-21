@@ -401,7 +401,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
         return (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-            <Text style={styles.loadingText}>Loading {title.toLowerCase()}...</Text>
+            <Text style={styles.loadingText}>Loading...</Text>
           </View>
         );
       }
