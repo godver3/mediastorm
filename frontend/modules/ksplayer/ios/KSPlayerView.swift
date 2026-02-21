@@ -55,18 +55,36 @@ class StrmrKSOptions: KSOptions {
         }
     }
 
-    /// Override to increase frame buffer capacity for high bitrate content (from Flixor)
+    /// Override to tune frame buffer capacity by resolution, but respect DV memory caps.
     override func videoFrameMaxCount(fps: Float, naturalSize: CGSize, isLive: Bool) -> UInt8 {
         if isLive {
-            return 8
+            return 4
         }
-        // 4K needs more buffer frames
+        // DV profiles use Metal LUT textures + VT decode buffers — cap frames to reduce memory.
+        // 4K DV decoded frames are ~25MB each; 32 of them would consume ~800MB.
+        if doviProfile5Detected || doviProfile78Detected {
+            return 6
+        }
+        #if os(tvOS)
+        // tvOS Apple TV has limited memory (~3GB shared). Be conservative for 4K.
         if naturalSize.width >= 3840 || naturalSize.height >= 2160 {
-            return 32
+            if streamBitRate > 60_000_000 {
+                return 8
+            }
+            return 12
+        } else if naturalSize.width >= 1920 || naturalSize.height >= 1080 {
+            return 16
+        }
+        return 16
+        #else
+        // iOS devices have more memory headroom
+        if naturalSize.width >= 3840 || naturalSize.height >= 2160 {
+            return 16
         } else if naturalSize.width >= 1920 || naturalSize.height >= 1080 {
             return 24
         }
         return 16
+        #endif
     }
 }
 
