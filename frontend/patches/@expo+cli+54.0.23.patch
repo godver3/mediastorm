@@ -1,0 +1,21 @@
+diff --git a/node_modules/@expo/cli/build/src/start/platforms/android/adb.js b/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
+index 608e5b0..1be6688 100644
+--- a/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
++++ b/node_modules/@expo/cli/build/src/start/platforms/android/adb.js
+@@ -274,9 +274,13 @@ async function getAttachedDevicesAsync() {
+             }
+         } else {
+             // Given an emulator pid, get the emulator name which can be used to start the emulator later.
+-            name = await getAdbNameForDeviceIdAsync({
+-                pid
+-            }) ?? '';
++            try {
++                name = await getAdbNameForDeviceIdAsync({
++                    pid
++                }) ?? '';
++            } catch {
++                name = '';
++            }
+         }
+         return props.connectionType ? {
+             pid,
