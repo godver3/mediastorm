@@ -160,11 +160,13 @@ export function ListCard(props: ListCardProps) {
             colors={['transparent', 'rgba(0,0,0,0.85)']}
             style={styles.collageOverlay}
           >
-            <Text style={styles.backdropSeed} numberOfLines={1}>
-              Because you watched
-            </Text>
+            {(props.title || !props.seedTitle) ? null : (
+              <Text style={styles.backdropSeed} numberOfLines={1}>
+                Because you watched
+              </Text>
+            )}
             <Text style={styles.collageTitle} numberOfLines={1}>
-              {props.seedTitle}
+              {props.title || props.seedTitle}
             </Text>
           </LinearGradient>
         </View>
