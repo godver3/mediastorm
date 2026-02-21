@@ -43,6 +43,8 @@ interface UserProfilesContextValue {
   setProfileSelectorActive: (active: boolean) => void;
   // Whether the profile selector overlay is currently visible (ref — does not trigger re-renders)
   profileSelectorVisibleRef: React.MutableRefObject<boolean>;
+  // State-based visibility for components that need re-renders when visibility changes
+  profileSelectorVisible: boolean;
   setProfileSelectorVisible: (visible: boolean) => void;
   // Increments on every successful PIN verification (used by profile selector to dismiss)
   pinVerifiedGeneration: number;
@@ -99,8 +101,10 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const usersRef = useRef<UserProfile[]>([]);
   const profileSelectorActiveRef = useRef(false);
   const profileSelectorVisibleRef = useRef(false);
+  const [profileSelectorVisible, _setProfileSelectorVisible] = useState(false);
   const setProfileSelectorVisible = useCallback((visible: boolean) => {
     profileSelectorVisibleRef.current = visible;
+    _setProfileSelectorVisible(visible);
   }, []);
   const { backendUrl, isReady, loadUserSettings, isBackendReachable } = useBackendSettings();
 
@@ -432,6 +436,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       isInitialPinCheck,
       setProfileSelectorActive,
       profileSelectorVisibleRef,
+      profileSelectorVisible,
       setProfileSelectorVisible,
       pinVerifiedGeneration,
       profileChangeGeneration,
@@ -461,6 +466,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     cancelPinEntry,
     isInitialPinCheck,
     setProfileSelectorActive,
+    profileSelectorVisible,
     setProfileSelectorVisible,
     pinVerifiedGeneration,
     profileChangeGeneration,

@@ -593,7 +593,7 @@ function IndexScreen() {
     error: continueWatchingError,
     refresh: refreshContinueWatching,
   } = useContinueWatching();
-  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisibleRef, profileChangeGeneration } =
+  const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisibleRef, profileSelectorVisible, profileChangeGeneration } =
     useUserProfiles();
   const {
     data: trendingMovies,
@@ -3048,7 +3048,7 @@ function IndexScreen() {
     </View>
   );
 
-  const isSpatialNavActive = focused && !isMenuOpen && !profileSelectorVisibleRef.current && !isVersionMismatchVisible;
+  const isSpatialNavActive = focused && !isMenuOpen && !profileSelectorVisible && !isVersionMismatchVisible;
 
   return (
     <>
