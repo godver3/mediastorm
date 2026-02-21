@@ -2985,7 +2985,6 @@ function IndexScreen() {
                   cardWidth={shelfCardWidth}
                   cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
                   cardSpacing={desktopStyles!.cardSpacing}
-                  numberOfItemsVisibleOnScreen={Math.max(1, visibleItems)}
                   onCardSelect={handleCardSelect}
                   onShelfItemFocus={handleShelfItemFocus}
                   autoFocus={shelf.autoFocus && shelf.cards.length > 0}
@@ -3388,7 +3387,6 @@ type VirtualizedShelfProps = {
   cardWidth: number;
   cardHeight: number;
   cardSpacing: number;
-  numberOfItemsVisibleOnScreen: number;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait)
@@ -3415,7 +3413,6 @@ function VirtualizedShelf({
   cardWidth,
   cardHeight,
   cardSpacing,
-  numberOfItemsVisibleOnScreen,
   badgeVisibility,
   watchStateIconStyle = 'colored',
   cardLayout = 'portrait',
@@ -3547,8 +3544,7 @@ function VirtualizedShelf({
             data={cards}
             renderItem={renderItem}
             itemSize={itemSize}
-            numberOfRenderedItems={numberOfItemsVisibleOnScreen + 4}
-            numberOfItemsVisibleOnScreen={numberOfItemsVisibleOnScreen}
+            additionalItemsRendered={4}
             orientation="horizontal"
             scrollDuration={300}
           />
@@ -3576,7 +3572,6 @@ const MemoizedShelf = React.memo(VirtualizedShelf, (prev, next) => (
   prev.cardWidth === next.cardWidth &&
   prev.cardHeight === next.cardHeight &&
   prev.cardSpacing === next.cardSpacing &&
-  prev.numberOfItemsVisibleOnScreen === next.numberOfItemsVisibleOnScreen &&
   prev.badgeVisibility === next.badgeVisibility &&
   prev.watchStateIconStyle === next.watchStateIconStyle &&
   prev.cardLayout === next.cardLayout

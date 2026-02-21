@@ -59,7 +59,6 @@ function ListShelf({
   cards,
   cardWidth,
   cardSpacing,
-  numberOfItemsVisibleOnScreen,
   autoFocus,
   shelfKey,
   cardAspectRatio,
@@ -71,7 +70,6 @@ function ListShelf({
   cards: ListCardData[];
   cardWidth: number;
   cardSpacing: number;
-  numberOfItemsVisibleOnScreen: number;
   autoFocus: boolean;
   shelfKey: string;
   cardAspectRatio: number;
@@ -124,8 +122,7 @@ function ListShelf({
           data={cards}
           renderItem={renderItem}
           itemSize={itemSize}
-          numberOfRenderedItems={numberOfItemsVisibleOnScreen + 4}
-          numberOfItemsVisibleOnScreen={numberOfItemsVisibleOnScreen}
+          additionalItemsRendered={4}
           orientation="horizontal"
           scrollDuration={300}
         />
@@ -934,7 +931,6 @@ export default function ListsScreen() {
                     cardWidth={sectionCardWidth}
                     cardSpacing={cardSpacing}
                     cardAspectRatio={sectionAspectRatio}
-                    numberOfItemsVisibleOnScreen={getVisibleItems(sectionCardWidth)}
                     autoFocus={sIdx === 0}
                     shelfKey={section.key}
                     registerShelfRef={registerShelfRef}

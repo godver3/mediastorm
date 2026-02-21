@@ -255,8 +255,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
             data={seasons}
             renderItem={renderSeasonItem}
             itemSize={SEASON_CHIP_WIDTH + SEASON_CHIP_GAP}
-            numberOfRenderedItems={SEASON_ITEMS_VISIBLE + 4}
-            numberOfItemsVisibleOnScreen={SEASON_ITEMS_VISIBLE}
+            additionalItemsRendered={4}
             orientation="horizontal"
             scrollDuration={300}
           />
@@ -270,8 +269,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
             data={episodes}
             renderItem={renderEpisodeItem}
             itemSize={THUMBNAIL_WIDTH + EPISODE_GAP}
-            numberOfRenderedItems={EPISODE_ITEMS_VISIBLE + 4}
-            numberOfItemsVisibleOnScreen={EPISODE_ITEMS_VISIBLE}
+            additionalItemsRendered={4}
             orientation="horizontal"
             scrollDuration={300}
           />
