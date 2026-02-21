@@ -29,7 +29,8 @@ module.exports = ({ config }) => {
     './plugins/with-ksplayer', // KSPlayer native player for iOS/tvOS
     './plugins/with-large-heap', // Increase Android heap limit for video playback
     './plugins/with-exoplayer-keep-resources', // Preserve ExoPlayer resources during shrinking
-    '@kesha-antonov/react-native-background-downloader',
+    // Background downloader not used on TV devices (and mmkv breaks armeabi-v7a builds)
+    ...(!isTV ? ['@kesha-antonov/react-native-background-downloader'] : []),
     [
       'expo-build-properties',
       {
