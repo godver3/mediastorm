@@ -9,7 +9,7 @@ export interface GenreConfig {
 export const MOVIE_GENRES: GenreConfig[] = [
   { id: 28, name: 'Action', icon: 'flash', tintColor: 'rgba(239,68,68,0.12)' },
   { id: 35, name: 'Comedy', icon: 'happy', tintColor: 'rgba(245,158,11,0.12)' },
-  { id: 18, name: 'Drama', icon: 'theater-masks', iconFamily: 'MaterialCommunityIcons', tintColor: 'rgba(168,85,247,0.12)' },
+  { id: 18, name: 'Drama', icon: 'drama-masks', iconFamily: 'MaterialCommunityIcons', tintColor: 'rgba(168,85,247,0.12)' },
   { id: 27, name: 'Horror', icon: 'skull', tintColor: 'rgba(185,28,28,0.12)' },
   { id: 878, name: 'Sci-Fi', icon: 'rocket', tintColor: 'rgba(59,130,246,0.12)' },
   { id: 10749, name: 'Romance', icon: 'heart', tintColor: 'rgba(236,72,153,0.12)' },
@@ -30,7 +30,7 @@ export const MOVIE_GENRES: GenreConfig[] = [
 export const TV_GENRES: GenreConfig[] = [
   { id: 10759, name: 'Action & Adventure', icon: 'flash', tintColor: 'rgba(239,68,68,0.12)' },
   { id: 35, name: 'Comedy', icon: 'happy', tintColor: 'rgba(245,158,11,0.12)' },
-  { id: 18, name: 'Drama', icon: 'theater-masks', iconFamily: 'MaterialCommunityIcons', tintColor: 'rgba(168,85,247,0.12)' },
+  { id: 18, name: 'Drama', icon: 'drama-masks', iconFamily: 'MaterialCommunityIcons', tintColor: 'rgba(168,85,247,0.12)' },
   { id: 10765, name: 'Sci-Fi & Fantasy', icon: 'rocket', tintColor: 'rgba(59,130,246,0.12)' },
   { id: 80, name: 'Crime', icon: 'shield', iconFamily: 'MaterialCommunityIcons', tintColor: 'rgba(75,85,99,0.12)' },
   { id: 9648, name: 'Mystery', icon: 'search', tintColor: 'rgba(6,182,212,0.12)' },

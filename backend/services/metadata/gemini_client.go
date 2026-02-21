@@ -103,7 +103,22 @@ func (c *geminiClient) getRecommendations(ctx context.Context, watchedTitles []s
 		titleList += fmt.Sprintf("- %s (%s)\n", title, mt)
 	}
 
-	prompt := fmt.Sprintf(`You are a movie and TV show recommendation engine. Based on the following titles that a user has recently watched and enjoyed, recommend exactly 20 movies and TV shows they would likely enjoy. Mix both movies and TV shows in your recommendations.
+	// Randomized emphasis to produce varied recommendations each time
+	emphases := []string{
+		"Prioritize hidden gems and lesser-known titles that most people haven't seen.",
+		"Lean toward critically acclaimed titles with strong storytelling.",
+		"Focus on visually stunning and atmospheric picks.",
+		"Emphasize cult classics and fan favorites.",
+		"Include some surprising, unexpected picks from genres the user might not expect to enjoy.",
+		"Lean toward recent releases from the last few years.",
+		"Include a mix of international and foreign-language titles alongside English ones.",
+		"Prioritize character-driven stories with strong performances.",
+	}
+	emphasis := emphases[time.Now().UnixNano()%int64(len(emphases))]
+
+	prompt := fmt.Sprintf(`You are a movie and TV show recommendation engine. Based on the following titles that a user has recently watched and enjoyed, recommend exactly 20 movies and TV shows they would likely enjoy.
+
+IMPORTANT: You MUST include a balanced mix — at least 8 movies and at least 8 TV shows in your 20 recommendations. Do not skew heavily toward one type.
 
 Titles the user has watched:
 %s
@@ -112,6 +127,7 @@ Focus on:
 - Both well-known and hidden gem recommendations
 - A mix of recent and classic titles
 - Do NOT recommend titles the user has already watched (listed above)
+- %s
 
 Respond with ONLY a JSON array, no other text. Each object must have exactly these fields:
 - "title": the exact title as it appears on TMDB
@@ -119,7 +135,7 @@ Respond with ONLY a JSON array, no other text. Each object must have exactly the
 - "mediaType": either "movie" or "series"
 
 Example format:
-[{"title": "Inception", "year": 2010, "mediaType": "movie"}, {"title": "Dark", "year": 2017, "mediaType": "series"}]`, titleList)
+[{"title": "Inception", "year": 2010, "mediaType": "movie"}, {"title": "Dark", "year": 2017, "mediaType": "series"}]`, titleList, emphasis)
 
 	// Rate limiting
 	c.throttleMu.Lock()
@@ -138,7 +154,7 @@ Example format:
 			{Parts: []geminiPart{{Text: prompt}}},
 		},
 		GenerationConfig: &geminiGenerationConfig{
-			Temperature:     0.7,
+			Temperature:     0.9,
 			MaxOutputTokens: 2048,
 		},
 	}

@@ -3254,15 +3254,7 @@ func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []stri
 		return nil, fmt.Errorf("no watched titles provided")
 	}
 
-	// Check cache first
-	cacheID := cacheKey("gemini", "recommendations", userID)
-	var cached []models.TrendingItem
-	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
-		log.Printf("[metadata] gemini recommendations cache hit user=%s count=%d", userID, len(cached))
-		return cached, nil
-	}
-
-	// Get recommendations from Gemini
+	// Get fresh recommendations from Gemini (no cache — each request should feel unique)
 	recs, err := s.gemini.getRecommendations(ctx, watchedTitles, mediaTypes)
 	if err != nil {
 		return nil, fmt.Errorf("gemini recommendations: %w", err)
@@ -3315,11 +3307,6 @@ func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []stri
 
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no recommendations could be resolved to TMDB titles")
-	}
-
-	// Cache the results
-	if err := s.cache.set(cacheID, items); err != nil {
-		log.Printf("[metadata] failed to cache gemini recommendations: %v", err)
 	}
 
 	log.Printf("[metadata] gemini recommendations resolved user=%s count=%d", userID, len(items))

@@ -103,6 +103,7 @@ export default function ListsScreen() {
   // Recommendation seeds from continue watching (top 3 movies + top 3 shows)
   const recommendationSeeds = useMemo(() => {
     if (!continueWatchingItems) return [];
+    const seen = new Set<number>();
     const withTmdb = continueWatchingItems
       .filter((item) => item.externalIds?.tmdb)
       .map((item) => ({
@@ -110,7 +111,12 @@ export default function ListsScreen() {
         title: item.seriesTitle,
         backdropUrl: item.backdropUrl,
         mediaType: (item.nextEpisode ? 'tv' : 'movie') as 'tv' | 'movie',
-      }));
+      }))
+      .filter((item) => {
+        if (seen.has(item.tmdbId)) return false;
+        seen.add(item.tmdbId);
+        return true;
+      });
     const movies = withTmdb.filter((s) => s.mediaType === 'movie').slice(0, 3);
     const shows = withTmdb.filter((s) => s.mediaType === 'tv').slice(0, 3);
     const interleaved: typeof withTmdb = [];
@@ -322,7 +328,7 @@ export default function ListsScreen() {
       title: 'Because You Watched',
       key: 'recommendations',
       cards: recommendationSeeds.map((seed) => ({
-        key: `similar-${seed.tmdbId}`,
+        key: `similar-${seed.mediaType}-${seed.tmdbId}`,
         content: (
           <ListCard
             variant="backdrop"
