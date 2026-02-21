@@ -26,6 +26,11 @@ type metadataService interface {
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
 	Similar(context.Context, string, int64) ([]models.Title, error)
+	DiscoverByGenre(context.Context, string, int64, int, int) ([]models.TrendingItem, int, error)
+	GetAIRecommendations(context.Context, []string, []string, string) ([]models.TrendingItem, error)
+	GetAISimilar(context.Context, string, string) ([]models.TrendingItem, error)
+	GetAICustomRecommendations(context.Context, string) ([]models.TrendingItem, error)
+	GetAISurprise(context.Context, string) (*models.TrendingItem, error)
 	PersonDetails(context.Context, int64) (*models.PersonDetails, error)
 	Trailers(context.Context, models.TrailerQuery) (*models.TrailerResponse, error)
 	ExtractTrailerStreamURL(context.Context, string) (string, error)
@@ -50,6 +55,12 @@ type userSettingsProvider interface {
 // historyServiceInterface provides access to watch history for filtering.
 type historyServiceInterface interface {
 	GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error)
+	ListWatchHistory(userID string) ([]models.WatchHistoryItem, error)
+}
+
+// watchlistLister provides access to a user's watchlist for recommendations.
+type watchlistLister interface {
+	List(userID string) ([]models.WatchlistItem, error)
 }
 
 // usersServiceInterface provides access to user profiles for kids filtering.
@@ -58,11 +69,12 @@ type usersServiceInterface interface {
 }
 
 type MetadataHandler struct {
-	Service        metadataService
-	CfgManager     *config.Manager
-	UserSettings   userSettingsProvider
-	HistoryService historyServiceInterface
-	UsersService   usersServiceInterface
+	Service          metadataService
+	CfgManager       *config.Manager
+	UserSettings     userSettingsProvider
+	HistoryService   historyServiceInterface
+	UsersService     usersServiceInterface
+	WatchlistService watchlistLister
 }
 
 func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *MetadataHandler {
@@ -82,6 +94,11 @@ func (h *MetadataHandler) SetHistoryService(service historyServiceInterface) {
 // SetUsersService sets the users service for kids profile filtering.
 func (h *MetadataHandler) SetUsersService(service usersServiceInterface) {
 	h.UsersService = service
+}
+
+// SetWatchlistService sets the watchlist service for AI recommendations.
+func (h *MetadataHandler) SetWatchlistService(service watchlistLister) {
+	h.WatchlistService = service
 }
 
 // DiscoverNewResponse wraps trending items with total count for pagination
@@ -854,6 +871,214 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// DiscoverByGenre returns TMDB discover results for a specific genre
+func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request) {
+	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	genreIDStr := strings.TrimSpace(r.URL.Query().Get("genreId"))
+
+	if genreIDStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "genreId is required"})
+		return
+	}
+
+	genreID, err := strconv.ParseInt(genreIDStr, 10, 64)
+	if err != nil || genreID <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid genreId"})
+		return
+	}
+
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	items, total, err := h.Service.DiscoverByGenre(r.Context(), mediaType, genreID, limit, offset)
+	if err != nil {
+		log.Printf("[metadata] discover genre error type=%s genreId=%d: %v", mediaType, genreID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if items == nil {
+		items = []models.TrendingItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
+}
+
+// GetAIRecommendations returns Gemini-powered personalized recommendations.
+// It collects the user's watched titles from history and watchlist, then
+// asks Gemini for recommendations and resolves them to TMDB titles.
+func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "userId is required"})
+		return
+	}
+
+	// Collect watched titles from watch history and watchlist
+	var watchedTitles []string
+	var mediaTypes []string
+	seen := make(map[string]bool)
+
+	// From watch history (recently watched items)
+	if h.HistoryService != nil {
+		history, err := h.HistoryService.ListWatchHistory(userID)
+		if err == nil {
+			for _, item := range history {
+				if item.Watched && item.Name != "" {
+					key := item.Name
+					if item.MediaType == "episode" && item.SeriesName != "" {
+						key = item.SeriesName
+					}
+					if !seen[key] {
+						seen[key] = true
+						mt := item.MediaType
+						if mt == "episode" {
+							mt = "series"
+						}
+						watchedTitles = append(watchedTitles, key)
+						mediaTypes = append(mediaTypes, mt)
+					}
+				}
+			}
+		}
+	}
+
+	// From watchlist
+	if h.WatchlistService != nil {
+		wl, err := h.WatchlistService.List(userID)
+		if err == nil {
+			for _, item := range wl {
+				if item.Name != "" && !seen[item.Name] {
+					seen[item.Name] = true
+					watchedTitles = append(watchedTitles, item.Name)
+					mediaTypes = append(mediaTypes, item.MediaType)
+				}
+			}
+		}
+	}
+
+	// Limit to most recent 30 titles to avoid huge prompts
+	if len(watchedTitles) > 30 {
+		watchedTitles = watchedTitles[:30]
+		mediaTypes = mediaTypes[:30]
+	}
+
+	if len(watchedTitles) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0})
+		return
+	}
+
+	items, err := h.Service.GetAIRecommendations(r.Context(), watchedTitles, mediaTypes, userID)
+	if err != nil {
+		log.Printf("[metadata] ai recommendations error user=%s: %v", userID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if items == nil {
+		items = []models.TrendingItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+}
+
+// GetAISimilar returns AI-powered recommendations similar to a specific title.
+func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
+	seedTitle := strings.TrimSpace(r.URL.Query().Get("title"))
+	mediaType := strings.TrimSpace(r.URL.Query().Get("type"))
+	if seedTitle == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "title is required"})
+		return
+	}
+	if mediaType == "" {
+		mediaType = "movie"
+	}
+
+	items, err := h.Service.GetAISimilar(r.Context(), seedTitle, mediaType)
+	if err != nil {
+		log.Printf("[metadata] ai similar error seed=%q: %v", seedTitle, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if items == nil {
+		items = []models.TrendingItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+}
+
+// GetAICustomRecommendations returns recommendations based on a free-text query.
+func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "q (query) is required"})
+		return
+	}
+
+	items, err := h.Service.GetAICustomRecommendations(r.Context(), query)
+	if err != nil {
+		log.Printf("[metadata] ai custom recommendations error query=%q: %v", query, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if items == nil {
+		items = []models.TrendingItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+}
+
+// GetAISurprise returns a single random movie/show recommendation.
+func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) {
+	decade := strings.TrimSpace(r.URL.Query().Get("decade"))
+	item, err := h.Service.GetAISurprise(r.Context(), decade)
+	if err != nil {
+		log.Printf("[metadata] ai surprise error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
 }
 
 // GetProgress returns a snapshot of active metadata enrichment progress.

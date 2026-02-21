@@ -80,7 +80,8 @@ export default function DrawerLayout() {
         }}>
         <Tabs.Screen name="index" options={{ title: 'Home' }} />
         <Tabs.Screen name="search" options={{ title: 'Search' }} />
-        <Tabs.Screen name="watchlist" options={{ title: 'Watchlist' }} />
+        <Tabs.Screen name="lists" options={{ title: 'Lists' }} />
+        <Tabs.Screen name="watchlist" options={{ href: null }} />
         <Tabs.Screen name="live" options={{ title: 'Live' }} />
         <Tabs.Screen name="profiles" options={{ title: 'Profiles' }} />
         <Tabs.Screen name="downloads" options={Platform.isTV || Platform.OS === 'web' ? { href: null } : { title: 'Downloads' }} />
@@ -145,6 +146,7 @@ export default function DrawerLayout() {
           }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="search" />
+          <Stack.Screen name="lists" />
           <Stack.Screen name="watchlist" />
           <Stack.Screen name="live" />
           <Stack.Screen name="profiles" />

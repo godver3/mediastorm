@@ -26,11 +26,19 @@ type fakeMetadataService struct {
 	movieResp    *models.Title
 	movieErr     error
 
-	lastTrendingType string
-	lastSearchQuery  string
-	lastSearchType   string
-	lastSeriesQuery  models.SeriesDetailsQuery
-	lastMovieQuery   models.MovieDetailsQuery
+	discoverByGenreResp  []models.TrendingItem
+	discoverByGenreTotal int
+	discoverByGenreErr   error
+
+	lastTrendingType        string
+	lastSearchQuery         string
+	lastSearchType          string
+	lastSeriesQuery         models.SeriesDetailsQuery
+	lastMovieQuery          models.MovieDetailsQuery
+	lastDiscoverGenreType   string
+	lastDiscoverGenreID     int64
+	lastDiscoverGenreLimit  int
+	lastDiscoverGenreOffset int
 }
 
 func (f *fakeMetadataService) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
@@ -129,6 +137,30 @@ func (f *fakeMetadataService) PersonDetails(_ context.Context, _ int64) (*models
 }
 
 func (f *fakeMetadataService) Similar(_ context.Context, _ string, _ int64) ([]models.Title, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) DiscoverByGenre(_ context.Context, mediaType string, genreID int64, limit, offset int) ([]models.TrendingItem, int, error) {
+	f.lastDiscoverGenreType = mediaType
+	f.lastDiscoverGenreID = genreID
+	f.lastDiscoverGenreLimit = limit
+	f.lastDiscoverGenreOffset = offset
+	return f.discoverByGenreResp, f.discoverByGenreTotal, f.discoverByGenreErr
+}
+
+func (f *fakeMetadataService) GetAIRecommendations(_ context.Context, _ []string, _ []string, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) GetAISimilar(_ context.Context, _ string, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) GetAICustomRecommendations(_ context.Context, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) GetAISurprise(_ context.Context, _ string) (*models.TrendingItem, error) {
 	return nil, nil
 }
 
@@ -414,5 +446,188 @@ func TestMetadataHandler_SearchNormalUserUnfiltered(t *testing.T) {
 	}
 	if len(payload) != 2 {
 		t.Fatalf("expected 2 unfiltered results for normal user, got %d", len(payload))
+	}
+}
+
+func TestMetadataHandler_DiscoverByGenre(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByGenreResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{Name: "Action Movie", MediaType: "movie", TMDBID: 100}},
+			{Rank: 2, Title: models.Title{Name: "Action Movie 2", MediaType: "movie", TMDBID: 200}},
+		},
+		discoverByGenreTotal: 42,
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=28&limit=10&offset=0", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastDiscoverGenreType != "movie" {
+		t.Fatalf("expected media type movie, got %q", fake.lastDiscoverGenreType)
+	}
+	if fake.lastDiscoverGenreID != 28 {
+		t.Fatalf("expected genre ID 28, got %d", fake.lastDiscoverGenreID)
+	}
+	if fake.lastDiscoverGenreLimit != 10 {
+		t.Fatalf("expected limit 10, got %d", fake.lastDiscoverGenreLimit)
+	}
+	if fake.lastDiscoverGenreOffset != 0 {
+		t.Fatalf("expected offset 0, got %d", fake.lastDiscoverGenreOffset)
+	}
+
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("unexpected content-type %q", got)
+	}
+
+	var payload DiscoverNewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(payload.Items))
+	}
+	if payload.Total != 42 {
+		t.Fatalf("expected total 42, got %d", payload.Total)
+	}
+	if payload.Items[0].Title.Name != "Action Movie" {
+		t.Fatalf("unexpected first item name: %q", payload.Items[0].Title.Name)
+	}
+}
+
+func TestMetadataHandler_DiscoverByGenreMissingGenreID(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["error"] != "genreId is required" {
+		t.Fatalf("expected genreId required error, got %q", payload["error"])
+	}
+}
+
+func TestMetadataHandler_DiscoverByGenreInvalidGenreID(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=abc", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["error"] != "invalid genreId" {
+		t.Fatalf("expected invalid genreId error, got %q", payload["error"])
+	}
+}
+
+func TestMetadataHandler_DiscoverByGenreError(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByGenreErr: errors.New("tmdb unavailable"),
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=series&genreId=16", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected %d, got %d", http.StatusBadGateway, rec.Code)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["error"] == "" {
+		t.Fatalf("expected error message, got %v", payload)
+	}
+}
+
+func TestMetadataHandler_DiscoverByGenreNilItems(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByGenreResp:  nil,
+		discoverByGenreTotal: 0,
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=28", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByGenre(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var payload DiscoverNewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Items == nil {
+		t.Fatalf("expected non-nil items array (should be empty slice)")
+	}
+	if len(payload.Items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(payload.Items))
+	}
+}
+
+func TestMetadataHandler_GetAIRecommendationsMissingUserId(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetAIRecommendations(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestMetadataHandler_GetAIRecommendationsEmptyHistory(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	// No history or watchlist services set — should return empty results
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations?userId=user1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetAIRecommendations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var payload DiscoverNewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(payload.Items))
 	}
 }

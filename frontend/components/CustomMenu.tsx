@@ -56,7 +56,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const baseMenuItems = [
     { name: '/', label: 'Home' },
     { name: '/search', label: 'Search' },
-    { name: '/watchlist', label: 'Watchlist' },
+    { name: '/lists', label: 'Lists' },
     { name: '/live', label: 'Live' },
     { name: '/profiles', label: 'Profiles' },
     { name: '/settings', label: 'Settings' },
@@ -387,8 +387,8 @@ function getMenuIconName(routeName: string): React.ComponentProps<typeof Materia
       return 'home-variant';
     case '/search':
       return 'magnify';
-    case '/watchlist':
-      return 'playlist-star';
+    case '/lists':
+      return 'format-list-bulleted-square';
     case '/live':
       return 'television-play';
     case '/profiles':

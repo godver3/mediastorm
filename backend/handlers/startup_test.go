@@ -146,6 +146,21 @@ func (m *mockMetadataServiceStartup) CollectionDetails(context.Context, int64) (
 func (m *mockMetadataServiceStartup) Similar(context.Context, string, int64) ([]models.Title, error) {
 	return nil, nil
 }
+func (m *mockMetadataServiceStartup) DiscoverByGenre(context.Context, string, int64, int, int) ([]models.TrendingItem, int, error) {
+	return nil, 0, nil
+}
+func (m *mockMetadataServiceStartup) GetAIRecommendations(context.Context, []string, []string, string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceStartup) GetAISimilar(context.Context, string, string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceStartup) GetAICustomRecommendations(context.Context, string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceStartup) GetAISurprise(context.Context, string) (*models.TrendingItem, error) {
+	return nil, nil
+}
 func (m *mockMetadataServiceStartup) PersonDetails(context.Context, int64) (*models.PersonDetails, error) {
 	return nil, nil
 }

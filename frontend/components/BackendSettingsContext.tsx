@@ -53,6 +53,7 @@ export interface BackendMetadataSettings {
   tvdbApiKey: string;
   tmdbApiKey: string;
   language: string;
+  geminiApiKey?: string;
 }
 
 export interface BackendCacheSettings {

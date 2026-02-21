@@ -28,6 +28,7 @@ import (
 type Service struct {
 	client  *tvdbClient
 	tmdb    *tmdbClient
+	gemini  *geminiClient
 	mdblist *mdblistClient
 	cache   *fileCache
 	// Separate cache for stable ID mappings (TMDB↔IMDB) with 7x longer TTL
@@ -103,7 +104,7 @@ type MDBListConfig struct {
 // stableIDCacheTTLMultiplier is used for ID mappings (TMDB↔IMDB) that rarely change
 const stableIDCacheTTLMultiplier = 7
 
-func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig) *Service {
+func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig, geminiAPIKey ...string) *Service {
 	// Use a dedicated subdirectory for metadata cache to avoid conflicts with
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
@@ -116,9 +117,16 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		log.Printf("[metadata] WARNING: failed to initialize trailer prequeue manager: %v", err)
 	}
 
+	// Extract optional Gemini API key
+	var geminiKey string
+	if len(geminiAPIKey) > 0 {
+		geminiKey = geminiAPIKey[0]
+	}
+
 	return &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
+		gemini:           newGeminiClient(geminiKey, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
 		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled, ttlHours),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
 		idCache:          newFileCache(idCacheDir, ttlHours*stableIDCacheTTLMultiplier),
@@ -359,47 +367,79 @@ func (s *Service) RefreshTrendingCache() {
 }
 
 // warmTrendingCache pre-fetches and enriches trending data and custom MDBList lists.
+// All fetches run concurrently to minimize total warm-up time when MDBList is slow.
 func (s *Service) warmTrendingCache() {
 	ctx := context.Background()
+	var mu sync.Mutex
 	var lastErr string
 
-	// Warm trending movies + TV
-	if _, err := s.Trending(ctx, "movie"); err != nil {
-		log.Printf("[metadata] cache manager: movie warm-up error: %v", err)
-		lastErr = "movies: " + err.Error()
-	}
-	if _, err := s.Trending(ctx, "series"); err != nil {
-		log.Printf("[metadata] cache manager: series warm-up error: %v", err)
+	appendErr := func(msg string) {
+		mu.Lock()
+		defer mu.Unlock()
 		if lastErr != "" {
 			lastErr += "; "
 		}
-		lastErr += "series: " + err.Error()
+		lastErr += msg
 	}
 
-	// Warm custom MDBList lists
+	var wg sync.WaitGroup
+
+	// Warm trending movies
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := s.Trending(ctx, "movie"); err != nil {
+			log.Printf("[metadata] cache manager: movie warm-up error: %v", err)
+			appendErr("movies: " + err.Error())
+		}
+	}()
+
+	// Warm trending TV
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := s.Trending(ctx, "series"); err != nil {
+			log.Printf("[metadata] cache manager: series warm-up error: %v", err)
+			appendErr("series: " + err.Error())
+		}
+	}()
+
+	// Warm custom MDBList lists (concurrently, capped at 5 workers)
 	if s.customListInfoFn != nil {
 		infos := s.customListInfoFn()
 		if len(infos) > 0 {
 			log.Printf("[metadata] cache manager: warming %d custom lists", len(infos))
+			sem := make(chan struct{}, 5)
 			for _, info := range infos {
-				opts := CustomListOptions{Limit: 0, Offset: 0, Label: info.Name}
-				if _, _, _, err := s.GetCustomList(ctx, info.URL, opts); err != nil {
-					log.Printf("[metadata] cache manager: custom list error url=%s: %v", info.URL, err)
-				}
+				wg.Add(1)
+				go func(info CustomListInfo) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					opts := CustomListOptions{Limit: 0, Offset: 0, Label: info.Name}
+					if _, _, _, err := s.GetCustomList(ctx, info.URL, opts); err != nil {
+						log.Printf("[metadata] cache manager: custom list error url=%s: %v", info.URL, err)
+					}
+				}(info)
 			}
 		}
 	}
+
+	wg.Wait()
 
 	s.cacheStatusMu.Lock()
 	s.cacheStatus.LastError = lastErr
 	s.cacheStatusMu.Unlock()
 }
 
-// UpdateAPIKeys updates the API keys for TVDB and TMDB clients
+// UpdateAPIKeys updates the API keys for TVDB, TMDB, and Gemini clients
 // This allows hot reloading when settings change
-func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string) {
+func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string, geminiAPIKey ...string) {
 	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{}, s.ttlHours)
 	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{}, s.cache)
+	if len(geminiAPIKey) > 0 {
+		s.gemini = newGeminiClient(geminiAPIKey[0], &http.Client{}, s.cache)
+	}
 
 	// Clear all cached metadata so fresh data is fetched with new API keys
 	if err := s.cache.clear(); err != nil {
@@ -3130,6 +3170,304 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 
 	log.Printf("[metadata] similar fetch success type=%s tmdbId=%d count=%d", normalizedType, tmdbID, len(titles))
 	return titles, nil
+}
+
+// DiscoverByGenre returns TMDB discover results for a specific genre.
+func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID int64, limit, offset int) ([]models.TrendingItem, int, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, 0, fmt.Errorf("tmdb client not configured")
+	}
+	if genreID <= 0 {
+		return nil, 0, fmt.Errorf("genre id required")
+	}
+
+	normalizedType := strings.ToLower(strings.TrimSpace(mediaType))
+	if normalizedType != "movie" {
+		normalizedType = "series"
+	}
+
+	// Convert offset/limit to TMDB page (TMDB pages are 20 items)
+	page := 1
+	if offset > 0 {
+		page = (offset / 20) + 1
+	}
+
+	cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page))
+	type discoverCache struct {
+		Items []models.Title `json:"items"`
+		Total int            `json:"total"`
+	}
+	var cached discoverCache
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		log.Printf("[metadata] discover genre cache hit type=%s genreId=%d page=%d count=%d", normalizedType, genreID, page, len(cached.Items))
+		items := make([]models.TrendingItem, len(cached.Items))
+		for i, t := range cached.Items {
+			items[i] = models.TrendingItem{Rank: i + 1 + ((page - 1) * 20), Title: t}
+		}
+		// Apply offset within page
+		offsetInPage := offset % 20
+		if offsetInPage > 0 && offsetInPage < len(items) {
+			items = items[offsetInPage:]
+		}
+		if limit > 0 && limit < len(items) {
+			items = items[:limit]
+		}
+		return items, cached.Total, nil
+	}
+
+	titles, total, err := s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Cache the raw page
+	if err := s.cache.set(cacheID, discoverCache{Items: titles, Total: total}); err != nil {
+		log.Printf("[metadata] failed to cache discover genre: %v", err)
+	}
+
+	items := make([]models.TrendingItem, len(titles))
+	for i, t := range titles {
+		items[i] = models.TrendingItem{Rank: i + 1 + ((page - 1) * 20), Title: t}
+	}
+
+	// Apply offset within page
+	offsetInPage := offset % 20
+	if offsetInPage > 0 && offsetInPage < len(items) {
+		items = items[offsetInPage:]
+	}
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+
+	log.Printf("[metadata] discover genre success type=%s genreId=%d page=%d count=%d total=%d", normalizedType, genreID, page, len(items), total)
+	return items, total, nil
+}
+
+// GetAIRecommendations generates personalized recommendations using Gemini AI
+// based on the user's watched titles. Results are cached for 24 hours per user.
+func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []string, mediaTypes []string, userID string) ([]models.TrendingItem, error) {
+	if s.gemini == nil || !s.gemini.isConfigured() {
+		return nil, fmt.Errorf("gemini api key not configured")
+	}
+
+	if len(watchedTitles) == 0 {
+		return nil, fmt.Errorf("no watched titles provided")
+	}
+
+	// Check cache first
+	cacheID := cacheKey("gemini", "recommendations", userID)
+	var cached []models.TrendingItem
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		log.Printf("[metadata] gemini recommendations cache hit user=%s count=%d", userID, len(cached))
+		return cached, nil
+	}
+
+	// Get recommendations from Gemini
+	recs, err := s.gemini.getRecommendations(ctx, watchedTitles, mediaTypes)
+	if err != nil {
+		return nil, fmt.Errorf("gemini recommendations: %w", err)
+	}
+
+	log.Printf("[metadata] gemini returned %d recommendations for user=%s", len(recs), userID)
+
+	// Build a set of watched titles (lowercased) to filter out from results
+	watchedSet := make(map[string]bool, len(watchedTitles))
+	for _, t := range watchedTitles {
+		watchedSet[strings.ToLower(t)] = true
+	}
+
+	// Resolve each recommendation to a TMDB title (with poster/backdrop)
+	var items []models.TrendingItem
+	seenTMDB := make(map[int64]bool)
+	rank := 0
+	for _, rec := range recs {
+		apiType := rec.MediaType
+		if apiType == "series" {
+			apiType = "tv"
+		}
+
+		title, err := s.tmdb.searchByTitle(ctx, rec.Title, rec.Year, apiType)
+		if err != nil {
+			log.Printf("[metadata] gemini rec %q: tmdb search failed: %v", rec.Title, err)
+			continue
+		}
+		if title == nil {
+			log.Printf("[metadata] gemini rec %q (%d): no tmdb match", rec.Title, rec.Year)
+			continue
+		}
+
+		// Skip duplicates (same TMDB ID) and titles the user already watched
+		if seenTMDB[title.TMDBID] {
+			continue
+		}
+		if watchedSet[strings.ToLower(title.Name)] {
+			log.Printf("[metadata] gemini rec %q: skipping (user already watched)", title.Name)
+			continue
+		}
+		seenTMDB[title.TMDBID] = true
+
+		rank++
+		items = append(items, models.TrendingItem{
+			Rank:  rank,
+			Title: *title,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no recommendations could be resolved to TMDB titles")
+	}
+
+	// Cache the results
+	if err := s.cache.set(cacheID, items); err != nil {
+		log.Printf("[metadata] failed to cache gemini recommendations: %v", err)
+	}
+
+	log.Printf("[metadata] gemini recommendations resolved user=%s count=%d", userID, len(items))
+	return items, nil
+}
+
+// GetAISimilar generates recommendations similar to a specific title using Gemini AI.
+func (s *Service) GetAISimilar(ctx context.Context, seedTitle string, mediaType string) ([]models.TrendingItem, error) {
+	if s.gemini == nil || !s.gemini.isConfigured() {
+		return nil, fmt.Errorf("gemini api key not configured")
+	}
+
+	// Check cache first
+	cacheID := cacheKey("gemini", "similar", mediaType, seedTitle)
+	var cached []models.TrendingItem
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		log.Printf("[metadata] gemini similar cache hit seed=%q count=%d", seedTitle, len(cached))
+		return cached, nil
+	}
+
+	recs, err := s.gemini.getSimilarRecommendations(ctx, seedTitle, mediaType)
+	if err != nil {
+		return nil, fmt.Errorf("gemini similar: %w", err)
+	}
+
+	log.Printf("[metadata] gemini returned %d similar recs for %q", len(recs), seedTitle)
+
+	var items []models.TrendingItem
+	seenTMDB := make(map[int64]bool)
+	seedLower := strings.ToLower(seedTitle)
+	rank := 0
+	for _, rec := range recs {
+		apiType := rec.MediaType
+		if apiType == "series" {
+			apiType = "tv"
+		}
+
+		title, err := s.tmdb.searchByTitle(ctx, rec.Title, rec.Year, apiType)
+		if err != nil || title == nil {
+			continue
+		}
+
+		if seenTMDB[title.TMDBID] || strings.ToLower(title.Name) == seedLower {
+			continue
+		}
+		seenTMDB[title.TMDBID] = true
+
+		rank++
+		items = append(items, models.TrendingItem{
+			Rank:  rank,
+			Title: *title,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no similar titles could be resolved")
+	}
+
+	if err := s.cache.set(cacheID, items); err != nil {
+		log.Printf("[metadata] failed to cache gemini similar: %v", err)
+	}
+
+	return items, nil
+}
+
+// GetAICustomRecommendations generates recommendations from a free-text user query using Gemini AI.
+func (s *Service) GetAICustomRecommendations(ctx context.Context, query string) ([]models.TrendingItem, error) {
+	if s.gemini == nil || !s.gemini.isConfigured() {
+		return nil, fmt.Errorf("gemini api key not configured")
+	}
+
+	// Check cache (hash the query for a stable key)
+	cacheID := cacheKey("gemini", "custom", fmt.Sprintf("%x", sha1.Sum([]byte(strings.ToLower(strings.TrimSpace(query))))))
+	var cached []models.TrendingItem
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		log.Printf("[metadata] gemini custom cache hit query=%q count=%d", query, len(cached))
+		return cached, nil
+	}
+
+	recs, err := s.gemini.getCustomRecommendations(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("gemini custom: %w", err)
+	}
+
+	log.Printf("[metadata] gemini returned %d custom recs for query=%q", len(recs), query)
+
+	var items []models.TrendingItem
+	seenTMDB := make(map[int64]bool)
+	rank := 0
+	for _, rec := range recs {
+		apiType := rec.MediaType
+		if apiType == "series" {
+			apiType = "tv"
+		}
+
+		title, err := s.tmdb.searchByTitle(ctx, rec.Title, rec.Year, apiType)
+		if err != nil || title == nil {
+			continue
+		}
+
+		if seenTMDB[title.TMDBID] {
+			continue
+		}
+		seenTMDB[title.TMDBID] = true
+
+		rank++
+		items = append(items, models.TrendingItem{
+			Rank:  rank,
+			Title: *title,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no custom recommendations could be resolved")
+	}
+
+	if err := s.cache.set(cacheID, items); err != nil {
+		log.Printf("[metadata] failed to cache gemini custom: %v", err)
+	}
+
+	return items, nil
+}
+
+// GetAISurprise returns a single random movie/show recommendation via Gemini AI.
+// Not cached — each call produces a different result.
+func (s *Service) GetAISurprise(ctx context.Context, decade string) (*models.TrendingItem, error) {
+	if s.gemini == nil || !s.gemini.isConfigured() {
+		return nil, fmt.Errorf("gemini api key not configured")
+	}
+
+	recs, err := s.gemini.getSurpriseRecommendation(ctx, decade)
+	if err != nil {
+		return nil, fmt.Errorf("gemini surprise: %w", err)
+	}
+
+	for _, rec := range recs {
+		apiType := rec.MediaType
+		if apiType == "series" {
+			apiType = "tv"
+		}
+		title, err := s.tmdb.searchByTitle(ctx, rec.Title, rec.Year, apiType)
+		if err != nil || title == nil {
+			continue
+		}
+		return &models.TrendingItem{Rank: 1, Title: *title}, nil
+	}
+
+	return nil, fmt.Errorf("surprise recommendation could not be resolved")
 }
 
 // PersonDetails retrieves detailed information about a person and their filmography

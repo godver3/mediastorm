@@ -7,6 +7,7 @@ import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import { CategoryFilterModal } from '@/components/CategoryFilterModal';
+import { SEASONAL_LISTS } from '@/constants/seasonal';
 import { apiService, type Title, type TrendingItem, type PersonDetails, type WatchStatusItem, type SeriesWatchState } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import {
@@ -197,12 +198,17 @@ export default function WatchlistScreen() {
   );
 
   // Get shelf, collection, and person parameters - if present, we're exploring a non-watchlist shelf
-  const { shelf: shelfId, collection: collectionId, collectionName, person: personId, personName } = useLocalSearchParams<{
+  const { shelf: shelfId, collection: collectionId, collectionName, person: personId, personName, genreName, mediaType: mediaTypeParam, seedTitle, aiSimilar, aiQuery } = useLocalSearchParams<{
     shelf?: string;
     collection?: string;
     collectionName?: string;
     person?: string;
     personName?: string;
+    genreName?: string;
+    mediaType?: string;
+    seedTitle?: string;
+    aiSimilar?: string;
+    aiQuery?: string;
   }>();
   const isExploreMode = !!shelfId || !!collectionId || !!personId;
   const isCollectionMode = !!collectionId;
@@ -264,7 +270,12 @@ export default function WatchlistScreen() {
   const [collectionLoading, setCollectionLoading] = useState(false);
   const [collectionError, setCollectionError] = useState<string | null>(null);
 
-  // Person mode state
+  // Similar/recommendations mode state
+  const [similarItems, setSimilarItems] = useState<Title[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState<string | null>(null);
+
+  // Person mode
   const [personDetails, setPersonDetails] = useState<PersonDetails | null>(null);
   const [personLoading, setPersonLoading] = useState(false);
   const [personError, setPersonError] = useState<string | null>(null);
@@ -333,7 +344,50 @@ export default function WatchlistScreen() {
   const isCustomList = shelfConfig?.type === 'mdblist' && !!shelfConfig?.listUrl;
   const isTrendingMovies = shelfId === 'trending-movies';
   const isTrendingTV = shelfId === 'trending-tv' || shelfId === 'trending-shows';
-  const needsProgressiveLoading = isTrendingMovies || isTrendingTV || isCustomList;
+  const isGenreShelf = !!shelfId?.startsWith('genre-');
+  const isSimilarShelf = !!shelfId?.startsWith('similar-');
+  const isSeasonalShelf = !!shelfId?.startsWith('seasonal-');
+  const isGeminiRecs = shelfId === 'gemini-recs';
+  const isCustomAi = shelfId === 'custom-ai' && !!aiQuery;
+  const needsProgressiveLoading = isTrendingMovies || isTrendingTV || isCustomList || isGenreShelf || isSeasonalShelf || isGeminiRecs || isCustomAi;
+
+  // Fetch similar/recommendation data when in similar mode
+  useEffect(() => {
+    if (!isSimilarShelf || !shelfId) {
+      setSimilarItems([]);
+      return;
+    }
+
+    const fetchSimilar = async () => {
+      setSimilarLoading(true);
+      setSimilarError(null);
+      try {
+        const mt = mediaTypeParam || 'movie';
+
+        // Use Gemma AI for similar recommendations when available
+        if (aiSimilar === '1' && seedTitle) {
+          const response = await apiService.getAISimilarContent(
+            decodeURIComponent(seedTitle),
+            mt,
+          );
+          setSimilarItems(response.items.map((item) => item.title));
+        } else {
+          const tmdbId = parseInt(shelfId.replace('similar-', ''), 10);
+          if (isNaN(tmdbId)) {
+            throw new Error('Invalid TMDB ID');
+          }
+          const titles = await apiService.getSimilarContent(mt, tmdbId);
+          setSimilarItems(titles);
+        }
+      } catch (err) {
+        setSimilarError(err instanceof Error ? err.message : 'Failed to load recommendations');
+      } finally {
+        setSimilarLoading(false);
+      }
+    };
+
+    void fetchSimilar();
+  }, [isSimilarShelf, shelfId, mediaTypeParam, aiSimilar, seedTitle]);
 
   // Universal hideWatched setting from display settings
   const hideWatched = settings?.display?.hideWatched ?? false;
@@ -380,6 +434,39 @@ export default function WatchlistScreen() {
             items = response.items;
             total = response.total;
           }
+        } else if (isGenreShelf && shelfId) {
+          // Parse genre shelf: "genre-{genreId}-{mediaType}"
+          const parts = shelfId.split('-');
+          const genreId = parseInt(parts[1], 10);
+          const genreMediaType = parts[2] || 'movie';
+          const response = await apiService.discoverByGenre(genreId, genreMediaType, limit, offset);
+          items = response.items;
+          total = response.total;
+        } else if (isSeasonalShelf && shelfId) {
+          // Parse seasonal shelf: "seasonal-{id}"
+          const seasonalId = shelfId.replace('seasonal-', '');
+          const seasonalConfig = SEASONAL_LISTS.find((s) => s.id === seasonalId);
+          if (seasonalConfig) {
+            const response = await apiService.getCustomList(
+              seasonalConfig.mdblistUrl,
+              activeUserId ?? undefined,
+              limit,
+              offset,
+              false,
+              hideWatched,
+              seasonalConfig.name,
+            );
+            items = response.items;
+            total = response.total;
+          }
+        } else if (isGeminiRecs && activeUserId) {
+          const response = await apiService.getAIRecommendations(activeUserId);
+          items = response.items;
+          total = response.total;
+        } else if (isCustomAi && aiQuery) {
+          const response = await apiService.getAICustomRecommendations(aiQuery);
+          items = response.items;
+          total = response.total;
         } else if (isCustomList && shelfConfig?.listUrl) {
           const response = await apiService.getCustomList(
             shelfConfig.listUrl,
@@ -414,6 +501,12 @@ export default function WatchlistScreen() {
       isTrendingMovies,
       isTrendingTV,
       isCustomList,
+      isGenreShelf,
+      isSeasonalShelf,
+      isGeminiRecs,
+      isCustomAi,
+      aiQuery,
+      shelfId,
       shelfConfig?.listUrl,
       shelfConfig?.hideUnreleased,
       hideWatched,
@@ -451,19 +544,21 @@ export default function WatchlistScreen() {
     if (!isExploreMode) return watchlistLoading;
     if (isPersonMode) return personLoading;
     if (isCollectionMode) return collectionLoading;
+    if (isSimilarShelf) return similarLoading;
     if (shelfId === 'continue-watching') return continueWatchingLoading;
     if (needsProgressiveLoading) return exploreLoading;
     return false;
-  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistLoading, personLoading, collectionLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, isSimilarShelf, shelfId, watchlistLoading, personLoading, collectionLoading, similarLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
 
   // Determine current error state
   const error = useMemo(() => {
     if (!isExploreMode) return watchlistError;
     if (isPersonMode) return personError;
     if (isCollectionMode) return collectionError;
+    if (isSimilarShelf) return similarError;
     if (needsProgressiveLoading) return exploreError;
     return null;
-  }, [isExploreMode, isPersonMode, isCollectionMode, watchlistError, personError, collectionError, needsProgressiveLoading, exploreError]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, isSimilarShelf, watchlistError, personError, collectionError, similarError, needsProgressiveLoading, exploreError]);
 
   // Cache years and metadata (genres, runtime) for watchlist items missing data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
@@ -766,7 +861,7 @@ export default function WatchlistScreen() {
     if (!needsProgressiveLoading || exploreItems.length === 0) return [];
 
     // Determine prefix based on shelf type
-    const prefix = isTrendingMovies ? 'tm' : isTrendingTV ? 'ttv' : 'cl';
+    const prefix = isTrendingMovies ? 'tm' : isTrendingTV ? 'ttv' : isGenreShelf ? 'genre' : isSeasonalShelf ? 'seasonal' : 'cl';
 
     const baseTitles = exploreItems.map((item, index) => {
       const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
@@ -834,6 +929,24 @@ export default function WatchlistScreen() {
       : baseTitles;
   }, [isPersonMode, personDetails, movieReleases, filmographySort, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
+  // Map similar/recommendation items to titles
+  const similarTitles = useMemo((): WatchlistTitle[] => {
+    if (!isSimilarShelf || similarItems.length === 0) return [];
+
+    const baseTitles = similarItems.map((item, index) => {
+      const cachedReleases = item.mediaType === 'movie' ? movieReleases.get(item.id) : undefined;
+      return {
+        ...item,
+        uniqueKey: `sim:${item.id}-${index}`,
+        theatricalRelease: item.theatricalRelease ?? cachedReleases?.theatricalRelease,
+        homeRelease: item.homeRelease ?? cachedReleases?.homeRelease,
+      };
+    });
+    return shouldEnrichWatchStatus
+      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      : baseTitles;
+  }, [isSimilarShelf, similarItems, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
     if (!isExploreMode) {
@@ -845,10 +958,11 @@ export default function WatchlistScreen() {
     }
     if (isPersonMode) return personTitles; // Don't filter bio mode
     if (isCollectionMode) return collectionTitles;
+    if (isSimilarShelf) return similarTitles;
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistTitles, personTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles, hideWatched, isWatched]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, isSimilarShelf, shelfId, watchlistTitles, personTitles, collectionTitles, similarTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles, hideWatched, isWatched]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {
@@ -862,8 +976,17 @@ export default function WatchlistScreen() {
     if (shelfId === 'continue-watching') return 'Continue Watching';
     if (shelfId === 'trending-movies') return 'Trending Movies';
     if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return 'Trending TV Shows';
+    if (isGenreShelf && genreName) return decodeURIComponent(genreName);
+    if (isSimilarShelf && seedTitle) return `Because you watched ${decodeURIComponent(seedTitle)}`;
+    if (isGeminiRecs) return 'Recommended For You';
+    if (isCustomAi && aiQuery) return aiQuery;
+    if (isSeasonalShelf) {
+      const seasonalId = shelfId?.replace('seasonal-', '');
+      const seasonal = SEASONAL_LISTS.find((s) => s.id === seasonalId);
+      if (seasonal) return seasonal.name;
+    }
     return 'Explore';
-  }, [isExploreMode, isPersonMode, personDetails?.person.name, personName, isCollectionMode, collectionName, shelfConfig?.name, shelfId]);
+  }, [isExploreMode, isPersonMode, personDetails?.person.name, personName, isCollectionMode, collectionName, shelfConfig?.name, shelfId, isGenreShelf, genreName, isSimilarShelf, seedTitle, isSeasonalShelf, isCustomAi, aiQuery]);
 
   // Tab title - show "Explore" when in explore mode, otherwise "Watchlist"
   const tabTitle = isExploreMode ? 'Explore' : 'Watchlist';

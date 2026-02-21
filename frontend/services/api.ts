@@ -1443,6 +1443,59 @@ class ApiService {
     return this.request<Title[]>(`/metadata/similar?${params.toString()}`);
   }
 
+  async discoverByGenre(
+    genreId: number,
+    mediaType: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<{ items: TrendingItem[]; total: number }> {
+    const params = new URLSearchParams();
+    params.set('genreId', String(genreId));
+    params.set('type', mediaType);
+    if (limit && limit > 0) {
+      params.set('limit', limit.toString());
+    }
+    if (offset && offset > 0) {
+      params.set('offset', offset.toString());
+    }
+    return this.request<{ items: TrendingItem[]; total: number }>(
+      `/discover/genre?${params.toString()}`,
+    );
+  }
+
+  async getAIRecommendations(
+    userId: string,
+  ): Promise<{ items: TrendingItem[]; total: number }> {
+    return this.request<{ items: TrendingItem[]; total: number }>(
+      `/recommendations?userId=${encodeURIComponent(userId)}`,
+    );
+  }
+
+  async getAISimilarContent(
+    title: string,
+    mediaType: string,
+  ): Promise<{ items: TrendingItem[]; total: number }> {
+    const params = new URLSearchParams();
+    params.set('title', title);
+    params.set('type', mediaType);
+    return this.request<{ items: TrendingItem[]; total: number }>(
+      `/recommendations/similar?${params.toString()}`,
+    );
+  }
+
+  async getAICustomRecommendations(
+    query: string,
+  ): Promise<{ items: TrendingItem[]; total: number }> {
+    return this.request<{ items: TrendingItem[]; total: number }>(
+      `/recommendations/custom?q=${encodeURIComponent(query)}`,
+    );
+  }
+
+  async getAISurprise(decade?: string): Promise<TrendingItem> {
+    const params = decade ? `?decade=${encodeURIComponent(decade)}` : '';
+    return this.request<TrendingItem>(`/recommendations/surprise${params}`);
+  }
+
   async getPersonDetails(personId: number): Promise<PersonDetails> {
     return this.request<PersonDetails>(`/metadata/person?id=${personId}`);
   }

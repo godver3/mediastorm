@@ -13,7 +13,7 @@ import { isTablet } from '@/theme/tokens/tvScale';
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
 import { useUserProfiles } from './UserProfilesContext';
 
-type TabKey = 'index' | 'search' | 'watchlist' | 'live' | 'profiles' | 'downloads' | 'settings';
+type TabKey = 'index' | 'search' | 'lists' | 'live' | 'profiles' | 'downloads' | 'settings';
 
 type TabItem = {
   key: TabKey;
@@ -28,7 +28,7 @@ const TAB_ICON_SIZE = 20;
 const TAB_ITEMS: TabItem[] = [
   { key: 'index', label: 'Home', icon: 'home-variant', route: '/(drawer)' },
   { key: 'search', label: 'Search', icon: 'magnify', route: '/(drawer)/search' },
-  { key: 'watchlist', label: 'Watchlist', icon: 'playlist-star', route: '/(drawer)/watchlist' },
+  { key: 'lists', label: 'Lists', icon: 'format-list-bulleted-square', route: '/(drawer)/lists' },
   { key: 'live', label: 'Live', icon: 'television-play', route: '/(drawer)/live' },
   { key: 'profiles', label: 'Profiles', icon: 'account-multiple', route: '/(drawer)/profiles' },
   { key: 'downloads', label: 'Downloads', icon: 'download', route: '/(drawer)/downloads' },
@@ -52,8 +52,8 @@ const getActiveTabFromPath = (pathname: string | null): TabKey | undefined => {
     return 'search';
   }
 
-  if (pathname.startsWith('/(drawer)/watchlist')) {
-    return 'watchlist';
+  if (pathname.startsWith('/(drawer)/lists') || pathname.startsWith('/(drawer)/watchlist')) {
+    return 'lists';
   }
 
   if (pathname.startsWith('/(drawer)/live')) {

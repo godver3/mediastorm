@@ -112,7 +112,7 @@ func main() {
 		Enabled:        settings.MDBList.Enabled,
 		EnabledRatings: settings.MDBList.EnabledRatings,
 	}
-	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg)
+	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, settings.Metadata.GeminiAPIKey)
 	metadataHandler := handlers.NewMetadataHandler(metadataService, cfgManager)
 	debridSearchService := debrid.NewSearchService(cfgManager)
 	indexerService := indexer.NewService(cfgManager, metadataService, debridSearchService)
@@ -326,6 +326,8 @@ func main() {
 	metadataHandler.SetHistoryService(historyService)
 	// Wire up users service to metadata handler for kids profile filtering
 	metadataHandler.SetUsersService(userService)
+	// Wire up watchlist service to metadata handler for AI recommendations
+	metadataHandler.SetWatchlistService(watchlistService)
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
 
