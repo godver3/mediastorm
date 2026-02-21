@@ -357,7 +357,7 @@ export const BulkWatchModal = ({
                           const isUnwatchedSuccess = successSeasons.has(unwatchedKey);
 
                           return (
-                            <View key={season.id} style={styles.seasonGroup}>
+                            <View key={`${season.id}-${season.number}`} style={styles.seasonGroup}>
                               <Text style={styles.seasonGroupTitle}>{getSeasonLabel(season.number, season.name)}</Text>
 
                               <SpatialNavigationFocusableView
