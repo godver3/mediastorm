@@ -385,6 +385,11 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 		return nil, err
 	}
 
+	// Build a canonical series ID map to merge series that share external IDs
+	// (e.g., player uses "tvdb:series:353546" while Trakt sync uses "tmdb:tv:82728" for the same show)
+	// This must happen before any grouping by seriesID.
+	canonicalSeriesID := buildCanonicalSeriesIDMap(items, progressItems)
+
 	// Build set of hidden series IDs from progress items
 	hiddenSeriesIDs := make(map[string]bool)
 	for _, prog := range progressItems {
@@ -394,7 +399,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 				hiddenSeriesIDs[prog.ItemID] = true
 			}
 			if prog.SeriesID != "" {
-				hiddenSeriesIDs[prog.SeriesID] = true
+				hiddenSeriesIDs[resolveCanonicalID(canonicalSeriesID, prog.SeriesID)] = true
 			}
 			// Also extract series ID from episode itemId (format: "tvdb:series:12345:S01E01")
 			// This handles cases where seriesId wasn't stored but can be inferred
@@ -405,7 +410,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 					if strings.HasPrefix(parts[i], "S") && len(parts[i]) > 1 {
 						inferredSeriesID := strings.Join(parts[:i], ":")
 						if inferredSeriesID != "" {
-							hiddenSeriesIDs[inferredSeriesID] = true
+							hiddenSeriesIDs[resolveCanonicalID(canonicalSeriesID, inferredSeriesID)] = true
 						}
 						break
 					}
@@ -447,6 +452,9 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			}
 		}
 
+		// Resolve to canonical ID so player and Trakt entries merge
+		seriesID = resolveCanonicalID(canonicalSeriesID, seriesID)
+
 		if isEpisode && seriesID != "" && prog.PercentWatched < 90 {
 			// Keep the most recently updated in-progress episode per series
 			existing := inProgressBySeriesCache[seriesID]
@@ -459,7 +467,6 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			}
 		}
 	}
-
 	// Filter to watched episodes from the past 365 days
 	cutoffDate := time.Now().UTC().AddDate(-1, 0, 0) // 365 days ago
 	seriesEpisodes := make(map[string][]models.WatchHistoryItem)
@@ -467,14 +474,15 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 	for _, item := range items {
 		if item.MediaType == "episode" && item.Watched && item.SeriesID != "" {
+			resolvedID := resolveCanonicalID(canonicalSeriesID, item.SeriesID)
 			// Skip hidden series
-			if hiddenSeriesIDs[item.SeriesID] {
+			if hiddenSeriesIDs[resolvedID] {
 				continue
 			}
 			if item.WatchedAt.After(cutoffDate) {
-				seriesEpisodes[item.SeriesID] = append(seriesEpisodes[item.SeriesID], item)
-				if _, exists := seriesInfo[item.SeriesID]; !exists {
-					seriesInfo[item.SeriesID] = item
+				seriesEpisodes[resolvedID] = append(seriesEpisodes[resolvedID], item)
+				if _, exists := seriesInfo[resolvedID]; !exists {
+					seriesInfo[resolvedID] = item
 				}
 			}
 		}
@@ -1257,6 +1265,119 @@ func (s *Service) saveLocked() error {
 
 func episodeKey(season, episode int) string {
 	return fmt.Sprintf("s%02de%02d", season, episode)
+}
+
+// buildCanonicalSeriesIDMap scans watch history and progress items to find series
+// that share the same IMDB or TVDB external IDs but have different seriesID values
+// (e.g., "tvdb:series:353546" from the player vs "tmdb:tv:82728" from Trakt sync).
+// Returns a map from each seriesID to its canonical (preferred) ID.
+func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []models.PlaybackProgress) map[string]string {
+	// Map external ID -> list of seriesIDs that reference it
+	type seriesEntry struct {
+		seriesID string
+		hasMore  bool // has richer external IDs
+	}
+	imdbToSeries := make(map[string][]string)
+	tvdbToSeries := make(map[string][]string)
+	seriesExternalIDCount := make(map[string]int) // track richness
+
+	recordIDs := func(seriesID string, extIDs map[string]string) {
+		if seriesID == "" || extIDs == nil {
+			return
+		}
+		count := 0
+		if id, ok := extIDs["imdb"]; ok && id != "" {
+			imdbToSeries[id] = append(imdbToSeries[id], seriesID)
+			count++
+		}
+		if id, ok := extIDs["tvdb"]; ok && id != "" {
+			tvdbToSeries[id] = append(tvdbToSeries[id], seriesID)
+			count++
+		}
+		if _, ok := extIDs["tmdb"]; ok {
+			count++
+		}
+		if existing, ok := seriesExternalIDCount[seriesID]; !ok || count > existing {
+			seriesExternalIDCount[seriesID] = count
+		}
+	}
+
+	for _, item := range items {
+		if item.MediaType == "episode" && item.SeriesID != "" {
+			recordIDs(item.SeriesID, item.ExternalIDs)
+		}
+	}
+	for _, prog := range progressItems {
+		if (prog.MediaType == "episode" || prog.SeasonNumber > 0) && prog.SeriesID != "" {
+			recordIDs(prog.SeriesID, prog.ExternalIDs)
+		}
+	}
+
+	// Build union-find: group seriesIDs that share an external ID
+	// Pick the one with the most external IDs as canonical (richer metadata)
+	canonical := make(map[string]string)
+
+	mergeGroup := func(group []string) {
+		if len(group) < 2 {
+			return
+		}
+		// Deduplicate
+		seen := make(map[string]bool)
+		var unique []string
+		for _, id := range group {
+			if !seen[id] {
+				seen[id] = true
+				unique = append(unique, id)
+			}
+		}
+		if len(unique) < 2 {
+			return
+		}
+		// Pick canonical: prefer the one with the most external IDs
+		best := unique[0]
+		for _, id := range unique[1:] {
+			if seriesExternalIDCount[id] > seriesExternalIDCount[best] {
+				best = id
+			}
+		}
+		for _, id := range unique {
+			canonical[id] = best
+		}
+	}
+
+	for _, group := range imdbToSeries {
+		mergeGroup(group)
+	}
+	for _, group := range tvdbToSeries {
+		mergeGroup(group)
+	}
+
+	// Ensure every seriesID maps to something (itself if not in a group)
+	addSelf := func(seriesID string) {
+		if _, ok := canonical[seriesID]; !ok {
+			canonical[seriesID] = seriesID
+		}
+	}
+	for _, item := range items {
+		if item.SeriesID != "" {
+			addSelf(item.SeriesID)
+		}
+	}
+	for _, prog := range progressItems {
+		if prog.SeriesID != "" {
+			addSelf(prog.SeriesID)
+		}
+	}
+	return canonical
+}
+
+// resolveCanonicalID looks up a seriesID in the canonical map, returning
+// the canonical ID or the original ID if not found.
+func resolveCanonicalID(canonical map[string]string, seriesID string) string {
+	if resolved, ok := canonical[seriesID]; ok {
+		return resolved
+	}
+	return seriesID
 }
 
 // countTotalEpisodes counts the total number of released episodes in a series,
