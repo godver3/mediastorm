@@ -108,6 +108,10 @@ export const ManualSelection = ({
   // Track override state - user's manual selection per result (keyed by result key)
   const [trackOverrides, setTrackOverrides] = useState<Record<string, ManualTrackOverrides>>({});
 
+  // Track pending health check: when user taps an item and we initiate a health check,
+  // store the result so we can auto-proceed when it resolves healthy
+  const pendingHealthCheckRef = useRef<{ key: string; result: NZBResult } | null>(null);
+
   // TV: Track which result is currently focused for side panel display
   const [tvFocusedKey, setTvFocusedKey] = useState<string | null>(null);
 
@@ -144,8 +148,30 @@ export const ManualSelection = ({
     if (!visible) {
       setTrackOverrides({});
       setExpandedTracks(new Set());
+      pendingHealthCheckRef.current = null;
     }
   }, [visible]);
+
+  // Auto-proceed when a pending health check resolves as healthy
+  useEffect(() => {
+    const pending = pendingHealthCheckRef.current;
+    if (!pending) return;
+
+    const healthState = healthChecks[pending.key];
+    if (!healthState || healthState.state === 'checking') return;
+
+    // Health check resolved — clear pending regardless of outcome
+    pendingHealthCheckRef.current = null;
+
+    if (healthState.state === 'healthy') {
+      if (downloadOnly && onDownload) {
+        onDownload(pending.result);
+      } else {
+        onSelect(pending.result, trackOverrides[pending.key]);
+      }
+    }
+    // If unhealthy/error/stream_error, do nothing — user sees red status
+  }, [healthChecks, downloadOnly, onDownload, onSelect, trackOverrides]);
 
   // Auto-refetch tracks when tracksLoading is true
   useEffect(() => {
@@ -1038,8 +1064,10 @@ export const ManualSelection = ({
                             );
 
                             // First tap: check health if not already checked or checking
+                            // Auto-proceed is handled by useEffect when health resolves healthy
                             if (!healthState || (!hasHealthCheck && healthState.state !== 'checking')) {
                               console.log('[ManualSelection] Checking health for:', result.title);
+                              pendingHealthCheckRef.current = { key, result };
                               onCheckHealth(result);
                               return;
                             }
@@ -1050,7 +1078,7 @@ export const ManualSelection = ({
                               return;
                             }
 
-                            // Second tap: play (or download) if healthy
+                            // Already resolved: play (or download) if healthy
                             if (isHealthy) {
                               if (downloadOnly && onDownload) {
                                 console.log('[ManualSelection] Downloading healthy result:', result.title);
@@ -1123,7 +1151,9 @@ export const ManualSelection = ({
 
                       const onSelectResult = () => {
                         // First tap: check health if not already checked or checking
+                        // Auto-proceed is handled by useEffect when health resolves healthy
                         if (!healthState || (!hasHealthCheck && healthState.state !== 'checking')) {
+                          pendingHealthCheckRef.current = { key, result };
                           onCheckHealth(result);
                           return;
                         }
@@ -1133,7 +1163,7 @@ export const ManualSelection = ({
                           return;
                         }
 
-                        // Second tap: play (or download) if healthy
+                        // Already resolved: play (or download) if healthy
                         if (isHealthy) {
                           if (downloadOnly && onDownload) {
                             onDownload(result);
