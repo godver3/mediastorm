@@ -2050,14 +2050,15 @@ func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool
 	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
 		showIDs := trakt.IDsToMap(item.Show.IDs)
 
-		// Build episode-specific composite ID: tmdb:tv:SHOWID:s01e02
+		// Build episode-specific composite ID: tvdb:series:SHOWID:s01e02
+		// Prefer TVDB to match the player/details page ID format
 		var seriesID, itemID string
-		if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
-			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
-			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
-		} else if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
+		if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
 			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
 			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
+		} else if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
+			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
+			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
 		} else if imdbID, ok := showIDs["imdb"]; ok && imdbID != "" {
 			seriesID = fmt.Sprintf("imdb:%s", imdbID)
 			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Episode.Season, item.Episode.Number)
