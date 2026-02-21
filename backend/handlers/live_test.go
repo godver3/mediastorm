@@ -1,7 +1,12 @@
 package handlers
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"novastream/config"
+	"novastream/models"
 )
 
 func TestSplitM3ULine(t *testing.T) {
@@ -208,5 +213,120 @@ http://stream2.example.com`,
 				}
 			}
 		})
+	}
+}
+
+// mockUserSettingsProvider is a test mock for LiveUserSettingsProvider.
+type mockUserSettingsProvider struct {
+	settings map[string]*models.UserSettings
+}
+
+func (m *mockUserSettingsProvider) Get(userID string) (*models.UserSettings, error) {
+	if s, ok := m.settings[userID]; ok {
+		return s, nil
+	}
+	return nil, nil
+}
+
+func TestResolveProfileLiveSource_NoProfileID(t *testing.T) {
+	h := &LiveHandler{
+		userSettingsSvc: &mockUserSettingsProvider{},
+	}
+
+	globalSettings := config.Settings{}
+	globalSettings.Live.Mode = "m3u"
+	globalSettings.Live.PlaylistURL = "http://global.m3u"
+
+	req := httptest.NewRequest(http.MethodGet, "/live/channels", nil)
+	src := h.resolveProfileLiveSource(req, globalSettings)
+
+	if src.Mode != "m3u" {
+		t.Errorf("Mode = %q, want %q", src.Mode, "m3u")
+	}
+	if src.PlaylistURL != "http://global.m3u" {
+		t.Errorf("PlaylistURL = %q, want %q", src.PlaylistURL, "http://global.m3u")
+	}
+}
+
+func TestResolveProfileLiveSource_WithOverrides(t *testing.T) {
+	mock := &mockUserSettingsProvider{
+		settings: map[string]*models.UserSettings{
+			"profile-1": {
+				LiveTV: models.LiveTVSettings{
+					Mode:           models.StringPtr("xtream"),
+					XtreamHost:     models.StringPtr("http://profile.host"),
+					XtreamUsername: models.StringPtr("puser"),
+					XtreamPassword: models.StringPtr("ppass"),
+				},
+			},
+		},
+	}
+
+	h := &LiveHandler{
+		userSettingsSvc: mock,
+	}
+
+	globalSettings := config.Settings{}
+	globalSettings.Live.Mode = "m3u"
+	globalSettings.Live.PlaylistURL = "http://global.m3u"
+	globalSettings.Live.XtreamHost = "http://global.host"
+	globalSettings.Live.XtreamUsername = "guser"
+	globalSettings.Live.XtreamPassword = "gpass"
+
+	req := httptest.NewRequest(http.MethodGet, "/live/channels?profileId=profile-1", nil)
+	src := h.resolveProfileLiveSource(req, globalSettings)
+
+	if src.Mode != "xtream" {
+		t.Errorf("Mode = %q, want %q", src.Mode, "xtream")
+	}
+	if src.XtreamHost != "http://profile.host" {
+		t.Errorf("XtreamHost = %q, want %q", src.XtreamHost, "http://profile.host")
+	}
+	if src.XtreamUsername != "puser" {
+		t.Errorf("XtreamUsername = %q, want %q", src.XtreamUsername, "puser")
+	}
+	if src.XtreamPassword != "ppass" {
+		t.Errorf("XtreamPassword = %q, want %q", src.XtreamPassword, "ppass")
+	}
+}
+
+func TestResolveProfileLiveSource_UnknownProfile(t *testing.T) {
+	mock := &mockUserSettingsProvider{
+		settings: map[string]*models.UserSettings{},
+	}
+
+	h := &LiveHandler{
+		userSettingsSvc: mock,
+	}
+
+	globalSettings := config.Settings{}
+	globalSettings.Live.Mode = "m3u"
+	globalSettings.Live.PlaylistURL = "http://global.m3u"
+
+	req := httptest.NewRequest(http.MethodGet, "/live/channels?profileId=unknown-profile", nil)
+	src := h.resolveProfileLiveSource(req, globalSettings)
+
+	if src.Mode != "m3u" {
+		t.Errorf("Mode = %q, want %q (should fall back to global)", src.Mode, "m3u")
+	}
+	if src.PlaylistURL != "http://global.m3u" {
+		t.Errorf("PlaylistURL = %q, want %q (should fall back to global)", src.PlaylistURL, "http://global.m3u")
+	}
+}
+
+func TestResolveProfileLiveSource_NilProvider(t *testing.T) {
+	h := &LiveHandler{
+		userSettingsSvc: nil,
+	}
+
+	globalSettings := config.Settings{}
+	globalSettings.Live.Mode = "xtream"
+	globalSettings.Live.XtreamHost = "http://global.host"
+
+	req := httptest.NewRequest(http.MethodGet, "/live/channels?profileId=profile-1", nil)
+	src := h.resolveProfileLiveSource(req, globalSettings)
+
+	if src.Mode != "xtream" {
+		t.Errorf("Mode = %q, want %q (should fall back to global with nil provider)", src.Mode, "xtream")
 	}
 }

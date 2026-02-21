@@ -400,7 +400,7 @@ func main() {
 		videoHandler.SetConfigManager(cfgManager)
 	}
 
-	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager)
+	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager, userSettingsService)
 
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)

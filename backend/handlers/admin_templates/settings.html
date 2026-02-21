@@ -136,11 +136,35 @@
     let filteredFields = null; // null = no filter, Map of sectionKey -> Set of matching field keys
 
     // Sections that are per-user (when a user is selected, only show these)
-    // Note: liveTV settings (favorites, hidden channels) are managed in-app, not via this UI
+    // Per-user sections: liveTV IPTV source overrides are configured here, favorites/hidden channels are managed in-app
     const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
+
+    // Map a per-user settings path to its global equivalent.
+    // e.g. "liveTV.mode" -> "live.mode" when schema.liveTV.inheritFrom === "live"
+    function getGlobalPath(path) {
+        const keys = path.split('.');
+        const topKey = keys[0];
+        const schemaDef = schema[topKey];
+        if (schemaDef && schemaDef.inheritFrom) {
+            return [schemaDef.inheritFrom, ...keys.slice(1)].join('.');
+        }
+        return path;
+    }
+
+    // Traverse currentSettings by a dot-separated path, returning the value or undefined
+    function getGlobalValue(path) {
+        const globalPath = getGlobalPath(path);
+        const keys = globalPath.split('.');
+        let val = currentSettings;
+        for (const key of keys) {
+            if (val === undefined || val === null) return undefined;
+            val = val[key];
+        }
+        return val;
+    }
 
     // Check if a value is empty/missing
     function isEmpty(val) {
@@ -825,6 +849,20 @@
             }
         }
 
+        // Check liveTV section (inherits from global "live" section)
+        if (!hasActualOverrides && userSettings.liveTV) {
+            const globalLive = currentSettings.live || {};
+            for (const key of Object.keys(userSettings.liveTV)) {
+                const profileVal = normalizeForComparison(userSettings.liveTV[key]);
+                if (profileVal === null) continue;
+                const globalVal = normalizeForComparison(globalLive[key]);
+                if (!deepEqual(profileVal, globalVal)) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
         // Check homeShelves section - use lenient comparison for shelves
         if (!hasActualOverrides && userSettings.homeShelves) {
             const globalHomeShelves = currentSettings.homeShelves || {};
@@ -983,13 +1021,8 @@
             }
         }
 
-        // Fall through to global settings
-        let val = currentSettings;
-        for (const key of keys) {
-            if (val === undefined || val === null) return undefined;
-            val = val[key];
-        }
-        return val;
+        // Fall through to global settings (mapping section key if needed)
+        return getGlobalValue(path);
     }
 
     function setValue(path, value) {
@@ -1005,12 +1038,8 @@
 
         // If user selected and this is a per-user section, update userSettings
         if (selectedUserId && userSettings && perUserSections.includes(topKey)) {
-            // Get global value for comparison
-            let globalVal = currentSettings;
-            for (const key of keys) {
-                if (globalVal === undefined || globalVal === null) break;
-                globalVal = globalVal[key];
-            }
+            // Get global value for comparison (mapping section key if needed)
+            const globalVal = getGlobalValue(path);
 
             // If value matches global (after normalization), delete instead of set
             const normValue = normalizeForComparison(value);
@@ -1111,7 +1140,6 @@
     function isProfileValueDifferent(path) {
         if (!selectedUserId || !userSettings) return false;
         const keys = path.split('.');
-        const topKey = keys[0];
 
         // Get profile value
         let profileVal = userSettings;
@@ -1121,15 +1149,8 @@
             profileVal = profileVal[key];
         }
 
-        // Get global value
-        let globalVal = currentSettings;
-        for (const key of keys) {
-            if (globalVal === undefined || globalVal === null) {
-                globalVal = undefined;
-                break;
-            }
-            globalVal = globalVal[key];
-        }
+        // Get global value (mapping section key if needed)
+        const globalVal = getGlobalValue(path);
 
         // Normalize and compare - treat empty arrays/strings/null/undefined as equivalent
         const normProfile = normalizeForComparison(profileVal);
@@ -1157,23 +1178,13 @@
                 }
                 if (val !== undefined && val !== null) return { value: val, source: 'profile' };
             }
-            // Fall through to global
-            let val = currentSettings;
-            for (const key of keys) {
-                if (val === undefined || val === null) return { value: undefined, source: 'global' };
-                val = val[key];
-            }
-            return { value: val, source: 'global' };
+            // Fall through to global (mapping section key if needed)
+            return { value: getGlobalValue(path), source: 'global' };
         }
 
-        // If we're at profile level, inherited value is from global
+        // If we're at profile level, inherited value is from global (mapping section key if needed)
         if (selectedUserId && perUserSections.includes(topKey)) {
-            let val = currentSettings;
-            for (const key of keys) {
-                if (val === undefined || val === null) return { value: undefined, source: 'global' };
-                val = val[key];
-            }
-            return { value: val, source: 'global' };
+            return { value: getGlobalValue(path), source: 'global' };
         }
 
         return { value: undefined, source: 'global' };
@@ -1774,11 +1785,14 @@
         for (const section of topLevelPerUserSections) {
             if (!userSettings[section]) continue;
 
-            const globalSection = globalSettings[section];
+            // Check if this section inherits from a differently-named global section
+            const schemaDef = schema[section];
+            const globalKey = (schemaDef && schemaDef.inheritFrom) || section;
+            const globalSection = globalSettings[globalKey];
             if (!globalSection) {
                 // No global equivalent, keep user settings
                 stripped[section] = userSettings[section];
-                console.log('stripInheritedValues: keeping entire section (no global)', section);
+                console.log('stripInheritedValues: keeping entire section (no global)', section, 'globalKey:', globalKey);
                 continue;
             }
 
@@ -2819,20 +2833,22 @@
                 // Check showWhen condition (same logic as renderArraySection)
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
-                    // Helper to get nested field value (e.g., "epg.enabled" -> sectionData.epg.enabled)
-                    const getNestedValue = (obj, path) => {
-                        if (!path.includes('.')) return obj[path];
-                        return path.split('.').reduce((o, k) => o?.[k], obj);
+                    // Helper to get field value with proper inheritance fallback
+                    // Uses getValue() so per-user fields fall through to global correctly
+                    const getCondValue = (fieldName) => {
+                        if (!fieldName.includes('.')) return getValue(sectionKey + '.' + fieldName);
+                        // Nested path within section (e.g., "epg.enabled")
+                        return getValue(sectionKey + '.' + fieldName);
                     };
                     let shouldShow = false;
                     if (typeof showWhen === 'string' && showWhen.includes('=')) {
                         // Simple string format: "field=value"
                         const [field, value] = showWhen.split('=');
-                        shouldShow = getNestedValue(sectionData, field) === value;
+                        shouldShow = getCondValue(field) === value;
                     } else if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
-                        shouldShow = showWhen.conditions.some(cond => getNestedValue(sectionData, cond.field) === cond.value);
+                        shouldShow = showWhen.conditions.some(cond => getCondValue(cond.field) === cond.value);
                     } else if (showWhen.field) {
-                        shouldShow = getNestedValue(sectionData, showWhen.field) === showWhen.value;
+                        shouldShow = getCondValue(showWhen.field) === showWhen.value;
                     }
                     if (!shouldShow) return '';
                 }
@@ -3686,6 +3702,8 @@
                 if (selectedClientId && !clientSections.includes(key)) return false;
                 // If a user is selected (but not client), show per-user sections
                 if (selectedUserId && !selectedClientId && !perUserSections.includes(key)) return false;
+                // Hide per-user-only sections (with inheritFrom) when viewing global settings
+                if (!selectedUserId && def.inheritFrom) return false;
                 return true;
             }).sort((a, b) => (a[1].order ?? 999) - (b[1].order ?? 999));
 

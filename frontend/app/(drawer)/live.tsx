@@ -579,11 +579,13 @@ function LiveScreen() {
   const router = useRouter();
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const isFocused = useIsFocused();
+  const { pendingPinUserId, activeUserId } = useUserProfiles();
   const { selectedCategories, toggleCategory, setSelectedCategories } = useLiveCategories();
   const { isFavorite, toggleFavorite, favorites } = useLiveFavorites();
   const { channels, loading, error, refresh, hasPlaylistUrl, availableCategories } = useLiveChannels(
     selectedCategories,
     favorites,
+    activeUserId,
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
   const { epgData, fetchEPGForChannels, isEnabled: isEPGEnabled, isStatusLoaded: isEPGStatusLoaded } = useChannelEPG();
@@ -600,7 +602,6 @@ function LiveScreen() {
   } = useMultiscreen();
   const { showToast } = useToast();
   const { refreshSettings } = useBackendSettings();
-  const { pendingPinUserId } = useUserProfiles();
 
   // Track mounted state to prevent state updates during unmount (causes infinite render loops)
   const isMountedRef = useRef(true);

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackendSettings } from '@/components/BackendSettingsContext';
+import { useStartupData } from '@/components/StartupDataContext';
 import apiService, { LiveChannel } from '@/services/api';
 
 // Re-export LiveChannel from api.ts for convenience
 export type { LiveChannel } from '@/services/api';
 
-export const useLiveChannels = (selectedCategories?: string[], favoriteChannelIds?: Set<string>) => {
+export const useLiveChannels = (selectedCategories?: string[], favoriteChannelIds?: Set<string>, profileId?: string) => {
   const { settings, isReady } = useBackendSettings();
+  const { startupData } = useStartupData();
   const [allChannels, setAllChannels] = useState<LiveChannel[]>([]);
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,21 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     [settings?.live?.effectivePlaylistUrl, settings?.live?.playlistUrl]
   );
   const normalisedPlaylistUrl = useMemo(() => playlistUrl.trim(), [playlistUrl]);
-  const hasPlaylistUrl = useMemo(() => !!normalisedPlaylistUrl, [normalisedPlaylistUrl]);
+
+  // Check if the profile has per-profile IPTV overrides
+  const profileLiveTV = startupData?.userSettings?.liveTV;
+  const hasProfileIPTV = useMemo(() => {
+    if (!profileLiveTV) return false;
+    if (profileLiveTV.mode === 'xtream') {
+      return !!(profileLiveTV.xtreamHost && profileLiveTV.xtreamUsername && profileLiveTV.xtreamPassword);
+    }
+    if (profileLiveTV.mode === 'm3u') {
+      return !!profileLiveTV.playlistUrl?.trim();
+    }
+    return false;
+  }, [profileLiveTV]);
+
+  const hasPlaylistUrl = useMemo(() => hasProfileIPTV || !!normalisedPlaylistUrl, [hasProfileIPTV, normalisedPlaylistUrl]);
 
   // Log state changes
   useEffect(() => {
@@ -47,6 +63,13 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
   // Note: Favorites are always included even if their category is not selected
   const channels = useMemo(() => {
     if (!selectedCategories || selectedCategories.length === 0) {
+      return allChannels;
+    }
+    // If none of the selected categories exist in available channels, skip filtering
+    // (prevents stale category selections from hiding all content after backend filter changes)
+    const availableSet = new Set(allChannels.map((c) => c.group).filter(Boolean));
+    const hasValidSelection = selectedCategories.some((cat) => availableSet.has(cat));
+    if (!hasValidSelection) {
       return allChannels;
     }
     return allChannels.filter((channel) => {
@@ -90,7 +113,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
       setError(null);
 
       // Use new backend endpoint that returns pre-parsed and filtered channels
-      const response = await apiService.getLiveChannels(controller.signal);
+      const response = await apiService.getLiveChannels(controller.signal, profileId);
       console.log('[useLiveChannels] fetchChannels: Got response with', response.channels?.length ?? 0, 'channels');
 
       // Add stream URLs to channels
@@ -130,7 +153,7 @@ export const useLiveChannels = (selectedCategories?: string[], favoriteChannelId
     } finally {
       setLoading(false);
     }
-  }, [hasPlaylistUrl, isReady, normalisedPlaylistUrl]);
+  }, [hasPlaylistUrl, isReady, normalisedPlaylistUrl, profileId]);
 
   useEffect(() => {
     console.log('[useLiveChannels] Fetch useEffect triggered:', {

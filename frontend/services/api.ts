@@ -820,6 +820,12 @@ export interface UserLiveTVSettings {
   favoriteChannels: string[];
   selectedCategories: string[];
   multiscreenSession?: MultiscreenSession;
+  // Per-profile IPTV source override (undefined = use global)
+  mode?: 'm3u' | 'xtream';
+  playlistUrl?: string;
+  xtreamHost?: string;
+  xtreamUsername?: string;
+  xtreamPassword?: string;
 }
 
 export interface UserDisplaySettings {
@@ -1729,12 +1735,14 @@ class ApiService {
     });
   }
 
-  async getLiveChannels(signal?: AbortSignal): Promise<LiveChannelsResponse> {
-    return this.request<LiveChannelsResponse>('/live/channels', { signal });
+  async getLiveChannels(signal?: AbortSignal, profileId?: string): Promise<LiveChannelsResponse> {
+    const params = profileId ? `?profileId=${encodeURIComponent(profileId)}` : '';
+    return this.request<LiveChannelsResponse>(`/live/channels${params}`, { signal });
   }
 
-  async getLiveCategories(): Promise<CategoriesResponse> {
-    return this.request<CategoriesResponse>('/live/categories');
+  async getLiveCategories(profileId?: string): Promise<CategoriesResponse> {
+    const params = profileId ? `?profileId=${encodeURIComponent(profileId)}` : '';
+    return this.request<CategoriesResponse>(`/live/categories${params}`);
   }
 
   // EPG (Electronic Program Guide) methods

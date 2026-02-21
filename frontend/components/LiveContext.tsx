@@ -130,6 +130,7 @@ export const LiveProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updatedSettings: UserSettings = {
           ...userSettingsRef.current,
           liveTV: {
+            ...userSettingsRef.current.liveTV, // preserve mode, playlistUrl, xtream* fields
             favoriteChannels: newFavorites,
             hiddenChannels: newHidden,
             selectedCategories: newCategories,
