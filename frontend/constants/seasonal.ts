@@ -6,6 +6,9 @@ export interface SeasonalListConfig {
   startDay: number;
   endMonth: number;
   endDay: number;
+  icon?: string;
+  iconFamily?: 'Ionicons' | 'MaterialCommunityIcons';
+  tintColor?: string;
 }
 
 export const SEASONAL_LISTS: SeasonalListConfig[] = [
@@ -17,6 +20,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 1,
     endMonth: 2,
     endDay: 28,
+    icon: 'heart',
+    tintColor: 'rgba(236,72,153,0.12)',
   },
   {
     id: 'oscars',
@@ -26,6 +31,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 15,
     endMonth: 3,
     endDay: 31,
+    icon: 'trophy',
+    tintColor: 'rgba(245,158,11,0.12)',
   },
   {
     id: 'summer-blockbusters',
@@ -35,6 +42,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 1,
     endMonth: 8,
     endDay: 31,
+    icon: 'sunny',
+    tintColor: 'rgba(245,158,11,0.12)',
   },
   {
     id: 'coming-of-age',
@@ -44,6 +53,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 15,
     endMonth: 9,
     endDay: 30,
+    icon: 'school',
+    tintColor: 'rgba(59,130,246,0.12)',
   },
   {
     id: 'halloween',
@@ -53,6 +64,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 1,
     endMonth: 11,
     endDay: 1,
+    icon: 'skull',
+    tintColor: 'rgba(185,28,28,0.12)',
   },
   {
     id: 'thanksgiving',
@@ -62,6 +75,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 1,
     endMonth: 11,
     endDay: 28,
+    icon: 'leaf',
+    tintColor: 'rgba(180,150,100,0.12)',
   },
   {
     id: 'christmas',
@@ -71,6 +86,8 @@ export const SEASONAL_LISTS: SeasonalListConfig[] = [
     startDay: 25,
     endMonth: 1,
     endDay: 7,
+    icon: 'gift',
+    tintColor: 'rgba(239,68,68,0.12)',
   },
 ];
 

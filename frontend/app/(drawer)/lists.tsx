@@ -100,18 +100,26 @@ export default function ListsScreen() {
     [watchlistItems],
   );
 
-  // Recommendation seeds from continue watching (top 3 items with tmdb IDs)
+  // Recommendation seeds from continue watching (top 3 movies + top 3 shows)
   const recommendationSeeds = useMemo(() => {
     if (!continueWatchingItems) return [];
-    return continueWatchingItems
+    const withTmdb = continueWatchingItems
       .filter((item) => item.externalIds?.tmdb)
-      .slice(0, 3)
       .map((item) => ({
         tmdbId: Number(item.externalIds!.tmdb),
         title: item.seriesTitle,
         backdropUrl: item.backdropUrl,
-        mediaType: item.nextEpisode ? 'tv' : 'movie',
+        mediaType: (item.nextEpisode ? 'tv' : 'movie') as 'tv' | 'movie',
       }));
+    const movies = withTmdb.filter((s) => s.mediaType === 'movie').slice(0, 3);
+    const shows = withTmdb.filter((s) => s.mediaType === 'tv').slice(0, 3);
+    const interleaved: typeof withTmdb = [];
+    const maxLen = Math.max(movies.length, shows.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (i < movies.length) interleaved.push(movies[i]);
+      if (i < shows.length) interleaved.push(shows[i]);
+    }
+    return interleaved;
   }, [continueWatchingItems]);
 
   // Check if Gemini API key is configured
@@ -132,6 +140,12 @@ export default function ListsScreen() {
     if (Platform.isTV) return responsiveSize(220, 170);
     if (isTablet) return 160;
     return screenWidth * 0.28;
+  }, [screenWidth]);
+
+  const wideCardWidth = useMemo(() => {
+    if (Platform.isTV) return responsiveSize(420, 320);
+    if (isTablet) return 300;
+    return screenWidth * 0.6;
   }, [screenWidth]);
 
   // Navigation helpers
@@ -244,12 +258,12 @@ export default function ListsScreen() {
     cards: [
       {
         key: 'trending-movies',
-        content: <ListCard variant="gradient" title="Trending Movies" subtitle="Updated daily" />,
+        content: <ListCard variant="gradient" title="Trending Movies" iconName="trending-up" tintColor="rgba(59,130,246,0.12)" aspectRatio={16 / 6} />,
         onPress: () => navigateToShelf('trending-movies'),
       },
       {
         key: 'trending-tv',
-        content: <ListCard variant="gradient" title="Trending TV Shows" subtitle="Updated daily" />,
+        content: <ListCard variant="gradient" title="Trending Shows" iconName="trending-up" tintColor="rgba(59,130,246,0.12)" aspectRatio={16 / 6} />,
         onPress: () => navigateToShelf('trending-tv'),
       },
     ],
@@ -262,7 +276,7 @@ export default function ListsScreen() {
       key: 'custom-lists',
       cards: customShelves.map((shelf) => ({
         key: `custom-${shelf.id}`,
-        content: <ListCard variant="gradient" title={shelf.name} />,
+        content: <ListCard variant="gradient" title={shelf.name} iconName="list" tintColor="rgba(100,116,139,0.12)" aspectRatio={16 / 6} />,
         onPress: () => navigateToShelf(shelf.id),
       })),
     });
@@ -272,7 +286,7 @@ export default function ListsScreen() {
   const makeGenreCards = (genres: GenreConfig[], mediaType: string) =>
     genres.map((genre) => ({
       key: `genre-${mediaType}-${genre.id}`,
-      content: <ListCard variant="gradient" title={genre.name} />,
+      content: <ListCard variant="gradient" title={genre.name} iconName={genre.icon} iconFamily={genre.iconFamily} tintColor={genre.tintColor} aspectRatio={16 / 7} />,
       onPress: () => navigateToShelf(`genre-${genre.id}-${mediaType}`, { genreName: genre.name }),
     }));
 
@@ -289,22 +303,25 @@ export default function ListsScreen() {
     cards: makeGenreCards(TV_GENRES, 'tv'),
   });
 
-  // Recommendations
-  if (hasGeminiKey || recommendationSeeds.length > 0) {
-    const recCards: typeof sections[0]['cards'] = [];
-
-    // AI-powered curated list (only when Gemini key is configured)
-    if (hasGeminiKey) {
-      recCards.push({
+  // AI-powered curated list (only when Gemini key is configured)
+  if (hasGeminiKey) {
+    sections.push({
+      title: 'Recommended For You',
+      key: 'gemini-recs',
+      cards: [{
         key: 'gemini-recs',
-        content: <ListCard variant="gradient" title="Recommended For You" subtitle="Personalized by AI" />,
+        content: <ListCard variant="gradient" title="Recommended For You" subtitle="Personalized by AI" iconName="sparkles" tintColor="rgba(139,92,246,0.12)" aspectRatio={16 / 4} />,
         onPress: () => navigateToShelf('gemini-recs'),
-      });
-    }
+      }],
+    });
+  }
 
-    // Per-title "Because you watched" cards (uses Gemma when key set, TMDB otherwise)
-    for (const seed of recommendationSeeds) {
-      recCards.push({
+  // Per-title "Because you watched" cards (uses Gemma when key set, TMDB otherwise)
+  if (recommendationSeeds.length > 0) {
+    sections.push({
+      title: 'Because You Watched',
+      key: 'recommendations',
+      cards: recommendationSeeds.map((seed) => ({
         key: `similar-${seed.tmdbId}`,
         content: (
           <ListCard
@@ -320,13 +337,7 @@ export default function ListsScreen() {
             seedTitle: seed.title,
             ...(hasGeminiKey ? { aiSimilar: '1' } : {}),
           }),
-      });
-    }
-
-    sections.push({
-      title: 'Recommended For You',
-      key: 'recommendations',
-      cards: recCards,
+      })),
     });
   }
 
@@ -414,7 +425,7 @@ export default function ListsScreen() {
       key: 'seasonal',
       cards: seasonalLists.map((list) => ({
         key: `seasonal-${list.id}`,
-        content: <ListCard variant="gradient" title={list.name} />,
+        content: <ListCard variant="gradient" title={list.name} iconName={list.icon} iconFamily={list.iconFamily} tintColor={list.tintColor} aspectRatio={16 / 6} />,
         onPress: () => navigateToShelf(`seasonal-${list.id}`),
       })),
     });
@@ -438,7 +449,8 @@ export default function ListsScreen() {
               <CardSection key={section.key} title={section.title} theme={theme} styles={styles}>
                 {section.cards.map((card, cIdx) => {
                   const isGenre = section.key.includes('genres');
-                  const width = isGenre ? genreCardWidth : cardWidth;
+                  const isWide = section.key === 'gemini-recs';
+                  const width = isWide ? wideCardWidth : isGenre ? genreCardWidth : cardWidth;
                   return (
                     <View key={card.key} style={{ width }}>
                       {renderCard(card.content, card.onPress, card.key, sIdx === 0 && cIdx === 0)}
@@ -463,7 +475,8 @@ export default function ListsScreen() {
                 <CardSection key={section.key} title={section.title} theme={theme} styles={styles}>
                   {section.cards.map((card) => {
                     const isGenre = section.key.includes('genres');
-                    const width = isGenre ? genreCardWidth : cardWidth;
+                    const isWide = section.key === 'gemini-recs';
+                    const width = isWide ? wideCardWidth : isGenre ? genreCardWidth : cardWidth;
                     return (
                       <Pressable key={card.key} onPress={card.onPress} style={{ width }}>
                         {card.content}

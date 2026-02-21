@@ -1,3 +1,4 @@
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo } from 'react';
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
@@ -22,6 +23,10 @@ interface GradientCardProps extends BaseCardProps {
   variant: 'gradient';
   title: string;
   subtitle?: string;
+  iconName?: string;
+  iconFamily?: 'Ionicons' | 'MaterialCommunityIcons';
+  tintColor?: string;
+  aspectRatio?: number;
 }
 
 interface BackdropCardProps extends BaseCardProps {
@@ -35,15 +40,24 @@ type ListCardProps = CollageCardProps | GradientCardProps | BackdropCardProps;
 
 const CARD_ASPECT_RATIO = 16 / 10;
 
+function CardIcon({ name, family, size }: { name: string; family?: 'Ionicons' | 'MaterialCommunityIcons'; size: number }) {
+  if (family === 'MaterialCommunityIcons') {
+    return <MaterialCommunityIcons name={name as any} size={size} color="rgba(255,255,255,0.5)" />;
+  }
+  return <Ionicons name={name as any} size={size} color="rgba(255,255,255,0.5)" />;
+}
+
 export function ListCard(props: ListCardProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const focused = props.isFocused ?? false;
 
+  const customAspectRatio = props.variant === 'gradient' ? props.aspectRatio : undefined;
   const cardStyle = [
     styles.card,
     focused && styles.cardFocused,
+    customAspectRatio != null && { aspectRatio: customAspectRatio },
   ];
 
   switch (props.variant) {
@@ -79,27 +93,56 @@ export function ListCard(props: ListCardProps) {
         </View>
       );
 
-    case 'gradient':
+    case 'gradient': {
+      const gradientStart = props.tintColor ?? 'rgba(255,255,255,0.08)';
+      const iconSize = Platform.isTV ? responsiveSize(32, 24) : 28;
+      const isFlat = props.aspectRatio != null && props.aspectRatio > CARD_ASPECT_RATIO;
       return (
         <View style={cardStyle}>
           <LinearGradient
-            colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+            colors={[gradientStart, 'rgba(255,255,255,0.02)']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[StyleSheet.absoluteFill, styles.gradientBg]}
           />
-          <View style={styles.gradientContent}>
-            <Text style={styles.gradientTitle} numberOfLines={2}>
-              {props.title}
-            </Text>
-            {props.subtitle && (
-              <Text style={styles.gradientSubtitle} numberOfLines={1}>
-                {props.subtitle}
-              </Text>
-            )}
-          </View>
+          {isFlat ? (
+            <View style={styles.gradientContentFlat}>
+              {props.iconName && (
+                <CardIcon name={props.iconName} family={props.iconFamily} size={iconSize} />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.gradientTitle} numberOfLines={1}>
+                  {props.title}
+                </Text>
+                {props.subtitle && (
+                  <Text style={styles.gradientSubtitle} numberOfLines={1}>
+                    {props.subtitle}
+                  </Text>
+                )}
+              </View>
+            </View>
+          ) : (
+            <>
+              {props.iconName && (
+                <View style={styles.gradientIcon}>
+                  <CardIcon name={props.iconName} family={props.iconFamily} size={iconSize} />
+                </View>
+              )}
+              <View style={styles.gradientContent}>
+                <Text style={styles.gradientTitle} numberOfLines={2}>
+                  {props.title}
+                </Text>
+                {props.subtitle && (
+                  <Text style={styles.gradientSubtitle} numberOfLines={1}>
+                    {props.subtitle}
+                  </Text>
+                )}
+              </View>
+            </>
+          )}
         </View>
       );
+    }
 
     case 'backdrop':
       return (
@@ -179,10 +222,22 @@ const createStyles = (theme: NovaTheme) =>
     gradientBg: {
       borderRadius: theme.radius.lg,
     },
+    gradientIcon: {
+      position: 'absolute',
+      top: Platform.isTV ? responsiveSize(14, 10) : 10,
+      right: Platform.isTV ? responsiveSize(14, 10) : 10,
+    },
     gradientContent: {
       flex: 1,
       justifyContent: 'flex-end',
       padding: Platform.isTV ? responsiveSize(16, 12) : 12,
+    },
+    gradientContentFlat: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Platform.isTV ? responsiveSize(12, 8) : 10,
+      paddingHorizontal: Platform.isTV ? responsiveSize(12, 8) : 10,
     },
     gradientTitle: {
       color: theme.colors.text.primary,
