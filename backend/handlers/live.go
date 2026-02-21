@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/models"
 )
 
 const (
@@ -122,6 +123,11 @@ func splitM3ULine(line string) (metadata, name string) {
 	return line[:commaIdx], line[commaIdx+1:]
 }
 
+// LiveUserSettingsProvider is the minimal interface for looking up per-profile settings.
+type LiveUserSettingsProvider interface {
+	Get(userID string) (*models.UserSettings, error)
+}
+
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
@@ -135,12 +141,13 @@ type LiveHandler struct {
 	analyzeDurationSec int  // FFmpeg analyzeduration in seconds (0 = default)
 	lowLatency         bool // Enable low-latency mode
 	cfgManager         *config.Manager
+	userSettingsSvc    LiveUserSettingsProvider
 }
 
 // NewLiveHandler creates a handler capable of fetching remote playlists.
 // The provided client may be nil, in which case a client with sensible
 // defaults will be created. cacheTTLHours specifies how long to cache playlists.
-func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int, probeSizeMB int, analyzeDurationSec int, lowLatency bool, cfgManager *config.Manager) *LiveHandler {
+func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string, cacheTTLHours int, probeSizeMB int, analyzeDurationSec int, lowLatency bool, cfgManager *config.Manager, userSettingsSvc LiveUserSettingsProvider) *LiveHandler {
 	if client == nil {
 		client = &http.Client{
 			Timeout: defaultPlaylistTimeout,
@@ -167,6 +174,7 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 		analyzeDurationSec: analyzeDurationSec,
 		lowLatency:         lowLatency,
 		cfgManager:         cfgManager,
+		userSettingsSvc:    userSettingsSvc,
 	}
 }
 
@@ -662,18 +670,8 @@ func filterChannels(channels []LiveChannel, filter config.LiveTVFilterSettings) 
 	return filtered
 }
 
-// fetchPlaylistContents fetches the M3U playlist from the configured URL.
-func (h *LiveHandler) fetchPlaylistContents(ctx context.Context) (string, error) {
-	if h.cfgManager == nil {
-		return "", errors.New("config manager not configured")
-	}
-
-	settings, err := h.cfgManager.Load()
-	if err != nil {
-		return "", fmt.Errorf("failed to load settings: %w", err)
-	}
-
-	playlistURL := settings.Live.GetEffectivePlaylistURL()
+// fetchPlaylistContents fetches the M3U playlist from the given URL.
+func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL string) (string, error) {
 	if strings.TrimSpace(playlistURL) == "" {
 		return "", errors.New("no playlist URL configured")
 	}
@@ -731,10 +729,8 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context) (string, error)
 }
 
 // fetchXtreamChannels fetches live channels from the Xtream Codes API.
-func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, settings *config.Settings) ([]LiveChannel, error) {
-	host := strings.TrimRight(settings.Live.XtreamHost, "/")
-	username := settings.Live.XtreamUsername
-	password := settings.Live.XtreamPassword
+func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, password string) ([]LiveChannel, error) {
+	host = strings.TrimRight(host, "/")
 
 	// Fetch categories first to build a category ID -> name map
 	categoriesURL := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories",
@@ -836,10 +832,44 @@ func (h *LiveHandler) isXtreamMode() bool {
 		settings.Live.XtreamPassword != ""
 }
 
+// resolveProfileLiveSource resolves the IPTV source for the current request.
+// If a profileId query parameter is provided and the profile has per-profile
+// IPTV overrides, those are merged with the global settings.
+func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings config.Settings) models.ResolvedLiveSource {
+	global := models.ResolvedLiveSource{
+		Mode:                  globalSettings.Live.Mode,
+		PlaylistURL:           globalSettings.Live.PlaylistURL,
+		XtreamHost:            globalSettings.Live.XtreamHost,
+		XtreamUsername:        globalSettings.Live.XtreamUsername,
+		XtreamPassword:        globalSettings.Live.XtreamPassword,
+		PlaylistCacheTTLHours: globalSettings.Live.PlaylistCacheTTLHours,
+		ProbeSizeMB:           globalSettings.Live.ProbeSizeMB,
+		AnalyzeDurationSec:    globalSettings.Live.AnalyzeDurationSec,
+		LowLatency:            globalSettings.Live.LowLatency,
+		EnabledCategories:       globalSettings.Live.Filtering.EnabledCategories,
+		MaxChannels:             globalSettings.Live.Filtering.MaxChannels,
+		EPGEnabled:              globalSettings.Live.EPG.Enabled,
+		EPGXmltvUrl:             globalSettings.Live.EPG.XmltvUrl,
+		EPGRefreshIntervalHours: globalSettings.Live.EPG.RefreshIntervalHours,
+		EPGRetentionDays:        globalSettings.Live.EPG.RetentionDays,
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" || h.userSettingsSvc == nil {
+		return global
+	}
+
+	userSettings, err := h.userSettingsSvc.Get(profileID)
+	if err != nil || userSettings == nil {
+		return global
+	}
+
+	return models.ResolveLiveSource(&userSettings.LiveTV, &global)
+}
+
 // GetChannels returns parsed and filtered channels from the configured playlist.
 func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 	var allChannels []LiveChannel
-	var filter config.LiveTVFilterSettings
 
 	settings, err := h.cfgManager.Load()
 	if err != nil {
@@ -847,23 +877,34 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to load settings"}`, http.StatusInternalServerError)
 		return
 	}
-	filter = settings.Live.Filtering
+
+	src := h.resolveProfileLiveSource(r, settings)
+	filter := config.LiveTVFilterSettings{
+		EnabledCategories: src.EnabledCategories,
+		MaxChannels:       src.MaxChannels,
+	}
 
 	// Check if we're in Xtream mode
-	if settings.Live.Mode == "xtream" &&
-		settings.Live.XtreamHost != "" &&
-		settings.Live.XtreamUsername != "" &&
-		settings.Live.XtreamPassword != "" {
+	if src.Mode == "xtream" &&
+		src.XtreamHost != "" &&
+		src.XtreamUsername != "" &&
+		src.XtreamPassword != "" {
 		// Use Xtream API
-		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
+		allChannels, err = h.fetchXtreamChannels(r.Context(), src.XtreamHost, src.XtreamUsername, src.XtreamPassword)
 		if err != nil {
 			log.Printf("[live] GetChannels Xtream error: %v", err)
 			http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
 			return
 		}
 	} else {
-		// Use M3U playlist
-		contents, err := h.fetchPlaylistContents(r.Context())
+		// Use M3U playlist — compute effective URL for m3u mode
+		playlistURL := src.PlaylistURL
+		if src.Mode == "xtream" && src.XtreamHost != "" && src.XtreamUsername != "" && src.XtreamPassword != "" {
+			host := strings.TrimRight(src.XtreamHost, "/")
+			playlistURL = fmt.Sprintf("%s/get.php?username=%s&password=%s&type=m3u&output=ts",
+				host, url.QueryEscape(src.XtreamUsername), url.QueryEscape(src.XtreamPassword))
+		}
+		contents, err := h.fetchPlaylistContents(r.Context(), playlistURL)
 		if err != nil {
 			log.Printf("[live] GetChannels error: %v", err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
@@ -908,13 +949,15 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	src := h.resolveProfileLiveSource(r, settings)
+
 	// Check if we're in Xtream mode
-	if settings.Live.Mode == "xtream" &&
-		settings.Live.XtreamHost != "" &&
-		settings.Live.XtreamUsername != "" &&
-		settings.Live.XtreamPassword != "" {
+	if src.Mode == "xtream" &&
+		src.XtreamHost != "" &&
+		src.XtreamUsername != "" &&
+		src.XtreamPassword != "" {
 		// Use Xtream API
-		allChannels, err = h.fetchXtreamChannels(r.Context(), &settings)
+		allChannels, err = h.fetchXtreamChannels(r.Context(), src.XtreamHost, src.XtreamUsername, src.XtreamPassword)
 		if err != nil {
 			log.Printf("[live] GetCategories Xtream error: %v", err)
 			http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
@@ -922,7 +965,8 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Use M3U playlist
-		contents, err := h.fetchPlaylistContents(r.Context())
+		playlistURL := src.PlaylistURL
+		contents, err := h.fetchPlaylistContents(r.Context(), playlistURL)
 		if err != nil {
 			log.Printf("[live] GetCategories error: %v", err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)

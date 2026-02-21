@@ -188,7 +188,18 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	// Check LiveTV
 	if len(s.LiveTV.HiddenChannels) > 0 ||
 		len(s.LiveTV.FavoriteChannels) > 0 ||
-		len(s.LiveTV.SelectedCategories) > 0 {
+		len(s.LiveTV.SelectedCategories) > 0 ||
+		s.LiveTV.Mode != nil ||
+		s.LiveTV.PlaylistURL != nil ||
+		s.LiveTV.XtreamHost != nil ||
+		s.LiveTV.XtreamUsername != nil ||
+		s.LiveTV.XtreamPassword != nil ||
+		s.LiveTV.PlaylistCacheTTLHours != nil ||
+		s.LiveTV.ProbeSizeMB != nil ||
+		s.LiveTV.AnalyzeDurationSec != nil ||
+		s.LiveTV.LowLatency != nil ||
+		s.LiveTV.Filtering != nil ||
+		s.LiveTV.EPG != nil {
 		return false
 	}
 

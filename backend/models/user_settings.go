@@ -3,6 +3,7 @@ package models
 // Helper functions for creating pointers (exported for use by other packages)
 func FloatPtr(v float64) *float64 { return &v }
 func BoolPtr(v bool) *bool        { return &v }
+func StringPtr(v string) *string   { return &v }
 
 // Helper functions for safely dereferencing pointers with defaults
 func FloatVal(p *float64, def float64) float64 {
@@ -55,6 +56,114 @@ type LiveTVSettings struct {
 	HiddenChannels     []string `json:"hiddenChannels"`     // Channel IDs that are hidden
 	FavoriteChannels   []string `json:"favoriteChannels"`   // Channel IDs that are favorited
 	SelectedCategories []string `json:"selectedCategories"` // Selected category filters
+	// Per-profile IPTV source override (nil = use global)
+	Mode           *string `json:"mode,omitempty"`
+	PlaylistURL    *string `json:"playlistUrl,omitempty"`
+	XtreamHost     *string `json:"xtreamHost,omitempty"`
+	XtreamUsername *string `json:"xtreamUsername,omitempty"`
+	XtreamPassword *string `json:"xtreamPassword,omitempty"`
+	// Per-profile tuning overrides (nil = use global)
+	PlaylistCacheTTLHours *int  `json:"playlistCacheTtlHours,omitempty"`
+	ProbeSizeMB           *int  `json:"probeSizeMb,omitempty"`
+	AnalyzeDurationSec    *int  `json:"analyzeDurationSec,omitempty"`
+	LowLatency            *bool `json:"lowLatency,omitempty"`
+	// Per-profile filtering overrides (nil = use global)
+	Filtering *LiveTVFilterOverrides `json:"filtering,omitempty"`
+	// Per-profile EPG overrides (nil = use global)
+	EPG *EPGOverrides `json:"epg,omitempty"`
+}
+
+// LiveTVFilterOverrides contains per-profile channel filtering overrides.
+type LiveTVFilterOverrides struct {
+	EnabledCategories []string `json:"enabledCategories,omitempty"`
+	MaxChannels       *int     `json:"maxChannels,omitempty"`
+}
+
+// EPGOverrides contains per-profile EPG overrides.
+type EPGOverrides struct {
+	Enabled              *bool   `json:"enabled,omitempty"`
+	XmltvUrl             *string `json:"xmltvUrl,omitempty"`
+	RefreshIntervalHours *int    `json:"refreshIntervalHours,omitempty"`
+	RetentionDays        *int    `json:"retentionDays,omitempty"`
+}
+
+// ResolvedLiveSource holds the resolved IPTV source and tuning configuration
+// after merging per-profile overrides with global settings.
+type ResolvedLiveSource struct {
+	Mode                  string
+	PlaylistURL           string
+	XtreamHost            string
+	XtreamUsername        string
+	XtreamPassword        string
+	PlaylistCacheTTLHours int
+	ProbeSizeMB           int
+	AnalyzeDurationSec    int
+	LowLatency            bool
+	EnabledCategories     []string
+	MaxChannels           int
+	EPGEnabled            bool
+	EPGXmltvUrl           string
+	EPGRefreshIntervalHours int
+	EPGRetentionDays      int
+}
+
+// ResolveLiveSource merges per-profile IPTV overrides with global settings.
+// Profile-level pointer fields take precedence when non-nil; otherwise global values are used.
+func ResolveLiveSource(profile *LiveTVSettings, global *ResolvedLiveSource) ResolvedLiveSource {
+	r := *global
+	if profile == nil {
+		return r
+	}
+	if profile.Mode != nil {
+		r.Mode = *profile.Mode
+	}
+	if profile.PlaylistURL != nil {
+		r.PlaylistURL = *profile.PlaylistURL
+	}
+	if profile.XtreamHost != nil {
+		r.XtreamHost = *profile.XtreamHost
+	}
+	if profile.XtreamUsername != nil {
+		r.XtreamUsername = *profile.XtreamUsername
+	}
+	if profile.XtreamPassword != nil {
+		r.XtreamPassword = *profile.XtreamPassword
+	}
+	if profile.PlaylistCacheTTLHours != nil {
+		r.PlaylistCacheTTLHours = *profile.PlaylistCacheTTLHours
+	}
+	if profile.ProbeSizeMB != nil {
+		r.ProbeSizeMB = *profile.ProbeSizeMB
+	}
+	if profile.AnalyzeDurationSec != nil {
+		r.AnalyzeDurationSec = *profile.AnalyzeDurationSec
+	}
+	if profile.LowLatency != nil {
+		r.LowLatency = *profile.LowLatency
+	}
+	if profile.Filtering != nil {
+		if profile.Filtering.EnabledCategories != nil {
+			r.EnabledCategories = profile.Filtering.EnabledCategories
+		}
+		if profile.Filtering.MaxChannels != nil {
+			r.MaxChannels = *profile.Filtering.MaxChannels
+		}
+	}
+	if profile.EPG != nil {
+		if profile.EPG.Enabled != nil {
+			r.EPGEnabled = *profile.EPG.Enabled
+		}
+		if profile.EPG.XmltvUrl != nil {
+			r.EPGXmltvUrl = *profile.EPG.XmltvUrl
+		}
+		if profile.EPG.RefreshIntervalHours != nil {
+			r.EPGRefreshIntervalHours = *profile.EPG.RefreshIntervalHours
+		}
+		if profile.EPG.RetentionDays != nil {
+			r.EPGRetentionDays = *profile.EPG.RetentionDays
+		}
+	}
+	return r
 }
 
 // PlaybackSettings controls how the client should launch resolved streams.
