@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -597,52 +598,72 @@ type mdblistTVShow struct {
 
 // fetchMDBListMovies fetches trending movies from MDBList
 func (c *tvdbClient) fetchMDBListMovies() ([]mdblistMovie, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/godver3/trending-movies/json", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("mdblist request failed: %s", resp.Status)
-	}
-
 	var movies []mdblistMovie
-	if err := json.NewDecoder(resp.Body).Decode(&movies); err != nil {
+	if err := c.fetchMDBListJSON("https://mdblist.com/lists/godver3/trending-movies/json", &movies); err != nil {
 		return nil, err
 	}
-
 	return movies, nil
 }
 
 // fetchMDBListTVShows fetches trending TV shows from MDBList
 func (c *tvdbClient) fetchMDBListTVShows() ([]mdblistTVShow, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://mdblist.com/lists/godver3/trending-shows/json", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("mdblist request failed: %s", resp.Status)
-	}
-
 	var tvShows []mdblistTVShow
-	if err := json.NewDecoder(resp.Body).Decode(&tvShows); err != nil {
+	if err := c.fetchMDBListJSON("https://mdblist.com/lists/godver3/trending-shows/json", &tvShows); err != nil {
 		return nil, err
 	}
-
 	return tvShows, nil
+}
+
+// fetchMDBListJSON fetches and decodes JSON from an MDBList URL with a 15-second
+// timeout and one retry on server errors (500+/524 Cloudflare timeouts).
+func (c *tvdbClient) fetchMDBListJSON(url string, dest any) error {
+	backoff := 500 * time.Millisecond
+	var lastErr error
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+
+		resp, err := c.httpc.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("mdblist http error: %w", err)
+			log.Printf("[mdblist] fetch error (attempt %d/2) url=%s: %v", attempt+1, url, err)
+			continue
+		}
+
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			cancel()
+			lastErr = fmt.Errorf("mdblist request failed: %s", resp.Status)
+			log.Printf("[mdblist] server error (attempt %d/2) url=%s: %s", attempt+1, url, resp.Status)
+			continue
+		}
+
+		if resp.StatusCode >= 300 {
+			resp.Body.Close()
+			cancel()
+			return fmt.Errorf("mdblist request failed: %s", resp.Status)
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(dest)
+		resp.Body.Close()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("mdblist decode error: %w", err)
+		}
+		return nil
+	}
+
+	return lastErr
 }
 
 // mdblistItem is a generic MDBList item that works for both movies and TV shows
@@ -660,25 +681,9 @@ type mdblistItem struct {
 
 // FetchMDBListCustom fetches items from a custom MDBList URL
 func (c *tvdbClient) FetchMDBListCustom(listURL string) ([]mdblistItem, error) {
-	req, err := http.NewRequest(http.MethodGet, listURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("mdblist request failed: %s", resp.Status)
-	}
-
 	var items []mdblistItem
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+	if err := c.fetchMDBListJSON(listURL, &items); err != nil {
 		return nil, err
 	}
-
 	return items, nil
 }

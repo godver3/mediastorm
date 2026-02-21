@@ -523,8 +523,9 @@ var SettingsSchema = map[string]interface{}{
 		"group": "services",
 		"order": 0,
 		"fields": map[string]interface{}{
-			"tvdbApiKey": map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
-			"tmdbApiKey": map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
+			"tvdbApiKey":   map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
+			"tmdbApiKey":   map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
+			"geminiApiKey": map[string]interface{}{"type": "password", "label": "Gemini API Key", "description": "Google Gemini API key for AI-powered recommendations (optional, free tier available)"},
 			"language": map[string]interface{}{
 				"type":        "select",
 				"label":       "Metadata Language",

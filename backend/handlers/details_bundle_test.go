@@ -39,6 +39,21 @@ func (m *mockMetadataServiceDetailsBundle) MovieDetails(_ context.Context, _ mod
 func (m *mockMetadataServiceDetailsBundle) Similar(_ context.Context, _ string, _ int64) ([]models.Title, error) {
 	return m.similar, m.similarErr
 }
+func (m *mockMetadataServiceDetailsBundle) DiscoverByGenre(_ context.Context, _ string, _ int64, _, _ int) ([]models.TrendingItem, int, error) {
+	return nil, 0, nil
+}
+func (m *mockMetadataServiceDetailsBundle) GetAIRecommendations(_ context.Context, _ []string, _ []string, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceDetailsBundle) GetAISimilar(_ context.Context, _ string, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceDetailsBundle) GetAICustomRecommendations(_ context.Context, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceDetailsBundle) GetAISurprise(_ context.Context, _ string) (*models.TrendingItem, error) {
+	return nil, nil
+}
 func (m *mockMetadataServiceDetailsBundle) Trailers(_ context.Context, _ models.TrailerQuery) (*models.TrailerResponse, error) {
 	return m.trailers, m.trailersErr
 }

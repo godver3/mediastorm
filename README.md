@@ -85,8 +85,22 @@ strmr requires API keys from TMDB and TVDB for metadata (posters, descriptions, 
 | **TMDB** | ✅ Yes | Movie/TV metadata, posters, cast | [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) (free account) |
 | **TVDB** | ✅ Yes | TV show metadata, episode info | [thetvdb.com/api-information](https://thetvdb.com/api-information) (free account) |
 | **MDBList** | ❌ Optional | Ratings from multiple sources (IMDb, RT, etc.) | [mdblist.com/preferences](https://mdblist.com/preferences/) (free account) |
+| **Gemini** | ❌ Optional | AI-powered personalized recommendations | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (free tier) |
 
 Enter these keys in the admin panel under **Settings → Metadata**.
+
+### AI Recommendations (Gemini)
+
+strmr can use Google's Gemini AI to generate personalized "Recommended For You" lists based on your watch history and watchlist. This is entirely optional — without a key, strmr still provides TMDB-based "Because you watched..." recommendations.
+
+**Setup:**
+
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey) and sign in with a Google account
+2. Click **Create API Key** and copy it
+3. In the strmr admin panel, go to **Settings → Metadata** and paste the key into the **Gemini API Key** field
+4. Save — recommendations will appear in the **Lists** tab under "Recommended For You"
+
+**Cost:** Gemini 2.0 Flash is used, which has a generous free tier (1,500 requests/day). A typical user generates ~1 request per day (results are cached for 24 hours per user), so this should remain free for personal use.
 
 ## Roadmap
 

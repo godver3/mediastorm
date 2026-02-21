@@ -1816,3 +1816,153 @@ func (c *tmdbClient) fetchSimilar(ctx context.Context, mediaType string, tmdbID 
 
 	return titles, nil
 }
+
+// searchByTitle searches TMDB for a movie or TV show by title and optional year.
+// Returns the best matching Title or nil if no match found.
+func (c *tmdbClient) searchByTitle(ctx context.Context, title string, year int, mediaType string) (*models.Title, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" && apiMediaType != "tv" {
+		apiMediaType = "multi"
+	}
+	if apiMediaType == "series" {
+		apiMediaType = "tv"
+	}
+
+	endpoint := fmt.Sprintf("%s/search/%s?api_key=%s&query=%s",
+		tmdbBaseURL, apiMediaType, c.apiKey, url.QueryEscape(title))
+	if year > 0 {
+		if apiMediaType == "movie" {
+			endpoint += fmt.Sprintf("&year=%d", year)
+		} else {
+			endpoint += fmt.Sprintf("&first_air_date_year=%d", year)
+		}
+	}
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Results []struct {
+			ID           int64   `json:"id"`
+			Name         string  `json:"name"`
+			Title        string  `json:"title"`
+			MediaType    string  `json:"media_type"`
+			Overview     string  `json:"overview"`
+			PosterPath   string  `json:"poster_path"`
+			BackdropPath string  `json:"backdrop_path"`
+			ReleaseDate  string  `json:"release_date"`
+			FirstAirDate string  `json:"first_air_date"`
+			Popularity   float64 `json:"popularity"`
+			VoteAverage  float64 `json:"vote_average"`
+		} `json:"results"`
+	}
+
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb search for %q failed: %w", title, err)
+	}
+
+	if len(payload.Results) == 0 {
+		return nil, nil
+	}
+
+	r := payload.Results[0]
+
+	// Determine result media type
+	resultMediaType := "movie"
+	if apiMediaType == "tv" || r.MediaType == "tv" {
+		resultMediaType = "series"
+	}
+
+	result := &models.Title{
+		ID:        fmt.Sprintf("tmdb:%s:%d", apiMediaType, r.ID),
+		Name:      pickTMDBName(apiMediaType, r.Name, r.Title),
+		Overview:  r.Overview,
+		MediaType: resultMediaType,
+		TMDBID:    r.ID,
+	}
+	if y := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); y != 0 {
+		result.Year = y
+	}
+	if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+		result.Poster = poster
+	}
+	if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+		result.Backdrop = backdrop
+	}
+	result.Popularity = scoreFallback(r.Popularity, r.VoteAverage)
+
+	return result, nil
+}
+
+// discoverByGenre fetches movies or TV shows for a given genre from TMDB discover API
+func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genreID int64, page int) ([]models.Title, int, error) {
+	if !c.isConfigured() {
+		return nil, 0, errors.New("tmdb api key not configured")
+	}
+
+	// Map "series" to "tv" for TMDB API
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	endpoint := fmt.Sprintf("%s/discover/%s?api_key=%s&with_genres=%d&sort_by=popularity.desc&page=%d",
+		tmdbBaseURL, apiMediaType, c.apiKey, genreID, page)
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Results []struct {
+			ID               int64   `json:"id"`
+			Name             string  `json:"name"`
+			Title            string  `json:"title"`
+			Overview         string  `json:"overview"`
+			OriginalLanguage string  `json:"original_language"`
+			PosterPath       string  `json:"poster_path"`
+			BackdropPath     string  `json:"backdrop_path"`
+			Popularity       float64 `json:"popularity"`
+			VoteAverage      float64 `json:"vote_average"`
+			FirstAirDate     string  `json:"first_air_date"`
+			ReleaseDate      string  `json:"release_date"`
+		} `json:"results"`
+		TotalResults int `json:"total_results"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, 0, fmt.Errorf("tmdb discover genre for %s/%d failed: %w", apiMediaType, genreID, err)
+	}
+
+	titles := make([]models.Title, 0, len(payload.Results))
+	for _, r := range payload.Results {
+		resultMediaType := "movie"
+		if apiMediaType == "tv" {
+			resultMediaType = "series"
+		}
+
+		title := models.Title{
+			ID:        fmt.Sprintf("tmdb:%s:%d", apiMediaType, r.ID),
+			Name:      pickTMDBName(apiMediaType, r.Name, r.Title),
+			Overview:  r.Overview,
+			Language:  r.OriginalLanguage,
+			MediaType: resultMediaType,
+			TMDBID:    r.ID,
+		}
+		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+		title.Popularity = scoreFallback(r.Popularity, r.VoteAverage)
+		titles = append(titles, title)
+	}
+
+	return titles, payload.TotalResults, nil
+}

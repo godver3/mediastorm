@@ -81,9 +81,10 @@ type TorrentScraperConfig struct {
 }
 
 type MetadataSettings struct {
-	TVDBAPIKey string `json:"tvdbApiKey"`
-	TMDBAPIKey string `json:"tmdbApiKey"`
-	Language   string `json:"language"`
+	TVDBAPIKey   string `json:"tvdbApiKey"`
+	TMDBAPIKey   string `json:"tmdbApiKey"`
+	GeminiAPIKey string `json:"geminiApiKey,omitempty"`
+	Language     string `json:"language"`
 }
 
 type CacheSettings struct {

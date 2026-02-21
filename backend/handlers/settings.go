@@ -149,7 +149,7 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 
 	// Reload metadata service with new API keys
 	if h.MetadataService != nil {
-		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language)
+		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language, s.Metadata.GeminiAPIKey)
 		log.Printf("[settings] reloaded metadata service API keys")
 
 		// Reload MDBList settings (rating sources, API key, enabled state)
