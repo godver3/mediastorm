@@ -6,7 +6,7 @@ import (
 )
 
 func TestRealWorldNyaaTitleMatching(t *testing.T) {
-	pref, nonPref := GetAnimeLanguageTerms("eng")
+	pref, nonPref, _ := GetAnimeLanguageTerms("eng")
 	prefCompiled := CompileTerms(pref)
 	nonPrefCompiled := CompileTerms(nonPref)
 
@@ -130,7 +130,7 @@ func TestRealWorldNyaaTitleMatching(t *testing.T) {
 }
 
 func TestItalianAnimeLanguageMatching(t *testing.T) {
-	pref, nonPref := GetAnimeLanguageTerms("ita")
+	pref, nonPref, _ := GetAnimeLanguageTerms("ita")
 	prefCompiled := CompileTerms(pref)
 	nonPrefCompiled := CompileTerms(nonPref)
 
@@ -200,6 +200,105 @@ func TestItalianAnimeLanguageMatching(t *testing.T) {
 		}
 		if matchNonPref != tc.wantNon {
 			t.Errorf("non-preferred mismatch for %q: got=%v want=%v", tc.title, matchNonPref, tc.wantNon)
+		}
+	}
+}
+
+func TestFalsePositives_IncidentalTerms(t *testing.T) {
+	// Verify that titles containing "raw", "dual", language words, etc.
+	// incidentally (not as audio/language tags) do NOT trigger ranking.
+
+	type langCase struct {
+		lang  string
+		title string
+		desc  string
+		pref  bool
+		non   bool
+	}
+
+	cases := []langCase{
+		// ──── "raw" as part of group names / other words ────
+		// "[Koi-Raws]" — group name, "Raws" != "raw" at word boundary
+		{"eng", "[Koi-Raws] ONE PIECE FILM RED (CX 1920x1080 x264 AAC).mkv", "group name Koi-Raws", false, false},
+		{"eng", "[Erai-raws] Kaya-chan wa Kowakunai - 07 [1080p]", "group name Erai-raws", false, false},
+		{"eng", "[EMBER] Straw Hat Pirates S01 [1080p][HEVC x265]", "straw in title", false, false},
+		{"eng", "[SubsPlease] The Crawling City - 01 [1080p]", "crawling in title", false, false},
+		{"eng", "[Judas] Drawing Sword - S01E01 [1080p][HEVC x265 10bit]", "drawing in title", false, false},
+		// "Tsundere-Raws" group name
+		{"eng", "Blue Orchestra S02E20 VOSTFR 1080p WEB x264 AAC -Tsundere-Raws (ADN)", "group Tsundere-Raws", false, false},
+
+		// ──── "dual" without "audio" ────
+		// "Dual!" is a real anime title
+		{"eng", "[SubsPlease] Dual! Parallel Lunalun Monogatari - 01 [1080p]", "anime title Dual!", false, false},
+		// DUAL as scene tag without "audio" should not match
+		{"eng", "Kaya chan Isnt Scary S01E07 1080p CR WEB-DL DUAL AAC2.0 H 264-VARYG", "DUAL scene tag", false, false},
+
+		// ──── Language words in character/title names ────
+		// "German" as part of title, not a dub tag
+		{"eng", "[SubsPlease] The German Boy and the French Girl - 01 [1080p]", "german in title", false, false},
+		// "Italian" as part of title
+		{"eng", "[SubsPlease] The Italian Chef Reincarnated - 01 [1080p]", "italian in title", false, false},
+
+		// ──── JPN preferred terms: "raw" and "jpn" should use word boundaries ────
+		{"jpn", "[Koi-Raws] ONE PIECE FILM RED (CX 1920x1080 x264 AAC).mkv", "Raws group jpn", false, false},
+		{"jpn", "[EMBER] Straw Hat Pirates S01 [1080p][HEVC x265]", "straw jpn", false, false},
+		{"jpn", "[SubsPlease] The Crawling City - 01 [1080p]", "crawling jpn", false, false},
+		{"jpn", "[Judas] Drawing Sword - S01E01 [1080p][HEVC x265 10bit]", "drawing jpn", false, false},
+		// But standalone "raw" SHOULD match for jpn preferred
+		{"jpn", "[Leopard-Raws] One Piece - RAW - 1120 [1280x720 DTV x264 AAC]", "RAW tag jpn", true, false},
+		// "jpn" should not match inside longer words
+		{"jpn", "[SubsPlease] JPNG Compression Test [1080p]", "jpng not jpn", false, false},
+	}
+
+	for _, tc := range cases {
+		pref, nonPref, _ := GetAnimeLanguageTerms(tc.lang)
+		prefC := CompileTerms(pref)
+		nonC := CompileTerms(nonPref)
+
+		gotPref := MatchesAnyTerm(tc.title, prefC)
+		gotNon := MatchesAnyTerm(tc.title, nonC)
+
+		if gotPref != tc.pref {
+			t.Errorf("[%s] %s: preferred got=%v want=%v\n  title: %q", tc.lang, tc.desc, gotPref, tc.pref, tc.title)
+		}
+		if gotNon != tc.non {
+			t.Errorf("[%s] %s: non-preferred got=%v want=%v\n  title: %q", tc.lang, tc.desc, gotNon, tc.non, tc.title)
+		}
+	}
+}
+
+func TestFalsePositives_FilterOut(t *testing.T) {
+	// Verify filter-out \braw\b regex does NOT catch group names or partial matches.
+	type testCase struct {
+		title      string
+		desc       string
+		wantFilter bool
+	}
+
+	cases := []testCase{
+		// Should NOT be filtered out (incidental "raw" substrings)
+		{"[Koi-Raws] ONE PIECE FILM RED (CX 1920x1080 x264 AAC).mkv", "Koi-Raws group", false},
+		{"[Erai-raws] Kaya-chan wa Kowakunai - 07 [1080p]", "Erai-raws group", false},
+		{"Blue Orchestra S02E20 VOSTFR 1080p -Tsundere-Raws (ADN)", "Tsundere-Raws group", false},
+		{"[EMBER] Straw Hat Pirates S01 [1080p][HEVC x265]", "straw in title", false},
+		{"[SubsPlease] The Crawling City - 01 [1080p]", "crawling", false},
+		{"[Judas] Drawing Sword - S01E01 [1080p]", "drawing", false},
+		{"Crawford S01E01 1080p WEB-DL x264", "crawford name", false},
+
+		// SHOULD be filtered out (actual raw tags)
+		{"[Leopard-Raws] One Piece - RAW - 1120 [1280x720 DTV x264 AAC]", "RAW tag", true},
+		{"[ohys-raws] Naruto Shippuuden - 500 (raw).mkv", "raw in parens", true},
+		{"Bleach 366 raw [720p].mkv", "raw standalone", true},
+	}
+
+	// Use eng filter-out terms (all non-jpn languages have the same filter-out)
+	_, _, filterOut := GetAnimeLanguageTerms("eng")
+	filterCompiled := CompileTerms(filterOut)
+
+	for _, tc := range cases {
+		got := MatchesAnyTerm(tc.title, filterCompiled)
+		if got != tc.wantFilter {
+			t.Errorf("filter-out %s: got=%v want=%v\n  title: %q", tc.desc, got, tc.wantFilter, tc.title)
 		}
 	}
 }
