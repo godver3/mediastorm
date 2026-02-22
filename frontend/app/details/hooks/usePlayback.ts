@@ -585,6 +585,14 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
     setTrackOverrideAudio(null);
     setTrackOverrideSubtitle(null);
 
+    // Check if prequeue is disabled via settings
+    const disablePrequeue = userSettings?.playback?.disablePrequeue ?? settings?.playback?.disablePrequeue ?? false;
+    if (disablePrequeue) {
+      console.log('[prequeue] Skipping automatic prequeue - disabled by setting');
+      prequeuePromiseRef.current = null;
+      return;
+    }
+
     if (!activeUserId || !titleId || !title) {
       console.log('[prequeue] Skipping prequeue - missing:', {
         activeUserId: !activeUserId,
@@ -683,7 +691,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
       }
       prequeuePromiseRef.current = null;
     };
-  }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode, bundleReady]);
+  }, [titleId, title, mediaType, isSeries, activeUserId, imdbId, yearNumber, activeEpisode, nextUpEpisode, bundleReady, userSettings?.playback?.disablePrequeue, settings?.playback?.disablePrequeue]);
 
   // =========================================================================
   // Prequeue polling effect (polls status until ready)
@@ -1832,6 +1840,38 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
             abortControllerRef.current = null;
           }
         }
+      }
+
+      // 2b. On-demand prequeue: if automatic prequeue was disabled, initiate one now on play
+      const disablePrequeue = userSettings?.playback?.disablePrequeue ?? settings?.playback?.disablePrequeue ?? false;
+      if (disablePrequeue && !prequeueId && !prequeuePromiseRef.current) {
+        console.log('[prequeue] On-demand prequeue (auto-prequeue disabled, user pressed play)');
+        const onDemandEpisode = targetEpisode || activeEpisode || nextUpEpisode;
+        prequeuePromiseRef.current = (async () => {
+          try {
+            const response = await apiService.prequeuePlayback({
+              titleId,
+              titleName: title,
+              mediaType: isSeries ? 'series' : 'movie',
+              userId: activeUserId,
+              imdbId: imdbId || undefined,
+              year: yearNumber || undefined,
+              seasonNumber: onDemandEpisode?.seasonNumber,
+              episodeNumber: onDemandEpisode?.episodeNumber,
+              absoluteEpisodeNumber: (onDemandEpisode as any)?.absoluteEpisodeNumber,
+              skipHLS: Platform.OS !== 'web' ? true : undefined,
+            });
+            const respTarget = response.targetEpisode
+              ? { seasonNumber: response.targetEpisode.seasonNumber, episodeNumber: response.targetEpisode.episodeNumber }
+              : null;
+            setPrequeueId(response.prequeueId);
+            if (respTarget) setPrequeueTargetEpisode(respTarget);
+            return { id: response.prequeueId, targetEpisode: respTarget };
+          } catch (error) {
+            console.log('[prequeue] On-demand prequeue failed:', error);
+            return null;
+          }
+        })();
       }
 
       // 3. Wait for any pending prequeue request to complete first

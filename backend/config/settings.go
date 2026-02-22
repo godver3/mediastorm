@@ -219,6 +219,7 @@ type PlaybackSettings struct {
 	AutoPlayTrailersTV        bool    `json:"autoPlayTrailersTV,omitempty"` // Auto-play trailers in backdrop on TV details pages
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause"`    // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart"`      // Seconds to rewind when resuming from saved progress (default 0)
+	DisablePrequeue           bool    `json:"disablePrequeue"`            // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
