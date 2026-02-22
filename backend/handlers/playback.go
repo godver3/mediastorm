@@ -16,6 +16,7 @@ import (
 
 type playbackService interface {
 	Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error)
+	ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error)
 	QueueStatus(ctx context.Context, queueID int64) (*models.PlaybackResolution, error)
 }
 
@@ -99,6 +100,44 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[playback-handler] TIMING: handler complete (TOTAL: %v)", time.Since(handlerStart))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resolution)
+}
+
+// ResolveBatch performs a single set of provider API calls and resolves all episodes from a pack.
+func (h *PlaybackHandler) ResolveBatch(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Result   models.NZBResult           `json:"result"`
+		Episodes []models.BatchEpisodeTarget `json:"episodes"`
+	}
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(request.Episodes) == 0 {
+		http.Error(w, "episodes list is empty", http.StatusBadRequest)
+		return
+	}
+	if len(request.Episodes) > 100 {
+		http.Error(w, "batch size exceeds maximum of 100 episodes", http.StatusBadRequest)
+		return
+	}
+
+	handlerStart := time.Now()
+	log.Printf("[playback-handler] batch resolve: %d episodes, title=%q", len(request.Episodes), request.Result.Title)
+
+	resp, err := h.Service.ResolveBatch(r.Context(), request.Result, request.Episodes)
+	if err != nil {
+		log.Printf("[playback-handler] batch resolve failed after %v: %v", time.Since(handlerStart), err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	log.Printf("[playback-handler] batch resolve complete (took: %v)", time.Since(handlerStart))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // QueueStatus reports the current resolution status for a previously queued playback request.

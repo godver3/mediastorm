@@ -705,3 +705,219 @@ func extractTorrentFilename(resp *http.Response, torrentURL string) string {
 
 	return "download.torrent"
 }
+
+// cloneAttributes returns a shallow copy of the map so per-episode mutations are safe.
+func cloneAttributes(src map[string]string) map[string]string {
+	if src == nil {
+		return map[string]string{}
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// ResolveBatch performs the 4 provider API calls once, then resolves every episode from memory.
+func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error) {
+	resolveStart := time.Now()
+	log.Printf("[debrid-playback-batch] start: %d episodes, title=%q", len(episodes), strings.TrimSpace(candidate.Title))
+
+	if len(episodes) == 0 {
+		return nil, fmt.Errorf("empty episodes list")
+	}
+
+	// Pre-resolved streams are not supported in batch mode
+	if candidate.Attributes["preresolved"] == "true" {
+		return nil, fmt.Errorf("pre-resolved streams are not supported for batch resolve")
+	}
+
+	// --- resolve provider (same logic as Resolve / resolveSingleProvider) ---
+	torrentURL := strings.TrimSpace(candidate.Attributes["torrentURL"])
+	hasMagnet := strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:")
+	if !hasMagnet && torrentURL == "" {
+		return nil, fmt.Errorf("missing magnet link and no torrent URL available")
+	}
+
+	settings, err := s.cfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
+	explicitProvider := strings.TrimSpace(candidate.Attributes["provider"])
+	var providerConfig *config.DebridProviderSettings
+	for i := range settings.Streaming.DebridProviders {
+		p := &settings.Streaming.DebridProviders[i]
+		if !p.Enabled || strings.TrimSpace(p.APIKey) == "" {
+			continue
+		}
+		if explicitProvider == "" || strings.EqualFold(p.Provider, explicitProvider) {
+			providerConfig = p
+			break
+		}
+	}
+	if providerConfig == nil {
+		return nil, fmt.Errorf("no debrid provider configured or enabled")
+	}
+	client, ok := GetProvider(strings.ToLower(providerConfig.Provider), providerConfig.APIKey)
+	if !ok {
+		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
+	}
+	providerName := client.Name()
+
+	// --- AddMagnet / AddTorrentFile (once) ---
+	var addResp *AddMagnetResult
+	if hasMagnet {
+		addResp, err = client.AddMagnet(ctx, candidate.Link)
+	} else {
+		torrentData, filename, dlErr := s.downloadTorrentFile(ctx, torrentURL)
+		if dlErr != nil {
+			return nil, fmt.Errorf("download torrent file: %w", dlErr)
+		}
+		addResp, err = client.AddTorrentFile(ctx, torrentData, filename)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("add torrent: %w", err)
+	}
+	torrentID := addResp.ID
+	log.Printf("[debrid-playback-batch] torrent added id=%s (elapsed %v)", torrentID, time.Since(resolveStart))
+
+	// --- GetTorrentInfo 1st (once) — get file list ---
+	info, err := client.GetTorrentInfo(ctx, torrentID)
+	if err != nil {
+		return nil, fmt.Errorf("get torrent info: %w", err)
+	}
+
+	// Select ALL media files (neutral hints — no target episode) so they are all cached.
+	neutralHints := buildSelectionHints(candidate, info.Filename)
+	// Clear episode targeting so we don't accidentally reject the selection.
+	neutralHints.TargetSeason = 0
+	neutralHints.TargetEpisode = 0
+	neutralHints.TargetEpisodeCode = ""
+	neutralHints.AbsoluteEpisodeNumber = 0
+	neutralHints.TargetAirDate = ""
+	neutralHints.IsDaily = false
+
+	neutralSel := selectMediaFiles(info.Files, neutralHints)
+	if neutralSel == nil || len(neutralSel.OrderedIDs) == 0 {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("no media files found in torrent")
+	}
+
+	fileSelection := strings.Join(neutralSel.OrderedIDs, ",")
+	log.Printf("[debrid-playback-batch] selecting %d media files for caching", len(neutralSel.OrderedIDs))
+
+	// --- SelectFiles (once) ---
+	if err := client.SelectFiles(ctx, torrentID, fileSelection); err != nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("select files: %w", err)
+	}
+
+	// --- GetTorrentInfo 2nd (once) — get download links ---
+	info, err = client.GetTorrentInfo(ctx, torrentID)
+	if err != nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("get torrent info after selection: %w", err)
+	}
+
+	isCached := strings.ToLower(info.Status) == "downloaded"
+	if !isCached {
+		log.Printf("[debrid-playback-batch] torrent not cached (status=%s), cleaning up", info.Status)
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("torrent not cached (status: %s)", info.Status)
+	}
+	if len(info.Links) == 0 {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, fmt.Errorf("no download links available")
+	}
+
+	log.Printf("[debrid-playback-batch] API calls done in %v, resolving %d episodes in-memory", time.Since(resolveStart), len(episodes))
+
+	// --- Per-episode loop (all in-memory) ---
+	results := make([]models.BatchEpisodeResult, len(episodes))
+	for i, ep := range episodes {
+		res := models.BatchEpisodeResult{
+			SeasonNumber:         ep.SeasonNumber,
+			EpisodeNumber:        ep.EpisodeNumber,
+			EpisodeCode:          ep.EpisodeCode,
+			AbsoluteEpisodeNumber: ep.AbsoluteEpisodeNumber,
+		}
+
+		// Build per-episode candidate with episode-specific attributes
+		epCandidate := candidate
+		epCandidate.Attributes = cloneAttributes(candidate.Attributes)
+		epCandidate.Attributes["targetSeason"] = fmt.Sprintf("%d", ep.SeasonNumber)
+		epCandidate.Attributes["targetEpisode"] = fmt.Sprintf("%d", ep.EpisodeNumber)
+		if ep.EpisodeCode != "" {
+			epCandidate.Attributes["targetEpisodeCode"] = ep.EpisodeCode
+		} else if ep.SeasonNumber > 0 && ep.EpisodeNumber > 0 {
+			epCandidate.Attributes["targetEpisodeCode"] = fmt.Sprintf("S%02dE%02d", ep.SeasonNumber, ep.EpisodeNumber)
+		}
+		if ep.AbsoluteEpisodeNumber > 0 {
+			epCandidate.Attributes["absoluteEpisodeNumber"] = fmt.Sprintf("%d", ep.AbsoluteEpisodeNumber)
+		}
+		if ep.AirDate != "" {
+			epCandidate.Attributes["targetAirDate"] = ep.AirDate
+		}
+		if ep.IsDaily {
+			epCandidate.Attributes["isDaily"] = "true"
+		}
+
+		// File selection with episode-specific hints
+		hints := buildSelectionHints(epCandidate, info.Filename)
+		selection := selectMediaFiles(info.Files, hints)
+		if selection == nil || len(selection.OrderedIDs) == 0 {
+			res.Error = "no media files matched this episode"
+			results[i] = res
+			continue
+		}
+		if selection.RejectionReason != "" {
+			res.Error = selection.RejectionReason
+			results[i] = res
+			continue
+		}
+
+		// Resolve download link for the preferred file
+		restrictedLink, filename, _, _ := resolveRestrictedLink(info, selection.PreferredID)
+		downloadURL := restrictedLink
+
+		isActualURL := strings.HasPrefix(downloadURL, "http://") || strings.HasPrefix(downloadURL, "https://")
+		if isActualURL {
+			if archiveExt := detectArchiveExtension(downloadURL); archiveExt != "" {
+				res.Error = fmt.Sprintf("download URL points to unsupported archive (%s)", archiveExt)
+				results[i] = res
+				continue
+			}
+		}
+
+		// Build WebDAV path
+		webdavPath := fmt.Sprintf("/debrid/%s/%s", providerName, torrentID)
+		if selection.PreferredID != "" {
+			webdavPath = fmt.Sprintf("%s/file/%s", webdavPath, selection.PreferredID)
+		}
+		if filename != "" {
+			webdavPath = fmt.Sprintf("%s/%s", webdavPath, filename)
+		}
+
+		resolvedFileSize := preferredFileSize(info.Files, selection, candidate.SizeBytes)
+
+		res.Resolution = &models.PlaybackResolution{
+			QueueID:       0,
+			WebDAVPath:    webdavPath,
+			HealthStatus:  "cached",
+			FileSize:      resolvedFileSize,
+			SourceNZBPath: downloadURL,
+		}
+		results[i] = res
+	}
+
+	successCount := 0
+	for _, r := range results {
+		if r.Resolution != nil {
+			successCount++
+		}
+	}
+	log.Printf("[debrid-playback-batch] done: %d/%d episodes resolved (TOTAL: %v)", successCount, len(episodes), time.Since(resolveStart))
+
+	return &models.BatchResolveResponse{Results: results}, nil
+}

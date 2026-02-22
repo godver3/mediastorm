@@ -13,6 +13,31 @@ type SubtitleSessionInfo struct {
 	FirstCueTime float64 `json:"firstCueTime,omitempty"` // Time of first extracted cue (for subtitle sync)
 }
 
+// BatchEpisodeTarget describes one episode to resolve within a batch request.
+type BatchEpisodeTarget struct {
+	SeasonNumber         int    `json:"seasonNumber"`
+	EpisodeNumber        int    `json:"episodeNumber"`
+	EpisodeCode          string `json:"episodeCode,omitempty"`
+	AbsoluteEpisodeNumber int   `json:"absoluteEpisodeNumber,omitempty"`
+	AirDate              string `json:"airDate,omitempty"`
+	IsDaily              bool   `json:"isDaily,omitempty"`
+}
+
+// BatchEpisodeResult is the per-episode outcome of a batch resolve.
+type BatchEpisodeResult struct {
+	SeasonNumber         int                 `json:"seasonNumber"`
+	EpisodeNumber        int                 `json:"episodeNumber"`
+	EpisodeCode          string              `json:"episodeCode,omitempty"`
+	AbsoluteEpisodeNumber int                `json:"absoluteEpisodeNumber,omitempty"`
+	Resolution           *PlaybackResolution `json:"resolution,omitempty"`
+	Error                string              `json:"error,omitempty"`
+}
+
+// BatchResolveResponse wraps the per-episode results of a batch resolve.
+type BatchResolveResponse struct {
+	Results []BatchEpisodeResult `json:"results"`
+}
+
 // PlaybackResolution contains the derived streaming details for an NZB selection.
 type PlaybackResolution struct {
 	QueueID       int64  `json:"queueId"`

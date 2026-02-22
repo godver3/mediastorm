@@ -86,6 +86,18 @@ func NewService(cfg *config.Manager, usenetSvc usenetHealthService, nzbSystem *i
 	}
 }
 
+// ResolveBatch performs a single set of provider API calls and resolves all episodes from memory.
+// Only supported for debrid results.
+func (s *Service) ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error) {
+	if candidate.ServiceType != models.ServiceTypeDebrid {
+		return nil, fmt.Errorf("batch resolve is only supported for debrid results")
+	}
+	if s.debrid == nil {
+		return nil, fmt.Errorf("debrid service not configured")
+	}
+	return s.debrid.ResolveBatch(ctx, candidate, episodes)
+}
+
 // Resolve ingests the supplied NZB search result, verifies it with our Usenet health check, and returns a streaming path.
 func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
 	log.Printf("[playback] resolve start title=%q downloadURL=%q link=%q serviceType=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.DownloadURL), strings.TrimSpace(candidate.Link), candidate.ServiceType)

@@ -376,6 +376,28 @@ export type PlaybackResolution = PlaybackResolutionResponse & {
   webdavPath: string;
 };
 
+export interface BatchEpisodeTarget {
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeCode?: string;
+  absoluteEpisodeNumber?: number;
+  airDate?: string;
+  isDaily?: boolean;
+}
+
+export interface BatchEpisodeResult {
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeCode?: string;
+  absoluteEpisodeNumber?: number;
+  resolution?: PlaybackResolutionResponse;
+  error?: string;
+}
+
+export interface BatchResolveResponse {
+  results: BatchEpisodeResult[];
+}
+
 export interface AudioStreamMetadata {
   index: number;
   codecName: string;
@@ -1927,6 +1949,16 @@ class ApiService {
 
       throw error;
     }
+  }
+
+  async resolvePlaybackBatch(
+    result: NZBResult,
+    episodes: BatchEpisodeTarget[],
+  ): Promise<BatchResolveResponse> {
+    return this.request<BatchResolveResponse>('/playback/resolve-batch', {
+      method: 'POST',
+      body: JSON.stringify({ result, episodes }),
+    });
   }
 
   async getPlaybackQueueStatus(queueId: number): Promise<PlaybackResolutionResponse> {

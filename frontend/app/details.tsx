@@ -1064,41 +1064,128 @@ export default function DetailsScreen() {
     let successCount = 0;
     let failCount = 0;
 
-    for (const ep of episodes) {
+    // Use batch resolve for debrid results (single API round-trip for all episodes)
+    if (result.serviceType === 'debrid') {
       try {
-        const epCode = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`;
-        const resolveResult = {
-          ...result,
-          attributes: {
-            ...(result.attributes || {}),
-            targetSeason: String(ep.seasonNumber),
-            targetEpisode: String(ep.episodeNumber),
-            targetEpisodeCode: epCode,
-          },
-        };
-        const resolution = await apiService.resolvePlayback(resolveResult);
-        if (!resolution.webdavPath) {
-          failCount++;
-          continue;
-        }
-        await startDownload({
-          titleId,
-          mediaType: 'episode',
-          title: `${title} ${epCode}`,
-          posterUrl: headerImage,
-          streamPath: resolution.webdavPath,
-          fileSize: resolution.fileSize || result.sizeBytes || 0,
-          seriesTitle: title,
+        const targets: import('@/services/api').BatchEpisodeTarget[] = episodes.map((ep) => ({
           seasonNumber: ep.seasonNumber,
           episodeNumber: ep.episodeNumber,
-          episodeName: ep.name,
-          imdbId: imdbId || undefined,
-          tvdbId: tvdbId || undefined,
-          seriesIdentifier: seriesIdentifier || undefined,
-        });
-        successCount++;
+          episodeCode: `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
+          absoluteEpisodeNumber: ep.absoluteEpisodeNumber,
+          airDate: ep.airedDate,
+        }));
+
+        const batchResp = await apiService.resolvePlaybackBatch(result, targets);
+
+        for (const epResult of batchResp.results) {
+          const ep = episodes.find(
+            (e) => e.seasonNumber === epResult.seasonNumber && e.episodeNumber === epResult.episodeNumber,
+          );
+          const epCode = epResult.episodeCode || `S${String(epResult.seasonNumber).padStart(2, '0')}E${String(epResult.episodeNumber).padStart(2, '0')}`;
+
+          if (!epResult.resolution?.webdavPath) {
+            failCount++;
+            continue;
+          }
+          try {
+            await startDownload({
+              titleId,
+              mediaType: 'episode',
+              title: `${title} ${epCode}`,
+              posterUrl: headerImage,
+              streamPath: epResult.resolution.webdavPath,
+              fileSize: epResult.resolution.fileSize || result.sizeBytes || 0,
+              seriesTitle: title,
+              seasonNumber: epResult.seasonNumber,
+              episodeNumber: epResult.episodeNumber,
+              episodeName: ep?.name,
+              imdbId: imdbId || undefined,
+              tvdbId: tvdbId || undefined,
+              seriesIdentifier: seriesIdentifier || undefined,
+            });
+            successCount++;
+          } catch {
+            failCount++;
+          }
+        }
       } catch {
-        failCount++;
+        // Batch call failed entirely — fall back to sequential resolve
+        for (const ep of episodes) {
+          try {
+            const epCode = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`;
+            const resolveResult = {
+              ...result,
+              attributes: {
+                ...(result.attributes || {}),
+                targetSeason: String(ep.seasonNumber),
+                targetEpisode: String(ep.episodeNumber),
+                targetEpisodeCode: epCode,
+              },
+            };
+            const resolution = await apiService.resolvePlayback(resolveResult);
+            if (!resolution.webdavPath) {
+              failCount++;
+              continue;
+            }
+            await startDownload({
+              titleId,
+              mediaType: 'episode',
+              title: `${title} ${epCode}`,
+              posterUrl: headerImage,
+              streamPath: resolution.webdavPath,
+              fileSize: resolution.fileSize || result.sizeBytes || 0,
+              seriesTitle: title,
+              seasonNumber: ep.seasonNumber,
+              episodeNumber: ep.episodeNumber,
+              episodeName: ep.name,
+              imdbId: imdbId || undefined,
+              tvdbId: tvdbId || undefined,
+              seriesIdentifier: seriesIdentifier || undefined,
+            });
+            successCount++;
+          } catch {
+            failCount++;
+          }
+        }
+      }
+    } else {
+      // Non-debrid: keep existing sequential resolve
+      for (const ep of episodes) {
+        try {
+          const epCode = `S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`;
+          const resolveResult = {
+            ...result,
+            attributes: {
+              ...(result.attributes || {}),
+              targetSeason: String(ep.seasonNumber),
+              targetEpisode: String(ep.episodeNumber),
+              targetEpisodeCode: epCode,
+            },
+          };
+          const resolution = await apiService.resolvePlayback(resolveResult);
+          if (!resolution.webdavPath) {
+            failCount++;
+            continue;
+          }
+          await startDownload({
+            titleId,
+            mediaType: 'episode',
+            title: `${title} ${epCode}`,
+            posterUrl: headerImage,
+            streamPath: resolution.webdavPath,
+            fileSize: resolution.fileSize || result.sizeBytes || 0,
+            seriesTitle: title,
+            seasonNumber: ep.seasonNumber,
+            episodeNumber: ep.episodeNumber,
+            episodeName: ep.name,
+            imdbId: imdbId || undefined,
+            tvdbId: tvdbId || undefined,
+            seriesIdentifier: seriesIdentifier || undefined,
+          });
+          successCount++;
+        } catch {
+          failCount++;
+        }
       }
     }
 

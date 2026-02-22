@@ -230,6 +230,8 @@ func Register(
 
 	protected.HandleFunc("/playback/resolve", playbackHandler.Resolve).Methods(http.MethodPost)
 	protected.HandleFunc("/playback/resolve", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/playback/resolve-batch", playbackHandler.ResolveBatch).Methods(http.MethodPost)
+	protected.HandleFunc("/playback/resolve-batch", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/playback/queue/{queueID}", playbackHandler.QueueStatus).Methods(http.MethodGet)
 	protected.HandleFunc("/playback/queue/{queueID}", handleOptions).Methods(http.MethodOptions)
 
