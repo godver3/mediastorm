@@ -1752,10 +1752,15 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	if update.Watched != nil {
 		item.Watched = *update.Watched
 		if *update.Watched {
-			// Use provided timestamp if set, otherwise use now
+			// Only set WatchedAt on the unwatched→watched transition, or when
+			// an explicit timestamp is provided (e.g. Trakt import).
+			// Repeated progress updates for an already-watched item must NOT
+			// bump the timestamp forward, as that desynchronises the local
+			// WatchedAt from the Trakt scrobble time and causes the periodic
+			// Trakt sync to re-export the item as a duplicate.
 			if !update.WatchedAt.IsZero() {
 				item.WatchedAt = update.WatchedAt.UTC()
-			} else {
+			} else if !wasAlreadyWatched {
 				item.WatchedAt = now
 			}
 		}
