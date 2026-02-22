@@ -55,6 +55,21 @@ class StrmrKSOptions: KSOptions {
         }
     }
 
+    /// Override to prevent aggressive maxBufferDuration capping for DV/4K content.
+    /// The parent class caps to 5-8s for DV and high bitrate, but compressed packets
+    /// are cheap in memory (~6MB/s at 50Mbps). A larger buffer prevents stalls when
+    /// the HTTP connection has brief interruptions.
+    override func process(assetTrack: some MediaPlayerTrack) {
+        super.process(assetTrack: assetTrack)
+        // Restore a reasonable buffer duration after parent's aggressive caps.
+        // 30s at 50Mbps = ~187MB of compressed packets — fine for Apple TV's ~3GB.
+        if maxBufferDuration < 30.0 {
+            let prev = maxBufferDuration
+            maxBufferDuration = 30.0
+            KSOptions.debugLogHandler?("[STRMR] Raised maxBufferDuration from \(prev) to \(maxBufferDuration)")
+        }
+    }
+
     /// Override to tune frame buffer capacity by resolution, but respect DV memory caps.
     override func videoFrameMaxCount(fps: Float, naturalSize: CGSize, isLive: Bool) -> UInt8 {
         if isLive {
@@ -370,12 +385,20 @@ public class KSPlayerView: UIView {
         options.destinationDynamicRange = nil
 
         // Performance settings
-        options.preferredForwardBufferDuration = 5.0
+        options.preferredForwardBufferDuration = 3.0
         options.maxBufferDuration = 300.0
         options.isSecondOpen = true
         options.probesize = 50_000_000
         options.maxAnalyzeDuration = 5_000_000
         options.decoderOptions["threads"] = "0"
+
+        // HTTP stream resilience for remote streams (debrid, etc.)
+        // Detect dead connections: timeout after 15s of no data on socket
+        options.formatContextOptions["rw_timeout"] = 15_000_000
+        // Auto-reconnect on network errors (timeout, connection reset, etc.)
+        options.formatContextOptions["reconnect_on_network_error"] = 1
+        // Cap reconnection backoff delay (FFmpeg default is 120s, way too long)
+        options.formatContextOptions["reconnect_delay_max"] = 5
 
         // Subtitle settings - autoSelectEmbedSubtitle must be true for KSPlayer to initialize subtitle decoder
         options.autoSelectEmbedSubtitle = true
