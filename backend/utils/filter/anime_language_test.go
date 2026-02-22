@@ -5,7 +5,7 @@ import (
 )
 
 func TestGetAnimeLanguageTerms_English(t *testing.T) {
-	pref, nonPref := GetAnimeLanguageTerms("eng")
+	pref, nonPref, _ := GetAnimeLanguageTerms("eng")
 	if len(pref) == 0 {
 		t.Fatal("expected preferred terms for eng, got none")
 	}
@@ -33,7 +33,7 @@ func TestGetAnimeLanguageTerms_English(t *testing.T) {
 }
 
 func TestGetAnimeLanguageTerms_Japanese(t *testing.T) {
-	pref, nonPref := GetAnimeLanguageTerms("jpn")
+	pref, nonPref, _ := GetAnimeLanguageTerms("jpn")
 	if len(pref) == 0 {
 		t.Fatal("expected preferred terms for jpn, got none")
 	}
@@ -56,7 +56,7 @@ func TestGetAnimeLanguageTerms_Japanese(t *testing.T) {
 func TestGetAnimeLanguageTerms_AllLanguages(t *testing.T) {
 	languages := []string{"eng", "spa", "fra", "deu", "ita", "por", "jpn"}
 	for _, lang := range languages {
-		pref, nonPref := GetAnimeLanguageTerms(lang)
+		pref, nonPref, _ := GetAnimeLanguageTerms(lang)
 		if len(pref) == 0 {
 			t.Errorf("expected preferred terms for %s, got none", lang)
 		}
@@ -66,8 +66,23 @@ func TestGetAnimeLanguageTerms_AllLanguages(t *testing.T) {
 	}
 }
 
+func TestGetAnimeLanguageTerms_FilterOutRaw(t *testing.T) {
+	// Non-Japanese languages should filter out raw releases
+	for _, lang := range []string{"eng", "spa", "fra", "deu", "ita", "por"} {
+		_, _, filterOut := GetAnimeLanguageTerms(lang)
+		if len(filterOut) == 0 {
+			t.Errorf("expected filter-out terms for %s, got none", lang)
+		}
+	}
+	// Japanese should NOT filter out raw releases (raw is preferred for jpn)
+	_, _, filterOut := GetAnimeLanguageTerms("jpn")
+	if len(filterOut) != 0 {
+		t.Errorf("expected no filter-out terms for jpn, got %v", filterOut)
+	}
+}
+
 func TestGetAnimeLanguageTerms_UnknownLanguage(t *testing.T) {
-	pref, nonPref := GetAnimeLanguageTerms("xyz")
+	pref, nonPref, _ := GetAnimeLanguageTerms("xyz")
 	if pref != nil {
 		t.Errorf("expected nil preferred for unknown language, got %v", pref)
 	}
@@ -89,7 +104,7 @@ func TestGetAnimeLanguageTerms_NoSelfReference(t *testing.T) {
 	}
 
 	for lang, ownDub := range langDubTerms {
-		_, nonPref := GetAnimeLanguageTerms(lang)
+		_, nonPref, _ := GetAnimeLanguageTerms(lang)
 		nonPrefSet := toSet(nonPref)
 		if _, ok := nonPrefSet[ownDub]; ok {
 			t.Errorf("language %s: own dub term %q should not be in non-preferred list", lang, ownDub)

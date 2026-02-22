@@ -465,6 +465,22 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	// Get effective filtering settings (cascade: global -> profile -> client)
 	filterSettings := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 
+	// Inject anime language filter-out terms early (before search/filter calls)
+	if opts.IsAnime && models.BoolVal(filterSettings.AnimeLanguageEnabled, false) {
+		langCode := ""
+		if filterSettings.AnimePreferredLanguage != nil {
+			langCode = *filterSettings.AnimePreferredLanguage
+		}
+		if langCode == "" {
+			langCode = "eng"
+		}
+		_, _, animeFilterOut := filter.GetAnimeLanguageTerms(langCode)
+		if len(animeFilterOut) > 0 {
+			filterSettings.FilterOutTerms = append(filterSettings.FilterOutTerms, animeFilterOut...)
+			log.Printf("[indexer] Anime language filter-out: injected %d terms for lang=%s", len(animeFilterOut), langCode)
+		}
+	}
+
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
 
@@ -603,7 +619,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 			if langCode == "" {
 				langCode = "eng"
 			}
-			animePref, animeNonPref := filter.GetAnimeLanguageTerms(langCode)
+			animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
 			if len(animePref) > 0 {
 				preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
 			}
@@ -702,6 +718,23 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	}
 
 	filterSettings := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+
+	// Inject anime language filter-out terms early (before search/filter calls)
+	if opts.IsAnime && models.BoolVal(filterSettings.AnimeLanguageEnabled, false) {
+		langCode := ""
+		if filterSettings.AnimePreferredLanguage != nil {
+			langCode = *filterSettings.AnimePreferredLanguage
+		}
+		if langCode == "" {
+			langCode = "eng"
+		}
+		_, _, animeFilterOut := filter.GetAnimeLanguageTerms(langCode)
+		if len(animeFilterOut) > 0 {
+			filterSettings.FilterOutTerms = append(filterSettings.FilterOutTerms, animeFilterOut...)
+			log.Printf("[indexer] Anime language filter-out: injected %d terms for lang=%s", len(animeFilterOut), langCode)
+		}
+	}
+
 	alternateTitles := s.resolveAlternateTitles(ctx, opts)
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
@@ -724,7 +757,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		if langCode == "" {
 			langCode = "eng"
 		}
-		animePref, animeNonPref := filter.GetAnimeLanguageTerms(langCode)
+		animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
 		if len(animePref) > 0 {
 			preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
 		}
