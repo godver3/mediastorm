@@ -23,13 +23,14 @@ func BoolVal(p *bool, def bool) bool {
 // UserSettings contains per-user customizable settings.
 // These override global defaults when set.
 type UserSettings struct {
-	Playback    PlaybackSettings     `json:"playback"`
-	HomeShelves HomeShelvesSettings  `json:"homeShelves"`
-	Filtering   FilterSettings       `json:"filtering"`
-	LiveTV      LiveTVSettings       `json:"liveTV"`
-	Display     DisplaySettings      `json:"display"`
-	Network     NetworkSettings      `json:"network"`
-	Ranking     *UserRankingSettings `json:"ranking,omitempty"`
+	Playback       PlaybackSettings       `json:"playback"`
+	HomeShelves    HomeShelvesSettings    `json:"homeShelves"`
+	Filtering      FilterSettings         `json:"filtering"`
+	AnimeFiltering AnimeFilteringSettings `json:"animeFiltering"`
+	LiveTV         LiveTVSettings         `json:"liveTV"`
+	Display        DisplaySettings        `json:"display"`
+	Network        NetworkSettings        `json:"network"`
+	Ranking        *UserRankingSettings   `json:"ranking,omitempty"`
 }
 
 // NetworkSettings configures network-aware backend URL switching.
@@ -219,8 +220,12 @@ type FilterSettings struct {
 	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`         // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms                []string    `json:"nonPreferredTerms,omitempty"`      // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
-	AnimeLanguageEnabled            *bool       `json:"animeLanguageEnabled,omitempty"`             // When enabled, boost preferred language and derank others for anime content
-	AnimePreferredLanguage          *string     `json:"animePreferredLanguage,omitempty"`           // ISO 639-2/B code for preferred anime language
+}
+
+// AnimeFilteringSettings controls anime-specific language preferences (per-user overrides).
+type AnimeFilteringSettings struct {
+	AnimeLanguageEnabled   *bool   `json:"animeLanguageEnabled,omitempty"`   // When enabled, boost preferred language and derank others for anime content
+	AnimePreferredLanguage *string `json:"animePreferredLanguage,omitempty"` // ISO 639-2/B code for preferred anime language
 }
 
 // DefaultUserSettings returns the default settings for a new user.

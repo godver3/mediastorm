@@ -137,7 +137,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Per-user sections: liveTV IPTV source overrides are configured here, favorites/hidden channels are managed in-app
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
+    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -446,6 +446,31 @@
                         if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
                             hasActualOverrides = true;
                             break;
+                        }
+                    }
+
+                    // Check anime filtering fields
+                    if (!hasActualOverrides) {
+                        for (const key of clientAnimeFilterFields) {
+                            const clientVal = settings[key];
+                            if (normalizeForComparison(clientVal) === null) continue;
+                            const globalVal = currentSettings.animeFiltering ? currentSettings.animeFiltering[key] : undefined;
+                            let inheritedVal;
+                            if (selectedUserId && userSettings && userSettings.animeFiltering) {
+                                const profileVal = userSettings.animeFiltering[key];
+                                if (profileVal !== undefined && profileVal !== null &&
+                                    !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                                    inheritedVal = profileVal;
+                                } else {
+                                    inheritedVal = globalVal;
+                                }
+                            } else {
+                                inheritedVal = globalVal;
+                            }
+                            if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                                hasActualOverrides = true;
+                                break;
+                            }
                         }
                     }
 
@@ -834,6 +859,20 @@
             }
         }
 
+        // Check anime filtering section
+        if (!hasActualOverrides && userSettings.animeFiltering) {
+            const globalAnimeFiltering = currentSettings.animeFiltering || {};
+            for (const key of Object.keys(userSettings.animeFiltering)) {
+                const profileVal = normalizeForComparison(userSettings.animeFiltering[key]);
+                if (profileVal === null) continue;
+                const globalVal = normalizeForComparison(globalAnimeFiltering[key]);
+                if (!deepEqual(profileVal, globalVal)) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
         // Check playback section
         if (!hasActualOverrides && userSettings.playback) {
             const globalPlayback = currentSettings.playback || {};
@@ -915,6 +954,31 @@
             }
         }
 
+        // Check anime filtering fields
+        if (!hasActualOverrides) {
+            for (const key of clientAnimeFilterFields) {
+                const clientVal = clientSettings[key];
+                if (normalizeForComparison(clientVal) === null) continue;
+                const globalVal = currentSettings.animeFiltering ? currentSettings.animeFiltering[key] : undefined;
+                let inheritedVal;
+                if (selectedUserId && userSettings && userSettings.animeFiltering) {
+                    const profileVal = userSettings.animeFiltering[key];
+                    if (profileVal !== undefined && profileVal !== null &&
+                        !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                        inheritedVal = profileVal;
+                    } else {
+                        inheritedVal = globalVal;
+                    }
+                } else {
+                    inheritedVal = globalVal;
+                }
+                if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
         // Check network fields (simpler - just check if set and non-empty)
         if (!hasActualOverrides) {
             for (const key of clientNetworkFields) {
@@ -947,6 +1011,7 @@
         'layout': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
         'list': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
         'filter': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+        'globe': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
         'monitor': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
         'users': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
         'lock': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
@@ -972,7 +1037,8 @@
     }
 
     // Map filtering field paths to client settings keys
-    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'bypassFilteringForAioStreamsOnly', 'animeLanguageEnabled', 'animePreferredLanguage'];
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'prioritizeHdr', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'bypassFilteringForAioStreamsOnly'];
+    const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
     // Map network field paths to client settings keys
     const clientNetworkFields = ['homeWifiSSID', 'homeBackendUrl', 'remoteBackendUrl'];
 
@@ -982,6 +1048,9 @@
         const keys = path.split('.');
         if (keys.length === 2) {
             if (keys[0] === 'filtering' && clientFilterFields.includes(keys[1])) {
+                return keys[1];
+            }
+            if (keys[0] === 'animeFiltering' && clientAnimeFilterFields.includes(keys[1])) {
                 return keys[1];
             }
             if (keys[0] === 'network' && clientNetworkFields.includes(keys[1])) {
@@ -3687,7 +3756,7 @@
         let html = bannerHtml;
 
         // Sections that can be configured per-client (subset of perUserSections)
-        const clientSections = ['filtering', 'network'];
+        const clientSections = ['filtering', 'animeFiltering', 'network'];
 
         let totalMatchingSections = 0;
 
