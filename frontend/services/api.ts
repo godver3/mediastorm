@@ -713,6 +713,7 @@ export interface UserPlaybackSettings {
   preferredSubtitleMode?: string;
   useLoadingScreen?: boolean;
   subtitleSize?: number;
+  rewindOnResumeFromPause?: number;
 }
 
 export interface UserShelfConfig {
@@ -1177,8 +1178,14 @@ class ApiService {
     }
 
     const responseText = await response.text();
+    const responseSizeBytes = responseText.length;
+    const responseSizeKB = (responseSizeBytes / 1024).toFixed(1);
+
     const expectJson = headerMap['Accept']?.toLowerCase().includes('json') ?? true;
     if (!expectJson) {
+      if (Platform.isTV) {
+        console.log(`[API:Size] ${options.method || 'GET'} ${endpoint} → ${responseSizeKB} KB (non-JSON)`);
+      }
       return responseText as T;
     }
 
@@ -1187,7 +1194,22 @@ class ApiService {
     }
 
     try {
+      const parseStart = performance.now();
       const data = JSON.parse(responseText);
+      const parseMs = performance.now() - parseStart;
+
+      if (Platform.isTV) {
+        console.log(
+          `[API:Size] ${options.method || 'GET'} ${endpoint} → ${responseSizeKB} KB, parse: ${parseMs.toFixed(1)}ms`
+        );
+        // Flag large responses that may cause jank on low-power devices
+        if (responseSizeBytes > 100 * 1024) {
+          console.warn(
+            `[API:Size] ⚠ LARGE RESPONSE: ${endpoint} is ${(responseSizeBytes / 1024 / 1024).toFixed(2)} MB — may cause jank on Fire Stick`
+          );
+        }
+      }
+
       return data;
     } catch (parseError) {
       console.error('Failed to parse API response JSON:', parseError, responseText);

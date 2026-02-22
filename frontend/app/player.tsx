@@ -5844,8 +5844,8 @@ export default function PlayerScreen() {
 
             if (preferredSubtitleMode !== undefined) {
               // Get actual audio language for audio-aware subtitle selection
-              const selectedAudioStream = Number.isFinite(selectedAudioIndex)
-                ? metadata.audioStreams?.find((s: { index: number; language?: string }) => s.index === selectedAudioIndex)
+              const selectedAudioStream = Number.isFinite(selectedAudioTrackIndex)
+                ? metadata.audioStreams?.find((s: { index: number; language?: string }) => s.index === selectedAudioTrackIndex)
                 : undefined;
               const actualAudioLang = selectedAudioStream?.language ||
                 contentPreference?.audioLanguage ||

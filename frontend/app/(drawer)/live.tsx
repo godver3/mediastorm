@@ -585,7 +585,7 @@ function LiveScreen() {
   const { channels, loading, error, refresh, hasPlaylistUrl, availableCategories } = useLiveChannels(
     selectedCategories,
     favorites,
-    activeUserId,
+    activeUserId ?? undefined,
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
   const { epgData, fetchEPGForChannels, isEnabled: isEPGEnabled, isStatusLoaded: isEPGStatusLoaded } = useChannelEPG();
