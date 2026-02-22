@@ -107,6 +107,7 @@ func Register(
 	imageHandler *handlers.ImageHandler,
 	startupHandler *handlers.StartupHandler,
 	detailsBundleHandler *handlers.DetailsBundleHandler,
+	calendarHandler *handlers.CalendarHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -526,6 +527,12 @@ func Register(
 	if detailsBundleHandler != nil {
 		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.GetDetailsBundle).Methods(http.MethodGet)
 		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.Options).Methods(http.MethodOptions)
+	}
+
+	// Calendar endpoint (upcoming content from watchlist, history, and MDBList)
+	if calendarHandler != nil {
+		profileProtected.HandleFunc("/{userID}/calendar", calendarHandler.GetCalendar).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/calendar", calendarHandler.Options).Methods(http.MethodOptions)
 	}
 }
 

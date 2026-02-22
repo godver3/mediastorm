@@ -23,6 +23,7 @@ import (
 	"novastream/internal/pool"
 	"novastream/internal/webdav"
 	"novastream/services/accounts"
+	"novastream/services/calendar"
 	"novastream/services/debrid"
 	"novastream/services/epg"
 	"novastream/services/history"
@@ -343,6 +344,10 @@ func main() {
 		metadataService, historyService, contentPreferencesService, userService,
 	)
 
+	// Calendar service provides upcoming content from watchlist, history, and MDBList
+	calendarService := calendar.New(metadataService, watchlistService, historyService, userSettingsService, userService)
+	calendarHandler := handlers.NewCalendarHandler(calendarService, userService, *demoMode)
+
 	// Create prequeue handler now that history service is available
 	// Video prober and HLS creator are optional - we'll set them after videoHandler is created
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
@@ -438,6 +443,7 @@ func main() {
 		imageHandler,
 		startupHandler,
 		detailsBundleHandler,
+		calendarHandler,
 		accountsService,
 		sessionsService,
 		userService,
@@ -822,6 +828,7 @@ func main() {
 		return infos
 	})
 	metadataService.StartBackgroundCacheManager(2 * time.Hour)
+	calendarService.StartBackgroundRefresh(4 * time.Hour)
 
 	// Start server in goroutine
 	go func() {
@@ -846,6 +853,9 @@ func main() {
 	if err := schedulerService.Stop(shutdownCtx); err != nil {
 		log.Printf("Scheduler shutdown error: %v", err)
 	}
+
+	// Stop calendar service background refresh
+	calendarService.Stop()
 
 	// Stop NZB system workers first to cancel background processing
 	log.Println("🧹 Stopping NZB system workers...")

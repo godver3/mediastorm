@@ -31,6 +31,16 @@ type UserSettings struct {
 	Display        DisplaySettings        `json:"display"`
 	Network        NetworkSettings        `json:"network"`
 	Ranking        *UserRankingSettings   `json:"ranking,omitempty"`
+	Calendar       CalendarSettings       `json:"calendar"`
+}
+
+// CalendarSettings controls which content sources populate the calendar.
+// All sources are enabled by default.
+type CalendarSettings struct {
+	Watchlist *bool `json:"watchlist,omitempty"` // Include series episodes & movie releases from watchlist
+	History   *bool `json:"history,omitempty"`   // Include upcoming episodes for series being watched
+	Trending  *bool `json:"trending,omitempty"`  // Include upcoming content from trending lists
+	MDBList   *bool `json:"mdblist,omitempty"`   // Include content from custom MDBList shelves
 }
 
 // NetworkSettings configures network-aware backend URL switching.
@@ -263,6 +273,12 @@ func DefaultUserSettings() UserSettings {
 			HomeWifiSSID:     "",
 			HomeBackendUrl:   "",
 			RemoteBackendUrl: "",
+		},
+		Calendar: CalendarSettings{
+			Watchlist: BoolPtr(true),
+			History:   BoolPtr(true),
+			Trending:  BoolPtr(true),
+			MDBList:   BoolPtr(true),
 		},
 	}
 }
