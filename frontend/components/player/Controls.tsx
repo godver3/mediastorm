@@ -70,6 +70,8 @@ interface ControlsProps {
   currentProgram?: EPGProgram;
   /** EPG next program for live TV */
   nextProgram?: EPGProgram;
+  /** Ref that parent can call to close the active child modal (used by TVControlsModal onRequestClose) */
+  closeModalRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 type TrackOption = {
@@ -125,6 +127,7 @@ const Controls: React.FC<ControlsProps> = ({
   flashSkipButton,
   currentProgram,
   nextProgram,
+  closeModalRef,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -259,6 +262,18 @@ const Controls: React.FC<ControlsProps> = ({
     setActiveMenu(null);
     onModalStateChange?.(false);
   }, [onModalStateChange]);
+
+  // Expose closeMenu to parent via ref (used by TVControlsModal's onRequestClose)
+  useEffect(() => {
+    if (closeModalRef) {
+      closeModalRef.current = activeMenu !== null ? closeMenu : null;
+    }
+    return () => {
+      if (closeModalRef) {
+        closeModalRef.current = null;
+      }
+    };
+  }, [activeMenu, closeMenu, closeModalRef]);
 
   // Wrapped callback for transitioning to subtitle search modal.
   // On tvOS, we need careful timing to transition focus between modals.

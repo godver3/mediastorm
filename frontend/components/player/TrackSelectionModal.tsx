@@ -567,6 +567,18 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     </View>
   );
 
+  // TV: pseudo-modal (no native Modal window) — avoids nested Modal focus issues
+  if (Platform.isTV) {
+    return (
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <SpatialNavigationRoot isActive={visible}>
+          {modalContent}
+        </SpatialNavigationRoot>
+      </View>
+    );
+  }
+
+  // Non-TV: keep native Modal
   return (
     <Modal
       visible={visible}

@@ -585,6 +585,8 @@ export default function PlayerScreen() {
     isModalOpenRef.current = open;
     setIsModalOpen(open);
   }, []);
+  // Ref for Controls to expose its closeMenu function (used by TVControlsModal onRequestClose)
+  const closeActiveModalRef = useRef<(() => void) | null>(null);
 
   // Track if video was paused before opening subtitle search (to avoid resuming if user had paused)
   const wasPlayingBeforeSubtitleSearchRef = useRef(false);
@@ -3408,6 +3410,11 @@ export default function PlayerScreen() {
       // If subtitle search modal is open, close it
       if (subtitleSearchModalVisible) {
         handleCloseSubtitleSearch();
+        return true;
+      }
+      // If a child pseudo-modal is open, close it (prevent system back navigation)
+      if (isModalOpen && closeActiveModalRef.current) {
+        closeActiveModalRef.current();
         return true;
       }
       if (controlsVisible && !isModalOpen) {
@@ -6397,8 +6404,10 @@ export default function PlayerScreen() {
                 <TVControlsModal
                   visible={controlsVisible || isTVSeeking}
                   onRequestClose={() => {
-                    // Close subtitle search modal first if open, otherwise hide controls
-                    if (subtitleSearchModalVisible) {
+                    if (closeActiveModalRef.current) {
+                      // A child pseudo-modal is open — close it directly
+                      closeActiveModalRef.current();
+                    } else if (subtitleSearchModalVisible) {
                       handleCloseSubtitleSearch();
                     } else {
                       hideControls({ immediate: true });
@@ -6481,6 +6490,7 @@ export default function PlayerScreen() {
                             }}
                             onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                             onModalStateChange={handleModalStateChange}
+                            closeModalRef={closeActiveModalRef}
                             onScrubStart={handleSeekBarScrubStart}
                             onScrubEnd={handleSeekBarScrubEnd}
                             isLiveTV={isLiveTV}
@@ -6608,6 +6618,7 @@ export default function PlayerScreen() {
                         }}
                         onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                         onModalStateChange={handleModalStateChange}
+                        closeModalRef={closeActiveModalRef}
                         onScrubStart={handleSeekBarScrubStart}
                         onScrubEnd={handleSeekBarScrubEnd}
                         isLiveTV={isLiveTV}

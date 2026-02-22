@@ -447,6 +447,25 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     </View>
   );
 
+  // TV: pseudo-modal (no native Modal window) — avoids nested Modal focus issues
+  if (Platform.isTV) {
+    return (
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <SpatialNavigationRoot isActive={visible}>
+          <View style={styles.overlay}>
+            <Pressable
+              style={styles.backdrop}
+              onPress={handleClose}
+              focusable={false}
+            />
+            {tvModalContent}
+          </View>
+        </SpatialNavigationRoot>
+      </View>
+    );
+  }
+
+  // Non-TV: keep native Modal
   return (
     <Modal
       visible={visible}
@@ -462,7 +481,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
             onPress={handleClose}
             focusable={false}
           />
-          {Platform.isTV ? tvModalContent : nonTvModalContent}
+          {nonTvModalContent}
         </View>
       </SpatialNavigationRoot>
     </Modal>
