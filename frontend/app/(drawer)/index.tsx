@@ -18,8 +18,6 @@ import { useWatchStatus } from '@/components/WatchStatusContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
 import { apiService, type MetadataProgressSnapshot, type MetadataProgressTask, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
-import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { useTVFocusBoundary } from '@/components/tv-focus';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -1823,15 +1821,6 @@ function IndexScreen() {
 
   // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
-  // Track shelf card counts for boundary detection (updated via ref to avoid callback recreation)
-  const shelfCardCountsRef = useRef<Record<string, number>>({});
-
-  // TV: detect boundary presses (left at first card → open menu)
-  const { reportFocusIndex } = useTVFocusBoundary({
-    onBoundaryReached: (dir) => {
-      if (dir === 'left' && !isMenuOpen && !profileSelectorVisibleRef.current) openMenu();
-    },
-  });
   // heroImageDimensions removed — now computed inline in TVHero component
 
   // Spatial navigation: left-at-edge opens menu (same pattern as settings/watchlist)
@@ -2370,10 +2359,6 @@ function IndexScreen() {
     (card: CardData, shelfKey: string, cardIndex: number): void => {
       const isVertical = focusedShelfKeyRef.current !== shelfKey;
 
-      // Report focus position for boundary detection (left-at-first → open menu)
-      const shelfTotal = shelfCardCountsRef.current[shelfKey] ?? 0;
-      reportFocusIndex(cardIndex, shelfTotal);
-
       // Close menu if open (no-op if already closed)
       closeMenu();
 
@@ -2403,7 +2388,7 @@ function IndexScreen() {
         setFocusedDesktopCard(card);
       }, debounceMs);
     },
-    [closeMenu, scrollToShelf, heroContentOpacity, reportFocusIndex],
+    [closeMenu, scrollToShelf, heroContentOpacity],
   );
 
   // These callbacks do actual work in production, not just logging
@@ -2553,15 +2538,6 @@ function IndexScreen() {
     isKidsCuratedMode,
     kidsAllowedShelves,
   ]);
-
-  // Keep shelf card counts in sync for boundary detection (ref avoids callback recreation)
-  useEffect(() => {
-    const counts: Record<string, number> = {};
-    for (const shelf of desktopShelves) {
-      counts[shelf.key] = shelf.cards.length;
-    }
-    shelfCardCountsRef.current = counts;
-  }, [desktopShelves]);
 
   // Track navigation structure changes - only based on which shelves exist, NOT card counts
   // Using card counts in the key was causing full remounts on every data load
