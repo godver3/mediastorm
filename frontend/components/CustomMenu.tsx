@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
+import { exitApp } from 'app-exit';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -45,6 +46,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
 
   const isRouteDisabled = useCallback(
     (routeName: string) => {
+      if (routeName === '__exit') return false;
       if (isBackendAvailable) {
         return false;
       }
@@ -62,7 +64,9 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     { name: '/settings', label: 'Settings' },
   ];
 
-  const menuItems = Platform.isTV ? baseMenuItems : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
+  const menuItems = Platform.isTV
+    ? [...baseMenuItems, { name: '__exit', label: 'Exit' }]
+    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
 
   React.useEffect(() => {
     if (isVisible) {
@@ -90,6 +94,10 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
 
   const handleItemSelect = useCallback(
     (routeName: string) => {
+      if (routeName === '__exit') {
+        exitApp();
+        return;
+      }
       if (isRouteDisabled(routeName)) {
         return;
       }
@@ -395,6 +403,8 @@ function getMenuIconName(routeName: string): React.ComponentProps<typeof Materia
       return 'account-multiple';
     case '/settings':
       return 'cog';
+    case '__exit':
+      return 'exit-to-app';
     case '/modal-test':
       return 'application-brackets-outline';
     case '/debug':

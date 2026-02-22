@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["AppExitModule"],
+    "podspecPath": "AppExit.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.appexit.AppExitModule"]
+  }
+}
