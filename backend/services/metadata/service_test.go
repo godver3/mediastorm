@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"novastream/models"
 )
 
 // TestGetCustomListFetchesTranslations verifies that GetCustomList fetches translations
@@ -354,4 +356,113 @@ func TestProgressIncrementNoTask(t *testing.T) {
 	// Should not panic
 	svc.incrementProgress("nonexistent")
 	svc.updateProgressPhase("nonexistent", "test", 10)
+}
+
+// TestExtractTitleFields verifies that extractTitleFields copies only requested fields.
+func TestExtractTitleFields(t *testing.T) {
+	full := &models.Title{
+		ID:            "tvdb:series:123",
+		Name:          "Test Show",
+		Overview:      "A great show",
+		Year:          2020,
+		Language:      "eng",
+		MediaType:     "series",
+		TVDBID:        123,
+		IMDBID:        "tt0000123",
+		TMDBID:        456,
+		Genres:        []string{"Drama", "Action"},
+		Status:        "Continuing",
+		Network:       "HBO",
+		Certification: "TV-MA",
+		Popularity:    85.5,
+		Ratings:       []models.Rating{{Source: "imdb", Value: 8.5, Max: 10}},
+	}
+
+	tests := []struct {
+		name   string
+		fields []string
+		check  func(t *testing.T, out models.Title)
+	}{
+		{
+			name:   "overview only",
+			fields: []string{"overview"},
+			check: func(t *testing.T, out models.Title) {
+				if out.Overview != "A great show" {
+					t.Errorf("expected overview, got %q", out.Overview)
+				}
+				if out.Year != 0 {
+					t.Errorf("year should be 0, got %d", out.Year)
+				}
+				if len(out.Genres) != 0 {
+					t.Errorf("genres should be empty, got %v", out.Genres)
+				}
+			},
+		},
+		{
+			name:   "year and genres",
+			fields: []string{"year", "genres"},
+			check: func(t *testing.T, out models.Title) {
+				if out.Year != 2020 {
+					t.Errorf("expected year 2020, got %d", out.Year)
+				}
+				if len(out.Genres) != 2 {
+					t.Errorf("expected 2 genres, got %d", len(out.Genres))
+				}
+				if out.Overview != "" {
+					t.Errorf("overview should be empty, got %q", out.Overview)
+				}
+			},
+		},
+		{
+			name:   "all fields",
+			fields: []string{"overview", "year", "genres", "status", "network", "certification", "language", "popularity", "ratings"},
+			check: func(t *testing.T, out models.Title) {
+				if out.Overview != "A great show" {
+					t.Errorf("expected overview, got %q", out.Overview)
+				}
+				if out.Year != 2020 {
+					t.Errorf("expected year 2020, got %d", out.Year)
+				}
+				if out.Status != "Continuing" {
+					t.Errorf("expected status Continuing, got %q", out.Status)
+				}
+				if len(out.Ratings) != 1 {
+					t.Errorf("expected 1 rating, got %d", len(out.Ratings))
+				}
+			},
+		},
+		{
+			name:   "empty fields",
+			fields: []string{},
+			check: func(t *testing.T, out models.Title) {
+				// Should only have IDs
+				if out.Overview != "" || out.Year != 0 || len(out.Genres) != 0 {
+					t.Error("expected only IDs with empty fields")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := extractTitleFields(full, tt.fields)
+			// IDs should always be present
+			if out.ID != full.ID {
+				t.Errorf("ID mismatch: %q vs %q", out.ID, full.ID)
+			}
+			if out.Name != full.Name {
+				t.Errorf("Name mismatch: %q vs %q", out.Name, full.Name)
+			}
+			if out.TVDBID != full.TVDBID {
+				t.Errorf("TVDBID mismatch: %d vs %d", out.TVDBID, full.TVDBID)
+			}
+			if out.IMDBID != full.IMDBID {
+				t.Errorf("IMDBID mismatch: %q vs %q", out.IMDBID, full.IMDBID)
+			}
+			if out.TMDBID != full.TMDBID {
+				t.Errorf("TMDBID mismatch: %d vs %d", out.TMDBID, full.TMDBID)
+			}
+			tt.check(t, out)
+		})
+	}
 }

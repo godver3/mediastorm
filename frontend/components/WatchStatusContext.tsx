@@ -29,8 +29,8 @@ const INITIAL_WS_STATE: WSState = { items: [], loading: false, error: null };
 export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<WSState>(INITIAL_WS_STATE);
   const { activeUser } = useUserProfiles();
-  const { startupData, ready: startupReady } = useStartupData();
-  const hydratedFromStartup = useRef(false);
+  const { startupData, ready: startupReady, generation } = useStartupData();
+  const hydratedGeneration = useRef(-1);
 
   const normaliseKeyPart = (value: string | undefined | null): string => {
     return value?.trim().toLowerCase() ?? '';
@@ -65,13 +65,13 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   useEffect(() => {
     if (!activeUser?.id) {
-      hydratedFromStartup.current = false;
+      hydratedGeneration.current = -1;
       return;
     }
-    // Hydrate from startup bundle if available (avoids separate HTTP request)
-    if (startupData?.watchHistory && !hydratedFromStartup.current) {
+    // Hydrate from startup bundle if available and generation has advanced
+    if (startupData?.watchHistory && hydratedGeneration.current < generation) {
       setState({ items: startupData.watchHistory || [], loading: false, error: null });
-      hydratedFromStartup.current = true;
+      hydratedGeneration.current = generation;
       return;
     }
     // Wait for startup bundle before falling back to independent fetch
@@ -79,10 +79,10 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       return;
     }
     // Fallback: fetch independently (startup failed or didn't include watch history)
-    if (!hydratedFromStartup.current) {
+    if (hydratedGeneration.current < generation) {
       refresh();
     }
-  }, [refresh, activeUser?.id, startupData, startupReady]);
+  }, [refresh, activeUser?.id, startupData, startupReady, generation]);
 
   const isWatched = useCallback(
     (mediaType: string, id: string): boolean => {

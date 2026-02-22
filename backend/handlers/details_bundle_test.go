@@ -68,6 +68,9 @@ func (m *mockMetadataServiceDetailsBundle) Search(_ context.Context, _ string, _
 func (m *mockMetadataServiceDetailsBundle) BatchSeriesDetails(_ context.Context, _ []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem {
 	return nil
 }
+func (m *mockMetadataServiceDetailsBundle) BatchSeriesTitleFields(_ context.Context, _ []models.SeriesDetailsQuery, _ []string) []models.BatchSeriesDetailsItem {
+	return nil
+}
 func (m *mockMetadataServiceDetailsBundle) BatchMovieReleases(_ context.Context, _ []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
 	return nil
 }

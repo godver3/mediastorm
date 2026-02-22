@@ -205,6 +205,7 @@ type PersonDetails struct {
 // BatchSeriesDetailsRequest represents a batch request for multiple series
 type BatchSeriesDetailsRequest struct {
 	Queries []SeriesDetailsQuery `json:"queries"`
+	Fields  []string             `json:"fields,omitempty"`
 }
 
 // BatchSeriesDetailsItem represents a single result in a batch response

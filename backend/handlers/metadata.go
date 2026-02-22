@@ -22,6 +22,7 @@ type metadataService interface {
 	EnrichSearchCertifications(context.Context, []models.SearchResult)
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
+	BatchSeriesTitleFields(context.Context, []models.SeriesDetailsQuery, []string) []models.BatchSeriesDetailsItem
 	MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error)
 	BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem
 	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
@@ -285,7 +286,12 @@ func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	results := h.Service.BatchSeriesDetails(r.Context(), req.Queries)
+	var results []models.BatchSeriesDetailsItem
+	if len(req.Fields) > 0 {
+		results = h.Service.BatchSeriesTitleFields(r.Context(), req.Queries, req.Fields)
+	} else {
+		results = h.Service.BatchSeriesDetails(r.Context(), req.Queries)
+	}
 
 	response := models.BatchSeriesDetailsResponse{
 		Results: results,

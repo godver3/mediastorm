@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"novastream/config"
@@ -87,6 +88,36 @@ func (f *fakeMetadataService) BatchSeriesDetails(_ context.Context, queries []mo
 			results[i].Error = f.seriesErr.Error()
 		} else {
 			results[i].Details = f.seriesResp
+		}
+	}
+	return results
+}
+
+func (f *fakeMetadataService) BatchSeriesTitleFields(_ context.Context, queries []models.SeriesDetailsQuery, fields []string) []models.BatchSeriesDetailsItem {
+	results := make([]models.BatchSeriesDetailsItem, len(queries))
+	for i, query := range queries {
+		results[i].Query = query
+		if f.seriesErr != nil {
+			results[i].Error = f.seriesErr.Error()
+		} else if f.seriesResp != nil {
+			// Return only requested fields (mimics real behavior)
+			t := models.Title{
+				ID:        f.seriesResp.Title.ID,
+				Name:      f.seriesResp.Title.Name,
+				MediaType: f.seriesResp.Title.MediaType,
+				TVDBID:    f.seriesResp.Title.TVDBID,
+			}
+			for _, field := range fields {
+				switch field {
+				case "overview":
+					t.Overview = f.seriesResp.Title.Overview
+				case "year":
+					t.Year = f.seriesResp.Title.Year
+				case "genres":
+					t.Genres = f.seriesResp.Title.Genres
+				}
+			}
+			results[i].Details = &models.SeriesDetails{Title: t}
 		}
 	}
 	return results
@@ -629,5 +660,144 @@ func TestMetadataHandler_GetAIRecommendationsEmptyHistory(t *testing.T) {
 	}
 	if len(payload.Items) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(payload.Items))
+	}
+}
+
+func TestMetadataHandler_BatchSeriesDetails_WithFields(t *testing.T) {
+	fake := &fakeMetadataService{
+		seriesResp: &models.SeriesDetails{
+			Title: models.Title{
+				ID:       "tvdb:series:123",
+				Name:     "Test Show",
+				Overview: "A test overview",
+				Year:     2020,
+				Genres:   []string{"Drama", "Sci-Fi"},
+				TVDBID:   123,
+			},
+			Seasons: []models.SeriesSeason{{Number: 1}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	// Test with fields — should only return requested fields
+	body := `{"queries":[{"name":"Test Show","tvdbId":123}],"fields":["overview"]}`
+	req := httptest.NewRequest("POST", "/metadata/series/batch", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.BatchSeriesDetails(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp models.BatchSeriesDetailsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	result := resp.Results[0]
+	if result.Details == nil {
+		t.Fatal("expected details to be non-nil")
+	}
+	if result.Details.Title.Overview != "A test overview" {
+		t.Errorf("expected overview 'A test overview', got %q", result.Details.Title.Overview)
+	}
+	// Fields not requested should be zero values
+	if result.Details.Title.Year != 0 {
+		t.Errorf("expected year 0 (not requested), got %d", result.Details.Title.Year)
+	}
+	if len(result.Details.Title.Genres) != 0 {
+		t.Errorf("expected no genres (not requested), got %v", result.Details.Title.Genres)
+	}
+	// Seasons should be nil (fields mode returns title only)
+	if len(result.Details.Seasons) != 0 {
+		t.Errorf("expected no seasons in fields mode, got %d", len(result.Details.Seasons))
+	}
+}
+
+func TestMetadataHandler_BatchSeriesDetails_WithoutFields(t *testing.T) {
+	fake := &fakeMetadataService{
+		seriesResp: &models.SeriesDetails{
+			Title: models.Title{
+				ID:       "tvdb:series:123",
+				Name:     "Test Show",
+				Overview: "A test overview",
+				Year:     2020,
+				TVDBID:   123,
+			},
+			Seasons: []models.SeriesSeason{{Number: 1}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	// Test without fields — should return full details
+	body := `{"queries":[{"name":"Test Show","tvdbId":123}]}`
+	req := httptest.NewRequest("POST", "/metadata/series/batch", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.BatchSeriesDetails(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp models.BatchSeriesDetailsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	result := resp.Results[0]
+	if result.Details == nil {
+		t.Fatal("expected details to be non-nil")
+	}
+	// Full mode should return everything including year and seasons
+	if result.Details.Title.Year != 2020 {
+		t.Errorf("expected year 2020, got %d", result.Details.Title.Year)
+	}
+	if len(result.Details.Seasons) != 1 {
+		t.Errorf("expected 1 season, got %d", len(result.Details.Seasons))
+	}
+}
+
+func TestMetadataHandler_BatchSeriesDetails_EmptyFields(t *testing.T) {
+	fake := &fakeMetadataService{
+		seriesResp: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     "tvdb:series:123",
+				Name:   "Test Show",
+				Year:   2020,
+				TVDBID: 123,
+			},
+			Seasons: []models.SeriesSeason{{Number: 1}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	// Empty fields array should use full path (same as no fields)
+	body := `{"queries":[{"name":"Test Show","tvdbId":123}],"fields":[]}`
+	req := httptest.NewRequest("POST", "/metadata/series/batch", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.BatchSeriesDetails(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp models.BatchSeriesDetailsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	result := resp.Results[0]
+	if result.Details == nil {
+		t.Fatal("expected details to be non-nil")
+	}
+	// Empty fields = full path, so year and seasons should be present
+	if result.Details.Title.Year != 2020 {
+		t.Errorf("expected year 2020, got %d", result.Details.Title.Year)
+	}
+	if len(result.Details.Seasons) != 1 {
+		t.Errorf("expected 1 season, got %d", len(result.Details.Seasons))
 	}
 }

@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import {
   apiService,
   type ContentPreference,
@@ -177,6 +178,7 @@ export function useDetailsData(params: UseDetailsDataParams): DetailsDataResult 
     if (!titleId && !title) return;
     let cancelled = false;
     const bundleType = isSeries ? 'series' : 'movie';
+    const bundleFetchStart = Date.now();
     apiService
       .getDetailsBundleData(activeUserId, {
         type: bundleType,
@@ -189,6 +191,49 @@ export function useDetailsData(params: UseDetailsDataParams): DetailsDataResult 
       })
       .then((data) => {
         if (cancelled) return;
+        const fetchMs = Date.now() - bundleFetchStart;
+
+        // Log bundle content breakdown
+        const hasMovie = data.movieDetails != null;
+        const hasSeries = data.seriesDetails != null;
+        const similarCount = data.similar?.length ?? 0;
+        const trailerCount = data.trailers?.trailers?.length ?? 0;
+        const progressCount = data.playbackProgress?.length ?? 0;
+        const hasPrefs = data.contentPreference != null;
+        const hasWatchState = data.watchState != null;
+        console.log(
+          `[details-bundle] Received in ${fetchMs}ms — ` +
+          `type: ${bundleType}, ` +
+          `${hasMovie ? 'movie' : hasSeries ? 'series' : 'no'} details, ` +
+          `similar: ${similarCount}, trailers: ${trailerCount}, ` +
+          `progress: ${progressCount} items, prefs: ${hasPrefs}, watchState: ${hasWatchState}`
+        );
+
+        // Log section sizes on TV for perf analysis
+        if (Platform.isTV) {
+          const sizeOf = (obj: unknown) => {
+            try { return JSON.stringify(obj)?.length ?? 0; } catch { return 0; }
+          };
+          const sections = {
+            seriesDetails: sizeOf(data.seriesDetails),
+            movieDetails: sizeOf(data.movieDetails),
+            similar: sizeOf(data.similar),
+            trailers: sizeOf(data.trailers),
+            playbackProgress: sizeOf(data.playbackProgress),
+            contentPreference: sizeOf(data.contentPreference),
+            watchState: sizeOf(data.watchState),
+          };
+          const totalKB = Object.values(sections).reduce((a, b) => a + b, 0) / 1024;
+          console.log(
+            `[details-bundle] Section sizes (KB): ` +
+            Object.entries(sections)
+              .filter(([, v]) => v > 0)
+              .map(([k, v]) => `${k}: ${(v / 1024).toFixed(1)}`)
+              .join(', ') +
+            ` — TOTAL: ${totalKB.toFixed(1)} KB`
+          );
+        }
+
         setDetailsBundle(data);
         setBundleReady(true);
       })
@@ -204,6 +249,7 @@ export function useDetailsData(params: UseDetailsDataParams): DetailsDataResult 
   // === Consolidated bundle hydration ===
   useEffect(() => {
     if (!detailsBundle) return;
+    const hydrateStart = Platform.isTV ? performance.now() : 0;
 
     if (detailsBundle.movieDetails && !hydratedFromBundle.current.movieDetails) {
       hydratedFromBundle.current.movieDetails = true;
@@ -259,6 +305,9 @@ export function useDetailsData(params: UseDetailsDataParams): DetailsDataResult 
         }
       }
       setEpisodeProgressMap(progressMap);
+    }
+    if (Platform.isTV && hydrateStart) {
+      console.log(`[details-bundle] Hydration completed in ${(performance.now() - hydrateStart).toFixed(1)}ms`);
     }
   }, [detailsBundle, isSeries, seriesIdentifier]);
 

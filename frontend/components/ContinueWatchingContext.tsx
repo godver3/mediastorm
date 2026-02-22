@@ -56,8 +56,8 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
   const [state, setState] = useState<CWState>(INITIAL_CW_STATE);
   const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
-  const { startupData, ready: startupReady } = useStartupData();
-  const hydratedFromStartup = useRef(false);
+  const { startupData, ready: startupReady, generation } = useStartupData();
+  const hydratedGeneration = useRef(-1);
 
   const refresh = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -180,16 +180,16 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
     }
     if (!activeUserId) {
       setState({ items: [], loading: false, error: null });
-      hydratedFromStartup.current = false;
+      hydratedGeneration.current = -1;
       return;
     }
-    // Hydrate from startup bundle if available. The backend pre-merges
-    // playbackProgress into continueWatching items (percentWatched + resumePercent
-    // are already computed), so we just set items directly — no JS-side processing.
-    if (startupData?.continueWatching && !hydratedFromStartup.current) {
-      console.log('[ContinueWatching] Hydrating from startup bundle');
+    // Hydrate from startup bundle if available and generation has advanced.
+    // The backend pre-merges playbackProgress into continueWatching items
+    // (percentWatched + resumePercent are already computed), so we just set items directly.
+    if (startupData?.continueWatching && hydratedGeneration.current < generation) {
+      console.log('[ContinueWatching] Hydrating from startup bundle (generation:', generation, ')');
       setState({ items: normaliseItems(startupData.continueWatching), loading: false, error: null });
-      hydratedFromStartup.current = true;
+      hydratedGeneration.current = generation;
       return;
     }
     // Wait for startup bundle before falling back to independent fetch
@@ -197,10 +197,10 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
       return;
     }
     // Fallback: fetch independently (startup failed or didn't include continue watching)
-    if (!hydratedFromStartup.current) {
+    if (hydratedGeneration.current < generation) {
       void refresh();
     }
-  }, [isReady, backendUrl, activeUserId, refresh, startupData, startupReady]);
+  }, [isReady, backendUrl, activeUserId, refresh, startupData, startupReady, generation]);
 
   const requireUserId = useCallback(() => {
     if (!activeUserId) {

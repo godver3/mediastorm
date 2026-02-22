@@ -2883,6 +2883,131 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 	return results
 }
 
+// extractTitleFields copies only the requested fields (plus IDs) from a full Title.
+func extractTitleFields(full *models.Title, fields []string) models.Title {
+	out := models.Title{
+		ID:        full.ID,
+		Name:      full.Name,
+		MediaType: full.MediaType,
+		TVDBID:    full.TVDBID,
+		IMDBID:    full.IMDBID,
+		TMDBID:    full.TMDBID,
+	}
+	for _, f := range fields {
+		switch strings.ToLower(f) {
+		case "overview":
+			out.Overview = full.Overview
+		case "year":
+			out.Year = full.Year
+		case "genres":
+			out.Genres = full.Genres
+		case "status":
+			out.Status = full.Status
+		case "network":
+			out.Network = full.Network
+		case "certification":
+			out.Certification = full.Certification
+		case "language":
+			out.Language = full.Language
+		case "popularity":
+			out.Popularity = full.Popularity
+		case "poster":
+			out.Poster = full.Poster
+		case "backdrop":
+			out.Backdrop = full.Backdrop
+		case "ratings":
+			out.Ratings = full.Ratings
+		}
+	}
+	return out
+}
+
+// BatchSeriesTitleFields returns only requested fields for each series query.
+// It checks the full SeriesDetails cache first and extracts fields; on cache miss
+// it falls back to SeriesInfo (lightweight, no episodes).
+func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.SeriesDetailsQuery, fields []string) []models.BatchSeriesDetailsItem {
+	if len(queries) == 0 {
+		return []models.BatchSeriesDetailsItem{}
+	}
+
+	results := make([]models.BatchSeriesDetailsItem, len(queries))
+
+	type fetchTask struct {
+		index int
+		query models.SeriesDetailsQuery
+	}
+	var tasksToFetch []fetchTask
+
+	// First pass: check full SeriesDetails cache and extract fields
+	for i, query := range queries {
+		results[i].Query = query
+
+		tvdbID, err := s.resolveSeriesTVDBID(query)
+		if err != nil {
+			results[i].Error = err.Error()
+			continue
+		}
+		if tvdbID <= 0 {
+			results[i].Error = "unable to resolve tvdb id for series"
+			continue
+		}
+
+		// Check the full SeriesDetails cache
+		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+		var cached models.SeriesDetails
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			extracted := extractTitleFields(&cached.Title, fields)
+			results[i].Details = &models.SeriesDetails{Title: extracted}
+			continue
+		}
+
+		// Also check the lightweight SeriesInfo cache
+		infoCacheID := cacheKey("tvdb", "series", "info", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
+		var cachedTitle models.Title
+		if ok, _ := s.cache.get(infoCacheID, &cachedTitle); ok {
+			extracted := extractTitleFields(&cachedTitle, fields)
+			results[i].Details = &models.SeriesDetails{Title: extracted}
+			continue
+		}
+
+		tasksToFetch = append(tasksToFetch, fetchTask{index: i, query: query})
+	}
+
+	if len(tasksToFetch) == 0 {
+		log.Printf("[metadata] batch series fields all cached count=%d fields=%v", len(queries), fields)
+		return results
+	}
+
+	log.Printf("[metadata] batch series fields fetching cached=%d uncached=%d fields=%v",
+		len(queries)-len(tasksToFetch), len(tasksToFetch), fields)
+
+	// Second pass: fetch uncached items using lightweight SeriesInfo
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for _, task := range tasksToFetch {
+		wg.Add(1)
+		go func(idx int, q models.SeriesDetailsQuery) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			title, err := s.SeriesInfo(ctx, q)
+			if err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+			extracted := extractTitleFields(title, fields)
+			results[idx].Details = &models.SeriesDetails{Title: extracted}
+		}(task.index, task.query)
+	}
+
+	wg.Wait()
+	log.Printf("[metadata] batch series fields complete total=%d", len(queries))
+	return results
+}
+
 // BatchMovieReleases fetches release data for multiple movies efficiently.
 // It checks the cache first for all queries and fetches uncached items concurrently.
 func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {

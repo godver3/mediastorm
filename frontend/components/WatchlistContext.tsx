@@ -67,8 +67,8 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [state, setState] = useState<WLState>(INITIAL_WL_STATE);
   const { activeUserId } = useUserProfiles();
   const { backendUrl, isReady } = useBackendSettings();
-  const { startupData, ready: startupReady } = useStartupData();
-  const hydratedFromStartup = useRef(false);
+  const { startupData, ready: startupReady, generation } = useStartupData();
+  const hydratedGeneration = useRef(-1);
 
   const requireUserId = useCallback(() => {
     if (!activeUserId) {
@@ -112,13 +112,13 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     if (!activeUserId) {
       setState({ items: [], loading: false, error: null });
-      hydratedFromStartup.current = false;
+      hydratedGeneration.current = -1;
       return;
     }
-    // Hydrate from startup bundle if available (avoids separate HTTP request)
-    if (startupData?.watchlist && !hydratedFromStartup.current) {
+    // Hydrate from startup bundle if available and generation has advanced
+    if (startupData?.watchlist && hydratedGeneration.current < generation) {
       setState({ items: normaliseItems(startupData.watchlist), loading: false, error: null });
-      hydratedFromStartup.current = true;
+      hydratedGeneration.current = generation;
       return;
     }
     // Wait for startup bundle before falling back to independent fetch
@@ -126,10 +126,10 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     // Fallback: fetch independently (startup failed or didn't include watchlist)
-    if (!hydratedFromStartup.current) {
+    if (hydratedGeneration.current < generation) {
       void refresh();
     }
-  }, [isReady, backendUrl, activeUserId, refresh, startupData, startupReady]);
+  }, [isReady, backendUrl, activeUserId, refresh, startupData, startupReady, generation]);
 
   const addToWatchlist = useCallback(
     async (payload: WatchlistUpsertPayload) => {

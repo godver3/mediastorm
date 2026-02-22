@@ -214,6 +214,7 @@ export interface BatchSeriesDetailsRequest {
     tvdbId?: number;
     tmdbId?: number;
   }>;
+  fields?: string[];
 }
 
 export interface BatchSeriesDetailsItem {
@@ -1115,9 +1116,10 @@ class ApiService {
 
     const requestStartTime = DEBUG_API_TIMING ? performance.now() : 0;
     const response = await fetch(url, requestInit);
+    const fetchEndTime = DEBUG_API_TIMING ? performance.now() : 0;
 
     if (DEBUG_API_TIMING && requestStartTime) {
-      const duration = performance.now() - requestStartTime;
+      const duration = fetchEndTime - requestStartTime;
       apiRequestCount++;
       totalApiTime += duration;
       if (duration > 200) {
@@ -1177,7 +1179,9 @@ class ApiService {
       throw apiError;
     }
 
+    const textStart = DEBUG_API_TIMING ? performance.now() : 0;
     const responseText = await response.text();
+    const textMs = DEBUG_API_TIMING ? performance.now() - textStart : 0;
     const responseSizeBytes = responseText.length;
     const responseSizeKB = (responseSizeBytes / 1024).toFixed(1);
 
@@ -1199,8 +1203,9 @@ class ApiService {
       const parseMs = performance.now() - parseStart;
 
       if (Platform.isTV) {
+        const fetchMs = fetchEndTime - requestStartTime;
         console.log(
-          `[API:Size] ${options.method || 'GET'} ${endpoint} → ${responseSizeKB} KB, parse: ${parseMs.toFixed(1)}ms`
+          `[API:Size] ${options.method || 'GET'} ${endpoint} → ${responseSizeKB} KB, fetch: ${fetchMs.toFixed(0)}ms, text: ${textMs.toFixed(0)}ms, parse: ${parseMs.toFixed(1)}ms`
         );
         // Flag large responses that may cause jank on low-power devices
         if (responseSizeBytes > 100 * 1024) {
@@ -1389,6 +1394,7 @@ class ApiService {
       name?: string;
       year?: number;
     }>,
+    fields?: string[],
   ): Promise<BatchSeriesDetailsResponse> {
     const requestBody: BatchSeriesDetailsRequest = {
       queries: queries.map((q) => ({
@@ -1398,6 +1404,7 @@ class ApiService {
         tvdbId: q.tvdbId ? Number(q.tvdbId) : undefined,
         tmdbId: q.tmdbId ? Number(q.tmdbId) : undefined,
       })),
+      ...(fields && fields.length > 0 ? { fields } : {}),
     };
 
     return this.request<BatchSeriesDetailsResponse>('/metadata/series/batch', {

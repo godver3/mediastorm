@@ -134,6 +134,9 @@ func (m *mockMetadataServiceStartup) SeriesDetails(context.Context, models.Serie
 func (m *mockMetadataServiceStartup) BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem {
 	return nil
 }
+func (m *mockMetadataServiceStartup) BatchSeriesTitleFields(context.Context, []models.SeriesDetailsQuery, []string) []models.BatchSeriesDetailsItem {
+	return nil
+}
 func (m *mockMetadataServiceStartup) MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error) {
 	return nil, nil
 }

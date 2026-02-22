@@ -43,13 +43,13 @@ export function useTrendingMovies(
   hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
-  const { startupData, ready: startupReady } = useStartupData();
+  const { startupData, ready: startupReady, generation } = useStartupData();
   const [state, setState] = useState<TrendingState>({ data: null, loading: enabled, error: null });
   const [refreshToken, setRefreshToken] = useState(0);
-  const hydratedFromStartup = useRef(false);
+  const hydratedGeneration = useRef(-1);
 
   const refetch = useCallback(() => {
-    hydratedFromStartup.current = false;
+    hydratedGeneration.current = -1;
     setRefreshToken((t) => t + 1);
   }, []);
 
@@ -59,11 +59,11 @@ export function useTrendingMovies(
       return;
     }
 
-    // Hydrate from startup bundle if available (avoids separate HTTP request)
-    if (startupData?.trendingMovies && !hydratedFromStartup.current && refreshToken === 0) {
-      console.log('[useTrendingMovies] Hydrating from startup bundle');
+    // Hydrate from startup bundle if available and generation has advanced
+    if (startupData?.trendingMovies && hydratedGeneration.current < generation && refreshToken === 0) {
+      console.log('[useTrendingMovies] Hydrating from startup bundle (generation:', generation, ')');
       setState({ data: startupData.trendingMovies.items, loading: false, error: null });
-      hydratedFromStartup.current = true;
+      hydratedGeneration.current = generation;
       return;
     }
 
@@ -104,14 +104,14 @@ export function useTrendingMovies(
       }
     };
 
-    if (!hydratedFromStartup.current) {
+    if (hydratedGeneration.current < generation) {
       fetchData();
     }
 
     return () => {
       cancelled = true;
     };
-  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady, generation]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
   return useMemo(() => ({ data: state.data, loading: state.loading, error: state.error, refetch }), [state, refetch]);
@@ -125,13 +125,13 @@ export function useTrendingTVShows(
   hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
-  const { startupData, ready: startupReady } = useStartupData();
+  const { startupData, ready: startupReady, generation } = useStartupData();
   const [state, setState] = useState<TrendingState>({ data: null, loading: enabled, error: null });
   const [refreshToken, setRefreshToken] = useState(0);
-  const hydratedFromStartup = useRef(false);
+  const hydratedGeneration = useRef(-1);
 
   const refetch = useCallback(() => {
-    hydratedFromStartup.current = false;
+    hydratedGeneration.current = -1;
     setRefreshToken((t) => t + 1);
   }, []);
 
@@ -141,11 +141,11 @@ export function useTrendingTVShows(
       return;
     }
 
-    // Hydrate from startup bundle if available (avoids separate HTTP request)
-    if (startupData?.trendingSeries && !hydratedFromStartup.current && refreshToken === 0) {
-      console.log('[useTrendingTVShows] Hydrating from startup bundle');
+    // Hydrate from startup bundle if available and generation has advanced
+    if (startupData?.trendingSeries && hydratedGeneration.current < generation && refreshToken === 0) {
+      console.log('[useTrendingTVShows] Hydrating from startup bundle (generation:', generation, ')');
       setState({ data: startupData.trendingSeries.items, loading: false, error: null });
-      hydratedFromStartup.current = true;
+      hydratedGeneration.current = generation;
       return;
     }
 
@@ -180,14 +180,14 @@ export function useTrendingTVShows(
       }
     };
 
-    if (!hydratedFromStartup.current) {
+    if (hydratedGeneration.current < generation) {
       fetchData();
     }
 
     return () => {
       cancelled = true;
     };
-  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady]);
+  }, [isReady, backendUrl, userId, enabled, hideUnreleased, hideWatched, refreshToken, startupData, startupReady, generation]);
 
   // Memoize return value to prevent unnecessary re-renders of consumers
   return useMemo(() => ({ data: state.data, loading: state.loading, error: state.error, refetch }), [state, refetch]);

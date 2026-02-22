@@ -637,6 +637,7 @@ export default function WatchlistScreen() {
               tmdbId: q.tmdbId,
               name: q.name,
             })),
+            ['year', 'genres'],
           );
 
           for (let i = 0; i < batchResponse.results.length; i++) {
