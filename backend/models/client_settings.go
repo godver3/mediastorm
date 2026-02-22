@@ -14,6 +14,8 @@ type ClientFilterSettings struct {
 	PreferredTerms                   *[]string    `json:"preferredTerms,omitempty"`
 	NonPreferredTerms                *[]string    `json:"nonPreferredTerms,omitempty"`
 	BypassFilteringForAIOStreamsOnly *bool        `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	AnimeLanguageEnabled            *bool        `json:"animeLanguageEnabled,omitempty"`
+	AnimePreferredLanguage          *string      `json:"animePreferredLanguage,omitempty"`
 
 	// Network settings for URL switching based on WiFi
 	HomeWifiSSID     *string `json:"homeWifiSSID,omitempty"`
@@ -35,6 +37,8 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.PreferredTerms == nil &&
 		c.NonPreferredTerms == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&
+		c.AnimeLanguageEnabled == nil &&
+		c.AnimePreferredLanguage == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&
 		c.RemoteBackendUrl == nil &&

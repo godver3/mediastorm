@@ -65,12 +65,14 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	// Get series metadata for TV shows (episode resolver + daily show detection)
 	var episodeResolver *filter.SeriesEpisodeResolver
 	var isDaily bool
+	var isAnime bool
 	var targetAirDate string
 	if mediaType == "series" && h.MetadataSvc != nil {
 		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year)
 		if seriesMeta != nil {
 			episodeResolver = seriesMeta.EpisodeResolver
 			isDaily = seriesMeta.IsDaily
+			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
 			if episodeResolver != nil {
 				log.Printf("[indexer] Episode resolver created: %d total episodes, %d seasons",
@@ -93,6 +95,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		ClientID:        clientID,
 		EpisodeResolver: episodeResolver,
 		IsDaily:         isDaily,
+		IsAnime:         isAnime,
 		TargetAirDate:   targetAirDate,
 	}
 
@@ -186,6 +189,7 @@ func classifySearchError(err error) (int, map[string]interface{}) {
 type seriesSearchMetadata struct {
 	EpisodeResolver *filter.SeriesEpisodeResolver
 	IsDaily         bool
+	IsAnime         bool
 	TargetAirDate   string // YYYY-MM-DD format for daily shows
 }
 
@@ -226,6 +230,15 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 
 	result := &seriesSearchMetadata{
 		IsDaily: details.Title.IsDaily,
+	}
+
+	// Check if this is anime content from the genres
+	for _, genre := range details.Title.Genres {
+		genreLower := strings.ToLower(genre)
+		if genreLower == "animation" || genreLower == "anime" {
+			result.IsAnime = true
+			break
+		}
 	}
 
 	// Build season -> episode count map for episode resolver

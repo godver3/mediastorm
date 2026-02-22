@@ -131,14 +131,16 @@ func (s *Service) SetClientSettingsProvider(provider clientSettingsProvider) {
 func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) models.FilterSettings {
 	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
-		MaxSizeEpisodeGB: models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
-		MaxResolution:    globalSettings.Filtering.MaxResolution,
-		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		PrioritizeHdr:    models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
-		FilterOutTerms:   globalSettings.Filtering.FilterOutTerms,
-		PreferredTerms:      globalSettings.Filtering.PreferredTerms,
-		NonPreferredTerms:   globalSettings.Filtering.NonPreferredTerms,
+		MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:       models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
+		MaxResolution:          globalSettings.Filtering.MaxResolution,
+		HDRDVPolicy:            models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		PrioritizeHdr:          models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
+		FilterOutTerms:         globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:         globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms:      globalSettings.Filtering.NonPreferredTerms,
+		AnimeLanguageEnabled:   models.BoolPtr(globalSettings.Filtering.AnimeLanguageEnabled),
+		AnimePreferredLanguage: models.StringPtr(globalSettings.Filtering.AnimePreferredLanguage),
 	}
 
 	// Layer 2: Profile settings override global (field-by-field, only if set)
@@ -176,6 +178,12 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
 				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
 			}
+			if profileFiltering.AnimeLanguageEnabled != nil {
+				filterSettings.AnimeLanguageEnabled = profileFiltering.AnimeLanguageEnabled
+			}
+			if profileFiltering.AnimePreferredLanguage != nil {
+				filterSettings.AnimePreferredLanguage = profileFiltering.AnimePreferredLanguage
+			}
 		}
 	}
 
@@ -209,6 +217,12 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.NonPreferredTerms != nil {
 				filterSettings.NonPreferredTerms = *clientSettings.NonPreferredTerms
+			}
+			if clientSettings.AnimeLanguageEnabled != nil {
+				filterSettings.AnimeLanguageEnabled = clientSettings.AnimeLanguageEnabled
+			}
+			if clientSettings.AnimePreferredLanguage != nil {
+				filterSettings.AnimePreferredLanguage = clientSettings.AnimePreferredLanguage
 			}
 		}
 	}
@@ -579,6 +593,26 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		servicePriority := settings.Streaming.ServicePriority
 		preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
 		nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
+
+		// Inject anime language terms when enabled and content is anime
+		if opts.IsAnime && models.BoolVal(filterSettings.AnimeLanguageEnabled, false) {
+			langCode := ""
+			if filterSettings.AnimePreferredLanguage != nil {
+				langCode = *filterSettings.AnimePreferredLanguage
+			}
+			if langCode == "" {
+				langCode = "eng"
+			}
+			animePref, animeNonPref := filter.GetAnimeLanguageTerms(langCode)
+			if len(animePref) > 0 {
+				preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
+			}
+			if len(animeNonPref) > 0 {
+				nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
+			}
+			log.Printf("[indexer] Anime language preference enabled (lang=%s): injected %d preferred + %d non-preferred terms", langCode, len(animePref), len(animeNonPref))
+		}
+
 		prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
 		preferredLang := settings.Metadata.Language
 
@@ -680,6 +714,26 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	servicePriority := settings.Streaming.ServicePriority
 	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
 	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
+
+	// Inject anime language terms when enabled and content is anime
+	if opts.IsAnime && models.BoolVal(filterSettings.AnimeLanguageEnabled, false) {
+		langCode := ""
+		if filterSettings.AnimePreferredLanguage != nil {
+			langCode = *filterSettings.AnimePreferredLanguage
+		}
+		if langCode == "" {
+			langCode = "eng"
+		}
+		animePref, animeNonPref := filter.GetAnimeLanguageTerms(langCode)
+		if len(animePref) > 0 {
+			preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
+		}
+		if len(animeNonPref) > 0 {
+			nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
+		}
+		log.Printf("[indexer] Anime language preference enabled (lang=%s): injected %d preferred + %d non-preferred terms", langCode, len(animePref), len(animeNonPref))
+	}
+
 	prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
 	preferredLang := settings.Metadata.Language
 

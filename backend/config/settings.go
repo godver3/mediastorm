@@ -320,6 +320,8 @@ type FilterSettings struct {
 	PreferredTerms                   []string    `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms                []string    `json:"nonPreferredTerms"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
+	AnimeLanguageEnabled            bool        `json:"animeLanguageEnabled"`             // When enabled, boost preferred language and derank others for anime content
+	AnimePreferredLanguage          string      `json:"animePreferredLanguage"`           // ISO 639-2/B code for preferred anime language (e.g. "eng")
 }
 
 // UISettings captures user interface preferences shared with the clients.

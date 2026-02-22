@@ -333,6 +333,22 @@ var SettingsSchema = map[string]interface{}{
 			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive substring match, ranked higher; wrap in /slashes/ for regex)"},
 			"nonPreferredTerms":               map[string]interface{}{"type": "tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results (case-insensitive substring match, ranked lower but not removed; wrap in /slashes/ for regex)"},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip strmr filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
+			"animeLanguageEnabled": map[string]interface{}{"type": "boolean", "label": "Anime Language Preference", "description": "When enabled, automatically boost releases matching your preferred language and derank other languages for anime content"},
+			"animePreferredLanguage": map[string]interface{}{
+				"type":  "select",
+				"label": "Preferred Anime Language",
+				"options": []map[string]string{
+					{"value": "eng", "label": "English"},
+					{"value": "spa", "label": "Spanish"},
+					{"value": "fra", "label": "French"},
+					{"value": "deu", "label": "German"},
+					{"value": "ita", "label": "Italian"},
+					{"value": "por", "label": "Portuguese"},
+					{"value": "jpn", "label": "Japanese"},
+				},
+				"description": "Language to prioritize for anime releases (boosts 'dual audio', preferred language terms; deranks other language terms)",
+				"showWhen":    map[string]interface{}{"field": "animeLanguageEnabled", "value": true},
+			},
 		},
 	},
 	"ranking": map[string]interface{}{
