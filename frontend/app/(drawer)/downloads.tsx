@@ -61,6 +61,10 @@ function DownloadRow({
   onPause,
   onResume,
   onDelete,
+  selectMode,
+  isSelected,
+  onToggleSelect,
+  onEnterSelectMode,
 }: {
   item: DownloadItem;
   theme: NovaTheme;
@@ -69,12 +73,20 @@ function DownloadRow({
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
+  selectMode: boolean;
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
+  onEnterSelectMode: (id: string) => void;
 }) {
   const isActive = item.status === 'downloading' || item.status === 'paused' || item.status === 'pending';
   const isCompleted = item.status === 'completed';
   const isError = item.status === 'error';
 
   const handlePress = () => {
+    if (selectMode) {
+      onToggleSelect(item.id);
+      return;
+    }
     if (isCompleted) {
       onPlay(item);
     } else if (item.status === 'downloading') {
@@ -85,10 +97,8 @@ function DownloadRow({
   };
 
   const handleLongPress = () => {
-    Alert.alert('Delete Download', `Remove "${item.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => onDelete(item.id) },
-    ]);
+    if (selectMode) return;
+    onEnterSelectMode(item.id);
   };
 
   const statusIcon = (): keyof typeof Ionicons.glyphMap => {
@@ -127,11 +137,22 @@ function DownloadRow({
     : formatBytes(item.fileSize);
 
   return (
-    <Pressable style={styles.row} onPress={handlePress} onLongPress={handleLongPress}>
-      <ProxiedImage
-        source={{ uri: item.posterUrl }}
-        style={styles.poster}
-      />
+    <Pressable style={[styles.row, selectMode && isSelected && styles.rowSelected]} onPress={handlePress} onLongPress={handleLongPress}>
+      <View>
+        <ProxiedImage
+          source={{ uri: item.posterUrl }}
+          style={styles.poster}
+        />
+        {selectMode && (
+          <View style={styles.checkboxOverlay}>
+            <Ionicons
+              name={isSelected ? 'checkbox' : 'square-outline'}
+              size={22}
+              color={isSelected ? theme.colors.accent.primary : theme.colors.text.muted}
+            />
+          </View>
+        )}
+      </View>
       <View style={styles.rowInfo}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {item.title}
@@ -167,12 +188,16 @@ function DownloadRow({
           </Text>
         )}
       </View>
-      <View style={styles.rowAction}>
-        <Ionicons name={statusIcon()} size={28} color={statusColor()} />
-      </View>
-      <Pressable style={styles.deleteButton} onPress={() => onDelete(item.id)} hitSlop={8}>
-        <Ionicons name="trash-outline" size={20} color={theme.colors.text.muted} />
-      </Pressable>
+      {!selectMode && (
+        <>
+          <View style={styles.rowAction}>
+            <Ionicons name={statusIcon()} size={28} color={statusColor()} />
+          </View>
+          <Pressable style={styles.deleteButton} onPress={() => onDelete(item.id)} hitSlop={8}>
+            <Ionicons name="trash-outline" size={20} color={theme.colors.text.muted} />
+          </Pressable>
+        </>
+      )}
     </Pressable>
   );
 }
@@ -211,6 +236,61 @@ export default function DownloadsScreen() {
     () => [...activeItems, ...errorItems, ...completedItems],
     [activeItems, errorItems, completedItems],
   );
+
+  // Multi-select state
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelected(new Set());
+  }, []);
+
+  const enterSelectMode = useCallback((id: string) => {
+    setSelectMode(true);
+    setSelected(new Set([id]));
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      if (next.size === 0) {
+        setSelectMode(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (selected.size === allItems.length) {
+      setSelected(new Set());
+      setSelectMode(false);
+    } else {
+      setSelected(new Set(allItems.map((i) => i.id)));
+    }
+  }, [allItems, selected.size]);
+
+  const handleBulkDelete = useCallback(() => {
+    const count = selected.size;
+    Alert.alert(`Delete ${count} Download${count > 1 ? 's' : ''}`, `Remove ${count} selected download${count > 1 ? 's' : ''}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          for (const id of selected) {
+            deleteDownload(id);
+          }
+          exitSelectMode();
+        },
+      },
+    ]);
+  }, [selected, deleteDownload, exitSelectMode]);
 
   const launchDownloadedItem = useCallback(
     (item: DownloadItem, startOffset?: number) => {
@@ -303,18 +383,36 @@ export default function DownloadsScreen() {
         onPause={pauseDownload}
         onResume={resumeDownload}
         onDelete={handleDelete}
+        selectMode={selectMode}
+        isSelected={selected.has(item.id)}
+        onToggleSelect={toggleSelect}
+        onEnterSelectMode={enterSelectMode}
       />
     ),
-    [theme, styles, handlePlay, pauseDownload, resumeDownload, handleDelete],
+    [theme, styles, handlePlay, pauseDownload, resumeDownload, handleDelete, selectMode, selected, toggleSelect, enterSelectMode],
   );
 
   const keyExtractor = useCallback((item: DownloadItem) => item.id, []);
 
   return (
     <FixedSafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Downloads</Text>
-      </View>
+      {selectMode ? (
+        <View style={styles.selectHeader}>
+          <Pressable onPress={exitSelectMode} hitSlop={8}>
+            <Text style={styles.selectHeaderAction}>Cancel</Text>
+          </Pressable>
+          <Text style={styles.headerTitle}>{selected.size} selected</Text>
+          <Pressable onPress={toggleSelectAll} hitSlop={8}>
+            <Text style={styles.selectHeaderAction}>
+              {selected.size === allItems.length ? 'Deselect All' : 'Select All'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Downloads</Text>
+        </View>
+      )}
       <View style={styles.settingsRow}>
         <Text style={styles.settingsLabel}>Wi-Fi Only</Text>
         <Switch
@@ -357,9 +455,16 @@ export default function DownloadsScreen() {
           data={allItems}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, selectMode && selected.size > 0 && styles.listWithBar]}
           showsVerticalScrollIndicator={false}
         />
+      )}
+      {selectMode && selected.size > 0 && (
+        <View style={styles.selectionBar}>
+          <Pressable style={styles.selectionBarButton} onPress={handleBulkDelete}>
+            <Text style={styles.selectionBarButtonText}>Delete ({selected.size})</Text>
+          </Pressable>
+        </View>
       )}
       <ResumePlaybackModal
         visible={resumeModalVisible}
@@ -425,9 +530,24 @@ const createStyles = (theme: NovaTheme) =>
       minWidth: 16,
       textAlign: 'center',
     },
+    selectHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.sm,
+    },
+    selectHeaderAction: {
+      ...theme.typography.body.md,
+      color: theme.colors.accent.primary,
+    },
     list: {
       paddingHorizontal: theme.spacing.md,
       paddingBottom: theme.spacing['2xl'],
+    },
+    listWithBar: {
+      paddingBottom: 80,
     },
     row: {
       flexDirection: 'row',
@@ -437,6 +557,9 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: theme.spacing.xs,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
+    },
+    rowSelected: {
+      backgroundColor: theme.colors.background.elevated,
     },
     poster: {
       width: 48,
@@ -480,6 +603,36 @@ const createStyles = (theme: NovaTheme) =>
     deleteButton: {
       padding: theme.spacing.xs,
       marginLeft: theme.spacing.xs,
+    },
+    checkboxOverlay: {
+      position: 'absolute',
+      bottom: -4,
+      right: -4,
+      backgroundColor: theme.colors.background.base,
+      borderRadius: 4,
+    },
+    selectionBar: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      paddingHorizontal: theme.spacing.lg,
+      paddingVertical: theme.spacing.md,
+      paddingBottom: theme.spacing.lg,
+      backgroundColor: theme.colors.background.surface,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.background.elevated,
+      alignItems: 'center',
+    },
+    selectionBarButton: {
+      backgroundColor: theme.colors.status.danger,
+      paddingHorizontal: theme.spacing['2xl'],
+      paddingVertical: theme.spacing.sm,
+      borderRadius: theme.radius.md,
+    },
+    selectionBarButtonText: {
+      ...theme.typography.label.md,
+      color: '#fff',
     },
     emptyContainer: {
       flex: 1,
