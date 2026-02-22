@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.annotations.ReactProp
 
-class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
+class MpvPlayerViewManager : SimpleViewManager<PlayerContainerView>() {
 
     companion object {
         private const val REACT_CLASS = "MpvPlayer"
@@ -18,75 +18,80 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
 
     override fun getName(): String = REACT_CLASS
 
-    override fun createViewInstance(reactContext: ThemedReactContext): MpvPlayerView {
-        return MpvPlayerView(reactContext)
+    override fun createViewInstance(reactContext: ThemedReactContext): PlayerContainerView {
+        return PlayerContainerView(reactContext)
     }
 
     // --- Props ---
 
     @ReactProp(name = "source")
-    fun setSource(view: MpvPlayerView, source: ReadableMap?) {
+    fun setSource(view: PlayerContainerView, source: ReadableMap?) {
         view.setSource(source)
     }
 
     @ReactProp(name = "paused", defaultBoolean = true)
-    fun setPaused(view: MpvPlayerView, paused: Boolean) {
+    fun setPaused(view: PlayerContainerView, paused: Boolean) {
         view.setPaused(paused)
     }
 
     @ReactProp(name = "volume", defaultFloat = 1f)
-    fun setVolume(view: MpvPlayerView, volume: Float) {
+    fun setVolume(view: PlayerContainerView, volume: Float) {
         view.setVolume(volume)
     }
 
     @ReactProp(name = "rate", defaultFloat = 1f)
-    fun setRate(view: MpvPlayerView, rate: Float) {
+    fun setRate(view: PlayerContainerView, rate: Float) {
         view.setRate(rate)
     }
 
     @ReactProp(name = "audioTrack", defaultInt = -1)
-    fun setAudioTrack(view: MpvPlayerView, trackIndex: Int) {
+    fun setAudioTrack(view: PlayerContainerView, trackIndex: Int) {
         view.setAudioTrack(trackIndex)
     }
 
     @ReactProp(name = "subtitleTrack", defaultInt = -1)
-    fun setSubtitleTrack(view: MpvPlayerView, trackIndex: Int) {
+    fun setSubtitleTrack(view: PlayerContainerView, trackIndex: Int) {
         view.setSubtitleTrack(trackIndex)
     }
 
     @ReactProp(name = "subtitleSize", defaultFloat = 0f)
-    fun setSubtitleSize(view: MpvPlayerView, size: Float) {
+    fun setSubtitleSize(view: PlayerContainerView, size: Float) {
         view.setSubtitleSize(size)
     }
 
     @ReactProp(name = "subtitleColor")
-    fun setSubtitleColor(view: MpvPlayerView, color: String?) {
+    fun setSubtitleColor(view: PlayerContainerView, color: String?) {
         view.setSubtitleColor(color)
     }
 
     @ReactProp(name = "subtitlePosition", defaultFloat = 0f)
-    fun setSubtitlePosition(view: MpvPlayerView, position: Float) {
+    fun setSubtitlePosition(view: PlayerContainerView, position: Float) {
         view.setSubtitlePosition(position)
     }
 
     @ReactProp(name = "subtitleStyle")
-    fun setSubtitleStyle(view: MpvPlayerView, style: ReadableMap?) {
+    fun setSubtitleStyle(view: PlayerContainerView, style: ReadableMap?) {
         view.setSubtitleStyle(style)
     }
 
     @ReactProp(name = "controlsVisible", defaultBoolean = false)
-    fun setControlsVisible(view: MpvPlayerView, visible: Boolean) {
+    fun setControlsVisible(view: PlayerContainerView, visible: Boolean) {
         view.setControlsVisible(visible)
     }
 
     @ReactProp(name = "externalSubtitleUrl")
-    fun setExternalSubtitleUrl(view: MpvPlayerView, url: String?) {
+    fun setExternalSubtitleUrl(view: PlayerContainerView, url: String?) {
         view.setExternalSubtitleUrl(url)
     }
 
     @ReactProp(name = "isHDR", defaultBoolean = false)
-    fun setIsHDR(view: MpvPlayerView, hdr: Boolean) {
+    fun setIsHDR(view: PlayerContainerView, hdr: Boolean) {
         view.isHDR = hdr
+    }
+
+    @ReactProp(name = "isDV", defaultBoolean = false)
+    fun setIsDV(view: PlayerContainerView, dv: Boolean) {
+        view.isDV = dv
     }
 
     // --- Events ---
@@ -114,7 +119,7 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
         )
     }
 
-    override fun receiveCommand(view: MpvPlayerView, commandId: String, args: ReadableArray?) {
+    override fun receiveCommand(view: PlayerContainerView, commandId: String, args: ReadableArray?) {
         // commandId arrives as the integer ID (from getCommandsMap) stringified
         when (commandId) {
             "seek", COMMAND_SEEK.toString() -> {
@@ -132,7 +137,7 @@ class MpvPlayerViewManager : SimpleViewManager<MpvPlayerView>() {
         }
     }
 
-    override fun onDropViewInstance(view: MpvPlayerView) {
+    override fun onDropViewInstance(view: PlayerContainerView) {
         super.onDropViewInstance(view)
         view.destroy()
     }

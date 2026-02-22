@@ -14,16 +14,17 @@ import android.view.SurfaceView
 import android.widget.FrameLayout
 import java.io.File
 import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ThemedReactContext
-import com.facebook.react.uimanager.events.RCTEventEmitter
 import dev.jdtech.mpv.MPVLib
 
-class MpvPlayerView(context: ThemedReactContext) :
-    FrameLayout(context), MPVLib.EventObserver, MPVLib.LogObserver, SurfaceHolder.Callback, ComponentCallbacks2 {
+class MpvPlayerView(
+    context: ThemedReactContext,
+    private val eventEmitter: (String, WritableMap?) -> Unit
+) :
+    FrameLayout(context), PlayerViewDelegate, MPVLib.EventObserver, MPVLib.LogObserver, SurfaceHolder.Callback, ComponentCallbacks2 {
 
     companion object {
         private const val TAG = "MpvPlayerView"
@@ -62,7 +63,7 @@ class MpvPlayerView(context: ThemedReactContext) :
     private var fileLoaded = false
 
     // HDR mode — set via React prop before source is loaded
-    var isHDR = false
+    override var isHDR = false
 
     // Source state
     private var pendingUri: String? = null
@@ -327,7 +328,7 @@ class MpvPlayerView(context: ThemedReactContext) :
 
     // ========== Property setters (called from ViewManager) ==========
 
-    fun setSource(source: ReadableMap?) {
+    override fun setSource(source: ReadableMap?) {
         source ?: return
         val uri = source.getString("uri") ?: return
         if (uri == currentUri) return
@@ -402,7 +403,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setPaused(paused: Boolean) {
+    override fun setPaused(paused: Boolean) {
         if (!initialized || destroyed) return
         // Keep screen awake while playing (prevents screensaver on Android TV)
         keepScreenOn = !paused
@@ -415,7 +416,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setVolume(volume: Float) {
+    override fun setVolume(volume: Float) {
         if (!initialized || destroyed) return
         val mpvVolume = (volume.coerceIn(0f, 1f) * 100).toInt()
         mpvHandler.post {
@@ -427,7 +428,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setRate(rate: Float) {
+    override fun setRate(rate: Float) {
         if (!initialized || destroyed) return
         mpvHandler.post {
             try {
@@ -438,7 +439,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setAudioTrack(rnIndex: Int) {
+    override fun setAudioTrack(rnIndex: Int) {
         if (!initialized || destroyed) return
         if (rnIndex < 0) return
 
@@ -462,7 +463,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setSubtitleTrack(rnIndex: Int) {
+    override fun setSubtitleTrack(rnIndex: Int) {
         emitDebugLog("setSubtitleTrack called: rnIndex=$rnIndex, initialized=$initialized, destroyed=$destroyed, tracksAvailable=$tracksAvailable, fileLoaded=$fileLoaded")
 
         if (!initialized || destroyed) {
@@ -522,7 +523,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setSubtitleSize(size: Float) {
+    override fun setSubtitleSize(size: Float) {
         if (!initialized || destroyed || size <= 0) return
         mpvHandler.post {
             try {
@@ -533,7 +534,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setSubtitleColor(color: String?) {
+    override fun setSubtitleColor(color: String?) {
         if (!initialized || destroyed || color == null) return
         mpvHandler.post {
             try {
@@ -544,7 +545,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setSubtitlePosition(position: Float) {
+    override fun setSubtitlePosition(position: Float) {
         if (!initialized || destroyed) return
         mpvHandler.post {
             try {
@@ -555,7 +556,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setSubtitleStyle(style: ReadableMap?) {
+    override fun setSubtitleStyle(style: ReadableMap?) {
         if (style == null) return
 
         if (style.hasKey("fontSize")) {
@@ -606,7 +607,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setControlsVisible(visible: Boolean) {
+    override fun setControlsVisible(visible: Boolean) {
         controlsVisible = visible
         updateSubtitlePosition()
     }
@@ -637,7 +638,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun setExternalSubtitleUrl(url: String?) {
+    override fun setExternalSubtitleUrl(url: String?) {
         val effectiveUrl = if (url.isNullOrEmpty()) null else url
 
         // No change
@@ -675,7 +676,7 @@ class MpvPlayerView(context: ThemedReactContext) :
         }
     }
 
-    fun seekTo(time: Double) {
+    override fun seekTo(time: Double) {
         if (!initialized || destroyed) return
         mpvHandler.post {
             try {
@@ -896,9 +897,7 @@ class MpvPlayerView(context: ThemedReactContext) :
     // ========== Event emission ==========
 
     private fun emitEvent(eventName: String, data: WritableMap?) {
-        val reactContext = context as? ReactContext ?: return
-        reactContext.getJSModule(RCTEventEmitter::class.java)
-            .receiveEvent(id, eventName, data)
+        eventEmitter(eventName, data)
     }
 
     private fun emitLoad(duration: Double, width: Int, height: Int) {
@@ -1001,7 +1000,7 @@ class MpvPlayerView(context: ThemedReactContext) :
 
     // ========== Cleanup ==========
 
-    fun destroy() {
+    override fun destroy() {
         if (destroyed) return
         destroyed = true
         keepScreenOn = false

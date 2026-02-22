@@ -759,7 +759,7 @@ const Controls: React.FC<ControlsProps> = ({
                     </View>
                   )}
                   {/* Subtitle offset controls for TV platforms */}
-                  {isTvPlatform && showSubtitleOffset && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
+                  {isTvPlatform && showSubtitleOffset && !isLiveTV && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
                     <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
                       <FocusablePressable
                         icon="remove-circle-outline"

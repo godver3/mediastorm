@@ -77,6 +77,7 @@ export interface MpvPlayerProps {
   controlsVisible?: boolean;
   externalSubtitleUrl?: string;
   isHDR?: boolean;
+  isDV?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (data: LoadEvent) => void;
   onProgress?: (data: ProgressEvent) => void;
@@ -109,6 +110,7 @@ interface NativeMpvPlayerProps {
   controlsVisible?: boolean;
   externalSubtitleUrl?: string;
   isHDR?: boolean;
+  isDV?: boolean;
   style?: StyleProp<ViewStyle>;
   onLoad?: (event: NativeSyntheticEvent<LoadEvent>) => void;
   onProgress?: (event: NativeSyntheticEvent<ProgressEvent>) => void;
@@ -158,6 +160,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
     controlsVisible,
     externalSubtitleUrl,
     isHDR,
+    isDV,
     style,
     onLoad,
     onProgress,
@@ -272,6 +275,7 @@ export const MpvPlayer = forwardRef<MpvPlayerRef, MpvPlayerProps>((props, ref) =
       controlsVisible={controlsVisible}
       externalSubtitleUrl={externalSubtitleUrl}
       isHDR={isHDR}
+      isDV={isDV}
       style={style}
       onLoad={handleLoad}
       onProgress={handleProgress}

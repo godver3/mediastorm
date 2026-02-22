@@ -28,4 +28,9 @@ repositories {
 dependencies {
     implementation "com.facebook.react:react-android:+"
     implementation "dev.jdtech.mpv:libmpv:0.5.1"
+
+    // Media3/ExoPlayer for Dolby Vision passthrough (ExoPlayerView)
+    implementation "androidx.media3:media3-exoplayer:1.4.1"
+    implementation "androidx.media3:media3-datasource:1.4.1"
+    implementation "androidx.media3:media3-common:1.4.1"
 }

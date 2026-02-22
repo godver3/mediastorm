@@ -81,6 +81,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     onPictureInPictureStatusChanged,
     externalSubtitleUrl,
     isHDR,
+    isDV,
   } = props;
 
   const playerRef = useRef<NativePlayerRef>(null);
@@ -317,6 +318,8 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     audioTrack: selectedAudioTrackIndex ?? 'undefined',
     subtitleTrack: selectedSubtitleTrackIndex ?? -1,
     externalSubtitleUrl: externalSubtitleUrl ?? 'undefined',
+    isHDR: isHDR ?? 'undefined',
+    isDV: isDV ?? 'undefined',
   });
 
   return (
@@ -331,6 +334,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       controlsVisible={controlsVisible}
       externalSubtitleUrl={externalSubtitleUrl}
       isHDR={isHDR}
+      isDV={isDV}
       style={nativePlayerStyles.player}
       onLoad={handleLoad}
       onProgress={handleProgress}

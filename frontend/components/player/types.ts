@@ -70,4 +70,6 @@ export interface VideoPlayerProps {
   externalSubtitleUrl?: string;
   /** Enable HDR passthrough mode (Android TV only) */
   isHDR?: boolean;
+  /** Route to ExoPlayer for Dolby Vision passthrough (Android only) */
+  isDV?: boolean;
 }

@@ -793,6 +793,11 @@ export default function PlayerScreen() {
       return;
     }
 
+    if (isLiveTV) {
+      console.log('[player] auto-subtitle search skipped: live TV');
+      return;
+    }
+
     const subtitleMode = userSettings?.playback?.preferredSubtitleMode ?? settings?.playback?.preferredSubtitleMode;
     const subtitleLang =
       userSettings?.playback?.preferredSubtitleLanguage ?? settings?.playback?.preferredSubtitleLanguage;
@@ -819,7 +824,7 @@ export default function PlayerScreen() {
     console.log('[player] triggering auto-subtitle search for language:', subtitleLang);
     autoSubtitleTriggeredRef.current = true;
     performAutoSubtitleSearch(subtitleLang);
-  }, [settings, userSettings, performAutoSubtitleSearch]);
+  }, [settings, userSettings, performAutoSubtitleSearch, isLiveTV]);
 
   // Subtitle timing adjustment handlers (0.25s increments)
   // Uses refs to access extendControlsVisibility which is defined later in the component
@@ -942,6 +947,10 @@ export default function PlayerScreen() {
   // This must be set at the activity level (COLOR_MODE_HDR) so that mpv can output
   // PQ/BT.2020 signals to the display. Reset to default on unmount.
   const isAndroidTvHDR = Platform.isTV && Platform.OS === 'android' && useNativePlayer && hasAnyHDR;
+  const isAndroidDV = Platform.OS === 'android' && routeHasDolbyVision;
+  useEffect(() => {
+    console.log('[Player] HDR/DV routing:', { isAndroidTvHDR, isAndroidDV, routeHasDolbyVision, routeHasHDR10, hasAnyHDR, useNativePlayer, isTV: Platform.isTV });
+  }, [isAndroidTvHDR, isAndroidDV, routeHasDolbyVision, routeHasHDR10, hasAnyHDR, useNativePlayer]);
   useEffect(() => {
     if (!isAndroidTvHDR) return;
     let cancelled = false;
@@ -6286,6 +6295,7 @@ export default function PlayerScreen() {
               controlsVisible={useNativePlayer ? controlsVisible : undefined}
               externalSubtitleUrl={useNativePlayer && selectedSubtitleTrackId === 'external' ? externalSubtitleUrl ?? undefined : undefined}
               isHDR={isAndroidTvHDR || undefined}
+              isDV={isAndroidDV || undefined}
             />
           </View>
 
