@@ -280,7 +280,8 @@ function enrichWithWatchStatus<T extends { id: string; mediaType: string; percen
   watchStatusItems: WatchStatusItem[],
   continueWatchingItems?: SeriesWatchState[],
 ): (T & { isWatched?: boolean; watchState?: 'none' | 'partial' | 'complete' })[] {
-  return titles.map((title) => {
+  const enrichStart = isAndroidTV ? performance.now() : 0;
+  const result = titles.map((title) => {
     if (title.mediaType === 'movie') {
       const movieWatched = isWatched('movie', title.id);
       const percentWatched = title.percentWatched ?? 0;
@@ -343,6 +344,10 @@ function enrichWithWatchStatus<T extends { id: string; mediaType: string; percen
     }
     return title;
   });
+  if (isAndroidTV && enrichStart) {
+    console.log(`[IndexPage:Perf] enrichWithWatchStatus: ${titles.length} titles, ${watchStatusItems.length} history items → ${(performance.now() - enrichStart).toFixed(1)}ms`);
+  }
+  return result;
 }
 
 // Helper to enrich TrendingItem[] with watch status (enriches the .title property of each item)
@@ -380,6 +385,8 @@ const KILL_MOVIE_RELEASES = false;
 const KILL_CUSTOM_SHELVES = false;
 const KILL_FOCUS_REFRESH = false;
 const KILL_HERO_ENRICHMENT = false;
+const KILL_HERO_BACKGROUND_ART = false; // Full-screen backdrop
+const KILL_HERO_OVERLAY = false; // Logo, ratings, genres, year, description panel
 const DEBUG_MAX_CARDS_PER_SHELF = 0;
 const KILL_ALL_SHELVES = false;
 // === END KILL SWITCHES ===
@@ -513,6 +520,8 @@ function IndexScreen() {
       KILL_CUSTOM_SHELVES && 'CUSTOM_SHELVES',
       KILL_FOCUS_REFRESH && 'FOCUS_REFRESH',
       KILL_HERO_ENRICHMENT && 'HERO_ENRICHMENT',
+      KILL_HERO_BACKGROUND_ART && 'HERO_BACKGROUND_ART',
+      KILL_HERO_OVERLAY && 'HERO_OVERLAY',
       KILL_ALL_SHELVES && 'ALL_SHELVES',
     ].filter(Boolean);
     console.log(`[STARTUP] IndexScreen mounted, kill switches: ${kills.length > 0 ? kills.join(', ') : 'NONE'}`);
@@ -559,7 +568,7 @@ function IndexScreen() {
     isBackendReachable,
     retryCountdown,
   } = useBackendSettings();
-  const { startupData, ready: startupReady, progress: metadataProgress } = useStartupData();
+  const { startupData, ready: startupReady, progress: metadataProgress, refreshStartup } = useStartupData();
 
   // Extract hideUnreleased settings for trending shelves from settings
   const trendingMoviesHideUnreleased = useMemo(() => {
@@ -1067,6 +1076,8 @@ function IndexScreen() {
   refreshContinueWatchingRef.current = refreshContinueWatching;
   const refreshWatchlistRef = useRef(refreshWatchlist);
   refreshWatchlistRef.current = refreshWatchlist;
+  const refreshStartupRef = useRef(refreshStartup);
+  refreshStartupRef.current = refreshStartup;
 
   // Reload data when screen becomes visible (including when navigating back from details)
   // Using useEffect with focused instead of useFocusEffect because the screen stays mounted
@@ -1154,14 +1165,16 @@ function IndexScreen() {
     // Only silently refresh when RETURNING from navigation, not on initial load
     // Initial load data is already fresh from the context providers
     if (isReturnFromNavigation && !KILL_FOCUS_REFRESH) {
-      // Silently refresh continue watching and watchlist when returning from details
-      // Uses refs to avoid re-triggering this effect when function identity changes during startup
-      refreshContinueWatchingRef.current?.({ silent: true }).catch(() => {
-        // Silent refresh failed - not critical
-      });
-
-      refreshWatchlistRef.current?.({ silent: true }).catch(() => {
-        // Silent refresh failed - not critical
+      // Refresh via startup bundle (single request) with fallback to individual refreshes
+      refreshStartupRef.current?.().then((ok) => {
+        if (!ok) {
+          // Startup refresh failed — fall back to individual refreshes
+          refreshContinueWatchingRef.current?.({ silent: true }).catch(() => {});
+          refreshWatchlistRef.current?.({ silent: true }).catch(() => {});
+        }
+      }).catch(() => {
+        refreshContinueWatchingRef.current?.({ silent: true }).catch(() => {});
+        refreshWatchlistRef.current?.({ silent: true }).catch(() => {});
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally omit card arrays, settings, and refresh refs to prevent re-triggering on startup state changes
@@ -1230,6 +1243,7 @@ function IndexScreen() {
   const { releases: movieReleases, hasRelease: hasMovieRelease, queueReleaseFetch } = useMovieReleases();
 
   const watchlistCards = useMemo(() => {
+    const memoStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
       console.log(
         `[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`,
@@ -1244,6 +1258,9 @@ function IndexScreen() {
       : enrichedItems;
     const allCards = mapTrendingToCards(filteredItems, movieReleases);
     const knownTotal = startupData?.watchlistTotal ?? allCards.length;
+    if (isAndroidTV) {
+      console.log(`[IndexPage:Perf] watchlistCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
+    }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
@@ -1252,6 +1269,7 @@ function IndexScreen() {
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
   }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems, hideWatched, startupData?.watchlistTotal]);
   const continueWatchingCards = useMemo(() => {
+    const memoStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
       console.log(
         `[IndexPage] useMemo: continueWatchingCards recomputing (${continueWatchingItems?.length ?? 0} items, ${seriesOverviews.size} overviews)`,
@@ -1259,6 +1277,9 @@ function IndexScreen() {
     }
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
     const knownTotal = startupData?.continueWatchingTotal ?? allCards.length;
+    if (isAndroidTV) {
+      console.log(`[IndexPage:Perf] continueWatchingCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
+    }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
@@ -1310,6 +1331,7 @@ function IndexScreen() {
           try {
             const batchResponse = await apiService.batchSeriesDetails(
               queriesToFetch.map((q) => ({ tvdbId: q.tvdbId, tmdbId: q.tmdbId, titleId: q.titleId, name: q.name, year: q.year })),
+              ['overview'],
             );
             for (let i = 0; i < batchResponse.results.length; i++) {
               const result = batchResponse.results[i];
@@ -1357,6 +1379,7 @@ function IndexScreen() {
           try {
             const batchResponse = await apiService.batchSeriesDetails(
               seriesToFetch.map((q) => ({ tvdbId: q.tvdbId, tmdbId: q.tmdbId, name: q.name })),
+              ['year'],
             );
             for (let i = 0; i < batchResponse.results.length; i++) {
               const result = batchResponse.results[i];
@@ -1503,10 +1526,14 @@ function IndexScreen() {
   ]);
 
   const trendingMovieCards = useMemo(() => {
+    const memoStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
       console.log(`[IndexPage] useMemo: trendingMovieCards recomputing (${trendingMovies?.length ?? 0} items)`);
     }
     const allCards = mapTrendingToCards(trendingMovies ?? undefined, movieReleases);
+    if (isAndroidTV) {
+      console.log(`[IndexPage:Perf] trendingMovieCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
+    }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
@@ -1516,10 +1543,14 @@ function IndexScreen() {
   }, [trendingMovies, movieReleases, exploreCardPosition]);
 
   const trendingShowCards = useMemo(() => {
+    const memoStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
       console.log(`[IndexPage] useMemo: trendingShowCards recomputing (${trendingTVShows?.length ?? 0} items)`);
     }
     const allCards = mapTrendingToCards(trendingTVShows ?? undefined);
+    if (isAndroidTV) {
+      console.log(`[IndexPage:Perf] trendingShowCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
+    }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
@@ -1975,12 +2006,16 @@ function IndexScreen() {
         }).slice(0, 3);
 
         // Pick an alternate backdrop different from what the card already shows
+        // Skip on Android TV — instant swap causes a jarring double-load
         const cardBackdrop = focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage;
-        const allBackdrops = [
-          ...(title.backdrops ?? []),
-          ...(title.backdrop ? [title.backdrop] : []),
-        ];
-        const alternateBackdrop = allBackdrops.find((b) => b.url !== cardBackdrop)?.url;
+        let alternateBackdrop: string | undefined;
+        if (!isAndroidTV) {
+          const allBackdrops = [
+            ...(title.backdrops ?? []),
+            ...(title.backdrop ? [title.backdrop] : []),
+          ];
+          alternateBackdrop = allBackdrops.find((b) => b.url !== cardBackdrop)?.url;
+        }
 
         const enriched: EnrichedHeroData = {
           logoUrl: title.logo?.url,
@@ -2022,7 +2057,7 @@ function IndexScreen() {
     if (enrichedLoading || !focusedDesktopCard) {
       heroContentOpacity.value = 0; // Instant hide — no animation delay
     } else {
-      heroContentOpacity.value = withTiming(1, { duration: 300 });
+      heroContentOpacity.value = isAndroidTV ? 1 : withTiming(1, { duration: 300 });
     }
   }, [enrichedLoading, focusedDesktopCard]);
 
@@ -2377,13 +2412,14 @@ function IndexScreen() {
       }
 
       const debounceMs = isAndroidTV
-        ? (isVertical ? 400 : 100)  // Vertical: defer past scroll animation; Horizontal: quick
+        ? 400  // Wait for navigation to settle before swapping hero content
         : 350;
 
-      // Fade out over the debounce period — invisible by the time content swaps
-      heroContentOpacity.value = withTiming(0, { duration: debounceMs });
+      // Fade out while navigating — skip on Android TV to keep old content visible until swap
+      if (!isAndroidTV) {
+        heroContentOpacity.value = withTiming(0, { duration: debounceMs });
+      }
       focusDebounceRef.current = setTimeout(() => {
-        // Batch both updates in same render so content swaps while invisible
         setEnrichedHeroState((prev) => ({ ...prev, loading: true }));
         setFocusedDesktopCard(card);
       }, debounceMs);
@@ -2419,6 +2455,7 @@ function IndexScreen() {
     // Skip computation for mobile layout
     if (shouldUseMobileLayout) return [];
     if (KILL_ALL_SHELVES) { console.log('[KILL] All shelves disabled'); return []; }
+    const shelfBuildStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
       console.log(
         `[IndexPage] useMemo: desktopShelves recomputing - CW:${continueWatchingCards.length} WL:${watchlistCards.length} TM:${trendingMovieCards.length} TS:${trendingShowCards.length}`,
@@ -2521,6 +2558,13 @@ function IndexScreen() {
 
     if (DEBUG_MAX_CARDS_PER_SHELF > 0) {
       console.log(`[DEBUG] Card cap: ${DEBUG_MAX_CARDS_PER_SHELF}/shelf, shelves: ${shelves.map(s => `${s.key}(${s.cards.length})`).join(', ')}`);
+    }
+    if (isAndroidTV && shelfBuildStart) {
+      const totalCards = shelves.reduce((sum, s) => sum + s.cards.length, 0);
+      console.log(
+        `[IndexPage:Perf] desktopShelves assembled: ${shelves.length} shelves, ${totalCards} total cards in ${(performance.now() - shelfBuildStart).toFixed(1)}ms — ` +
+        shelves.map(s => `${s.key}:${s.cards.length}`).join(', ')
+      );
     }
     return shelves;
   }, [
@@ -2797,53 +2841,74 @@ function IndexScreen() {
       accessibilityElementsHidden={isMenuOpen}
       importantForAccessibility={isMenuOpen ? 'no-hide-descendants' : 'auto'}>
       {/* Full-screen background art for TV — crossfades as user navigates between items */}
-      {Platform.isTV && focusedDesktopCard && (
+      {!KILL_HERO_BACKGROUND_ART && Platform.isTV && focusedDesktopCard && (
         <View style={desktopStyles?.styles.tvBackgroundArt} pointerEvents="none">
-          <Animated.View style={[StyleSheet.absoluteFill, heroContentAnimStyle]}>
-            <Image
-              source={enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage}
+          {isAndroidTV ? (
+            <RNImage
+              source={{ uri: enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage }}
               style={StyleSheet.absoluteFill}
-              contentFit="cover"
-              transition={500}
+              resizeMode="cover"
+              fadeDuration={300}
             />
-          </Animated.View>
-          {/* Bottom fade to background base — kept outside animated view so edges stay smooth during transitions */}
-          <LinearGradient
-            colors={['transparent', 'rgba(11,11,15,0.1)', 'rgba(11,11,15,0.45)', '#0b0b0f']}
-            locations={[0, 0.6, 0.85, 1]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={desktopStyles?.styles.tvBackgroundOverlay}
-          />
-          {/* Left edge fade — horizontal base layer */}
-          <LinearGradient
-            colors={['#0b0b0f', 'rgba(11,11,15,0.5)', 'rgba(11,11,15,0.15)', 'rgba(11,11,15,0.03)', 'transparent']}
-            locations={[0, 0.12, 0.35, 0.6, 1.0]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={desktopStyles?.styles.tvBackgroundOverlay}
-          />
-          {/* Top-left corner fade */}
-          <LinearGradient
-            colors={['#0b0b0f', 'rgba(11,11,15,0.6)', 'rgba(11,11,15,0.15)', 'transparent']}
-            locations={[0, 0.2, 0.45, 0.75]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0.6, y: 0.6 }}
-            style={desktopStyles?.styles.tvBackgroundOverlay}
-          />
-          {/* Bottom-left corner fade */}
-          <LinearGradient
-            colors={['#0b0b0f', 'rgba(11,11,15,0.7)', 'rgba(11,11,15,0.25)', 'rgba(11,11,15,0.05)', 'transparent']}
-            locations={[0, 0.15, 0.4, 0.6, 0.85]}
-            start={{ x: 0, y: 1 }}
-            end={{ x: 0.55, y: 0 }}
-            style={desktopStyles?.styles.tvBackgroundOverlay}
-          />
+          ) : (
+            <Animated.View style={[StyleSheet.absoluteFill, heroContentAnimStyle]}>
+              <Image
+                source={enrichedHeroData?.backdropUrl || focusedDesktopCard.backdropUrl || focusedDesktopCard.headerImage}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={500}
+              />
+            </Animated.View>
+          )}
+          {/* Gradient overlays — Android TV uses a single baked PNG (1 layer vs 4 live gradients) */}
+          {isAndroidTV ? (
+            <RNImage
+              source={require('@/assets/images/hero-gradient-overlay.png')}
+              style={StyleSheet.absoluteFill}
+              resizeMode="stretch"
+              fadeDuration={0}
+            />
+          ) : (
+            <>
+              {/* Bottom fade to background base */}
+              <LinearGradient
+                colors={['transparent', 'rgba(11,11,15,0.1)', 'rgba(11,11,15,0.45)', '#0b0b0f']}
+                locations={[0, 0.6, 0.85, 1]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={desktopStyles?.styles.tvBackgroundOverlay}
+              />
+              {/* Left edge fade */}
+              <LinearGradient
+                colors={['#0b0b0f', 'rgba(11,11,15,0.5)', 'rgba(11,11,15,0.15)', 'rgba(11,11,15,0.03)', 'transparent']}
+                locations={[0, 0.12, 0.35, 0.6, 1.0]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={desktopStyles?.styles.tvBackgroundOverlay}
+              />
+              {/* Top-left corner fade */}
+              <LinearGradient
+                colors={['#0b0b0f', 'rgba(11,11,15,0.6)', 'rgba(11,11,15,0.15)', 'transparent']}
+                locations={[0, 0.2, 0.45, 0.75]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0.6, y: 0.6 }}
+                style={desktopStyles?.styles.tvBackgroundOverlay}
+              />
+              {/* Bottom-left corner fade */}
+              <LinearGradient
+                colors={['#0b0b0f', 'rgba(11,11,15,0.7)', 'rgba(11,11,15,0.25)', 'rgba(11,11,15,0.05)', 'transparent']}
+                locations={[0, 0.15, 0.4, 0.6, 0.85]}
+                start={{ x: 0, y: 1 }}
+                end={{ x: 0.55, y: 0 }}
+                style={desktopStyles?.styles.tvBackgroundOverlay}
+              />
+            </>
+          )}
         </View>
       )}
       {Platform.isTV && (
         <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
-          {focusedDesktopCard && (
+          {!KILL_HERO_OVERLAY && focusedDesktopCard && (
             <Animated.View style={[desktopStyles?.styles.tvHeroOverview, heroContentAnimStyle]}>
               <View style={desktopStyles?.styles.tvHeroOverviewBg}>
                 {/* Logo or title text */}
