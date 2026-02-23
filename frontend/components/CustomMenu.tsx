@@ -14,7 +14,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
+import { InteractionManager, Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
 import { exitApp } from 'app-exit';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,6 +40,8 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
   const slideAnim = useRef(new Animated.Value(isVisible ? 0 : -MENU_WIDTH)).current;
   const [isAnimatedHidden, setIsAnimatedHidden] = useState(!isVisible);
+  // When true, skip the close animation in the visibility effect (TV nav already handled it)
+  const skipCloseAnimRef = useRef(false);
 
   // Backend is considered available if reachable OR still loading initially
   const isBackendAvailable = isBackendReachable || (settingsLoading && !settingsReady);
@@ -71,6 +73,11 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   React.useEffect(() => {
     if (isVisible) {
       setIsAnimatedHidden(false);
+      skipCloseAnimRef.current = false;
+    } else if (skipCloseAnimRef.current) {
+      // TV navigation already hid the menu synchronously — skip redundant animation
+      skipCloseAnimRef.current = false;
+      return;
     }
     Animated.timing(slideAnim, {
       toValue: isVisible ? 0 : -MENU_WIDTH,
@@ -110,12 +117,18 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
       // Fabric race condition where animation and navigation both modify view hierarchy
       if (isTV) {
         setIsAnimatedHidden(true);
+        slideAnim.stopAnimation();
         slideAnim.setValue(-MENU_WIDTH);
+        skipCloseAnimRef.current = true;
         onClose();
-        // Delay navigation slightly to let the view hierarchy settle
-        setTimeout(() => {
-          router.replace(routeName as any);
-        }, 50);
+        // Wait for Fabric to finish committing the menu removal before navigating.
+        // InteractionManager waits for animations/layout to settle, then the extra
+        // frame via requestAnimationFrame ensures the native view tree is stable.
+        InteractionManager.runAfterInteractions(() => {
+          requestAnimationFrame(() => {
+            router.replace(routeName as any);
+          });
+        });
       } else {
         onClose();
         router.replace(routeName as any);
