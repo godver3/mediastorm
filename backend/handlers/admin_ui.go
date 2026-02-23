@@ -1328,7 +1328,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"episode_name":   episodeName,
 				"externalIds":    externalIDs,
 			}
-			if hlsIsPaused {
+			if hlsIsPaused || (matchedProgress != nil && matchedProgress.IsPaused) {
 				hlsStreamData["is_paused"] = true
 			}
 			if matchedProgress != nil {
@@ -1405,7 +1405,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"episode_name":   episodeName,
 			"externalIds":    externalIDs,
 		}
-		if isPaused {
+		if isPaused || (matchedProgress != nil && matchedProgress.IsPaused) {
 			streamData["is_paused"] = true
 		}
 		if matchedProgress != nil {

@@ -1039,7 +1039,7 @@
     let interpolationTimer = null;
     let sseRetryTimer = null;
     let fallbackPollTimer = null;
-    let streamInterpolationState = new Map(); // streamId -> { position, percent, duration, isPaused, lastUpdated, receivedAt }
+    let streamInterpolationState = new Map(); // streamId -> { position, percent, duration, isPaused, lastUpdated, serverTime, receivedAt }
 
     function handleStreamUpdate(data) {
         const streams = data.streams || [];
@@ -1053,17 +1053,25 @@
 
         cachedStreams = streams;
 
+        // Track which streams changed pause state for dynamic UI update
+        const pauseChanged = [];
+
         // Rebuild interpolation state
         streamInterpolationState.clear();
         for (const stream of streams) {
             const sid = stream.id;
             if (!sid) continue;
             const lastUpdated = stream.last_updated ? new Date(stream.last_updated).getTime() : serverTime;
+            const isPaused = stream.is_paused || false;
+            const position = stream.current_position || 0;
+
+            pauseChanged.push({ sid, isPaused });
+
             streamInterpolationState.set(sid, {
-                position: stream.current_position || 0,
+                position: position,
                 percent: stream.percent_watched || 0,
                 duration: stream.duration || 0,
-                isPaused: stream.is_paused || false,
+                isPaused: isPaused,
                 lastUpdated: lastUpdated,
                 serverTime: serverTime,
                 receivedAt: receivedAt
@@ -1088,6 +1096,55 @@
         // Only full re-render when streams added/removed; otherwise interpolation handles display
         if (setChanged) {
             renderStreams(streams);
+        }
+
+        // Apply pause state to DOM (after any re-render so it isn't overwritten)
+        for (const { sid, isPaused } of pauseChanged) {
+            applyPausedState(sid, isPaused);
+        }
+    }
+
+    function applyPausedState(streamId, isPaused) {
+        // Card view
+        const card = document.querySelector(`.stream-card[data-stream-id="${streamId}"]`);
+        if (card) {
+            if (isPaused) {
+                card.classList.add('paused');
+                // Add PAUSED badge if not present
+                const badges = card.querySelector('.stream-card-badges');
+                if (badges && !badges.querySelector('.stream-card-badge.paused')) {
+                    badges.insertAdjacentHTML('afterbegin', '<span class="stream-card-badge paused">PAUSED</span>');
+                }
+                // Dim the live badge
+                const liveBadge = card.querySelector('.stream-card-live-badge');
+                if (liveBadge) liveBadge.style.background = 'rgba(156, 163, 175, 0.9)';
+            } else {
+                card.classList.remove('paused');
+                const pausedBadge = card.querySelector('.stream-card-badge.paused');
+                if (pausedBadge) pausedBadge.remove();
+                const liveBadge = card.querySelector('.stream-card-live-badge');
+                if (liveBadge) liveBadge.style.background = '';
+            }
+        }
+
+        // Table view
+        const row = document.querySelector(`tr[data-stream-id="${streamId}"]`);
+        if (row) {
+            row.style.opacity = isPaused ? '0.6' : '';
+            const statusCell = row.querySelector('.status-badge');
+            if (statusCell) {
+                if (isPaused) {
+                    statusCell.className = 'status-badge';
+                    statusCell.style.background = 'rgba(156, 163, 175, 0.1)';
+                    statusCell.style.color = '#9ca3af';
+                    statusCell.textContent = 'Paused';
+                } else {
+                    statusCell.className = 'status-badge online';
+                    statusCell.style.background = '';
+                    statusCell.style.color = '';
+                    statusCell.textContent = 'Playing';
+                }
+            }
         }
     }
 
@@ -1122,7 +1179,14 @@
 
     function interpolateTick() {
         for (const [streamId, state] of streamInterpolationState) {
-            if (state.isPaused || !state.duration || state.duration <= 0) continue;
+            if (!state.duration || state.duration <= 0) continue;
+
+            if (state.isPaused) {
+                // Show actual server position without interpolation
+                const percent = (state.position / state.duration) * 100;
+                updateStreamDisplay(streamId, state.position, percent, state.duration);
+                continue;
+            }
 
             // How stale position was when server sent it
             const serverLag = Math.max(0, (state.serverTime - state.lastUpdated) / 1000);

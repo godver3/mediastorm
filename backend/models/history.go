@@ -91,6 +91,7 @@ type PlaybackProgressUpdate struct {
 	Position      float64           `json:"position"`     // Current playback position in seconds
 	Duration      float64           `json:"duration"`     // Total duration in seconds
 	Timestamp     time.Time         `json:"timestamp"`    // When this update was sent
+	IsPaused      bool              `json:"isPaused"`     // Whether playback is currently paused
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields
@@ -114,6 +115,7 @@ type PlaybackProgress struct {
 	Duration      float64           `json:"duration"`     // Total duration in seconds
 	PercentWatched float64          `json:"percentWatched"` // Position/Duration * 100
 	UpdatedAt     time.Time         `json:"updatedAt"`    // Last update time
+	IsPaused      bool              `json:"isPaused"`     // Whether playback is currently paused
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields

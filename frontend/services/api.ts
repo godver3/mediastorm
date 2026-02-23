@@ -648,6 +648,7 @@ export interface PlaybackProgressUpdate {
   position: number;
   duration: number;
   timestamp?: string;
+  isPaused?: boolean;
   externalIds?: Record<string, string>;
   // Episode-specific fields
   seasonNumber?: number;
