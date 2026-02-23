@@ -190,6 +190,7 @@ export const EPGGrid = ({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        scrollEnabled={!isTV}
         style={styles.tableScroll}>
 
         {/* Table content */}
@@ -209,8 +210,9 @@ export const EPGGrid = ({
             </View>
           </View>
 
-          {/* Vertical scroll for channel rows */}
-          <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} style={styles.bodyScroll}>
+          {/* Vertical scroll for channel rows - scrollEnabled=false on TV to prevent
+              native D-pad scroll from interfering with spatial navigation */}
+          <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} scrollEnabled={!isTV} style={styles.bodyScroll}>
             {isTV ? (
               <SpatialNavigationNode orientation="vertical">
                 {channels.map((channel) => (
@@ -358,7 +360,11 @@ const EPGRow = React.memo(function EPGRow({
 
   if (isTV) {
     return (
-      <SpatialNavigationFocusableView onSelect={onPress} onFocus={onFocus}>
+      <SpatialNavigationFocusableView
+        onSelect={onPress}
+        onFocus={onFocus}
+        viewProps={{ accessible: false, importantForAccessibility: 'no' as const }}
+      >
         {({ isFocused }: { isFocused: boolean }) => (
           <View ref={rowRef} style={[styles.row, isFocused && styles.rowFocused]}>
             {rowContent}
