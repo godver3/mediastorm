@@ -474,6 +474,7 @@ func main() {
 	adminUIHandler.SetSessionsService(sessionsService)
 	adminUIHandler.SetClientsService(clientsService)
 	adminUIHandler.SetClientSettingsService(clientSettingsService)
+	adminUIHandler.SetCalendarService(calendarService)
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
@@ -490,6 +491,8 @@ func main() {
 	r.HandleFunc("/admin/search", adminUIHandler.RequireAuth(adminUIHandler.SearchPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/calendar", adminUIHandler.RequireAuth(adminUIHandler.CalendarPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/calendar", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarData)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
@@ -680,6 +683,8 @@ func main() {
 	r.HandleFunc("/account/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet) // Shows as "Profiles" for non-admin
 	r.HandleFunc("/account/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/calendar", adminUIHandler.RequireAuth(adminUIHandler.CalendarPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/calendar", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarData)).Methods(http.MethodGet)
 
 	// Protected account routes - Status APIs
 	r.HandleFunc("/account/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)

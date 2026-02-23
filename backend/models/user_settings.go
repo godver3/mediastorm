@@ -37,10 +37,23 @@ type UserSettings struct {
 // CalendarSettings controls which content sources populate the calendar.
 // All sources are enabled by default.
 type CalendarSettings struct {
-	Watchlist *bool `json:"watchlist,omitempty"` // Include series episodes & movie releases from watchlist
-	History   *bool `json:"history,omitempty"`   // Include upcoming episodes for series being watched
-	Trending  *bool `json:"trending,omitempty"`  // Include upcoming content from trending lists
-	MDBList   *bool `json:"mdblist,omitempty"`   // Include content from custom MDBList shelves
+	Watchlist      *bool           `json:"watchlist,omitempty"`      // Include series episodes & movie releases from watchlist
+	History        *bool           `json:"history,omitempty"`        // Include upcoming episodes for series being watched
+	Trending       *bool           `json:"trending,omitempty"`       // Include upcoming content from trending lists
+	MDBListShelves map[string]bool `json:"mdblistShelves,omitempty"` // Per-shelf calendar enable: shelf ID -> enabled (nil = all enabled)
+}
+
+// MDBListShelfEnabled returns whether a specific MDBList shelf is enabled for the calendar.
+// If MDBListShelves is nil (unset), all shelves are enabled by default.
+func (c CalendarSettings) MDBListShelfEnabled(shelfID string) bool {
+	if c.MDBListShelves == nil {
+		return true
+	}
+	enabled, ok := c.MDBListShelves[shelfID]
+	if !ok {
+		return true // shelves not in the map default to enabled
+	}
+	return enabled
 }
 
 // NetworkSettings configures network-aware backend URL switching.
@@ -278,7 +291,6 @@ func DefaultUserSettings() UserSettings {
 			Watchlist: BoolPtr(true),
 			History:   BoolPtr(true),
 			Trending:  BoolPtr(true),
-			MDBList:   BoolPtr(true),
 		},
 	}
 }

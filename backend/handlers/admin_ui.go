@@ -26,6 +26,7 @@ import (
 	"novastream/internal/auth"
 	"novastream/models"
 	"novastream/services/accounts"
+	"novastream/services/calendar"
 	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/invitations"
@@ -781,6 +782,7 @@ type AdminUIHandler struct {
 	accountsTemplate      *template.Template
 	kidsSettingsTemplate  *template.Template
 	backupTemplate        *template.Template
+	calendarTemplate      *template.Template
 	settingsPath          string
 	hlsManager            *HLSManager
 	usersService          *users.Service
@@ -794,6 +796,7 @@ type AdminUIHandler struct {
 	traktClient           *trakt.Client
 	configManager         *config.Manager
 	metadataService       MetadataService
+	calendarService       *calendar.Service
 	clientsService        clientsService
 	clientSettingsService clientSettingsService
 }
@@ -845,6 +848,11 @@ func (h *AdminUIHandler) SetClientsService(cs clientsService) {
 // SetClientSettingsService sets the client settings service for propagation
 func (h *AdminUIHandler) SetClientSettingsService(css clientSettingsService) {
 	h.clientSettingsService = css
+}
+
+// SetCalendarService sets the calendar service for the calendar admin page
+func (h *AdminUIHandler) SetCalendarService(cs *calendar.Service) {
+	h.calendarService = cs
 }
 
 // NewAdminUIHandler creates a new admin UI handler
@@ -981,6 +989,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		accountsTemplate:     createPageTemplate("accounts.html"),
 		kidsSettingsTemplate: createPageTemplate("kids_settings.html"),
 		backupTemplate:       createPageTemplate("backup.html"),
+		calendarTemplate:     createPageTemplate("calendar.html"),
 		settingsPath:         settingsPath,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
@@ -4570,6 +4579,132 @@ func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Backup template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// CalendarPage serves the calendar admin page
+func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	usersList := h.getScopedUsers(isAdmin, accountID)
+	noProfiles := !isAdmin && len(usersList) == 0
+
+	// Load global settings to get MDBList shelves for the calendar sources panel
+	mgr := config.NewManager(h.settingsPath)
+	settings, _ := mgr.Load()
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/calendar",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Users:       usersList,
+		Settings:    settings,
+		Version:     GetBackendVersion(),
+		NoProfiles:  noProfiles,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.calendarTemplate == nil {
+		http.Error(w, "Calendar template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.calendarTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Calendar template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// GetCalendarData returns calendar data for a user as JSON.
+// Query params: user (userID), tz (timezone), days (int), source (filter).
+func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("user"))
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "user query parameter required"})
+		return
+	}
+
+	if h.calendarService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "calendar service not available"})
+		return
+	}
+
+	// Parse timezone
+	tzName := strings.TrimSpace(r.URL.Query().Get("tz"))
+	loc := time.UTC
+	if tzName != "" {
+		parsed, err := time.LoadLocation(tzName)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid timezone: " + tzName})
+			return
+		}
+		loc = parsed
+	}
+
+	// Parse days
+	days := 30
+	if daysStr := r.URL.Query().Get("days"); daysStr != "" {
+		if parsed, err := strconv.Atoi(daysStr); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	if days > 90 {
+		days = 90
+	}
+
+	// Parse source filter
+	sourceFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("source")))
+
+	cached := h.calendarService.Get(userID)
+	if cached == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(models.CalendarResponse{
+			Items:    []models.CalendarItem{},
+			Total:    0,
+			Timezone: loc.String(),
+			Days:     days,
+		})
+		return
+	}
+
+	nowInTZ := time.Now().In(loc)
+	todayStart := time.Date(nowInTZ.Year(), nowInTZ.Month(), nowInTZ.Day(), 0, 0, 0, 0, loc)
+	cutoff := todayStart.AddDate(0, 0, days)
+
+	var result []models.CalendarItem
+	for _, item := range cached.Items {
+		if sourceFilter != "" && item.Source != sourceFilter {
+			continue
+		}
+		airDate, err := time.Parse("2006-01-02", item.AirDate)
+		if err != nil {
+			continue
+		}
+		airInTZ := airDate.In(loc)
+		if airInTZ.Before(todayStart) || airInTZ.After(cutoff) {
+			continue
+		}
+		adjusted := item
+		adjusted.AirDate = airInTZ.Format("2006-01-02")
+		result = append(result, adjusted)
+	}
+	if result == nil {
+		result = []models.CalendarItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models.CalendarResponse{
+		Items:       result,
+		Total:       len(result),
+		Timezone:    loc.String(),
+		Days:        days,
+		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
+	})
 }
 
 // PlexCreatePIN creates a new Plex OAuth PIN

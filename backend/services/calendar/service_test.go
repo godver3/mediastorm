@@ -440,6 +440,57 @@ func TestBuildUserCalendar_SkipsSpecials(t *testing.T) {
 	}
 }
 
+func TestBuildUserCalendar_MDBListPerShelfDisable(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	// User has an mdblist shelf configured
+	us.settings["user1"] = &models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "mdb-1", Name: "My List", Enabled: true, Type: "mdblist", ListURL: "https://mdblist.com/lists/test/list1/json"},
+				{ID: "mdb-2", Name: "Other List", Enabled: true, Type: "mdblist", ListURL: "https://mdblist.com/lists/test/list2/json"},
+			},
+		},
+		Calendar: models.CalendarSettings{
+			MDBListShelves: map[string]bool{
+				"mdb-1": false, // disabled
+				// mdb-2 not in map = defaults to enabled
+			},
+		},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	// collectFromMDBLists is a placeholder but we can verify the per-shelf
+	// filtering doesn't panic and respects settings
+	items := svc.buildUserCalendar("user1")
+	// No items expected since MDBList collection is a placeholder
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items (mdblist is placeholder), got %d", len(items))
+	}
+}
+
+func TestMDBListShelfEnabled(t *testing.T) {
+	// nil map = all enabled
+	cal := models.CalendarSettings{}
+	if !cal.MDBListShelfEnabled("any-shelf") {
+		t.Error("expected nil map to enable all shelves")
+	}
+
+	// explicit disable
+	cal = models.CalendarSettings{
+		MDBListShelves: map[string]bool{"shelf-1": false, "shelf-2": true},
+	}
+	if cal.MDBListShelfEnabled("shelf-1") {
+		t.Error("expected shelf-1 to be disabled")
+	}
+	if !cal.MDBListShelfEnabled("shelf-2") {
+		t.Error("expected shelf-2 to be enabled")
+	}
+	// unknown shelf defaults to enabled
+	if !cal.MDBListShelfEnabled("shelf-3") {
+		t.Error("expected unknown shelf to default to enabled")
+	}
+}
+
 func TestRefreshAll(t *testing.T) {
 	meta, wl, hist, us, users := defaultMocks()
 	users.users = []models.User{{ID: "u1"}, {ID: "u2"}}

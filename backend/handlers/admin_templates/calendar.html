@@ -1,0 +1,477 @@
+{{template "base" .}}
+
+{{define "title"}}Calendar - {{if .IsAdmin}}strmr Admin{{else}}strmr account{{end}}{{end}}
+
+{{define "content"}}
+{{if .NoProfiles}}
+<div class="page-header">
+    <h1>Calendar</h1>
+    <p>Upcoming episodes and movie releases</p>
+</div>
+<div class="card" style="margin-top: 2rem;">
+    <div class="card-body" style="text-align: center; padding: 3rem;">
+        <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        <h2 style="margin-bottom: 0.5rem;">No Profiles</h2>
+        <p style="color: var(--text-muted); margin-bottom: 1.5rem;">You don't have any profiles associated with your account yet. Create a profile to view this page.</p>
+    </div>
+</div>
+{{else}}
+<div class="page-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+    <div>
+        <h1>Calendar</h1>
+        <p>Upcoming episodes and movie releases from your sources</p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+        <select id="profileSelect" class="form-select" style="min-width: 200px;" onchange="loadCalendar()">
+            {{range .Users}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+        </select>
+        <select id="daysSelect" class="form-select" style="min-width: 120px;" onchange="loadCalendar()">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+        </select>
+        <button class="btn btn-secondary" onclick="loadCalendar()">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="1 4 1 10 7 10"/>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-4" style="margin-bottom: 1.5rem;">
+    <div class="stat-card">
+        <div class="stat-label">Total Items</div>
+        <div class="stat-value" id="totalItems">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Episodes</div>
+        <div class="stat-value" id="episodeCount">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Movie Releases</div>
+        <div class="stat-value" id="movieCount">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Last Refreshed</div>
+        <div class="stat-value" id="lastRefreshed" style="font-size: 1rem;">-</div>
+    </div>
+</div>
+
+<!-- Source Filter -->
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+    <button class="btn btn-primary source-btn active" data-source="all" onclick="filterSource('all', this)">All</button>
+    <button class="btn btn-secondary source-btn" data-source="watchlist" onclick="filterSource('watchlist', this)">Watchlist</button>
+    <button class="btn btn-secondary source-btn" data-source="history" onclick="filterSource('history', this)">Continue Watching</button>
+    <button class="btn btn-secondary source-btn" data-source="trending" onclick="filterSource('trending', this)">Trending</button>
+    <button class="btn btn-secondary source-btn" data-source="mdblist" onclick="filterSource('mdblist', this)">MDBList</button>
+</div>
+
+<!-- Calendar Settings -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header" style="cursor: pointer;" onclick="toggleSettingsPanel()">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            Calendar Sources
+        </h2>
+        <svg id="settingsChevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--text-muted); transition: transform 0.2s;">
+            <polyline points="6 9 12 15 18 9"/>
+        </svg>
+    </div>
+    <div id="settingsPanel" class="card-body" style="display: none; border-top: 1px solid var(--border);">
+        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;">Choose which sources populate this profile's calendar. Changes are saved automatically.</p>
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
+                <div>
+                    <div style="font-weight: 500;">Watchlist</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming episodes &amp; movie releases from your watchlist</div>
+                </div>
+                <input type="checkbox" id="srcWatchlist" checked onchange="saveCalendarSettings()">
+            </label>
+            <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
+                <div>
+                    <div style="font-weight: 500;">Continue Watching</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming episodes for series you're currently watching</div>
+                </div>
+                <input type="checkbox" id="srcHistory" checked onchange="saveCalendarSettings()">
+            </label>
+            <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
+                <div>
+                    <div style="font-weight: 500;">Trending</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming content from trending movies and series</div>
+                </div>
+                <input type="checkbox" id="srcTrending" checked onchange="saveCalendarSettings()">
+            </label>
+            <!-- MDBList per-shelf toggles (dynamically populated) -->
+            <div id="mdblistShelvesContainer"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Calendar Content -->
+<div class="card">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            Upcoming
+        </h2>
+        <div id="calendarCount" style="color: var(--text-muted); font-size: 0.875rem;">-</div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div id="calendarContainer">
+            <div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);">
+                <div class="spinner" style="margin-right: 0.5rem;"></div>
+                Loading calendar...
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "scripts"}}
+{{if not .NoProfiles}}
+<script>
+    let calendarData = [];
+    let currentSource = 'all';
+    let userSettings = null;
+
+    // Global MDBList shelves from server config (injected at page load)
+    const globalMDBListShelves = [
+        {{range .Settings.HomeShelves.Shelves}}{{if eq .Type "mdblist"}}{{if .Enabled}}
+        { id: {{.ID | json}}, name: {{.Name | json}} },
+        {{end}}{{end}}{{end}}
+    ];
+
+    function getSelectedProfile() {
+        return document.getElementById('profileSelect').value;
+    }
+
+    function getSelectedDays() {
+        return document.getElementById('daysSelect').value;
+    }
+
+    function getBasePath() {
+        // Detect whether we're on /admin or /account
+        const path = window.location.pathname;
+        if (path.startsWith('/account')) return '/account';
+        return '/admin';
+    }
+
+    function formatRelativeDate(dateStr) {
+        const date = new Date(dateStr + 'T00:00:00');
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        const diffDays = Math.round((target - today) / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 0) return 'Today';
+        if (diffDays === 1) return 'Tomorrow';
+        if (diffDays < 7) return date.toLocaleDateString('en-US', { weekday: 'long' });
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    function formatDate(dateStr) {
+        const date = new Date(dateStr + 'T00:00:00');
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function sourceBadge(source) {
+        const colors = {
+            watchlist: 'background: rgba(34, 197, 94, 0.1); color: var(--success);',
+            history: 'background: rgba(99, 102, 241, 0.1); color: var(--accent);',
+            trending: 'background: rgba(245, 158, 11, 0.1); color: var(--warning);',
+            mdblist: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;',
+        };
+        const style = colors[source] || 'background: var(--bg-tertiary); color: var(--text-muted);';
+        return '<span class="status-badge" style="' + style + '">' + source + '</span>';
+    }
+
+    function releaseTypeBadge(type) {
+        if (!type) return '';
+        const labels = {
+            theatrical: 'Theatrical',
+            digital: 'Digital',
+            physical: 'Physical',
+            premiere: 'Premiere',
+            tv: 'TV',
+        };
+        return ' <span class="status-badge" style="background: var(--bg-tertiary); color: var(--text-muted); font-size: 0.6875rem;">' + (labels[type] || type) + '</span>';
+    }
+
+    function toggleSettingsPanel() {
+        const panel = document.getElementById('settingsPanel');
+        const chevron = document.getElementById('settingsChevron');
+        const isHidden = panel.style.display === 'none';
+        panel.style.display = isHidden ? 'block' : 'none';
+        chevron.style.transform = isHidden ? 'rotate(180deg)' : '';
+    }
+
+    function filterSource(source, btn) {
+        currentSource = source;
+        document.querySelectorAll('.source-btn').forEach(b => {
+            b.classList.remove('btn-primary', 'active');
+            b.classList.add('btn-secondary');
+        });
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary', 'active');
+        renderCalendar();
+    }
+
+    function renderCalendar() {
+        const container = document.getElementById('calendarContainer');
+        const countEl = document.getElementById('calendarCount');
+
+        // Filter by source
+        const filtered = currentSource === 'all'
+            ? calendarData
+            : calendarData.filter(item => item.source === currentSource);
+
+        countEl.textContent = filtered.length + ' items';
+
+        if (filtered.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--text-muted);">' +
+                '<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;">' +
+                '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' +
+                '</svg><p>No upcoming content found</p>' +
+                '<p style="font-size: 0.8125rem; margin-top: 0.5rem;">Try increasing the day range or checking your calendar source settings.</p></div>';
+            return;
+        }
+
+        // Group by date
+        const groups = {};
+        filtered.forEach(item => {
+            if (!groups[item.airDate]) groups[item.airDate] = [];
+            groups[item.airDate].push(item);
+        });
+
+        const sortedDates = Object.keys(groups).sort();
+        let html = '';
+
+        sortedDates.forEach(date => {
+            const items = groups[date];
+            const relDate = formatRelativeDate(date);
+            const fullDate = formatDate(date);
+            const isToday = relDate === 'Today';
+            const isTomorrow = relDate === 'Tomorrow';
+
+            html += '<div style="border-bottom: 1px solid var(--border);">';
+            html += '<div style="padding: 0.75rem 1.25rem; background: ' + (isToday ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-secondary)') + '; display: flex; align-items: center; justify-content: space-between;">';
+            html += '<div style="font-weight: 600; font-size: 0.875rem;' + (isToday ? ' color: var(--accent);' : '') + '">' + relDate + '</div>';
+            html += '<div style="font-size: 0.8125rem; color: var(--text-muted);">' + fullDate + ' &middot; ' + items.length + ' item' + (items.length !== 1 ? 's' : '') + '</div>';
+            html += '</div>';
+
+            items.forEach(item => {
+                html += '<div style="padding: 0.75rem 1.25rem; display: flex; align-items: center; gap: 1rem; border-top: 1px solid var(--border);">';
+
+                // Poster thumbnail
+                if (item.posterUrl) {
+                    html += '<img src="' + item.posterUrl + '" style="width: 40px; height: 60px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" onerror="this.style.display=\'none\'">';
+                } else {
+                    html += '<div style="width: 40px; height: 60px; border-radius: 4px; background: var(--bg-tertiary); flex-shrink: 0; display: flex; align-items: center; justify-content: center;">';
+                    if (item.mediaType === 'movie') {
+                        html += '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.4;"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>';
+                    } else {
+                        html += '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.4;"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>';
+                    }
+                    html += '</div>';
+                }
+
+                // Content details
+                html += '<div style="flex: 1; min-width: 0;">';
+                html += '<div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + item.title;
+                if (item.year) html += ' <span style="color: var(--text-muted); font-weight: 400;">(' + item.year + ')</span>';
+                html += '</div>';
+
+                if (item.mediaType === 'series') {
+                    const epCode = 'S' + String(item.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.episodeNumber || 0).padStart(2, '0');
+                    html += '<div style="font-size: 0.8125rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">';
+                    html += '<span style="color: var(--accent); font-weight: 500;">' + epCode + '</span>';
+                    if (item.episodeTitle) html += ' &middot; ' + item.episodeTitle;
+                    html += '</div>';
+                } else if (item.mediaType === 'movie') {
+                    html += '<div style="font-size: 0.8125rem; color: var(--text-secondary);">Movie' + releaseTypeBadge(item.releaseType) + '</div>';
+                }
+
+                html += '</div>';
+
+                // Source badge
+                html += '<div style="flex-shrink: 0;">' + sourceBadge(item.source) + '</div>';
+                html += '</div>';
+            });
+
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
+    }
+
+    async function loadCalendarSettings() {
+        const profileId = getSelectedProfile();
+        try {
+            const resp = await fetch(getBasePath() + '/api/user-settings?userId=' + encodeURIComponent(profileId));
+            if (!resp.ok) return;
+            userSettings = await resp.json();
+
+            const cal = userSettings.calendar || {};
+            document.getElementById('srcWatchlist').checked = cal.watchlist !== false;
+            document.getElementById('srcHistory').checked = cal.history !== false;
+            document.getElementById('srcTrending').checked = cal.trending !== false;
+
+            // Render MDBList per-shelf toggles
+            renderMDBListShelves(cal);
+        } catch (e) {
+            console.error('Error loading calendar settings:', e);
+        }
+    }
+
+    function renderMDBListShelves(cal) {
+        const container = document.getElementById('mdblistShelvesContainer');
+
+        if (globalMDBListShelves.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+
+        const mdblistShelves = cal.mdblistShelves || {};
+        let html = '<div style="margin-top: 0.25rem; padding-top: 0.75rem; border-top: 1px solid var(--border);">';
+        html += '<div style="font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem; padding-left: 0.25rem;">MDBList Shelves</div>';
+
+        globalMDBListShelves.forEach(shelf => {
+            const isEnabled = mdblistShelves[shelf.id] !== false; // default enabled
+            html += '<label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer; margin-bottom: 0.5rem;">';
+            html += '<div>';
+            html += '<div style="font-weight: 500;">' + shelf.name + '</div>';
+            html += '<div style="font-size: 0.8125rem; color: var(--text-muted);">MDBList shelf</div>';
+            html += '</div>';
+            html += '<input type="checkbox" class="mdblist-shelf-toggle" data-shelf-id="' + shelf.id + '" ' + (isEnabled ? 'checked' : '') + ' onchange="saveCalendarSettings()">';
+            html += '</label>';
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    async function saveCalendarSettings() {
+        if (!userSettings) return;
+        const profileId = getSelectedProfile();
+
+        const cal = userSettings.calendar || {};
+        cal.watchlist = document.getElementById('srcWatchlist').checked;
+        cal.history = document.getElementById('srcHistory').checked;
+        cal.trending = document.getElementById('srcTrending').checked;
+
+        // Collect per-shelf MDBList settings
+        const shelfToggles = document.querySelectorAll('.mdblist-shelf-toggle');
+        if (shelfToggles.length > 0) {
+            const mdblistShelves = {};
+            shelfToggles.forEach(toggle => {
+                mdblistShelves[toggle.dataset.shelfId] = toggle.checked;
+            });
+            cal.mdblistShelves = mdblistShelves;
+        }
+
+        userSettings.calendar = cal;
+
+        try {
+            const resp = await fetch(getBasePath() + '/api/user-settings?userId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userSettings),
+            });
+            if (resp.ok) {
+                showToast('Calendar settings saved');
+            } else {
+                showToast('Failed to save settings', 'danger');
+            }
+        } catch (e) {
+            console.error('Error saving calendar settings:', e);
+            showToast('Failed to save settings', 'danger');
+        }
+    }
+
+    async function loadCalendar() {
+        const profileId = getSelectedProfile();
+        const days = getSelectedDays();
+        const container = document.getElementById('calendarContainer');
+
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading calendar...</div>';
+
+        // Reset source filter
+        currentSource = 'all';
+        document.querySelectorAll('.source-btn').forEach(b => {
+            b.classList.remove('btn-primary', 'active');
+            b.classList.add('btn-secondary');
+        });
+        document.querySelector('.source-btn[data-source="all"]').classList.remove('btn-secondary');
+        document.querySelector('.source-btn[data-source="all"]').classList.add('btn-primary', 'active');
+
+        try {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const url = getBasePath() + '/api/calendar?user=' + encodeURIComponent(profileId) + '&days=' + days + '&tz=' + encodeURIComponent(tz);
+            const resp = await fetch(url);
+            if (!resp.ok) {
+                const errText = await resp.text();
+                throw new Error('API error: ' + resp.status + ' - ' + errText);
+            }
+            const data = await resp.json();
+            calendarData = data.items || [];
+
+            // Update stats
+            const episodes = calendarData.filter(i => i.mediaType === 'series').length;
+            const movies = calendarData.filter(i => i.mediaType === 'movie').length;
+            document.getElementById('totalItems').textContent = data.total || 0;
+            document.getElementById('episodeCount').textContent = episodes;
+            document.getElementById('movieCount').textContent = movies;
+
+            if (data.refreshedAt) {
+                const refreshed = new Date(data.refreshedAt);
+                const now = new Date();
+                const diffMins = Math.floor((now - refreshed) / 60000);
+                if (diffMins < 1) {
+                    document.getElementById('lastRefreshed').textContent = 'just now';
+                } else if (diffMins < 60) {
+                    document.getElementById('lastRefreshed').textContent = diffMins + ' min ago';
+                } else {
+                    const diffHours = Math.floor(diffMins / 60);
+                    document.getElementById('lastRefreshed').textContent = diffHours + 'h ago';
+                }
+            } else {
+                document.getElementById('lastRefreshed').textContent = 'not yet';
+            }
+
+            renderCalendar();
+        } catch (e) {
+            console.error('Error loading calendar:', e);
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load calendar</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">' + e.message + '</p></div>';
+        }
+
+        // Load settings in parallel
+        loadCalendarSettings();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadCalendar();
+    });
+</script>
+{{end}}
+{{end}}

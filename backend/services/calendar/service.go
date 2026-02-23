@@ -138,7 +138,6 @@ func (s *Service) calendarSourcesEnabled(userID string) models.CalendarSettings 
 		Watchlist: models.BoolPtr(true),
 		History:   models.BoolPtr(true),
 		Trending:  models.BoolPtr(true),
-		MDBList:   models.BoolPtr(true),
 	}
 
 	settings, err := s.userSettings.Get(userID)
@@ -156,9 +155,7 @@ func (s *Service) calendarSourcesEnabled(userID string) models.CalendarSettings 
 	if cal.Trending == nil {
 		cal.Trending = defaults.Trending
 	}
-	if cal.MDBList == nil {
-		cal.MDBList = defaults.MDBList
-	}
+	// MDBListShelves: nil means all enabled (handled by MDBListShelfEnabled)
 	return cal
 }
 
@@ -192,11 +189,9 @@ func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 		items = append(items, trendingItems...)
 	}
 
-	// 4. Content from MDBList custom lists
-	if models.BoolVal(sources.MDBList, true) {
-		mdbItems := s.collectFromMDBLists(ctx, userID, now, cutoff, seen)
-		items = append(items, mdbItems...)
-	}
+	// 4. Content from MDBList custom lists (per-shelf filtering)
+	mdbItems := s.collectFromMDBLists(ctx, userID, sources, now, cutoff, seen)
+	items = append(items, mdbItems...)
 
 	// Sort by air date ascending
 	sort.Slice(items, func(i, j int) bool {
@@ -304,7 +299,8 @@ func (s *Service) collectFromTrending(ctx context.Context, now, cutoff time.Time
 }
 
 // collectFromMDBLists fetches upcoming content from the user's custom MDBList shelves.
-func (s *Service) collectFromMDBLists(ctx context.Context, userID string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+// Each shelf is individually controlled via calSources.MDBListShelves (nil = all enabled).
+func (s *Service) collectFromMDBLists(ctx context.Context, userID string, calSources models.CalendarSettings, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	settings, err := s.userSettings.Get(userID)
 	if err != nil || settings == nil {
 		return nil
@@ -313,6 +309,10 @@ func (s *Service) collectFromMDBLists(ctx context.Context, userID string, now, c
 	var items []models.CalendarItem
 	for _, shelf := range settings.HomeShelves.Shelves {
 		if shelf.Type != "mdblist" || !shelf.Enabled || shelf.ListURL == "" {
+			continue
+		}
+		// Check per-shelf calendar setting
+		if !calSources.MDBListShelfEnabled(shelf.ID) {
 			continue
 		}
 		// MDBList items don't include release dates in the raw API response.
