@@ -817,7 +817,7 @@ export default function SearchScreen() {
                           underlineColorAndroid="transparent"
                           importantForAutofill="no"
                           disableFullscreenUI={true}
-                          editable={Platform.isTV ? textInputFocused && !isMenuOpen : !isMenuOpen}
+                          editable={!isMenuOpen}
                           {...(Platform.OS === 'ios' &&
                             Platform.isTV && {
                               keyboardAppearance: 'dark',
