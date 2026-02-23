@@ -17,53 +17,6 @@
     </button>
 </div>
 
-<!-- Connection Status -->
-<div class="grid {{if .IsAdmin}}grid-4{{else}}grid-2{{end}}" style="margin-bottom: 1.5rem;">
-    <div class="stat-card">
-        <div class="stat-label">Backend</div>
-        <div class="stat-value" id="backendStatus">
-            {{if .Status.BackendReachable}}
-            <span class="status-badge online"><span class="status-dot"></span> Online</span>
-            {{else}}
-            <span class="status-badge offline"><span class="status-dot"></span> Offline</span>
-            {{end}}
-        </div>
-        {{if .IsAdmin}}<div class="stat-subtext">http://{{.Settings.Server.Host}}:{{.Settings.Server.Port}}</div>{{end}}
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-label">Active Streams</div>
-        <div class="stat-value" id="activeStreamCount">-</div>
-        <div class="stat-subtext" id="streamSubtext">Loading...</div>
-    </div>
-
-    {{if .IsAdmin}}
-    <div class="stat-card">
-        <div class="stat-label">Service Mode</div>
-        <div class="stat-value" style="font-size: 1rem;">{{.Settings.Streaming.ServiceMode}}</div>
-        <div class="stat-subtext">Priority: {{.Settings.Streaming.ServicePriority}}</div>
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-label">Transmux</div>
-        <div class="stat-value" style="font-size: 1rem;">
-            {{if .Settings.Transmux.Enabled}}
-            <span class="status-badge online"><span class="status-dot"></span> Enabled</span>
-            {{else}}
-            <span class="status-badge offline"><span class="status-dot"></span> Disabled</span>
-            {{end}}
-        </div>
-        <div class="stat-subtext">{{.Settings.Transmux.FFmpegPath}}</div>
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-label">Cache Limit</div>
-        <div class="stat-value">{{.Settings.Streaming.MaxCacheSizeMB}} MB</div>
-        <div class="stat-subtext">{{.Settings.Streaming.MaxDownloadWorkers}} workers</div>
-    </div>
-    {{end}}
-</div>
-
 <!-- Active Streams -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
@@ -91,13 +44,6 @@
                     </svg>
                 </button>
             </div>
-            <button class="btn btn-sm btn-secondary" onclick="refreshStreams()">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="1 4 1 10 7 10"/>
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                </svg>
-                Refresh
-            </button>
         </div>
     </div>
     <div class="card-body">
@@ -894,12 +840,13 @@
     function renderTableView(streams) {
         return '<div class="table-container"><table><thead><tr><th>File</th><th>Profile(s)</th><th>Status</th><th>Progress</th><th>Transferred</th><th>Started</th></tr></thead><tbody>' +
             streams.map(stream => {
+                const streamId = stream.id || '';
                 const progress = stream.percent_watched || 0;
                 const currentPos = stream.current_position || 0;
                 const duration = stream.duration || 0;
                 const timeDisplay = duration > 0 ? formatTime(currentPos) + ' / ' + formatTime(duration) : '-';
                 const isPaused = stream.is_paused || false;
-                return '<tr'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+getProfilesDisplay(stream)+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>';
+                return '<tr data-stream-id="'+streamId+'"'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+getProfilesDisplay(stream)+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div class="stream-progress-bar" style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span class="stream-percent" style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div class="stream-time" style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -1011,36 +958,6 @@
         }
     }
 
-    async function refreshStreams() {
-        const container = document.getElementById('streamsContainer');
-        const countEl = document.getElementById('activeStreamCount');
-        const subtextEl = document.getElementById('streamSubtext');
-        try {
-            const response = await fetch(basePath + '/api/streams');
-            const data = await response.json();
-            if (data.error) {
-                countEl.textContent = '-';
-                subtextEl.textContent = 'Backend unavailable';
-                container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Could not fetch streams</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">'+data.error+'</p></div>';
-                return;
-            }
-            const streams = data.streams || [];
-            cachedStreams = streams;
-            countEl.textContent = streams.length;
-            const totalBandwidth = streams.reduce((sum, s) => sum + (s.bytes_streamed || 0), 0);
-            subtextEl.textContent = totalBandwidth > 0 ? formatBytes(totalBandwidth) + ' total' : 'No active streams';
-            if (streams.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><polygon points="5 3 19 12 5 21 5 3"/></svg><p>No active streams</p></div>';
-                return;
-            }
-            renderStreams(streams);
-        } catch (e) {
-            countEl.textContent = '-';
-            subtextEl.textContent = 'Error';
-            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load streams</p><p style="font-size: 0.75rem;">'+e.message+'</p></div>';
-        }
-    }
-
     async function refreshStatus() {
         try {
             const status = await apiCall(basePath + '/api/status');
@@ -1050,7 +967,6 @@
             } else {
                 backendEl.innerHTML = '<span class="status-badge offline"><span class="status-dot"></span> Offline</span>';
             }
-            await refreshStreams();
             showToast('Status refreshed');
         } catch (e) {
             showToast('Failed to refresh status', 'error');
@@ -1118,16 +1034,168 @@
         }
     }
 
-    setInterval(() => { refreshStreams(); }, 10000);
+    // --- SSE + Interpolation ---
+    let eventSource = null;
+    let interpolationTimer = null;
+    let sseRetryTimer = null;
+    let fallbackPollTimer = null;
+    let streamInterpolationState = new Map(); // streamId -> { position, percent, duration, isPaused, lastUpdated, receivedAt }
+
+    function handleStreamUpdate(data) {
+        const streams = data.streams || [];
+        const serverTime = data.server_time ? new Date(data.server_time).getTime() : Date.now();
+        const receivedAt = Date.now();
+
+        // Check if stream set changed (different IDs or count) to decide on full re-render
+        const oldIds = new Set(cachedStreams.map(s => s.id).filter(Boolean));
+        const newIds = new Set(streams.map(s => s.id).filter(Boolean));
+        const setChanged = oldIds.size !== newIds.size || [...newIds].some(id => !oldIds.has(id));
+
+        cachedStreams = streams;
+
+        // Rebuild interpolation state
+        streamInterpolationState.clear();
+        for (const stream of streams) {
+            const sid = stream.id;
+            if (!sid) continue;
+            const lastUpdated = stream.last_updated ? new Date(stream.last_updated).getTime() : serverTime;
+            streamInterpolationState.set(sid, {
+                position: stream.current_position || 0,
+                percent: stream.percent_watched || 0,
+                duration: stream.duration || 0,
+                isPaused: stream.is_paused || false,
+                lastUpdated: lastUpdated,
+                serverTime: serverTime,
+                receivedAt: receivedAt
+            });
+        }
+
+        // Update header stats (elements may not exist if stat cards were removed)
+        const countEl = document.getElementById('activeStreamCount');
+        const subtextEl = document.getElementById('streamSubtext');
+        if (countEl) countEl.textContent = streams.length;
+        if (subtextEl) {
+            const totalBandwidth = streams.reduce((sum, s) => sum + (s.bytes_streamed || 0), 0);
+            subtextEl.textContent = totalBandwidth > 0 ? formatBytes(totalBandwidth) + ' total' : 'No active streams';
+        }
+
+        const container = document.getElementById('streamsContainer');
+        if (streams.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><polygon points="5 3 19 12 5 21 5 3"/></svg><p>No active streams</p></div>';
+            return;
+        }
+
+        // Only full re-render when streams added/removed; otherwise interpolation handles display
+        if (setChanged) {
+            renderStreams(streams);
+        }
+    }
+
+    function updateStreamDisplay(streamId, position, percent, duration) {
+        // Card view updates
+        const card = document.querySelector(`.stream-card[data-stream-id="${streamId}"]`);
+        if (card) {
+            const progressBar = card.querySelector('.stream-card-progress-bar');
+            if (progressBar) progressBar.style.width = percent.toFixed(1) + '%';
+            const metaItems = card.querySelectorAll('.stream-card-meta-item');
+            if (metaItems.length >= 1 && duration > 0) {
+                const clockSvg = metaItems[0].querySelector('svg');
+                const svgHtml = clockSvg ? clockSvg.outerHTML : '';
+                metaItems[0].innerHTML = svgHtml + ' ' + formatTime(position) + ' / ' + formatTime(duration);
+            }
+            if (metaItems.length >= 2) {
+                metaItems[1].textContent = percent > 0 ? percent.toFixed(0) + '%' : '-';
+            }
+        }
+
+        // Table view updates
+        const row = document.querySelector(`tr[data-stream-id="${streamId}"]`);
+        if (row) {
+            const progressBar = row.querySelector('.stream-progress-bar > div');
+            if (progressBar) progressBar.style.width = percent.toFixed(1) + '%';
+            const percentEl = row.querySelector('.stream-percent');
+            if (percentEl) percentEl.textContent = percent > 0 ? percent.toFixed(0) + '%' : '-';
+            const timeEl = row.querySelector('.stream-time');
+            if (timeEl) timeEl.textContent = duration > 0 ? formatTime(position) + ' / ' + formatTime(duration) : '-';
+        }
+    }
+
+    function interpolateTick() {
+        for (const [streamId, state] of streamInterpolationState) {
+            if (state.isPaused || !state.duration || state.duration <= 0) continue;
+
+            // How stale position was when server sent it
+            const serverLag = Math.max(0, (state.serverTime - state.lastUpdated) / 1000);
+            // Time since we received the update
+            const clientElapsed = (Date.now() - state.receivedAt) / 1000;
+            let interpolatedPosition = state.position + serverLag + clientElapsed;
+            interpolatedPosition = Math.min(interpolatedPosition, state.duration);
+            const interpolatedPercent = (interpolatedPosition / state.duration) * 100;
+
+            updateStreamDisplay(streamId, interpolatedPosition, interpolatedPercent, state.duration);
+        }
+    }
+
+    function startInterpolation() {
+        if (interpolationTimer) clearInterval(interpolationTimer);
+        interpolationTimer = setInterval(interpolateTick, 1000);
+    }
+
+    function connectSSE() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        if (fallbackPollTimer) {
+            clearInterval(fallbackPollTimer);
+            fallbackPollTimer = null;
+        }
+
+        eventSource = new EventSource(basePath + '/api/streams/sse');
+
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                handleStreamUpdate(data);
+            } catch (e) {
+                console.warn('SSE parse error:', e);
+            }
+        };
+
+        eventSource.onerror = function() {
+            eventSource.close();
+            eventSource = null;
+            // Fall back to polling via fetch
+            if (!fallbackPollTimer) {
+                fallbackPollTimer = setInterval(async () => {
+                    try {
+                        const response = await fetch(basePath + '/api/streams');
+                        const data = await response.json();
+                        if (!data.error) handleStreamUpdate(data);
+                    } catch (e) { /* SSE retry will recover */ }
+                }, 10000);
+            }
+            // Retry SSE after 30s
+            if (sseRetryTimer) clearTimeout(sseRetryTimer);
+            sseRetryTimer = setTimeout(() => { connectSSE(); }, 30000);
+        };
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
-        // Initialize view toggle buttons based on saved preference
         setStreamView(currentStreamView);
-        refreshStreams();
+        connectSSE();
+        startInterpolation();
         if (isAdmin) {
             testEndpoints();
             refreshDebridStatus();
         }
+    });
+
+    window.addEventListener('beforeunload', () => {
+        if (eventSource) eventSource.close();
+        if (interpolationTimer) clearInterval(interpolationTimer);
+        if (fallbackPollTimer) clearInterval(fallbackPollTimer);
+        if (sseRetryTimer) clearTimeout(sseRetryTimer);
     });
 </script>
 {{end}}
