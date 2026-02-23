@@ -6,7 +6,7 @@ import { useFocusEffect } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import { Tabs } from 'expo-router/tabs';
 import { useCallback, useEffect } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { MobileTabBar } from '../../components/MobileTabBar';
 import { useMenuContext } from '../../components/MenuContext';
 import { TVBackground } from '../../components/TVBackground';
@@ -164,6 +164,20 @@ export default function DrawerLayout() {
 
       {/* Custom menu overlay - unified native focus for all platforms */}
       <CustomMenu isVisible={isMenuOpen} onClose={closeMenu} />
+
+      {/* Hidden focus anchor for Android TV — ensures D-pad key events reach
+          React Native on pages that have no natively focusable views (e.g.
+          pages using only SpatialNavigationFocusableView which renders plain
+          Views). Without this, Android's native focus system has nothing to
+          land on and key events never reach ReactRootView.dispatchKeyEvent. */}
+      {Platform.OS === 'android' && Platform.isTV && (
+        <Pressable
+          style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+          accessible={false}
+          importantForAccessibility="no"
+          focusable={true}
+        />
+      )}
     </View>
   );
 }

@@ -229,6 +229,7 @@ function TVAISection({
   onShelfFocus,
   styles,
   router,
+  isMenuOpen,
 }: {
   aiQuery: string;
   setAiQuery: (q: string) => void;
@@ -243,6 +244,7 @@ function TVAISection({
   onShelfFocus: (shelfKey: string) => void;
   styles: ReturnType<typeof createStyles>;
   router: ReturnType<typeof useRouter>;
+  isMenuOpen: boolean;
 }) {
   const theme = useTheme();
   const containerRef = useRef<RNView | null>(null);
@@ -294,6 +296,7 @@ function TVAISection({
                     }
                   }}
                   returnKeyType="search"
+                  editable={Platform.isTV ? isFocused && !isMenuOpen : !isMenuOpen}
                   {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                 />
               </Pressable>
@@ -901,6 +904,7 @@ export default function ListsScreen() {
                       onShelfFocus={handleShelfFocus}
                       styles={styles}
                       router={router}
+                      isMenuOpen={isMenuOpen}
                     />
                   );
                 }
