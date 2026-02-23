@@ -68,8 +68,9 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
       hydratedGeneration.current = -1;
       return;
     }
-    // Hydrate from startup bundle if available and generation has advanced
-    if (startupData?.watchHistory && hydratedGeneration.current < generation) {
+    // Hydrate from startup bundle if it contains actual watch history items
+    // (the startup bundle may return an empty [] to keep the payload small)
+    if (startupData?.watchHistory?.length && hydratedGeneration.current < generation) {
       setState({ items: startupData.watchHistory || [], loading: false, error: null });
       hydratedGeneration.current = generation;
       return;
@@ -80,6 +81,7 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
     // Fallback: fetch independently (startup failed or didn't include watch history)
     if (hydratedGeneration.current < generation) {
+      hydratedGeneration.current = generation;
       refresh();
     }
   }, [refresh, activeUser?.id, startupData, startupReady, generation]);

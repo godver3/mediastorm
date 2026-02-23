@@ -916,28 +916,19 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
       return progressMap;
     };
 
+    // Seed from details bundle on initial load to avoid a flash of empty badges
+    if (progressRefreshKey === 0 && detailsBundle) {
+      setEpisodeProgressMap(buildProgressMap(detailsBundle.playbackProgress));
+      return;
+    }
+
     // Wait for bundle attempt before falling back (only on initial load)
     if (!bundleReady && progressRefreshKey === 0) return;
 
-    // Already hydrated from bundle on initial load -- skip redundant fetch.
-    // The bundle hydration writes to episodeProgressMap in the useDetailsData consolidated effect,
-    // so we only need to re-fetch when progressRefreshKey > 0 (return from player).
-    if (progressRefreshKey === 0 && detailsBundle) return;
-
     let cancelled = false;
 
-    console.log('[usePlayback:Progress] Episode progress falling through to individual fetch', {
-      bundleReady,
-      progressRefreshKey,
-      hasBundle: !!detailsBundle,
-      seriesIdentifier,
-    });
     const fetchAllProgress = async () => {
       try {
-        console.log('[usePlayback:Progress] Fetching ALL progress for episode map', {
-          seriesIdentifier,
-          source: 'episodeProgressMap',
-        });
         const progressList = await apiService.listPlaybackProgress(activeUserId);
         if (cancelled) return;
         setEpisodeProgressMap(buildProgressMap(progressList));
