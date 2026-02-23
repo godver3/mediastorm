@@ -70,6 +70,14 @@ type CacheManagerStatus struct {
 	LastError        string    `json:"lastError,omitempty"`
 }
 
+// formatInterval formats a duration as a human-friendly string like "2h" or "30m".
+func formatInterval(d time.Duration) string {
+	if d >= time.Hour {
+		return fmt.Sprintf("%.0fh", d.Hours())
+	}
+	return fmt.Sprintf("%.0fm", d.Minutes())
+}
+
 // ProgressTask tracks the progress of a long-running metadata operation.
 type ProgressTask struct {
 	ID        string `json:"id"`        // "trending-movie", "trending-series", "custom-list:<url>"
@@ -220,7 +228,7 @@ func (s *Service) StartBackgroundCacheManager(refreshInterval time.Duration) {
 	s.cacheStatus = CacheManagerStatus{
 		Running:         true,
 		Status:          "warming",
-		RefreshInterval: refreshInterval.String(),
+		RefreshInterval: formatInterval(refreshInterval),
 	}
 	s.cacheStatusMu.Unlock()
 
