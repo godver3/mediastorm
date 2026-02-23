@@ -25,8 +25,8 @@ func TestGetActiveStreams_PauseDetection(t *testing.T) {
 	pausedReq := httptest.NewRequest(http.MethodGet, "/stream?profileId=user2&profileName=Bob", nil)
 	pausedID, pausedBytes, pausedActivity := tracker.StartStream(pausedReq, "/media/paused-movie.mkv", 1000000, 0, 999999)
 	atomic.StoreInt64(pausedBytes, 30000)
-	// Set activity to 2 minutes ago to simulate pause
-	atomic.StoreInt64(pausedActivity, time.Now().Add(-2*time.Minute).UnixNano())
+	// Set activity to 45 seconds ago to simulate pause (between pauseThreshold=30s and hideThreshold=60s)
+	atomic.StoreInt64(pausedActivity, time.Now().Add(-45*time.Second).UnixNano())
 
 	// Add a long-idle direct stream (stale > 5 min, should be hidden)
 	idleReq := httptest.NewRequest(http.MethodGet, "/stream?profileId=user3&profileName=Carol", nil)
