@@ -242,6 +242,7 @@ func (s *Service) RecordEpisode(userID string, payload models.EpisodeWatchPayloa
 		Name:          episode.Title,
 		Year:          payload.Year,
 		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(), // Always use current time for active user watches
 		ExternalIDs:   payload.ExternalIDs,
 		SeasonNumber:  episode.SeasonNumber,
 		EpisodeNumber: episode.EpisodeNumber,
@@ -1689,6 +1690,10 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 		if s.clearEarlierEpisodesProgressLocked(userID, item.SeriesID, item.SeasonNumber, item.EpisodeNumber) {
 			progressCleared = true
 		}
+		// Also clear progress by external ID matching (handles cross-ID-format mismatches)
+		if s.clearProgressByExternalIDMatchLocked(userID, item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs) {
+			progressCleared = true
+		}
 	}
 
 	if progressCleared {
@@ -1790,6 +1795,11 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	// If marking an episode as watched, also clear progress for earlier episodes
 	if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 		if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
+			progressCleared = true
+		}
+		// Also clear progress by external ID matching (handles cross-ID-format mismatches,
+		// e.g. Trakt using tvdb:series:X while player uses tmdb:tv:Y for the same show)
+		if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 			progressCleared = true
 		}
 	}
@@ -1912,6 +1922,10 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 			if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
 				progressCleared = true
 			}
+			// Also clear progress by external ID matching (handles cross-ID-format mismatches)
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+				progressCleared = true
+			}
 		}
 
 		results = append(results, item)
@@ -2032,6 +2046,10 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 
 		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 			if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
+				progressCleared = true
+			}
+			// Also clear progress by external ID matching (handles cross-ID-format mismatches)
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 				progressCleared = true
 			}
 		}
@@ -2607,8 +2625,8 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 	return s.savePlaybackProgressLocked()
 }
 
-// clearEarlierEpisodesProgressLocked removes playback progress for all earlier episodes
-// of the same series when a later episode is marked as watched.
+// clearEarlierEpisodesProgressLocked removes playback progress for the current episode
+// and all earlier episodes of the same series when an episode is marked as watched.
 // Callers must hold s.mu before invoking this helper.
 func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, seasonNumber, episodeNumber int) bool {
 	if userID == "" || seriesID == "" {
@@ -2627,19 +2645,73 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 			continue
 		}
 
-		// Check if this episode is earlier than the one being marked as watched
-		isEarlier := false
+		// Check if this episode is the current one or earlier
+		isCurrentOrEarlier := false
 		if progress.SeasonNumber < seasonNumber {
-			isEarlier = true
-		} else if progress.SeasonNumber == seasonNumber && progress.EpisodeNumber < episodeNumber {
-			isEarlier = true
+			isCurrentOrEarlier = true
+		} else if progress.SeasonNumber == seasonNumber && progress.EpisodeNumber <= episodeNumber {
+			isCurrentOrEarlier = true
 		}
 
-		if isEarlier {
+		if isCurrentOrEarlier {
 			delete(perUser, key)
 			anyCleared = true
 		}
 	}
 
 	return anyCleared
+}
+
+// clearProgressByExternalIDMatchLocked removes playback progress entries for a specific
+// episode that match by season+episode number and share at least one external ID.
+// This handles cross-ID-format mismatches where the same show uses different ID prefixes
+// (e.g. Trakt imports with tvdb:series:X vs player progress with tmdb:tv:Y).
+// Callers must hold s.mu before invoking this helper.
+func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumber, episodeNumber int, externalIDs map[string]string) bool {
+	if seasonNumber <= 0 || episodeNumber <= 0 || len(externalIDs) == 0 {
+		return false
+	}
+
+	perUser, ok := s.playbackProgress[userID]
+	if !ok {
+		return false
+	}
+
+	anyCleared := false
+	for key, progress := range perUser {
+		if progress.MediaType != "episode" ||
+			progress.SeasonNumber != seasonNumber ||
+			progress.EpisodeNumber != episodeNumber {
+			continue
+		}
+
+		// Check if this progress entry shares any external ID with the update
+		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+			delete(perUser, key)
+			anyCleared = true
+		}
+	}
+
+	return anyCleared
+}
+
+// hasMatchingExternalID returns true if two external ID maps share at least one
+// common key+value pair (excluding non-standard keys like "titleId").
+func hasMatchingExternalID(a, b map[string]string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	for k, v := range a {
+		if v == "" {
+			continue
+		}
+		// Skip non-standard keys that aren't reliable for matching
+		if k == "titleId" {
+			continue
+		}
+		if bv, ok := b[k]; ok && bv == v {
+			return true
+		}
+	}
+	return false
 }

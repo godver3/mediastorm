@@ -755,6 +755,153 @@ func TestBulkUpdateWatchHistoryClearsProgressWhenMarkingUnwatched(t *testing.T) 
 	}
 }
 
+func TestCrossIDFormatProgressClearing(t *testing.T) {
+	// Simulates the scenario where:
+	// 1. Player records progress with tmdb:tv:224372 as seriesID
+	// 2. Trakt import marks the episode as watched using tvdb:series:433631
+	// 3. The progress entry should be cleared via external ID matching (shared tvdb ID)
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Step 1: Player records progress with tmdb-based IDs
+	tmdbSeriesID := "tmdb:tv:224372"
+	tmdbEpID := tmdbSeriesID + ":s01e01"
+	if _, err := svc.UpdatePlaybackProgress("user-cross-id", models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        tmdbEpID,
+		Position:      587,
+		Duration:      2512,
+		SeriesID:      tmdbSeriesID,
+		SeriesName:    "A Knight of the Seven Kingdoms",
+		EpisodeName:   "The Hedge Knight",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"imdb": "tt27497448", "tvdb": "433631"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Verify progress exists
+	progressItems, err := svc.ListPlaybackProgress("user-cross-id")
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 progress item, got %d", len(progressItems))
+	}
+
+	// Step 2: Trakt import marks episode as watched with tvdb-based IDs
+	watched := true
+	tvdbSeriesID := "tvdb:series:433631"
+	tvdbEpID := tvdbSeriesID + ":s01e01"
+	if _, err := svc.ImportWatchHistory("user-cross-id", []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        tvdbEpID,
+			Name:          "The Hedge Knight",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			ExternalIDs:   map[string]string{"tmdb": "224372", "tvdb": "433631", "imdb": "tt23974790"},
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			SeriesID:      tvdbSeriesID,
+			SeriesName:    "A Knight of the Seven Kingdoms",
+		},
+	}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// Step 3: Verify progress was cleared despite different ID formats
+	progressItems, err = svc.ListPlaybackProgress("user-cross-id")
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 0 {
+		t.Fatalf("expected progress to be cleared via cross-ID matching, got %d items: %+v", len(progressItems), progressItems)
+	}
+}
+
+func TestRecordEpisodeAlwaysBumpsWatchedAt(t *testing.T) {
+	// Verifies that RecordEpisode always sets WatchedAt to current time,
+	// even if the episode was previously marked as watched with an old timestamp.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:   "tmdb:tv:99999",
+				Name: "Test Show",
+			},
+			Seasons: []models.SeriesSeason{
+				{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "ep-1", Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+						{ID: "ep-2", Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+					},
+				},
+			},
+		},
+	})
+
+	// Pre-mark episode as watched with an old timestamp (simulating Trakt import)
+	watched := true
+	oldTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := svc.UpdateWatchHistory("user-bump", models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:99999:s01e01",
+		Name:          "Pilot",
+		Watched:       &watched,
+		WatchedAt:     oldTime,
+		SeriesID:      "tmdb:tv:99999",
+		SeriesName:    "Test Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	// Now RecordEpisode (active user watch) should bump WatchedAt
+	beforeRecord := time.Now().UTC().Add(-1 * time.Second)
+	if _, err := svc.RecordEpisode("user-bump", models.EpisodeWatchPayload{
+		SeriesID:    "tmdb:tv:99999",
+		SeriesTitle: "Test Show",
+		Episode: models.EpisodeReference{
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			Title:         "Pilot",
+		},
+	}); err != nil {
+		t.Fatalf("RecordEpisode() error = %v", err)
+	}
+
+	// Check that WatchedAt was bumped past the old timestamp
+	items, err := svc.ListWatchHistory("user-bump")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+
+	var found bool
+	for _, item := range items {
+		if item.SeasonNumber == 1 && item.EpisodeNumber == 1 {
+			found = true
+			if item.WatchedAt.Before(beforeRecord) {
+				t.Errorf("WatchedAt was not bumped: got %v, expected after %v", item.WatchedAt, beforeRecord)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("episode not found in watch history")
+	}
+}
+
 // Mock TraktScrobbler that records calls
 type mockTraktScrobbler struct {
 	movieCalls   int
