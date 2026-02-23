@@ -1656,6 +1656,7 @@ export default function PlayerScreen() {
   const { reportProgress } = usePlaybackProgress(activeUserId || 'default', mediaInfo, {
     updateInterval: 10000, // Update every 10 seconds
     minTimeChange: 5, // Only update if position changed by 5+ seconds
+    isPipActive, // Continue reporting progress during PiP
     debug: true, // Enable for debugging
   });
 

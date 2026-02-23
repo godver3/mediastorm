@@ -17,6 +17,12 @@ export interface PlaybackProgressOptions {
   minTimeChange?: number;
 
   /**
+   * When true, progress updates continue even when app is backgrounded (e.g. PiP mode)
+   * Default: false
+   */
+  isPipActive?: boolean;
+
+  /**
    * Enable debug logging
    * Default: false
    */
@@ -61,7 +67,7 @@ export function usePlaybackProgress(
   },
   options: PlaybackProgressOptions = {},
 ): UsePlaybackProgressReturn {
-  const { updateInterval = 10000, minTimeChange = 5, debug = false } = options;
+  const { updateInterval = 10000, minTimeChange = 5, isPipActive = false, debug = false } = options;
 
   const lastUpdateTimeRef = useRef<number>(0);
   const lastPositionRef = useRef<number>(0);
@@ -82,7 +88,7 @@ export function usePlaybackProgress(
 
   const sendUpdate = useCallback(
     async (position: number, duration: number) => {
-      if (isUnmountedRef.current || isBackgroundedRef.current) {
+      if (isUnmountedRef.current || (isBackgroundedRef.current && !isPipActive)) {
         return;
       }
 
@@ -139,7 +145,7 @@ export function usePlaybackProgress(
         console.error('[usePlaybackProgress] Update payload was:', update);
       }
     },
-    [userId, mediaInfo, updateInterval, minTimeChange, log],
+    [userId, mediaInfo, updateInterval, minTimeChange, isPipActive, log],
   );
 
   const reportProgress = useCallback((position: number, duration: number) => {
