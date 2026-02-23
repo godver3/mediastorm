@@ -28,6 +28,11 @@ type SeriesDetailsProvider interface {
 	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 }
 
+// MovieDetailsProvider provides movie metadata for anime detection
+type MovieDetailsProvider interface {
+	MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
+}
+
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
 type PrequeueHandler struct {
 	store              *playback.PrequeueStore
@@ -43,6 +48,7 @@ type PrequeueHandler struct {
 	clientSettingsSvc       ClientSettingsProvider
 	configManager           *config.Manager
 	metadataSvc        SeriesDetailsProvider // For episode counting
+	movieMetadataSvc   MovieDetailsProvider  // For movie anime detection
 	subtitleExtractor  SubtitlePreExtractor  // For pre-extracting subtitles
 	demoMode           bool
 }
@@ -180,6 +186,11 @@ func (h *PrequeueHandler) SetClientSettingsService(svc ClientSettingsProvider) {
 // SetMetadataService sets the metadata service for episode counting
 func (h *PrequeueHandler) SetMetadataService(svc SeriesDetailsProvider) {
 	h.metadataSvc = svc
+}
+
+// SetMovieMetadataService sets the movie metadata service for anime detection
+func (h *PrequeueHandler) SetMovieMetadataService(svc MovieDetailsProvider) {
+	h.movieMetadataSvc = svc
 }
 
 // SetSubtitleExtractor sets the subtitle extractor for pre-extraction
@@ -395,6 +406,26 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
 			log.Printf("[prequeue] Target episode S%02dE%02d has absolute episode number: %d",
 				targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber)
+		}
+	}
+
+	// For movies, check if the movie is anime by looking at genres
+	if mediaType == "movie" && h.movieMetadataSvc != nil {
+		movieQuery := models.MovieDetailsQuery{
+			TitleID: titleID,
+			Name:    titleName,
+			Year:    year,
+			IMDBID:  imdbID,
+		}
+		if movieTitle, err := h.movieMetadataSvc.MovieInfo(ctx, movieQuery); err == nil && movieTitle != nil {
+			for _, genre := range movieTitle.Genres {
+				genreLower := strings.ToLower(genre)
+				if genreLower == "animation" || genreLower == "anime" {
+					isAnime = true
+					log.Printf("[prequeue] Movie %q is anime (genre=%q) - applying anime language preferences", titleName, genre)
+					break
+				}
+			}
 		}
 	}
 
