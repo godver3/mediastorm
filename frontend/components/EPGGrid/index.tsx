@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -35,6 +37,10 @@ const TIME_INDICATOR_WIDTH = 2;
 // Horizontal padding in the parent container (matches live.tsx)
 const CONTAINER_PADDING = Platform.isTV ? tvScale(32, 24) : 24;
 
+// Mobile EPG: show 1.5 hours on screen, but load 6 hours for horizontal scrolling
+const MOBILE_VISIBLE_HOURS = 1.5;
+const MOBILE_TOTAL_HOURS = 6;
+
 interface EPGGridProps {
   channels: LiveChannel[];
   onChannelSelect: (channel: LiveChannel) => void;
@@ -44,7 +50,8 @@ interface EPGGridProps {
 
 /**
  * EPG Grid View - Single unified scrollable table.
- * Channel column shrinks as you scroll right, then content scrolls.
+ * On mobile: frozen channel column with horizontally scrollable program grid.
+ * On TV: single unified layout with spatial navigation.
  */
 export const EPGGrid = ({
   channels,
@@ -67,10 +74,10 @@ export const EPGGrid = ({
     setTimeWindowHours,
   } = useEPGGrid();
 
-  // Use shorter time window on mobile for better readability
+  // Mobile: load more hours for horizontal scrolling
   useEffect(() => {
     if (!isTV) {
-      setTimeWindowHours(1.5);
+      setTimeWindowHours(MOBILE_TOTAL_HOURS);
     }
   }, [isTV, setTimeWindowHours]);
 
@@ -80,6 +87,11 @@ export const EPGGrid = ({
   const scrollViewRef = useRef<ScrollView>(null);
   const rowRefs = useRef<{ [channelId: string]: RNView | null }>({});
   const focusedChannelRef = useRef<string | null>(null);
+
+  // Refs for synced vertical scrolling on mobile (frozen channel column)
+  const channelScrollRef = useRef<ScrollView>(null);
+  const programScrollRef = useRef<ScrollView>(null);
+  const isSyncingScroll = useRef(false);
 
   // Scroll to a specific row when focus changes
   const scrollToRow = useCallback((channelId: string) => {
@@ -115,18 +127,40 @@ export const EPGGrid = ({
     rowRefs.current[channelId] = ref;
   }, []);
 
+  // Sync vertical scroll: channel column -> program grid
+  const handleChannelScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    programScrollRef.current?.scrollTo({ y: e.nativeEvent.contentOffset.y, animated: false });
+    requestAnimationFrame(() => { isSyncingScroll.current = false; });
+  }, []);
+
+  // Sync vertical scroll: program grid -> channel column
+  const handleProgramScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    channelScrollRef.current?.scrollTo({ y: e.nativeEvent.contentOffset.y, animated: false });
+    requestAnimationFrame(() => { isSyncingScroll.current = false; });
+  }, []);
+
   // Apply grid scale to dimensions
   const channelWidth = Math.round(CHANNEL_COLUMN_WIDTH * gridScale);
+  const rowHeight = Math.round(ROW_HEIGHT * gridScale);
+  const headerHeight = Math.round(HEADER_HEIGHT * gridScale);
+  const iconScale = 1 + (gridScale - 1) * 1.75;
 
   // Calculate available width for time slots (screen width minus channel column and padding)
   const availableWidth = windowWidth - channelWidth - (CONTAINER_PADDING * 2);
 
-  // Calculate grid width - time slot width is dynamic to fill available space
+  // Calculate grid width - on mobile, slot width is based on visible hours so content extends beyond screen
   const totalSlots = (gridState.timeWindowHours * 60) / EPG_GRID_SLOT_MINUTES;
-  const timeSlotWidth = Math.floor((availableWidth * gridScale) / totalSlots);
+  const visibleSlots = isTV
+    ? totalSlots
+    : (MOBILE_VISIBLE_HOURS * 60) / EPG_GRID_SLOT_MINUTES;
+  const timeSlotWidth = Math.floor((availableWidth * gridScale) / visibleSlots);
   const gridContentWidth = totalSlots * timeSlotWidth;
 
-  // Total width
+  // Total width (used for TV layout)
   const totalWidth = channelWidth + gridContentWidth;
 
   // Fetch EPG data when channels change or time window changes
@@ -186,34 +220,33 @@ export const EPGGrid = ({
         </Text>
       </View>
 
-      {/* Single horizontal scroll for entire table */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEnabled={!isTV}
-        style={styles.tableScroll}>
+      {isTV ? (
+        /* TV: single horizontal scroll layout (no horizontal scrolling) */
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          scrollEnabled={false}
+          style={styles.tableScroll}>
 
-        {/* Table content */}
-        <View style={{ width: totalWidth }}>
-          {/* Header row */}
-          <View style={styles.headerRow}>
-            <View style={[styles.cornerCell, { width: channelWidth }]} />
-            <View style={[styles.timeHeader, { width: gridContentWidth }]}>
-              {timeSlots.map((slot, index) => (
-                <View key={index} style={[styles.timeSlot, { width: timeSlotWidth }]}>
-                  <Text style={styles.timeSlotText}>{formatTimeSlot(slot)}</Text>
-                </View>
-              ))}
-              {currentTimePosition !== null && (
-                <View style={[styles.timeIndicator, { left: `${currentTimePosition}%` }]} />
-              )}
+          <View style={{ width: totalWidth }}>
+            {/* Header row */}
+            <View style={styles.headerRow}>
+              <View style={[styles.cornerCell, { width: channelWidth }]} />
+              <View style={[styles.timeHeader, { width: gridContentWidth }]}>
+                {timeSlots.map((slot, index) => (
+                  <View key={index} style={[styles.timeSlot, { width: timeSlotWidth }]}>
+                    <Text style={styles.timeSlotText}>{formatTimeSlot(slot)}</Text>
+                  </View>
+                ))}
+                {currentTimePosition !== null && (
+                  <View style={[styles.timeIndicator, { left: `${currentTimePosition}%` }]} />
+                )}
+              </View>
             </View>
-          </View>
 
-          {/* Vertical scroll for channel rows - scrollEnabled=false on TV to prevent
-              native D-pad scroll from interfering with spatial navigation */}
-          <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} scrollEnabled={!isTV} style={styles.bodyScroll}>
-            {isTV ? (
+            {/* Vertical scroll for channel rows - scrollEnabled=false on TV to prevent
+                native D-pad scroll from interfering with spatial navigation */}
+            <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} scrollEnabled={false} style={styles.bodyScroll}>
               <SpatialNavigationNode orientation="vertical">
                 {channels.map((channel) => (
                   <EPGRow
@@ -234,27 +267,115 @@ export const EPGGrid = ({
                   />
                 ))}
               </SpatialNavigationNode>
-            ) : (
-              channels.map((channel) => (
-                <EPGRow
-                  key={channel.id}
-                  channel={channel}
-                  programs={schedules.get(channel.tvgId || '') || []}
-                  channelWidth={channelWidth}
-                  gridContentWidth={gridContentWidth}
-                  timeSlotWidth={timeSlotWidth}
-                  isFavorite={favoriteChannelIds.has(channel.id)}
-                  currentTimePosition={currentTimePosition}
-                  onPress={() => handleChannelPress(channel)}
-                  theme={theme}
-                  isTV={isTV}
-                  gridScale={gridScale}
-                />
-              ))
-            )}
+            </ScrollView>
+          </View>
+        </ScrollView>
+      ) : (
+        /* Mobile: frozen channel column + horizontally scrollable program grid */
+        <View style={styles.gridBody}>
+          {/* Frozen channel column */}
+          <View style={[styles.frozenColumn, { width: channelWidth }]}>
+            <View style={[styles.cornerCell, { width: channelWidth, height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.border.subtle }]} />
+            <ScrollView
+              ref={channelScrollRef}
+              showsVerticalScrollIndicator={false}
+              onScroll={handleChannelScroll}
+              scrollEventThrottle={16}
+              style={styles.bodyScroll}
+            >
+              {channels.map((channel) => (
+                <Pressable key={channel.id} onPress={() => handleChannelPress(channel)}>
+                  <View style={[styles.row, { height: rowHeight }]}>
+                    <View style={[styles.channelCell, { width: channelWidth }]}>
+                      {channel.logo ? (
+                        <Image
+                          source={{ uri: channel.logo }}
+                          style={styles.channelLogo}
+                          contentFit="contain"
+                        />
+                      ) : (
+                        <View style={styles.channelLogoPlaceholder}>
+                          <Ionicons name="tv-outline" size={Math.round(18 * iconScale)} color={theme.colors.text.muted} />
+                        </View>
+                      )}
+                      <Text style={styles.channelName} numberOfLines={1}>
+                        {channel.name}
+                      </Text>
+                      {favoriteChannelIds.has(channel.id) && (
+                        <Ionicons
+                          name="star"
+                          size={Math.round(12 * iconScale)}
+                          color={theme.colors.status.warning}
+                          style={styles.favoriteIcon}
+                        />
+                      )}
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Horizontally scrollable program area */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            style={{ flex: 1 }}
+          >
+            <View style={{ width: gridContentWidth }}>
+              {/* Time header */}
+              <View style={[styles.timeHeader, { width: gridContentWidth, height: headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.border.subtle }]}>
+                {timeSlots.map((slot, index) => (
+                  <View key={index} style={[styles.timeSlot, { width: timeSlotWidth }]}>
+                    <Text style={styles.timeSlotText}>{formatTimeSlot(slot)}</Text>
+                  </View>
+                ))}
+                {currentTimePosition !== null && (
+                  <View style={[styles.timeIndicator, { left: `${currentTimePosition}%` }]} />
+                )}
+              </View>
+              {/* Program rows - vertical scroll synced with channel column */}
+              <ScrollView
+                ref={programScrollRef}
+                showsVerticalScrollIndicator={false}
+                onScroll={handleProgramScroll}
+                scrollEventThrottle={16}
+                style={styles.bodyScroll}
+              >
+                {channels.map((channel) => {
+                  const programs = schedules.get(channel.tvgId || '') || [];
+                  return (
+                    <Pressable key={channel.id} onPress={() => handleChannelPress(channel)}>
+                      <View style={[styles.row, { height: rowHeight }]}>
+                        <View style={[styles.programsContainer, { width: gridContentWidth }]}>
+                          {programs.length > 0 ? (
+                            programs.map((program, index) => (
+                              <ProgramCell
+                                key={`${program.channelId}-${program.start}-${index}`}
+                                program={program}
+                                theme={theme}
+                                timeSlotWidth={timeSlotWidth}
+                                gridScale={gridScale}
+                              />
+                            ))
+                          ) : (
+                            <View style={styles.noDataCell}>
+                              <Text style={styles.noDataText}>No guide data</Text>
+                            </View>
+                          )}
+                          {currentTimePosition !== null && (
+                            <View style={[styles.timeIndicator, { left: `${currentTimePosition}%` }]} pointerEvents="none" />
+                          )}
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
           </ScrollView>
         </View>
-      </ScrollView>
+      )}
 
       {/* Loading overlay */}
       {loading && (
@@ -468,6 +589,18 @@ const createStyles = (theme: NovaTheme, scale: number = 1.0) => {
     },
     bodyScroll: {
       flex: 1,
+    },
+
+    // Mobile frozen column layout
+    gridBody: {
+      flex: 1,
+      flexDirection: 'row',
+    },
+    frozenColumn: {
+      zIndex: 1,
+      borderRightWidth: 1,
+      borderRightColor: theme.colors.border.subtle,
+      backgroundColor: theme.colors.background.base,
     },
 
     // Header
