@@ -897,6 +897,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		"-nostdin",
 		"-y",
 		"-loglevel", "warning",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
 		// Live input options
 		"-fflags", "+genpts+discardcorrupt",
 		"-reconnect", "1",
@@ -1344,6 +1345,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		"-nostdin",
 		"-y", // Overwrite output files - prevents race condition with on-demand subtitle extraction
 		"-loglevel", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		// Reduce probe/analyze time for faster startup (default is 5MB/5s)
 		"-probesize", "1000000",      // 1MB
 		"-analyzeduration", "500000", // 0.5s
@@ -3498,6 +3500,7 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 	}
 
 	// Add input seeking if session has a start offset

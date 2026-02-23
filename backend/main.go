@@ -46,6 +46,7 @@ import (
 	"novastream/utils"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/time/rate"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -466,6 +467,9 @@ func main() {
 	schedulerService.SetHistoryService(historyService)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
+	// Rate limiter for admin/account login (5/min per IP)
+	adminLoginLimiter := api.NewIPRateLimiter(rate.Every(12*time.Second), 5)
+
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
 	adminUIHandler.SetMetadataService(metadataService)
@@ -480,7 +484,7 @@ func main() {
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
-	r.HandleFunc("/admin/login", adminUIHandler.LoginSubmit).Methods(http.MethodPost)
+	r.HandleFunc("/admin/login", api.RateLimitHandlerFunc(adminLoginLimiter, adminUIHandler.LoginSubmit)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/logout", adminUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
 	// Protected admin routes (require session authentication)
@@ -683,7 +687,7 @@ func main() {
 
 	// Account login/logout routes (no auth required)
 	r.HandleFunc("/account/login", accountUIHandler.LoginPage).Methods(http.MethodGet)
-	r.HandleFunc("/account/login", accountUIHandler.LoginSubmit).Methods(http.MethodPost)
+	r.HandleFunc("/account/login", api.RateLimitHandlerFunc(adminLoginLimiter, accountUIHandler.LoginSubmit)).Methods(http.MethodPost)
 	r.HandleFunc("/account/logout", accountUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
 	// Protected account routes - Pages (use adminUIHandler with unified templates)
@@ -792,11 +796,12 @@ func main() {
 
 	// Create HTTP server with timeouts
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      r,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 0, // No write timeout for streaming
-		IdleTimeout:  120 * time.Second,
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      0, // No write timeout for streaming
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Setup graceful shutdown

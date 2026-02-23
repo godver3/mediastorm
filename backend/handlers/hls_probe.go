@@ -212,6 +212,7 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 		"-v", "error",
 		"-probesize", "1000000",      // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
@@ -244,6 +245,7 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 		"-v", "error",
 		"-probesize", "1000000",      // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
@@ -448,6 +450,7 @@ func (m *HLSManager) probeAudioStreams(ctx context.Context, path string) (stream
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "a",
 		"-show_entries", "stream=index,codec_name",
 		"-of", "json",
@@ -511,6 +514,7 @@ func (m *HLSManager) probeAudioStreamsFromURL(ctx context.Context, url string) (
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "a",
 		"-show_entries", "stream=index,codec_name",
 		"-of", "json",
@@ -626,6 +630,7 @@ func (m *HLSManager) probeSubtitleStreams(ctx context.Context, path string) (str
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "s",
 		"-show_entries", "stream=index,codec_name",
 		"-of", "json",
@@ -694,6 +699,7 @@ func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "s",
 		"-show_entries", "stream=index,codec_name",
 		"-of", "json",
@@ -798,6 +804,7 @@ func (m *HLSManager) probeDuration(ctx context.Context, cleanPath string) (float
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		"-i", "pipe:0",
@@ -832,6 +839,7 @@ func (m *HLSManager) probeDurationFromURL(ctx context.Context, url string) (floa
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		"-i", url,
@@ -901,6 +909,7 @@ func (m *HLSManager) probeColorMetadata(ctx context.Context, cleanPath string) (
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=color_transfer",
 		"-of", "default=noprint_wrappers=1:nokey=1",
@@ -929,6 +938,7 @@ func (m *HLSManager) probeColorMetadataFromURL(ctx context.Context, url string) 
 
 	args := []string{
 		"-v", "error",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=color_transfer",
 		"-of", "default=noprint_wrappers=1:nokey=1",
@@ -998,6 +1008,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 		"-v", "error",
 		"-probesize", "1000000",      // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-i", url,
 		"-select_streams", "v:0",
 		"-skip_frame", "nokey",
@@ -1016,6 +1027,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 			"-v", "error",
 			"-probesize", "1000000",      // 1MB (faster startup)
 			"-analyzeduration", "500000", // 0.5s (faster startup)
+			"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 			"-i", url,
 			"-select_streams", "v:0",
 			"-show_frames",

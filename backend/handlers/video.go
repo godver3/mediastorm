@@ -1696,6 +1696,7 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 		"-v", "error",
 		"-probesize", "1000000",      // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
 		"-show_streams",
 		"-show_format",

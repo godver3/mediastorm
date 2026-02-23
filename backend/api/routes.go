@@ -5,13 +5,16 @@ import (
 	"net/http/pprof"
 	"runtime"
 	"strconv"
+	"time"
 
 	"novastream/handlers"
 	"novastream/services/accounts"
 	"novastream/services/sessions"
 	"novastream/services/users"
+	"novastream/utils"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/time/rate"
 )
 
 func itoa(i int) string      { return strconv.Itoa(i) }
@@ -59,13 +62,16 @@ func devOnlyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// corsMiddleware handles CORS for API routes
+// corsMiddleware handles CORS for API routes, reflecting origin only for local/private sources
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" && utils.IsAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-PIN, X-Client-ID")
+		}
 
 		// Handle preflight requests
 		if r.Method == "OPTIONS" {
@@ -118,9 +124,13 @@ func Register(
 	// Add CORS middleware to API subrouter
 	api.Use(corsMiddleware)
 
+	// Rate limiters for auth endpoints
+	loginLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5)       // 5/min per IP
+	defaultPwLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)   // 10/min per IP
+
 	// Auth routes (no authentication required)
 	authHandler := handlers.NewAuthHandler(accountsSvc, sessionsSvc)
-	api.HandleFunc("/auth/login", authHandler.Login).Methods(http.MethodPost)
+	api.HandleFunc("/auth/login", RateLimitHandlerFunc(loginLimiter, authHandler.Login)).Methods(http.MethodPost)
 	api.HandleFunc("/auth/login", authHandler.Options).Methods(http.MethodOptions)
 	api.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
 	api.HandleFunc("/auth/logout", authHandler.Options).Methods(http.MethodOptions)
@@ -133,7 +143,7 @@ func Register(
 
 	// Check if master account has default password (public endpoint for warning)
 	accountsHandler := handlers.NewAccountsHandler(accountsSvc, sessionsSvc, usersSvc)
-	api.HandleFunc("/auth/default-password", accountsHandler.HasDefaultPassword).Methods(http.MethodGet)
+	api.HandleFunc("/auth/default-password", RateLimitHandlerFunc(defaultPwLimiter, accountsHandler.HasDefaultPassword)).Methods(http.MethodGet)
 	api.HandleFunc("/auth/default-password", accountsHandler.Options).Methods(http.MethodOptions)
 
 	// Profile icon endpoint (public - needed for Image components that can't send auth headers)

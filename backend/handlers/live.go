@@ -275,6 +275,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
 	}
 
 	// Add probesize if configured (value in MB, convert to bytes)

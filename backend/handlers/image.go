@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,8 +59,17 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate URL is from allowed sources (TMDB for now)
-	if !strings.Contains(sourceURL, "image.tmdb.org") && !strings.Contains(sourceURL, "img.youtube.com") {
+	// Validate URL is from allowed image sources (exact hostname match)
+	allowedImageHosts := map[string]struct{}{
+		"image.tmdb.org":   {},
+		"img.youtube.com":  {},
+	}
+	parsedSource, err := url.Parse(sourceURL)
+	if err != nil || parsedSource.Host == "" {
+		http.Error(w, "invalid URL", http.StatusBadRequest)
+		return
+	}
+	if _, ok := allowedImageHosts[parsedSource.Hostname()]; !ok {
 		http.Error(w, "URL not allowed", http.StatusForbidden)
 		return
 	}

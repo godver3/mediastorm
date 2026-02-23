@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -25,4 +26,24 @@ func EncodeURLWithSpaces(rawURL string) (string, error) {
 		encoded += "?" + encodedQuery
 	}
 	return encoded, nil
+}
+
+// ValidateMediaURL ensures a media URL uses only safe protocols.
+// Accepts empty strings, "pipe:0", and http/https URLs.
+// Rejects file://, gopher://, ftp://, and other potentially dangerous schemes.
+func ValidateMediaURL(rawURL string) error {
+	if rawURL == "" || rawURL == "pipe:0" {
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("disallowed URL scheme %q: only http and https are permitted", scheme)
+	}
 }
