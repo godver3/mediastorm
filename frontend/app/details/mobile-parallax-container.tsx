@@ -14,14 +14,20 @@ import Animated, {
   useAnimatedStyle,
   interpolate,
   Extrapolation,
+  type AnimatedStyle,
 } from 'react-native-reanimated';
 import type { NovaTheme } from '@/theme';
+import type { ViewStyle } from 'react-native';
 
 interface MobileParallaxContainerProps {
   posterUrl: string | null;
   backdropUrl: string | null;
   theme: NovaTheme;
   children: ReactNode;
+  /** Animated style for fading in the background poster/backdrop */
+  backgroundAnimatedStyle?: AnimatedStyle<ViewStyle>;
+  /** Animated style for fading in the content area */
+  contentAnimatedStyle?: AnimatedStyle<ViewStyle>;
 }
 
 // Distance in pixels for the poster transition effect
@@ -36,6 +42,8 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
   backdropUrl,
   theme,
   children,
+  backgroundAnimatedStyle,
+  contentAnimatedStyle,
 }: MobileParallaxContainerProps) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const isLandscape = windowWidth > windowHeight;
@@ -75,7 +83,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
     <View style={styles.container}>
       {/* Fixed background poster/backdrop - persists with parallax */}
       {imageUrl && (
-        <Animated.View style={[styles.posterContainer, posterAnimatedStyle]}>
+        <Animated.View style={[styles.posterContainer, posterAnimatedStyle, backgroundAnimatedStyle]}>
           <View style={styles.posterImageWrapper}>
             <Image
               source={{ uri: imageUrl }}
@@ -106,7 +114,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
         <View style={styles.contentSpacer} />
 
         {/* Content card - gradient is a background layer so it doesn't clip children */}
-        <View style={styles.contentCard}>
+        <Animated.View style={[styles.contentCard, contentAnimatedStyle]}>
           <LinearGradient
             colors={[
               'transparent',
@@ -119,7 +127,7 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
             pointerEvents="none"
           />
           {children}
-        </View>
+        </Animated.View>
       </Animated.ScrollView>
     </View>
   );

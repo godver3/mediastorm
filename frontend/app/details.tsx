@@ -602,14 +602,18 @@ export default function DetailsScreen() {
   const logoResolved = logoReady || (metadataLoaded && (!logoUrl || logoLoadFailed));
   const titleTextOpacity = useSharedValue(0);
   const logoOpacity = useSharedValue(0);
+  // logoFadeReady is set to true once the page-level content fade has started,
+  // so the logo/title don't fade in while the page is still invisible.
+  const [logoFadeReady, setLogoFadeReady] = useState(false);
   useEffect(() => {
+    if (!logoFadeReady) return;
     if (logoReady) {
       logoOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     } else if (logoResolved) {
       // Metadata loaded but no logo — show title text
       titleTextOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     }
-  }, [logoReady, logoResolved]);
+  }, [logoReady, logoResolved, logoFadeReady]);
   const titleTextAnimatedStyle = useAnimatedStyle(() => ({ opacity: titleTextOpacity.value }));
   const logoAnimatedStyle = useAnimatedStyle(() => ({ opacity: logoOpacity.value }));
 
@@ -1594,13 +1598,15 @@ export default function DetailsScreen() {
     }
   }, [shouldHideUntilMetadataReady, isSeries, isTV]);
 
-  const shouldAnimateBackground = isTV || isMobile;
-
-  // Fade in background when metadata is ready
-  const backgroundOpacity = useSharedValue(shouldAnimateBackground ? 0 : 1);
+  // Fade in background and content on all platforms
+  const backgroundOpacity = useSharedValue(0);
+  const contentOpacity = useSharedValue(0);
   const backgroundAnimatedStyle = useAnimatedStyle(() => ({
     opacity: backgroundOpacity.value,
     ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 }] } : {}),
+  }));
+  const contentAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
   }));
   const tvScrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -1629,20 +1635,31 @@ export default function DetailsScreen() {
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
 
+  // On TV/mobile the visibility gate delays rendering, so trigger fade when it opens.
+  // On web/desktop there's no gate — trigger fade once the poster image has preloaded.
+  const readyToFadeIn = (isTV || isMobile)
+    ? !shouldHideUntilMetadataReady
+    : isPosterPreloaded;
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (!shouldHideUntilMetadataReady && shouldAnimateBackground && !hasTriggeredFadeIn.current) {
+    if (readyToFadeIn && !hasTriggeredFadeIn.current) {
       hasTriggeredFadeIn.current = true;
       cancelAnimation(backgroundOpacity);
+      cancelAnimation(contentOpacity);
       backgroundOpacity.value = 0;
+      contentOpacity.value = 0;
       timer = setTimeout(() => {
-        backgroundOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
+        backgroundOpacity.value = withTiming(1, { duration: 400, easing: Easing.out(Easing.ease) });
+        contentOpacity.value = withTiming(1, { duration: 350, easing: Easing.out(Easing.ease) });
+        // Allow logo/title to begin their own fade now that content is becoming visible
+        setLogoFadeReady(true);
       }, 16);
     }
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
+  }, [readyToFadeIn, backgroundOpacity, contentOpacity]);
 
   if (isAndroidTV && !isDetailsPageActive) {
     return (
@@ -2383,7 +2400,7 @@ export default function DetailsScreen() {
 
   // Mobile content rendering with parallax
   const renderMobileContent = () => (
-    <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme}>
+    <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme} contentAnimatedStyle={contentAnimatedStyle} backgroundAnimatedStyle={backgroundAnimatedStyle}>
       <View style={[styles.topContent, { overflow: 'visible' }]}>
         <View style={[styles.titleRow, { overflow: 'visible', marginLeft: -12 }]}>
           <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
@@ -2695,7 +2712,7 @@ export default function DetailsScreen() {
                         style={[
                           styles.backgroundImageContainer,
                           shouldAnchorHeroToTop && styles.backgroundImageContainerTop,
-                          isTV && backgroundAnimatedStyle,
+                          backgroundAnimatedStyle,
                         ]}
                         pointerEvents="none">
                         {shouldShowBlurredFill && (
@@ -2730,60 +2747,63 @@ export default function DetailsScreen() {
                       </Animated.View>
                     )
                   ) : null}
-                  {/* Hide overlay gradient when TVTrailerBackdrop is active */}
-                  {!(autoPlayTrailersTV && TVTrailerBackdrop) && (
-                    <LinearGradient
-                      pointerEvents="none"
-                      colors={overlayGradientColors}
-                      locations={overlayGradientLocations}
-                      start={{ x: 0.5, y: 0 }}
-                      end={{ x: 0.5, y: 1 }}
-                      style={styles.gradientOverlay}
-                    />
-                  )}
-                  {Platform.isTV ? (
-                    <>
-                      <Animated.ScrollView
-                        ref={tvScrollViewRef}
-                        style={styles.tvScrollContainer}
-                        contentContainerStyle={styles.tvScrollContent}
-                        showsVerticalScrollIndicator={false}
-                        onScroll={tvScrollHandler}
-                        onContentSizeChange={handleTVContentSizeChange}
-                        scrollEventThrottle={16}
-                        scrollEnabled={false}
-                        bounces={false}
-                        overScrollMode="never"
-                        decelerationRate="fast">
-                        {/* Fixed height spacer */}
-                        <View style={{ height: tvSpacerHeight }} />
-                        {/* Content area with gradient background */}
-                        <Animated.View style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}>
-                          <LinearGradient
-                            colors={[
-                              'transparent',
-                              'rgba(0, 0, 0, 0.6)',
-                              'rgba(0, 0, 0, 0.85)',
-                              theme.colors.background.base,
-                            ]}
-                            locations={[0, 0.1, 0.25, 0.45]}
-                            style={styles.tvContentGradient}>
-                            <View style={styles.tvContentInner}>
-                              {renderDetailsContent()}
-                            </View>
-                          </LinearGradient>
-                        </Animated.View>
-                      </Animated.ScrollView>
-                    </>
-                  ) : (
-                    <View style={styles.contentOverlay}>
-                      <View style={[styles.contentBox, contentBoxStyle]}>
-                        <View style={styles.contentBoxInner}>
-                          <View style={styles.contentContainer}>{renderDetailsContent()}</View>
+                  {/* Content + overlay fade in together */}
+                  <Animated.View style={[{ flex: 1 }, contentAnimatedStyle]}>
+                    {/* Hide overlay gradient when TVTrailerBackdrop is active */}
+                    {!(autoPlayTrailersTV && TVTrailerBackdrop) && (
+                      <LinearGradient
+                        pointerEvents="none"
+                        colors={overlayGradientColors}
+                        locations={overlayGradientLocations}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={styles.gradientOverlay}
+                      />
+                    )}
+                    {Platform.isTV ? (
+                      <>
+                        <Animated.ScrollView
+                          ref={tvScrollViewRef}
+                          style={styles.tvScrollContainer}
+                          contentContainerStyle={styles.tvScrollContent}
+                          showsVerticalScrollIndicator={false}
+                          onScroll={tvScrollHandler}
+                          onContentSizeChange={handleTVContentSizeChange}
+                          scrollEventThrottle={16}
+                          scrollEnabled={false}
+                          bounces={false}
+                          overScrollMode="never"
+                          decelerationRate="fast">
+                          {/* Fixed height spacer */}
+                          <View style={{ height: tvSpacerHeight }} />
+                          {/* Content area with gradient background */}
+                          <Animated.View style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}>
+                            <LinearGradient
+                              colors={[
+                                'transparent',
+                                'rgba(0, 0, 0, 0.6)',
+                                'rgba(0, 0, 0, 0.85)',
+                                theme.colors.background.base,
+                              ]}
+                              locations={[0, 0.1, 0.25, 0.45]}
+                              style={styles.tvContentGradient}>
+                              <View style={styles.tvContentInner}>
+                                {renderDetailsContent()}
+                              </View>
+                            </LinearGradient>
+                          </Animated.View>
+                        </Animated.ScrollView>
+                      </>
+                    ) : (
+                      <View style={styles.contentOverlay}>
+                        <View style={[styles.contentBox, contentBoxStyle]}>
+                          <View style={styles.contentBoxInner}>
+                            <View style={styles.contentContainer}>{renderDetailsContent()}</View>
+                          </View>
                         </View>
                       </View>
-                    </View>
-                  )}
+                    )}
+                  </Animated.View>
                 </>
               )}
             </>
