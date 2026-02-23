@@ -118,7 +118,8 @@ func main() {
 	debridSearchService := debrid.NewSearchService(cfgManager)
 	indexerService := indexer.NewService(cfgManager, metadataService, debridSearchService)
 	indexerHandler := handlers.NewIndexerHandler(indexerService, *demoMode)
-	indexerHandler.SetMetadataService(metadataService) // Enable episode resolver for pack size filtering
+	indexerHandler.SetMetadataService(metadataService)      // Enable episode resolver for pack size filtering
+	indexerHandler.SetMovieMetadataService(metadataService) // Enable movie anime detection for manual search
 	// Note: user settings service wiring happens later after userSettingsService is created
 	debridProxyService := debrid.NewProxyService(cfgManager)
 	// Create HealthService with ffprobe path for pre-resolved stream validation
@@ -389,6 +390,7 @@ func main() {
 		prequeueHandler.SetClientSettingsService(clientSettingsService)
 		prequeueHandler.SetConfigManager(cfgManager)
 		prequeueHandler.SetMetadataService(metadataService) // For episode counting in pack size filtering
+		prequeueHandler.SetMovieMetadataService(metadataService) // For movie anime detection
 
 		// Wire up subtitle pre-extraction for direct streaming (SDR content)
 		if subtitleMgr := videoHandler.GetSubtitleExtractManager(); subtitleMgr != nil {
@@ -510,6 +512,7 @@ func main() {
 	r.HandleFunc("/admin/api/users", adminUIHandler.RequireAuth(usersHandler.List)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/search", adminUIHandler.RequireAuth(metadataHandler.Search)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/metadata/series/details", adminUIHandler.RequireAuth(metadataHandler.SeriesDetails)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/metadata/movie/details", adminUIHandler.RequireAuth(metadataHandler.MovieDetails)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/indexers/search", adminUIHandler.RequireAuth(indexerHandler.Search)).Methods(http.MethodGet)
 
 	// Provider test endpoints

@@ -24,9 +24,10 @@ type indexerService interface {
 var _ indexerService = (*indexer.Service)(nil)
 
 type IndexerHandler struct {
-	Service     indexerService
-	MetadataSvc SeriesDetailsProvider
-	DemoMode    bool
+	Service        indexerService
+	MetadataSvc    SeriesDetailsProvider
+	MovieMetadataSvc MovieDetailsProvider
+	DemoMode       bool
 }
 
 func NewIndexerHandler(s indexerService, demoMode bool) *IndexerHandler {
@@ -36,6 +37,11 @@ func NewIndexerHandler(s indexerService, demoMode bool) *IndexerHandler {
 // SetMetadataService sets the metadata service for episode counting
 func (h *IndexerHandler) SetMetadataService(svc SeriesDetailsProvider) {
 	h.MetadataSvc = svc
+}
+
+// SetMovieMetadataService sets the movie metadata service for anime detection
+func (h *IndexerHandler) SetMovieMetadataService(svc MovieDetailsProvider) {
+	h.MovieMetadataSvc = svc
 }
 
 func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +86,25 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			}
 			if isDaily {
 				log.Printf("[indexer] Daily show detected, targetAirDate=%s", targetAirDate)
+			}
+		}
+	}
+
+	// Detect anime for movies via movie metadata
+	if mediaType == "movie" && h.MovieMetadataSvc != nil {
+		movieQuery := models.MovieDetailsQuery{
+			Name:   strings.TrimSpace(query),
+			Year:   year,
+			IMDBID: imdbID,
+		}
+		if movieTitle, err := h.MovieMetadataSvc.MovieInfo(r.Context(), movieQuery); err == nil && movieTitle != nil {
+			for _, genre := range movieTitle.Genres {
+				genreLower := strings.ToLower(genre)
+				if genreLower == "animation" || genreLower == "anime" {
+					isAnime = true
+					log.Printf("[indexer] Movie %q is anime (genre=%q) - applying anime language preferences", query, genre)
+					break
+				}
 			}
 		}
 	}

@@ -18,6 +18,18 @@ type fakeIndexerService struct {
 	lastOpts indexer.SearchOptions
 }
 
+type fakeMovieMetadataService struct {
+	title *models.Title
+	err   error
+}
+
+func (f *fakeMovieMetadataService) MovieInfo(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.title, nil
+}
+
 func (f *fakeIndexerService) Search(_ context.Context, opts indexer.SearchOptions) ([]models.NZBResult, error) {
 	f.lastOpts = opts
 	if f.err != nil {
@@ -95,5 +107,47 @@ func TestIndexerHandler_SearchError(t *testing.T) {
 	}
 	if payload["error"] == "" {
 		t.Fatalf("expected error message, got %v", payload)
+	}
+}
+
+func TestIndexerHandler_SearchMovieAnimeDetection(t *testing.T) {
+	fake := &fakeIndexerService{results: []models.NZBResult{}}
+	movieSvc := &fakeMovieMetadataService{
+		title: &models.Title{Genres: []string{"Animation", "Fantasy"}},
+	}
+	handler := NewIndexerHandler(fake, false)
+	handler.SetMovieMetadataService(movieSvc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=Spirited+Away&mediaType=movie&year=2001", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if !fake.lastOpts.IsAnime {
+		t.Fatal("expected IsAnime=true for anime movie, got false")
+	}
+}
+
+func TestIndexerHandler_SearchMovieNonAnime(t *testing.T) {
+	fake := &fakeIndexerService{results: []models.NZBResult{}}
+	movieSvc := &fakeMovieMetadataService{
+		title: &models.Title{Genres: []string{"Action", "Thriller"}},
+	}
+	handler := NewIndexerHandler(fake, false)
+	handler.SetMovieMetadataService(movieSvc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=John+Wick&mediaType=movie&year=2014", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if fake.lastOpts.IsAnime {
+		t.Fatal("expected IsAnime=false for non-anime movie, got true")
 	}
 }
