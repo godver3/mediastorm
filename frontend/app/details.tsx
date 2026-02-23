@@ -575,11 +575,14 @@ export default function DetailsScreen() {
 
   // Measure logo dimensions to calculate proper sizing within bounding box
   const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
   useEffect(() => {
     if (!logoUrl) {
       setLogoDimensions(null);
+      setLogoLoadFailed(false);
       return;
     }
+    setLogoLoadFailed(false);
     RNImage.getSize(
       logoUrl,
       (width, height) => {
@@ -587,23 +590,24 @@ export default function DetailsScreen() {
       },
       () => {
         setLogoDimensions(null);
+        setLogoLoadFailed(true);
       }
     );
   }, [logoUrl]);
 
-  // Crossfade: title text fades out, logo fades in
+  // Title area starts invisible. Fade in logo if it loads, or title text as fallback.
   const logoReady = !!(logoUrl && logoDimensions);
-  const titleTextOpacity = useSharedValue(1);
+  const showTitleFallback = !logoUrl || logoLoadFailed;
+  const titleTextOpacity = useSharedValue(0);
   const logoOpacity = useSharedValue(0);
   useEffect(() => {
     if (logoReady) {
-      titleTextOpacity.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.ease) });
       logoOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
-    } else {
-      titleTextOpacity.value = 1;
-      logoOpacity.value = 0;
+    } else if (showTitleFallback) {
+      titleTextOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     }
-  }, [logoReady]);
+    // While logo is still loading (logoUrl set, not failed, no dimensions yet), both stay at 0
+  }, [logoReady, showTitleFallback]);
   const titleTextAnimatedStyle = useAnimatedStyle(() => ({ opacity: titleTextOpacity.value }));
   const logoAnimatedStyle = useAnimatedStyle(() => ({ opacity: logoOpacity.value }));
 
