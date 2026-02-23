@@ -32,8 +32,9 @@ type TrackedStream struct {
 	RangeEnd      int64
 	Method        string
 	UserAgent     string
-	done          chan struct{}
-	bytesCounter  *int64
+	done             chan struct{}
+	bytesCounter     *int64
+	activityCounter  *int64 // unix nanos of last byte transfer, updated atomically
 }
 
 // Global stream tracker instance
@@ -46,8 +47,10 @@ func GetStreamTracker() *StreamTracker {
 	return globalStreamTracker
 }
 
-// StartStream registers a new stream and returns its ID
-func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength int64, rangeStart, rangeEnd int64) (string, *int64) {
+// StartStream registers a new stream and returns its ID, a bytes counter, and an activity timestamp counter.
+// The caller should atomically update the bytes counter with total bytes transferred
+// and the activity counter with time.Now().UnixNano() on each write.
+func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength int64, rangeStart, rangeEnd int64) (string, *int64, *int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -66,28 +69,32 @@ func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength 
 	}
 	profileName := r.URL.Query().Get("profileName")
 
+	now := time.Now()
 	bytesCounter := new(int64)
+	activityCounter := new(int64)
+	*activityCounter = now.UnixNano()
 
 	stream := &TrackedStream{
-		ID:            id,
-		Path:          path,
-		Filename:      filename,
-		ClientIP:      clientIP,
-		ProfileID:     profileID,
-		ProfileName:   profileName,
-		StartTime:     time.Now(),
-		LastActivity:  time.Now(),
-		ContentLength: contentLength,
-		RangeStart:    rangeStart,
-		RangeEnd:      rangeEnd,
-		Method:        r.Method,
-		UserAgent:     r.UserAgent(),
-		done:          make(chan struct{}),
-		bytesCounter:  bytesCounter,
+		ID:              id,
+		Path:            path,
+		Filename:        filename,
+		ClientIP:        clientIP,
+		ProfileID:       profileID,
+		ProfileName:     profileName,
+		StartTime:       now,
+		LastActivity:    now,
+		ContentLength:   contentLength,
+		RangeStart:      rangeStart,
+		RangeEnd:        rangeEnd,
+		Method:          r.Method,
+		UserAgent:       r.UserAgent(),
+		done:            make(chan struct{}),
+		bytesCounter:    bytesCounter,
+		activityCounter: activityCounter,
 	}
 
 	t.streams[id] = stream
-	return id, bytesCounter
+	return id, bytesCounter, activityCounter
 }
 
 // UpdateBytes updates the bytes streamed for a stream
@@ -120,7 +127,14 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 
 	streams := make([]*TrackedStream, 0, len(t.streams))
 	for _, s := range t.streams {
-		// Create a copy with current bytes count
+		// Read last activity from atomic counter
+		lastActivity := s.StartTime
+		if s.activityCounter != nil {
+			if nanos := atomic.LoadInt64(s.activityCounter); nanos > 0 {
+				lastActivity = time.Unix(0, nanos)
+			}
+		}
+		// Create a copy with current bytes count and activity time
 		streamCopy := &TrackedStream{
 			ID:            s.ID,
 			Path:          s.Path,
@@ -129,7 +143,7 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 			ProfileID:     s.ProfileID,
 			ProfileName:   s.ProfileName,
 			StartTime:     s.StartTime,
-			LastActivity:  s.LastActivity,
+			LastActivity:  lastActivity,
 			BytesStreamed: atomic.LoadInt64(s.bytesCounter),
 			ContentLength: s.ContentLength,
 			RangeStart:    s.RangeStart,

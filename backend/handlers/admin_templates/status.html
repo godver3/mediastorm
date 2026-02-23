@@ -669,6 +669,17 @@
         background: rgba(99, 102, 241, 0.9);
         color: white;
     }
+    .stream-card-badge.paused {
+        background: rgba(156, 163, 175, 0.9);
+        color: white;
+    }
+
+    .stream-card.paused {
+        opacity: 0.6;
+    }
+    .stream-card.paused .stream-card-live-badge {
+        background: rgba(156, 163, 175, 0.9);
+    }
 
     .stream-card-content {
         padding: 0.875rem;
@@ -881,13 +892,14 @@
     }
 
     function renderTableView(streams) {
-        return '<div class="table-container"><table><thead><tr><th>File</th><th>Profile(s)</th><th>Type</th><th>Progress</th><th>Transferred</th><th>Started</th></tr></thead><tbody>' +
+        return '<div class="table-container"><table><thead><tr><th>File</th><th>Profile(s)</th><th>Status</th><th>Progress</th><th>Transferred</th><th>Started</th></tr></thead><tbody>' +
             streams.map(stream => {
                 const progress = stream.percent_watched || 0;
                 const currentPos = stream.current_position || 0;
                 const duration = stream.duration || 0;
                 const timeDisplay = duration > 0 ? formatTime(currentPos) + ' / ' + formatTime(duration) : '-';
-                return '<tr><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+getProfilesDisplay(stream)+'</td><td><span class="status-badge '+(stream.type === 'hls' ? 'online' : 'warning')+'">'+(stream.type || 'direct')+'</span></td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>';
+                const isPaused = stream.is_paused || false;
+                return '<tr'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+(stream.path || stream.original_path || '-')+'">'+(stream.filename || (stream.path ? stream.path.split('/').pop() : '-'))+'</div>'+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;">'+getProfilesDisplay(stream)+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -925,8 +937,9 @@
                 const profileDisplay = getCardProfileDisplay(stream);
                 const profileNames = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || [];
                 const hasMultipleViewers = profileNames.length > 1;
+                const isPaused = stream.is_paused || false;
                 return `
-                    <div class="stream-card" data-stream-id="${streamId}">
+                    <div class="stream-card${isPaused ? ' paused' : ''}" data-stream-id="${streamId}">
                         <div class="stream-card-media">
                             <div class="stream-card-poster-placeholder" id="poster-${streamId}">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -934,9 +947,9 @@
                                 </svg>
                             </div>
                             <div class="stream-card-badges">
+                                ${isPaused ? '<span class="stream-card-badge paused">PAUSED</span>' : ''}
                                 ${stream.has_dv ? '<span class="stream-card-badge dv">DV</span>' : ''}
                                 ${stream.has_hdr ? '<span class="stream-card-badge hdr">HDR</span>' : ''}
-                                <span class="stream-card-badge ${stream.type === 'hls' ? 'hls' : 'direct'}">${(stream.type || 'direct').toUpperCase()}</span>
                             </div>
                             <div class="stream-card-profile" ${hasMultipleViewers ? `title="${profileNames.join(', ')}"` : ''}>
                                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">

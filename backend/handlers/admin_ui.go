@@ -1151,6 +1151,11 @@ func (h *AdminUIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
 
+	// Pause detection thresholds
+	const pauseThreshold = 30 * time.Second // No activity for 30s = paused
+	const hideThreshold = 60 * time.Second  // Paused for 30s beyond pause threshold = hide from dashboard
+	now := time.Now()
+
 	// Get allowed profile IDs for this account (for filtering)
 	allowedProfileIDs := make(map[string]bool)
 	if !isAdmin {
@@ -1213,7 +1218,8 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 					}
 
 					cleanedProgressName := cleanFilenameForProgressMatch(progressName)
-					if cleanedProgressName != "" && cleanedFilename != "" &&
+					// Require minimum 3 chars to avoid false positives from short names (e.g. "Up", "Dr")
+					if len(cleanedProgressName) >= 3 && cleanedFilename != "" &&
 						strings.Contains(cleanedFilename, cleanedProgressName) {
 						return progress
 					}
@@ -1246,6 +1252,17 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				session.mu.RUnlock()
 				continue
 			}
+			// Pause detection for HLS: use LastSegmentRequest (updated by keepalives)
+			hlsActivity := session.LastSegmentRequest
+			if hlsActivity.IsZero() {
+				hlsActivity = session.LastAccess
+			}
+			hlsIdleDuration := now.Sub(hlsActivity)
+			if hlsIdleDuration > hideThreshold {
+				session.mu.RUnlock()
+				continue // Hidden: idle too long
+			}
+			hlsIsPaused := hlsIdleDuration > pauseThreshold
 			// Skip streams that don't belong to this account's profiles
 			if !isAdmin && !allowedProfileIDs[session.ProfileID] {
 				session.mu.RUnlock()
@@ -1289,7 +1306,7 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			streams = append(streams, map[string]interface{}{
+			hlsStreamData := map[string]interface{}{
 				"id":               session.ID,
 				"type":             "hls",
 				"path":             session.Path,
@@ -1299,7 +1316,7 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				"profile_name":     session.ProfileName,
 				"client_ip":        session.ClientIP,
 				"created_at":       session.CreatedAt,
-				"last_access":      session.LastAccess,
+				"last_access":      hlsActivity,
 				"duration":         duration,
 				"current_position": position,
 				"percent_watched":  percent,
@@ -1316,7 +1333,11 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 				"episode_number": episodeNumber,
 				"episode_name":   episodeName,
 				"externalIds":    externalIDs,
-			})
+			}
+			if hlsIsPaused {
+				hlsStreamData["is_paused"] = true
+			}
+			streams = append(streams, hlsStreamData)
 			session.mu.RUnlock()
 		}
 		h.hlsManager.mu.RUnlock()
@@ -1329,6 +1350,13 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin && !allowedProfileIDs[stream.ProfileID] {
 			continue
 		}
+
+		// Pause detection: check how long since last byte transfer
+		idleDuration := now.Sub(stream.LastActivity)
+		if idleDuration > hideThreshold {
+			continue // Hidden: idle too long
+		}
+		isPaused := idleDuration > pauseThreshold
 
 		// Match playback progress for position and media identification
 		matchedProgress := matchProgress(stream.Filename, stream.ProfileID, stream.ProfileName)
@@ -1355,7 +1383,7 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		streams = append(streams, map[string]interface{}{
+		streamData := map[string]interface{}{
 			"id":               stream.ID,
 			"type":             "direct",
 			"path":             stream.Path,
@@ -1379,7 +1407,11 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			"episode_number": episodeNumber,
 			"episode_name":   episodeName,
 			"externalIds":    externalIDs,
-		})
+		}
+		if isPaused {
+			streamData["is_paused"] = true
+		}
+		streams = append(streams, streamData)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1388,13 +1420,20 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// cleanFilenameForProgressMatch removes common filename artifacts for matching against media titles
+// cleanFilenameForProgressMatch removes common filename artifacts for matching against media titles.
+// Used for both filenames and media title strings, so only strips known video file extensions
+// rather than using filepath.Ext (which misinterprets dots in titles like "Dr. STONE").
 func cleanFilenameForProgressMatch(name string) string {
 	if name == "" {
 		return ""
 	}
-	// Remove file extension
-	name = strings.TrimSuffix(name, filepath.Ext(name))
+	// Remove known video file extensions only (filepath.Ext misinterprets dots in titles)
+	for _, ext := range []string{".mkv", ".mp4", ".avi", ".ts", ".m4v", ".webm", ".mov", ".wmv", ".flv"} {
+		if strings.HasSuffix(strings.ToLower(name), ext) {
+			name = name[:len(name)-len(ext)]
+			break
+		}
+	}
 	// Replace common separators with spaces
 	name = strings.ReplaceAll(name, ".", " ")
 	name = strings.ReplaceAll(name, "_", " ")

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"novastream/models"
 	"novastream/services/debrid"
@@ -90,11 +91,11 @@ func (h *DebridHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		// Track this stream for admin monitoring
 		tracker := GetStreamTracker()
 		filename := filepath.Base(resourceURL)
-		streamID, bytesCounter := tracker.StartStream(r, "debrid:"+filename, resp.ContentLength, 0, 0)
+		streamID, bytesCounter, actCounter := tracker.StartStream(r, "debrid:"+filename, resp.ContentLength, 0, 0)
 		defer tracker.EndStream(streamID)
 
-		// Use a tracking writer to count bytes
-		trackingWriter := &trackingWriter{ResponseWriter: w, counter: bytesCounter}
+		// Use a tracking writer to count bytes and activity
+		trackingWriter := &trackingWriter{ResponseWriter: w, counter: bytesCounter, activityCounter: actCounter}
 		if _, err := io.Copy(trackingWriter, resp.Body); err != nil {
 			// Best effort logging; cannot write error to client at this point.
 		}
@@ -104,13 +105,19 @@ func (h *DebridHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 // trackingWriter wraps http.ResponseWriter to count bytes written
 type trackingWriter struct {
 	http.ResponseWriter
-	counter *int64
+	counter         *int64
+	activityCounter *int64
 }
 
 func (tw *trackingWriter) Write(b []byte) (int, error) {
 	n, err := tw.ResponseWriter.Write(b)
-	if n > 0 && tw.counter != nil {
-		atomic.AddInt64(tw.counter, int64(n))
+	if n > 0 {
+		if tw.counter != nil {
+			atomic.AddInt64(tw.counter, int64(n))
+		}
+		if tw.activityCounter != nil {
+			atomic.StoreInt64(tw.activityCounter, time.Now().UnixNano())
+		}
 	}
 	return n, err
 }

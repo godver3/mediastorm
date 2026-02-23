@@ -308,6 +308,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	tracker := GetStreamTracker()
 	var streamID string
 	var bytesCounter *int64
+	var activityCounter *int64
 
 	// Log the provider request details
 	log.Printf(
@@ -396,7 +397,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		// Start tracking this stream
 		var rangeStart, rangeEnd int64
 		// Parse range if present (simplified)
-		streamID, bytesCounter = tracker.StartStream(r, cleanPath, expectedLength, rangeStart, rangeEnd)
+		streamID, bytesCounter, activityCounter = tracker.StartStream(r, cleanPath, expectedLength, rangeStart, rangeEnd)
 		defer tracker.EndStream(streamID)
 
 		reader := io.Reader(resp.Body)
@@ -451,9 +452,12 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 				}
 
 				total += int64(written)
-				// Update stream tracking bytes counter
+				// Update stream tracking bytes and activity counters
 				if bytesCounter != nil {
 					atomic.StoreInt64(bytesCounter, total)
+				}
+				if activityCounter != nil {
+					atomic.StoreInt64(activityCounter, time.Now().UnixNano())
 				}
 				flushCounter++
 
@@ -3215,7 +3219,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 			expectedLength = parsed
 		}
 	}
-	streamID, bytesCounter := tracker.StartStream(r, externalURL, expectedLength, 0, 0)
+	streamID, bytesCounter, actCounter := tracker.StartStream(r, externalURL, expectedLength, 0, 0)
 	defer tracker.EndStream(streamID)
 
 	// Stream the response body to the client
@@ -3252,9 +3256,12 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 			}
 
 			total += int64(written)
-			// Update stream tracking bytes counter
+			// Update stream tracking bytes and activity counters
 			if bytesCounter != nil {
 				atomic.StoreInt64(bytesCounter, total)
+			}
+			if actCounter != nil {
+				atomic.StoreInt64(actCounter, time.Now().UnixNano())
 			}
 			flushCounter++
 

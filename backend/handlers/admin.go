@@ -79,6 +79,9 @@ type StreamInfo struct {
 	EpisodeNumber int               `json:"episode_number,omitempty"` // Episode number (for episodes)
 	EpisodeName   string            `json:"episode_name,omitempty"`   // Episode title (for episodes)
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"` // tmdbId, tvdbId, imdbId
+	// Pause detection
+	IsPaused      bool      `json:"is_paused,omitempty"`       // True if no recent activity (likely paused)
+	PausedSince   time.Time `json:"paused_since,omitempty"`    // When the stream was detected as paused
 }
 
 // StreamsResponse is the response for the streams endpoint
@@ -106,6 +109,11 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 	if h.progressService != nil {
 		allProgress = h.progressService.ListAllPlaybackProgress()
 	}
+
+	// Pause detection thresholds
+	const pauseThreshold = 30 * time.Second // No activity for 30s = paused
+	const hideThreshold = 60 * time.Second  // Paused for 30s beyond pause threshold = hide from dashboard
+	now := time.Now()
 
 	// Collect all raw streams first
 	type rawStream struct {
@@ -135,6 +143,13 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 
+			// For pause detection, use LastSegmentRequest (updated by keepalives every 10s)
+			// Falls back to LastAccess if no segment requests yet
+			lastActivity := session.LastSegmentRequest
+			if lastActivity.IsZero() {
+				lastActivity = session.LastAccess
+			}
+
 			info := StreamInfo{
 				ID:           session.ID,
 				Type:         "hls",
@@ -145,7 +160,7 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 				ProfileID:    session.ProfileID,
 				ProfileName:  profileName,
 				CreatedAt:    session.CreatedAt,
-				LastAccess:   session.LastAccess,
+				LastAccess:   lastActivity,
 				Duration:     session.Duration,
 				BytesStreamed: session.BytesStreamed,
 				HasDV:        session.HasDV && !session.DVDisabled,
@@ -375,6 +390,18 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 		if info.BytesStreamed == 0 {
 			continue
 		}
+
+		// Pause detection: mark as paused if no recent activity
+		idleDuration := now.Sub(info.LastAccess)
+		if idleDuration > pauseThreshold {
+			// Hide streams that have been idle too long
+			if idleDuration > hideThreshold {
+				continue
+			}
+			info.IsPaused = true
+			info.PausedSince = info.LastAccess
+		}
+
 		response.Streams = append(response.Streams, *info)
 	}
 	response.Count = len(response.Streams)
@@ -387,8 +414,13 @@ func cleanFilenameForMatch(name string) string {
 	if name == "" {
 		return ""
 	}
-	// Remove file extension
-	name = strings.TrimSuffix(name, filepath.Ext(name))
+	// Remove known video file extensions only (filepath.Ext misinterprets dots in titles)
+	for _, ext := range []string{".mkv", ".mp4", ".avi", ".ts", ".m4v", ".webm", ".mov", ".wmv", ".flv"} {
+		if strings.HasSuffix(strings.ToLower(name), ext) {
+			name = name[:len(name)-len(ext)]
+			break
+		}
+	}
 	// Replace common separators with spaces
 	name = strings.ReplaceAll(name, ".", " ")
 	name = strings.ReplaceAll(name, "_", " ")
