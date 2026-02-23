@@ -2409,16 +2409,17 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if season == nil {
 			continue
 		}
-		if len(season.Episodes) > 0 {
-			sort.Slice(season.Episodes, func(i, j int) bool {
-				left := season.Episodes[i]
-				right := season.Episodes[j]
-				if left.EpisodeNumber == right.EpisodeNumber {
-					return left.TVDBID < right.TVDBID
-				}
-				return left.EpisodeNumber < right.EpisodeNumber
-			})
+		if len(season.Episodes) == 0 {
+			continue // Don't send empty seasons
 		}
+		sort.Slice(season.Episodes, func(i, j int) bool {
+			left := season.Episodes[i]
+			right := season.Episodes[j]
+			if left.EpisodeNumber == right.EpisodeNumber {
+				return left.TVDBID < right.TVDBID
+			}
+			return left.EpisodeNumber < right.EpisodeNumber
+		})
 		season.EpisodeCount = len(season.Episodes)
 		seasons = append(seasons, *season)
 	}
@@ -2769,16 +2770,17 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		if season == nil {
 			continue
 		}
-		if len(season.Episodes) > 0 {
-			sort.Slice(season.Episodes, func(i, j int) bool {
-				left := season.Episodes[i]
-				right := season.Episodes[j]
-				if left.EpisodeNumber == right.EpisodeNumber {
-					return left.TVDBID < right.TVDBID
-				}
-				return left.EpisodeNumber < right.EpisodeNumber
-			})
+		if len(season.Episodes) == 0 {
+			continue // Don't send empty seasons
 		}
+		sort.Slice(season.Episodes, func(i, j int) bool {
+			left := season.Episodes[i]
+			right := season.Episodes[j]
+			if left.EpisodeNumber == right.EpisodeNumber {
+				return left.TVDBID < right.TVDBID
+			}
+			return left.EpisodeNumber < right.EpisodeNumber
+		})
 		season.EpisodeCount = len(season.Episodes)
 		seasons = append(seasons, *season)
 	}

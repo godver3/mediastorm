@@ -24,6 +24,8 @@ interface UseEpisodeManagerParams {
       targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string };
     }) => Promise<void>) | null
   >;
+  initialSeasonNumber: number | null;
+  initialEpisodeNumber: number | null;
   dismissTrailerAutoPlay: () => void;
   showLoadingScreenIfEnabled: () => Promise<void>;
   /** pendingShuffleModeRef shared with usePlayback */
@@ -119,6 +121,8 @@ export function useEpisodeManager(params: UseEpisodeManagerParams): EpisodeManag
     detailsBundle,
     bundleReady,
     resolveAndPlayRef,
+    initialSeasonNumber,
+    initialEpisodeNumber,
     dismissTrailerAutoPlay,
     showLoadingScreenIfEnabled,
     pendingShuffleModeRef,
@@ -150,6 +154,7 @@ export function useEpisodeManager(params: UseEpisodeManagerParams): EpisodeManag
   const [isEpisodeStripFocused, setIsEpisodeStripFocused] = useState(false);
 
   const hydratedWatchStateRef = useRef(false);
+  const hydratedSeasonsFromBundleRef = useRef(false);
 
   // Keep pendingShuffleModeRef in sync with state
   useEffect(() => {
@@ -164,6 +169,67 @@ export function useEpisodeManager(params: UseEpisodeManagerParams): EpisodeManag
       setEpisodesLoading(false);
     }
   }, [isSeries]);
+
+  // Direct season/episode hydration from bundle — eliminates the 2 extra render
+  // cycles that the SeriesEpisodes → handleSeasonsLoaded callback path requires.
+  // This ensures episodes are available in the same render as cast/similar on TV,
+  // which fixes spatial navigation focus order.
+  useEffect(() => {
+    if (!isSeries || hydratedSeasonsFromBundleRef.current) return;
+    const bundleSeasons = detailsBundle?.seriesDetails?.seasons;
+    if (!bundleSeasons?.length) return;
+
+    hydratedSeasonsFromBundleRef.current = true;
+
+    // Replicate ordering/filtering from series-episodes.tsx
+    const seasonsWithEpisodes = bundleSeasons.filter(
+      (season) => season.episodeCount > 0 || season.episodes.length > 0,
+    );
+    if (!seasonsWithEpisodes.length) return;
+    const ordered = [...seasonsWithEpisodes].sort((a, b) => a.number - b.number);
+
+    setSeasons(ordered);
+
+    // Collect all episodes
+    const allEps: SeriesEpisode[] = [];
+    ordered.forEach((season) => {
+      allEps.push(...season.episodes);
+    });
+    setAllEpisodes(allEps);
+    allEpisodesRef.current = allEps;
+    setEpisodesLoading(false);
+
+    // Select initial season
+    let initialSeason: SeriesSeason | null = null;
+    if (initialSeasonNumber !== null && initialSeasonNumber !== undefined) {
+      initialSeason = ordered.find((s) => s.number === initialSeasonNumber) ?? null;
+    }
+    if (!initialSeason) {
+      initialSeason = ordered.find((s) => s.number > 0) ?? ordered[0];
+    }
+    if (initialSeason) {
+      setSelectedSeason(initialSeason);
+    }
+
+    // Select initial episode
+    if (initialSeason && !activeEpisode) {
+      const seasonEpisodes = initialSeason.episodes.sort(
+        (a, b) => a.episodeNumber - b.episodeNumber,
+      );
+      if (seasonEpisodes.length > 0) {
+        let target: SeriesEpisode | undefined;
+        if (initialEpisodeNumber !== null && initialEpisodeNumber !== undefined) {
+          target = seasonEpisodes.find((ep) => ep.episodeNumber === initialEpisodeNumber);
+        }
+        if (!target) {
+          target = seasonEpisodes[0];
+        }
+        if (target) {
+          setActiveEpisode(target);
+        }
+      }
+    }
+  }, [isSeries, detailsBundle, initialSeasonNumber, initialEpisodeNumber, activeEpisode]);
 
   // Fetch watch state to determine next episode
   useEffect(() => {
@@ -426,12 +492,14 @@ export function useEpisodeManager(params: UseEpisodeManagerParams): EpisodeManag
   }, []);
 
   const handleEpisodesLoaded = useCallback((episodes: SeriesEpisode[]) => {
+    if (hydratedSeasonsFromBundleRef.current) return;
     setAllEpisodes(episodes);
     allEpisodesRef.current = episodes;
     setEpisodesLoading(false);
   }, []);
 
   const handleSeasonsLoaded = useCallback((loadedSeasons: SeriesSeason[]) => {
+    if (hydratedSeasonsFromBundleRef.current) return;
     setSeasons(loadedSeasons);
   }, []);
 

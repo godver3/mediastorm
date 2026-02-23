@@ -167,17 +167,6 @@ const getCertificationConfig = (certification: string, baseUrl: string): { iconU
   return config ? { iconUrl: `${iconBase}/${config.file}`, aspectRatio: config.aspectRatio } : null;
 };
 
-// Define the order for rating sources (lower = displayed first)
-const RATING_ORDER: Record<string, number> = {
-  imdb: 1,
-  tmdb: 2,
-  trakt: 3,
-  tomatoes: 4, // RT Critics before Audience
-  audience: 5,
-  metacritic: 6,
-  letterboxd: 7,
-};
-
 // Format rating value based on source and scale
 const formatRating = (rating: Rating): string => {
   switch (rating.source) {
@@ -528,8 +517,8 @@ export default function DetailsScreen() {
     primaryTrailer,
     trailersLoading,
     contentPreference,
-    episodeProgressMap: detailsEpisodeProgressMap,
-    displayProgress: detailsDisplayProgress,
+    // episodeProgressMap and displayProgress from useDetailsData are unused —
+    // the component uses playback.episodeProgressMap and playback.displayProgress instead.
     movieDetailsLoading,
     movieDetailsError,
     seriesDetailsLoading,
@@ -601,6 +590,22 @@ export default function DetailsScreen() {
       }
     );
   }, [logoUrl]);
+
+  // Crossfade: title text fades out, logo fades in
+  const logoReady = !!(logoUrl && logoDimensions);
+  const titleTextOpacity = useSharedValue(1);
+  const logoOpacity = useSharedValue(0);
+  useEffect(() => {
+    if (logoReady) {
+      titleTextOpacity.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.ease) });
+      logoOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
+    } else {
+      titleTextOpacity.value = 1;
+      logoOpacity.value = 0;
+    }
+  }, [logoReady]);
+  const titleTextAnimatedStyle = useAnimatedStyle(() => ({ opacity: titleTextOpacity.value }));
+  const logoAnimatedStyle = useAnimatedStyle(() => ({ opacity: logoOpacity.value }));
 
   // Preload poster/backdrop image so it's ready when page displays
   const [isPosterPreloaded, setIsPosterPreloaded] = useState(false);
@@ -871,6 +876,29 @@ export default function DetailsScreen() {
     }
   }, [autoPlayTrailersTV, trailersHook.trailerPrequeueStatus, trailersHook.trailerStreamUrl, trailersHook.trailerAutoPlayDismissed, playback.prequeueId]);
 
+  // Parse initial season/episode from route params (must be computed before useEpisodeManager)
+  const initialSeasonNumber = useMemo(() => {
+    if (nextEpisodeFromPlayback) {
+      return nextEpisodeFromPlayback.seasonNumber;
+    }
+    if (!initialSeasonParam || initialSeasonParam.trim() === '') {
+      return null;
+    }
+    const parsed = Number(initialSeasonParam);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }, [initialSeasonParam, nextEpisodeFromPlayback]);
+
+  const initialEpisodeNumber = useMemo(() => {
+    if (nextEpisodeFromPlayback) {
+      return nextEpisodeFromPlayback.episodeNumber;
+    }
+    if (!initialEpisodeParam || initialEpisodeParam.trim() === '') {
+      return null;
+    }
+    const parsed = Number(initialEpisodeParam);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }, [initialEpisodeParam, nextEpisodeFromPlayback]);
+
   // ===== Hook 4: useEpisodeManager =====
   const episodeManager = useEpisodeManager({
     isSeries,
@@ -880,6 +908,8 @@ export default function DetailsScreen() {
     detailsBundle,
     bundleReady,
     resolveAndPlayRef: playback.resolveAndPlayRef,
+    initialSeasonNumber,
+    initialEpisodeNumber,
     dismissTrailerAutoPlay: trailersHook.dismissTrailerAutoPlay,
     showLoadingScreenIfEnabled: playback.showLoadingScreenIfEnabled,
     pendingShuffleModeRef: playback.pendingShuffleModeRef,
@@ -1239,55 +1269,14 @@ export default function DetailsScreen() {
     }, [titleId]),
   );
 
-  const initialSeasonNumber = useMemo(() => {
-    if (nextEpisodeFromPlayback) {
-      return nextEpisodeFromPlayback.seasonNumber;
-    }
-    if (!initialSeasonParam || initialSeasonParam.trim() === '') {
-      return null;
-    }
-    const parsed = Number(initialSeasonParam);
-    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-  }, [initialSeasonParam, nextEpisodeFromPlayback]);
-
-  const initialEpisodeNumber = useMemo(() => {
-    if (nextEpisodeFromPlayback) {
-      return nextEpisodeFromPlayback.episodeNumber;
-    }
-    if (!initialEpisodeParam || initialEpisodeParam.trim() === '') {
-      return null;
-    }
-    const parsed = Number(initialEpisodeParam);
-    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-  }, [initialEpisodeParam, nextEpisodeFromPlayback]);
-
   // ===== Derived display values =====
-  const credits = useMemo(() => {
-    if (isSeries) {
-      return seriesDetailsData?.title?.credits ?? null;
-    }
-    return movieDetails?.credits ?? null;
-  }, [isSeries, seriesDetailsData, movieDetails]);
-
-  const ratings = useMemo(() => {
-    const rawRatings = isSeries ? (seriesDetailsForBackdrop?.ratings ?? []) : (movieDetails?.ratings ?? []);
-    return [...rawRatings].sort((a, b) => {
-      const orderA = RATING_ORDER[a.source] ?? 99;
-      const orderB = RATING_ORDER[b.source] ?? 99;
-      return orderA - orderB;
-    });
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+  // credits, ratings, genres, certification are pre-computed by useDetailsData
+  const credits = detailsCredits;
+  const ratings = detailsRatings;
+  const genres = detailsGenres;
+  const certification = detailsCertification;
 
   const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
-
-  const genres = useMemo(() => {
-    const rawGenres = isSeries ? (seriesDetailsForBackdrop?.genres ?? []) : (movieDetails?.genres ?? []);
-    return rawGenres.slice(0, 3);
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
-
-  const certification = useMemo(() => {
-    return isSeries ? seriesDetailsForBackdrop?.certification : movieDetails?.certification;
-  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
 
   const describeRelease = useCallback((release?: Title['homeRelease']) => {
     if (!release?.date) return '';
@@ -1572,15 +1561,32 @@ export default function DetailsScreen() {
     [trailersHook.dismissTrailerAutoPlay, scrollToSection],
   );
 
+  // On Android TV (low-RAM devices), unmount heavy content when the player is active
+  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
+
   // ===== Visibility gate =====
   const hasBeenDisplayedRef = useRef(false);
   const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
-  const isLogoReady = !logoUrl || logoDimensions !== null;
   const isPosterReady = isPosterPreloaded;
-  const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current && (isMetadataLoading || !isLogoReady || !isPosterReady);
+  // On Android TV, bypass the gate when nav params provide enough content to render immediately
+  // (title text fallback + backdrop from params). This eliminates ~3s blank screen on Fire Stick.
+  const hasNavParamContent = !!title && !!(headerImageParam || posterUrlParam || backdropUrlParam);
+  const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current &&
+    !(isAndroidTV && hasNavParamContent) &&
+    (isMetadataLoading || !isPosterReady);
   if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
     hasBeenDisplayedRef.current = true;
   }
+
+  // Defer the hidden SeriesEpisodes pre-mount until after the first paint,
+  // so it doesn't compete with the critical render path for JS thread time.
+  const [deferredSeriesReady, setDeferredSeriesReady] = useState(false);
+  useEffect(() => {
+    if (!shouldHideUntilMetadataReady && isSeries && isTV) {
+      const id = requestAnimationFrame(() => setDeferredSeriesReady(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [shouldHideUntilMetadataReady, isSeries, isTV]);
 
   const shouldAnimateBackground = isTV || isMobile;
 
@@ -1632,8 +1638,6 @@ export default function DetailsScreen() {
     };
   }, [shouldHideUntilMetadataReady, shouldAnimateBackground, backgroundOpacity]);
 
-  // On Android TV (low-RAM devices), unmount heavy content when the player is active
-  const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
   if (isAndroidTV && !isDetailsPageActive) {
     return (
       <>
@@ -1648,21 +1652,42 @@ export default function DetailsScreen() {
     && !playback.resumeModalVisible && !watchActions.bulkWatchModalVisible
     && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible;
 
+  // Force spatial nav tree to rebuild when track selectors appear.
+  // Track selectors mount late (after prequeue resolves) and would register
+  // after episodes/cast/similar in the LRUD tree, breaking focus order.
+  // Changing the key causes a one-time remount that re-registers all nodes in DOM order.
+  const spatialNavKey = (playback.prequeueDisplayInfo?.audioTracks?.length ?? 0) > 0 ||
+    (playback.prequeueDisplayInfo?.subtitleTracks?.length ?? 0) > 0 ? 'with-tracks' : 'base';
+
   // ===== Render helpers =====
   const renderDetailsContent = () => (
     <>
       <View style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}>
         <View style={[styles.titleRow, { overflow: 'visible' }]}>
-          {logoUrl && logoDimensions ? (
-            <View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle]}>
+          {isTV ? (
+            <>
+              {/* TV: title reserves layout height, logo grows upward via absolute positioning */}
+              <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
+              {logoUrl && logoDimensions && (
+                <Animated.View style={[{ position: 'absolute', bottom: 0, left: 0, padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
+                  <RNImage
+                    source={{ uri: logoUrl }}
+                    style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
+                    resizeMode="contain"
+                  />
+                </Animated.View>
+              )}
+            </>
+          ) : logoUrl && logoDimensions ? (
+            <Animated.View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
                 style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
-            </View>
+            </Animated.View>
           ) : (
-            <Text style={styles.title}>{title}</Text>
+            <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
           )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
@@ -2369,15 +2394,15 @@ export default function DetailsScreen() {
       <View style={[styles.topContent, { overflow: 'visible' }]}>
         <View style={[styles.titleRow, { overflow: 'visible', marginLeft: -12 }]}>
           {logoUrl && logoDimensions ? (
-            <View style={[{ padding: 12, overflow: 'visible' }, logoGlowStyle]}>
+            <Animated.View style={[{ padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
                 style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
-            </View>
+            </Animated.View>
           ) : (
-            <Text style={styles.title}>{title}</Text>
+            <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
           )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
@@ -2613,8 +2638,9 @@ export default function DetailsScreen() {
     <>
       <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
         <View style={styles.container}>
-          {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) */}
-          {isTV && isSeries && (
+          {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) — deferred until after first paint.
+              Skip entirely when bundle hydration already populated seasons (its callbacks would no-op anyway). */}
+          {isTV && isSeries && deferredSeriesReady && episodeManager.seasons.length === 0 && (
             <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
               <SeriesEpisodes
                 isSeries={isSeries}
@@ -2780,7 +2806,7 @@ export default function DetailsScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       {Platform.isTV ? (
-        <SpatialNavigationRoot isActive={isSpatialNavActive}>
+        <SpatialNavigationRoot isActive={isSpatialNavActive} key={spatialNavKey}>
           {detailsContent}
         </SpatialNavigationRoot>
       ) : (
