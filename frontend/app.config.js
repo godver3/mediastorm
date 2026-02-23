@@ -41,6 +41,8 @@ module.exports = ({ config }) => {
           // Build optimizations for smaller APK and better performance on low-end devices
           enableProguardInReleaseBuilds: true,
           enableShrinkResourcesInReleaseBuilds: true,
+          // Only build 64-bit ABIs (mmkv doesn't support armeabi-v7a)
+          reactNativeArchitectures: ['arm64-v8a', 'x86_64'],
         },
         ios: {
           deploymentTarget: '15.1',

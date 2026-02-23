@@ -11,7 +11,7 @@
       "android": {
         "buildType": "apk",
         "withoutCredentials": true,
-        "gradleCommand": ":app:assembleDebug"
+        "gradleCommand": ":app:assembleDebug -PreactNativeArchitectures=arm64-v8a,x86_64"
       },
       "ios": {
         "buildConfiguration": "Debug",
@@ -26,7 +26,7 @@
       "android": {
         "buildType": "apk",
         "withoutCredentials": true,
-        "gradleCommand": ":app:assembleDebug -Pabi_filters=arm64-v8a"
+        "gradleCommand": ":app:assembleDebug -PreactNativeArchitectures=arm64-v8a"
       },
       "ios": {
         "buildConfiguration": "Debug",
@@ -60,7 +60,7 @@
       },
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease"
+        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a,x86_64"
       }
     },
     "production_tv": {
@@ -70,7 +70,7 @@
       },
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease"
+        "gradleCommand": ":app:assembleRelease -x lintVitalAnalyzeRelease -PreactNativeArchitectures=arm64-v8a"
       },
       "ios": {
         "buildConfiguration": "Release",
