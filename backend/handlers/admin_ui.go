@@ -17,9 +17,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"novastream/config"
@@ -783,6 +785,7 @@ type AdminUIHandler struct {
 	kidsSettingsTemplate  *template.Template
 	backupTemplate        *template.Template
 	calendarTemplate      *template.Template
+	performanceTemplate   *template.Template
 	settingsPath          string
 	hlsManager            *HLSManager
 	usersService          *users.Service
@@ -990,6 +993,7 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		kidsSettingsTemplate: createPageTemplate("kids_settings.html"),
 		backupTemplate:       createPageTemplate("backup.html"),
 		calendarTemplate:     createPageTemplate("calendar.html"),
+		performanceTemplate:  createPageTemplate("performance.html"),
 		settingsPath:         settingsPath,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
@@ -1147,10 +1151,8 @@ func (h *AdminUIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// GetStreams returns active streams as JSON
-func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
-	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
-
+// buildStreamsPayload builds the streams JSON payload for both the REST and SSE endpoints.
+func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]byte, error) {
 	// Pause detection thresholds
 	const pauseThreshold = 30 * time.Second // No activity for 30s = paused
 	const hideThreshold = 60 * time.Second  // Paused for 30s beyond pause threshold = hide from dashboard
@@ -1236,19 +1238,16 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		h.hlsManager.mu.RLock()
 		for _, session := range h.hlsManager.sessions {
 			session.mu.RLock()
-			log.Printf("[admin-ui] Stream check: id=%s profileID=%q profileName=%q bytes=%d", session.ID, session.ProfileID, session.ProfileName, session.BytesStreamed)
 			// Skip "default" user streams - but only if profileName is also empty/default
 			// (A stream with profileID="default" but valid profileName should still be shown)
 			isDefaultProfile := strings.ToLower(session.ProfileID) == "default" || session.ProfileID == ""
 			hasValidProfileName := session.ProfileName != "" && strings.ToLower(session.ProfileName) != "default"
 			if isDefaultProfile && !hasValidProfileName {
-				log.Printf("[admin-ui] Filtered: default profile with no valid name")
 				session.mu.RUnlock()
 				continue
 			}
 			// Skip streams with 0 bytes transferred (not actually playing)
 			if session.BytesStreamed == 0 {
-				log.Printf("[admin-ui] Filtered: 0 bytes")
 				session.mu.RUnlock()
 				continue
 			}
@@ -1281,11 +1280,6 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			var seasonNumber, episodeNumber, year int
 			var externalIDs map[string]string
 
-			if matchedProgress != nil {
-				log.Printf("[admin-ui] Matched progress for %s: mediaType=%s title=%q externalIDs=%v", filename, matchedProgress.MediaType, matchedProgress.SeriesName, matchedProgress.ExternalIDs)
-			} else {
-				log.Printf("[admin-ui] No progress match for filename=%q profileID=%q profileName=%q", filename, session.ProfileID, session.ProfileName)
-			}
 			if matchedProgress != nil {
 				position = matchedProgress.Position
 				percent = matchedProgress.PercentWatched
@@ -1336,6 +1330,9 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 			}
 			if hlsIsPaused {
 				hlsStreamData["is_paused"] = true
+			}
+			if matchedProgress != nil {
+				hlsStreamData["last_updated"] = matchedProgress.UpdatedAt
 			}
 			streams = append(streams, hlsStreamData)
 			session.mu.RUnlock()
@@ -1411,13 +1408,69 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		if isPaused {
 			streamData["is_paused"] = true
 		}
+		if matchedProgress != nil {
+			streamData["last_updated"] = matchedProgress.UpdatedAt
+		}
 		streams = append(streams, streamData)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"streams": streams,
+	return json.Marshal(map[string]interface{}{
+		"streams":     streams,
+		"server_time": now.UTC(),
 	})
+}
+
+// GetStreams returns active streams as JSON
+func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	w.Header().Set("Content-Type", "application/json")
+	data, err := h.buildStreamsPayload(isAdmin, accountID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to build streams payload"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Write(data)
+}
+
+// GetStreamsSSE streams active streams data via Server-Sent Events every 5 seconds.
+func (h *AdminUIHandler) GetStreamsSSE(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"Streaming not supported"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial snapshot immediately
+	data, err := h.buildStreamsPayload(isAdmin, accountID)
+	if err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			data, err := h.buildStreamsPayload(isAdmin, accountID)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 // cleanFilenameForProgressMatch removes common filename artifacts for matching against media titles.
@@ -6056,4 +6109,197 @@ func (h *AdminUIHandler) PlexImportHistory(w http.ResponseWriter, r *http.Reques
 		plexResponse["errors"] = errors
 	}
 	json.NewEncoder(w).Encode(plexResponse)
+}
+
+// --- Performance monitoring ---
+
+var processStartTime = time.Now()
+
+// cpuTracker computes process CPU % using getrusage deltas.
+type cpuTracker struct {
+	mu       sync.Mutex
+	lastTime time.Time
+	lastUser time.Duration
+	lastSys  time.Duration
+}
+
+var perfCPUTracker = &cpuTracker{}
+
+func (c *cpuTracker) sample() float64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+
+	userTime := time.Duration(ru.Utime.Nano())
+	sysTime := time.Duration(ru.Stime.Nano())
+	now := time.Now()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.lastTime.IsZero() {
+		c.lastTime = now
+		c.lastUser = userTime
+		c.lastSys = sysTime
+		return 0
+	}
+
+	wall := now.Sub(c.lastTime)
+	if wall <= 0 {
+		return 0
+	}
+
+	cpuDelta := (userTime - c.lastUser) + (sysTime - c.lastSys)
+	pct := float64(cpuDelta) / float64(wall) * 100.0
+
+	c.lastTime = now
+	c.lastUser = userTime
+	c.lastSys = sysTime
+
+	return pct
+}
+
+// PerformanceMetrics is the JSON payload for the performance page.
+type PerformanceMetrics struct {
+	CPUPercent     float64 `json:"cpuPercent"`
+	NumCPU         int     `json:"numCPU"`
+	NumCgoCall     int64   `json:"numCgoCall"`
+	HeapAlloc      uint64  `json:"heapAlloc"`
+	HeapSys        uint64  `json:"heapSys"`
+	HeapInuse      uint64  `json:"heapInuse"`
+	HeapIdle       uint64  `json:"heapIdle"`
+	HeapReleased   uint64  `json:"heapReleased"`
+	HeapObjects    uint64  `json:"heapObjects"`
+	StackInuse     uint64  `json:"stackInuse"`
+	StackSys       uint64  `json:"stackSys"`
+	MSpanInuse     uint64  `json:"mSpanInuse"`
+	MCacheInuse    uint64  `json:"mCacheInuse"`
+	Sys            uint64  `json:"sys"`
+	TotalAlloc     uint64  `json:"totalAlloc"`
+	NumGC          uint32  `json:"numGC"`
+	LastGC         uint64  `json:"lastGC"`
+	PauseTotalNs   uint64  `json:"pauseTotalNs"`
+	LastPauseNs    uint64  `json:"lastPauseNs"`
+	GCCPUFraction  float64 `json:"gcCPUFraction"`
+	NextGC         uint64  `json:"nextGC"`
+	Goroutines     int     `json:"goroutines"`
+	UptimeSeconds  float64 `json:"uptimeSeconds"`
+	GoVersion      string  `json:"goVersion"`
+	GOOS           string  `json:"goos"`
+	GOARCH         string  `json:"goarch"`
+	OpenFDs        int     `json:"openFDs"`
+}
+
+func buildPerformanceMetrics() PerformanceMetrics {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	lastPause := uint64(0)
+	if m.NumGC > 0 {
+		lastPause = m.PauseNs[(m.NumGC+255)%256]
+	}
+
+	return PerformanceMetrics{
+		CPUPercent:    perfCPUTracker.sample(),
+		NumCPU:        runtime.NumCPU(),
+		NumCgoCall:    runtime.NumCgoCall(),
+		HeapAlloc:     m.HeapAlloc,
+		HeapSys:       m.HeapSys,
+		HeapInuse:     m.HeapInuse,
+		HeapIdle:      m.HeapIdle,
+		HeapReleased:  m.HeapReleased,
+		HeapObjects:   m.HeapObjects,
+		StackInuse:    m.StackInuse,
+		StackSys:      m.StackSys,
+		MSpanInuse:    m.MSpanInuse,
+		MCacheInuse:   m.MCacheInuse,
+		Sys:           m.Sys,
+		TotalAlloc:    m.TotalAlloc,
+		NumGC:         m.NumGC,
+		LastGC:        m.LastGC,
+		PauseTotalNs:  m.PauseTotalNs,
+		LastPauseNs:   lastPause,
+		GCCPUFraction: m.GCCPUFraction,
+		NextGC:        m.NextGC,
+		Goroutines:    runtime.NumGoroutine(),
+		UptimeSeconds: time.Since(processStartTime).Seconds(),
+		GoVersion:     runtime.Version(),
+		GOOS:          runtime.GOOS,
+		GOARCH:        runtime.GOARCH,
+		OpenFDs:       countOpenFDs(),
+	}
+}
+
+// PerformancePage serves the performance admin page.
+func (h *AdminUIHandler) PerformancePage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	if !isAdmin {
+		http.Redirect(w, r, basePath, http.StatusFound)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/performance",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.performanceTemplate == nil {
+		http.Error(w, "Performance template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.performanceTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Performance template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// GetPerformanceMetrics returns a single JSON snapshot of performance metrics.
+func (h *AdminUIHandler) GetPerformanceMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(buildPerformanceMetrics())
+}
+
+// GetPerformanceSSE streams performance metrics via Server-Sent Events every 3 seconds.
+func (h *AdminUIHandler) GetPerformanceSSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"Streaming not supported"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial snapshot immediately
+	data, err := json.Marshal(buildPerformanceMetrics())
+	if err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			data, err := json.Marshal(buildPerformanceMetrics())
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
