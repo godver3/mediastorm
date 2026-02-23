@@ -33,7 +33,7 @@ export interface UsePlaybackProgressReturn {
   /**
    * Report current playback position
    */
-  reportProgress: (position: number, duration: number) => void;
+  reportProgress: (position: number, duration: number, isPaused?: boolean) => void;
 
   /**
    * Clear the progress tracking interval
@@ -43,7 +43,7 @@ export interface UsePlaybackProgressReturn {
   /**
    * Force an immediate progress update
    */
-  forceUpdate: (position: number, duration: number) => Promise<void>;
+  forceUpdate: (position: number, duration: number, isPaused?: boolean) => Promise<void>;
 }
 
 /**
@@ -71,6 +71,7 @@ export function usePlaybackProgress(
 
   const lastUpdateTimeRef = useRef<number>(0);
   const lastPositionRef = useRef<number>(0);
+  const lastSentPausedRef = useRef<boolean>(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentPositionRef = useRef<number>(0);
   const currentDurationRef = useRef<number>(0);
@@ -103,11 +104,12 @@ export function usePlaybackProgress(
         return;
       }
 
-      // Skip if position hasn't changed enough
+      // Skip if position hasn't changed enough (but always send when pause state changes)
       const timeSinceLastUpdate = Date.now() - lastUpdateTimeRef.current;
       const positionDiff = Math.abs(position - lastPositionRef.current);
+      const pauseStateChanged = lastSentPausedRef.current !== isPausedRef.current;
 
-      if (timeSinceLastUpdate < updateInterval && positionDiff < minTimeChange) {
+      if (!pauseStateChanged && timeSinceLastUpdate < updateInterval && positionDiff < minTimeChange) {
         log('Skipping update - insufficient change', { timeSinceLastUpdate, positionDiff });
         return;
       }
@@ -117,6 +119,7 @@ export function usePlaybackProgress(
         itemId: mediaInfo.itemId,
         position,
         duration,
+        isPaused: isPausedRef.current,
         externalIds: mediaInfo.externalIds,
         seasonNumber: mediaInfo.seasonNumber,
         episodeNumber: mediaInfo.episodeNumber,
@@ -138,6 +141,7 @@ export function usePlaybackProgress(
 
         lastUpdateTimeRef.current = Date.now();
         lastPositionRef.current = position;
+        lastSentPausedRef.current = isPausedRef.current;
 
         log('Progress update sent successfully', result);
       } catch (error) {
@@ -148,13 +152,19 @@ export function usePlaybackProgress(
     [userId, mediaInfo, updateInterval, minTimeChange, isPipActive, log],
   );
 
-  const reportProgress = useCallback((position: number, duration: number) => {
+  const isPausedRef = useRef<boolean>(false);
+
+  const reportProgress = useCallback((position: number, duration: number, isPaused?: boolean) => {
     currentPositionRef.current = position;
     currentDurationRef.current = duration;
+    if (isPaused !== undefined) {
+      isPausedRef.current = isPaused;
+    }
   }, []);
 
   const forceUpdate = useCallback(
-    async (position: number, duration: number) => {
+    async (position: number, duration: number, isPaused?: boolean) => {
+      if (isPaused !== undefined) isPausedRef.current = isPaused;
       // Temporarily clear the throttling
       lastUpdateTimeRef.current = 0;
       await sendUpdate(position, duration);
@@ -221,6 +231,7 @@ export function usePlaybackProgress(
             itemId: mediaInfo.itemId,
             position,
             duration,
+            isPaused: true, // Unmounting = playback ending
             externalIds: mediaInfo.externalIds,
             seasonNumber: mediaInfo.seasonNumber,
             episodeNumber: mediaInfo.episodeNumber,

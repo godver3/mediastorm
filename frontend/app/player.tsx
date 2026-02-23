@@ -1653,12 +1653,22 @@ export default function PlayerScreen() {
   ]);
 
   // Initialize playback progress tracking hook
-  const { reportProgress } = usePlaybackProgress(activeUserId || 'default', mediaInfo, {
+  const { reportProgress, forceUpdate } = usePlaybackProgress(activeUserId || 'default', mediaInfo, {
     updateInterval: 10000, // Update every 10 seconds
     minTimeChange: 5, // Only update if position changed by 5+ seconds
     isPipActive, // Continue reporting progress during PiP
     debug: true, // Enable for debugging
   });
+
+  // Send pause/unpause state changes to the backend immediately
+  useEffect(() => {
+    if (!hasStartedPlaying) return;
+    const pos = currentTimeRef.current;
+    const dur = durationRef.current;
+    if (pos > 0 && dur > 0 && !isLiveTV) {
+      forceUpdate(pos, dur, paused);
+    }
+  }, [paused, forceUpdate, hasStartedPlaying, isLiveTV]);
 
   // Extract HLS session ID from existing playlist URL (for sessions created by details screen)
   // Note: The useHlsSession hook handles initial extraction, this syncs runtime changes
@@ -3137,7 +3147,7 @@ export default function PlayerScreen() {
       // Report progress to the backend for tracking (skip for live TV)
       const currentDuration = durationRef.current;
       if (!isLiveTV && currentDuration > 0 && absoluteTime >= 0) {
-        reportProgress(absoluteTime, currentDuration);
+        reportProgress(absoluteTime, currentDuration, pausedRef.current);
       }
 
       // Update iOS/tvOS Now Playing position (throttled to every 10 seconds)
