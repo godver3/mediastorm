@@ -53,6 +53,8 @@ type Title struct {
 	TMDBID          int64     `json:"tmdbId,omitempty"`
 	Popularity      float64   `json:"popularity,omitempty"`
 	Network         string    `json:"network,omitempty"`
+	AirsTime        string    `json:"airsTime,omitempty"`     // e.g. "21:00" — local air time from TVDB
+	AirsTimezone    string    `json:"airsTimezone,omitempty"` // IANA timezone inferred from network/country
 	Status          string    `json:"status,omitempty"` // For series: Continuing, Ended, Upcoming, etc.
 	IsDaily         bool      `json:"isDaily,omitempty"` // True for daily shows (talk shows, news, etc.) that use date-based episode naming
 	Certification   string    `json:"certification,omitempty"` // MPAA/TV content rating (G, PG, PG-13, R, TV-Y, TV-G, TV-PG, TV-14, TV-MA)

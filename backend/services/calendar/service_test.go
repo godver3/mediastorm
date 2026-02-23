@@ -522,3 +522,60 @@ func TestRefreshAll(t *testing.T) {
 		t.Errorf("expected 0 items for u2, got %d", len(cal2.Items))
 	}
 }
+
+func TestParseAirDateTime(t *testing.T) {
+	tests := []struct {
+		name         string
+		dateStr      string
+		airsTime     string
+		airsTimezone string
+		wantUTC      string // expected UTC time as "2006-01-02 15:04"
+	}{
+		{
+			name:         "HBO 9pm EST",
+			dateStr:      "2026-02-22",
+			airsTime:     "21:00",
+			airsTimezone: "America/New_York",
+			wantUTC:      "2026-02-23 02:00",
+		},
+		{
+			name:         "BBC 9pm London",
+			dateStr:      "2026-02-22",
+			airsTime:     "21:00",
+			airsTimezone: "Europe/London",
+			wantUTC:      "2026-02-22 21:00",
+		},
+		{
+			name:         "no air time falls back to end of day",
+			dateStr:      "2026-02-22",
+			airsTime:     "",
+			airsTimezone: "",
+			wantUTC:      "2026-02-22 23:59",
+		},
+		{
+			name:         "air time without timezone falls back to end of day",
+			dateStr:      "2026-02-22",
+			airsTime:     "21:00",
+			airsTimezone: "",
+			wantUTC:      "2026-02-22 23:59",
+		},
+		{
+			name:         "Korean 22:00 KST",
+			dateStr:      "2026-02-22",
+			airsTime:     "22:00",
+			airsTimezone: "Asia/Seoul",
+			wantUTC:      "2026-02-22 13:00",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseAirDateTime(tt.dateStr, tt.airsTime, tt.airsTimezone)
+			gotStr := got.Format("2006-01-02 15:04")
+			if gotStr != tt.wantUTC {
+				t.Errorf("parseAirDateTime(%q, %q, %q) = %s, want %s",
+					tt.dateStr, tt.airsTime, tt.airsTimezone, gotStr, tt.wantUTC)
+			}
+		})
+	}
+}

@@ -206,6 +206,29 @@
         return '<span class="status-badge" style="' + style + '">' + source + '</span>';
     }
 
+    function formatAirTime(item) {
+        if (!item.airTime) return '';
+        // Convert "HH:MM" to 12-hour format
+        const parts = item.airTime.split(':');
+        let hour = parseInt(parts[0], 10);
+        const minute = parts[1] || '00';
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        if (hour > 12) hour -= 12;
+        if (hour === 0) hour = 12;
+        let timeStr = hour + ':' + minute + ' ' + ampm;
+        // Add short timezone label
+        if (item.airTimezone) {
+            try {
+                const tz = item.airTimezone;
+                // Get short timezone abbreviation
+                const d = new Date();
+                const abbr = d.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'short' }).split(' ').pop();
+                timeStr += ' ' + abbr;
+            } catch (e) { /* ignore */ }
+        }
+        return timeStr;
+    }
+
     function releaseTypeBadge(type) {
         if (!type) return '';
         const labels = {
@@ -308,6 +331,15 @@
                     html += '<span style="color: var(--accent); font-weight: 500;">' + epCode + '</span>';
                     if (item.episodeTitle) html += ' &middot; ' + item.episodeTitle;
                     html += '</div>';
+                    // Air time and network
+                    const airTimeStr = formatAirTime(item);
+                    if (airTimeStr || item.network) {
+                        html += '<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.125rem;">';
+                        if (airTimeStr) html += '<span style="font-weight: 500;">' + airTimeStr + '</span>';
+                        if (airTimeStr && item.network) html += ' &middot; ';
+                        if (item.network) html += item.network;
+                        html += '</div>';
+                    }
                 } else if (item.mediaType === 'movie') {
                     html += '<div style="font-size: 0.8125rem; color: var(--text-secondary);">Movie' + releaseTypeBadge(item.releaseType) + '</div>';
                 }

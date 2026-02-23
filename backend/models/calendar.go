@@ -8,6 +8,9 @@ type CalendarItem struct {
 	SeasonNumber  int               `json:"seasonNumber,omitempty"`
 	EpisodeNumber int               `json:"episodeNumber,omitempty"`
 	AirDate       string            `json:"airDate"`                         // YYYY-MM-DD
+	AirTime       string            `json:"airTime,omitempty"`               // HH:MM local air time (from TVDB airsTime)
+	AirTimezone   string            `json:"airTimezone,omitempty"`           // IANA timezone for air time
+	Network       string            `json:"network,omitempty"`               // Network name (e.g. "HBO")
 	ReleaseType   string            `json:"releaseType,omitempty"`           // For movies: "theatrical", "digital", "physical", etc.
 	PosterURL     string            `json:"posterUrl,omitempty"`
 	Year          int               `json:"year,omitempty"`

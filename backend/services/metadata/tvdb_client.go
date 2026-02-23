@@ -523,20 +523,28 @@ type tvdbSeriesTranslation struct {
 	IsPrimary bool   `json:"isPrimary"`
 }
 
+type tvdbOriginalNetwork struct {
+	Name    string `json:"name"`
+	Country string `json:"country"`
+}
+
 type tvdbSeriesExtendedData struct {
-	ID        int64         `json:"id"`
-	Name      string        `json:"name"`
-	Overview  string        `json:"overview"`
-	Year      tvdbYear      `json:"year"`
-	Network   string        `json:"network"`
-	Image     string        `json:"image"`
-	Poster    string        `json:"poster"`
-	Fanart    string        `json:"fanart"`
-	Seasons   []tvdbSeason  `json:"seasons"`
-	Episodes  []tvdbEpisode `json:"episodes"`
-	Trailers  []tvdbTrailer `json:"trailers"`
-	Artworks  []tvdbArtwork `json:"artworks"`
-	RemoteIDs []struct {
+	ID              int64              `json:"id"`
+	Name            string             `json:"name"`
+	Overview        string             `json:"overview"`
+	Year            tvdbYear           `json:"year"`
+	Network         string             `json:"network"`
+	AirsTime        string             `json:"airsTime"`        // e.g. "21:00"
+	AirsDays        json.RawMessage    `json:"airsDays"`        // varies: object or array
+	OriginalNetwork tvdbOriginalNetwork `json:"originalNetwork"` // includes name and country code
+	Image           string             `json:"image"`
+	Poster          string             `json:"poster"`
+	Fanart          string             `json:"fanart"`
+	Seasons         []tvdbSeason       `json:"seasons"`
+	Episodes        []tvdbEpisode      `json:"episodes"`
+	Trailers        []tvdbTrailer      `json:"trailers"`
+	Artworks        []tvdbArtwork      `json:"artworks"`
+	RemoteIDs       []struct {
 		ID         string `json:"id"`
 		Type       int    `json:"type"`
 		SourceName string `json:"sourceName"`

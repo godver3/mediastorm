@@ -44,6 +44,19 @@ type userCalendar struct {
 	RefreshedAt time.Time
 }
 
+// Status holds the current state of the calendar background worker.
+type Status struct {
+	Running         bool      `json:"running"`
+	State           string    `json:"state"`           // "idle", "refreshing", "stopped"
+	LastRefreshAt   time.Time `json:"lastRefreshAt"`
+	LastRefreshMs   int64     `json:"lastRefreshMs"`
+	NextRefreshAt   time.Time `json:"nextRefreshAt"`
+	RefreshInterval string    `json:"refreshInterval"`
+	UsersTracked    int       `json:"usersTracked"`
+	TotalItems      int       `json:"totalItems"`
+	LastError       string    `json:"lastError,omitempty"`
+}
+
 // Service manages pre-populated calendar data for all users.
 type Service struct {
 	mu              sync.RWMutex
@@ -56,6 +69,16 @@ type Service struct {
 	stopCh          chan struct{}
 	maxDays         int // how far ahead to look (default 90)
 	refreshInterval time.Duration
+
+	// Status tracking
+	statusMu      sync.RWMutex
+	running       bool
+	state         string // "idle", "refreshing", "stopped"
+	lastRefreshAt time.Time
+	lastRefreshMs int64
+	nextRefreshAt time.Time
+	lastError     string
+	refreshNow    chan struct{} // trigger immediate refresh
 }
 
 // New creates a new calendar service.
@@ -81,27 +104,115 @@ func New(
 func (s *Service) StartBackgroundRefresh(interval time.Duration) {
 	s.refreshInterval = interval
 	s.stopCh = make(chan struct{})
+	s.refreshNow = make(chan struct{}, 1)
+
+	s.statusMu.Lock()
+	s.running = true
+	s.state = "idle"
+	s.statusMu.Unlock()
 
 	go func() {
 		log.Println("[calendar] background refresh: initial population starting...")
-		s.refreshAll()
+		s.doRefresh()
 		log.Println("[calendar] background refresh: initial population complete")
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
+			s.statusMu.Lock()
+			s.nextRefreshAt = time.Now().Add(interval)
+			s.statusMu.Unlock()
+
 			select {
 			case <-ticker.C:
 				log.Println("[calendar] background refresh: periodic refresh starting...")
-				s.refreshAll()
+				s.doRefresh()
 				log.Println("[calendar] background refresh: periodic refresh complete")
+			case <-s.refreshNow:
+				log.Println("[calendar] background refresh: manual refresh triggered...")
+				s.doRefresh()
+				log.Println("[calendar] background refresh: manual refresh complete")
+				// Reset ticker so next auto-refresh is a full interval away
+				ticker.Reset(interval)
 			case <-s.stopCh:
 				log.Println("[calendar] background refresh: stopped")
+				s.statusMu.Lock()
+				s.running = false
+				s.state = "stopped"
+				s.statusMu.Unlock()
 				return
 			}
 		}
 	}()
+}
+
+// doRefresh runs a full refresh with status tracking.
+func (s *Service) doRefresh() {
+	s.statusMu.Lock()
+	s.state = "refreshing"
+	s.statusMu.Unlock()
+
+	start := time.Now()
+	s.refreshAll()
+	elapsed := time.Since(start)
+
+	s.statusMu.Lock()
+	s.state = "idle"
+	s.lastRefreshAt = time.Now()
+	s.lastRefreshMs = elapsed.Milliseconds()
+	s.statusMu.Unlock()
+}
+
+// Refresh triggers an immediate calendar refresh. Non-blocking.
+func (s *Service) Refresh() {
+	select {
+	case s.refreshNow <- struct{}{}:
+	default:
+		// Already a refresh pending
+	}
+}
+
+// GetStatus returns the current status of the calendar worker.
+func (s *Service) GetStatus() Status {
+	s.statusMu.RLock()
+	running := s.running
+	state := s.state
+	lastRefreshAt := s.lastRefreshAt
+	lastRefreshMs := s.lastRefreshMs
+	nextRefreshAt := s.nextRefreshAt
+	lastError := s.lastError
+	s.statusMu.RUnlock()
+
+	// Count users and items
+	s.mu.RLock()
+	usersTracked := len(s.cache)
+	totalItems := 0
+	for _, uc := range s.cache {
+		totalItems += len(uc.Items)
+	}
+	s.mu.RUnlock()
+
+	intervalStr := ""
+	if s.refreshInterval > 0 {
+		if s.refreshInterval >= time.Hour {
+			intervalStr = fmt.Sprintf("%.0fh", s.refreshInterval.Hours())
+		} else {
+			intervalStr = fmt.Sprintf("%.0fm", s.refreshInterval.Minutes())
+		}
+	}
+
+	return Status{
+		Running:         running,
+		State:           state,
+		LastRefreshAt:   lastRefreshAt,
+		LastRefreshMs:   lastRefreshMs,
+		NextRefreshAt:   nextRefreshAt,
+		RefreshInterval: intervalStr,
+		UsersTracked:    usersTracked,
+		TotalItems:      totalItems,
+		LastError:       lastError,
+	}
 }
 
 // Stop gracefully stops the background refresh.
@@ -418,6 +529,13 @@ func (s *Service) fetchUpcomingEpisodes(
 
 	extIDs := buildExternalIDs(details.Title.IMDBID, details.Title.TMDBID, details.Title.TVDBID)
 
+	// Build the actual air datetime using the series' air time and timezone.
+	// Without this, episodes are compared as midnight UTC which causes items
+	// airing later in the day (e.g. 9pm EST) to be incorrectly filtered as
+	// "already aired" when it's still earlier that day in UTC.
+	airsTime := details.Title.AirsTime
+	airsTimezone := details.Title.AirsTimezone
+
 	var items []models.CalendarItem
 	for _, season := range details.Seasons {
 		if season.Number == 0 {
@@ -427,11 +545,8 @@ func (s *Service) fetchUpcomingEpisodes(
 			if ep.AiredDate == "" {
 				continue
 			}
-			airDate, err := time.Parse("2006-01-02", ep.AiredDate)
-			if err != nil {
-				continue
-			}
-			if airDate.Before(now) || airDate.After(cutoff) {
+			airDateTime := parseAirDateTime(ep.AiredDate, airsTime, airsTimezone)
+			if airDateTime.Before(now) || airDateTime.After(cutoff) {
 				continue
 			}
 
@@ -448,6 +563,9 @@ func (s *Service) fetchUpcomingEpisodes(
 				SeasonNumber:  ep.SeasonNumber,
 				EpisodeNumber: ep.EpisodeNumber,
 				AirDate:       ep.AiredDate,
+				AirTime:       airsTime,
+				AirTimezone:   airsTimezone,
+				Network:       details.Title.Network,
 				PosterURL:     posterURL,
 				Year:          details.Title.Year,
 				ExternalIDs:   extIDs,
@@ -513,6 +631,36 @@ func buildExternalIDs(imdbID string, tmdbID, tvdbID int64) map[string]string {
 		ids["tvdb"] = strconv.FormatInt(tvdbID, 10)
 	}
 	return ids
+}
+
+// parseAirDateTime combines a date string with an optional air time and timezone
+// to produce an accurate UTC datetime for comparison. If air time or timezone is
+// missing, falls back to end-of-day UTC (23:59) to avoid prematurely filtering
+// items that haven't actually aired yet.
+func parseAirDateTime(dateStr, airsTime, airsTimezone string) time.Time {
+	airDate, err := time.Parse("2006-01-02", strings.TrimSpace(dateStr))
+	if err != nil {
+		return time.Time{}
+	}
+
+	if airsTime != "" && airsTimezone != "" {
+		loc, err := time.LoadLocation(airsTimezone)
+		if err == nil {
+			parts := strings.SplitN(airsTime, ":", 2)
+			if len(parts) == 2 {
+				hour, e1 := strconv.Atoi(parts[0])
+				minute, e2 := strconv.Atoi(parts[1])
+				if e1 == nil && e2 == nil {
+					localDT := time.Date(airDate.Year(), airDate.Month(), airDate.Day(), hour, minute, 0, 0, loc)
+					return localDT.UTC()
+				}
+			}
+		}
+	}
+
+	// Fallback: use end-of-day UTC so we don't prematurely filter out episodes
+	// that air in the evening of their listed date.
+	return time.Date(airDate.Year(), airDate.Month(), airDate.Day(), 23, 59, 59, 0, time.UTC)
 }
 
 func parseDate(s string) (time.Time, error) {

@@ -89,19 +89,16 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Parse the stored UTC date and check against the user's TZ window
-		airDate, err := time.Parse("2006-01-02", item.AirDate)
-		if err != nil {
+		// Build the full air datetime using air time + timezone when available.
+		// This prevents premature filtering of episodes that air later in the day.
+		airDT := buildAirDateTime(item)
+		airInTZ := airDT.In(loc)
+		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
+		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
 			continue
 		}
 
-		// Convert to user's timezone for comparison
-		airInTZ := airDate.In(loc)
-		if airInTZ.Before(todayStart) || airInTZ.After(cutoff) {
-			continue
-		}
-
-		// Return the date in the user's timezone
+		// Return the date adjusted to the user's timezone
 		adjusted := item
 		adjusted.AirDate = airInTZ.Format("2006-01-02")
 		result = append(result, adjusted)
@@ -124,6 +121,32 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 // Options handles CORS preflight.
 func (h *CalendarHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// buildAirDateTime constructs a full UTC datetime from a CalendarItem's date,
+// air time, and timezone. Falls back to end-of-day UTC when time info is missing.
+func buildAirDateTime(item models.CalendarItem) time.Time {
+	airDate, err := time.Parse("2006-01-02", item.AirDate)
+	if err != nil {
+		return time.Time{}
+	}
+
+	if item.AirTime != "" && item.AirTimezone != "" {
+		loc, err := time.LoadLocation(item.AirTimezone)
+		if err == nil {
+			parts := strings.SplitN(item.AirTime, ":", 2)
+			if len(parts) == 2 {
+				hour, e1 := strconv.Atoi(parts[0])
+				minute, e2 := strconv.Atoi(parts[1])
+				if e1 == nil && e2 == nil {
+					return time.Date(airDate.Year(), airDate.Month(), airDate.Day(), hour, minute, 0, 0, loc).UTC()
+				}
+			}
+		}
+	}
+
+	// Fallback: end-of-day UTC
+	return time.Date(airDate.Year(), airDate.Month(), airDate.Day(), 23, 59, 59, 0, time.UTC)
 }
 
 func (h *CalendarHandler) requireUser(w http.ResponseWriter, r *http.Request) (string, bool) {

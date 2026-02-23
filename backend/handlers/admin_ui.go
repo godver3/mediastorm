@@ -3918,6 +3918,29 @@ func (h *AdminUIHandler) RefreshTrendingCache(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Refresh started"})
 }
 
+// GetCalendarWorkerStatus returns the current status of the calendar background worker.
+func (h *AdminUIHandler) GetCalendarWorkerStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.calendarService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "calendar service not available"})
+		return
+	}
+	json.NewEncoder(w).Encode(h.calendarService.GetStatus())
+}
+
+// RefreshCalendar triggers an immediate refresh of the calendar data.
+func (h *AdminUIHandler) RefreshCalendar(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.calendarService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "calendar service not available"})
+		return
+	}
+	h.calendarService.Refresh()
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Calendar refresh started"})
+}
+
 // GetWatchHistory returns watch history for a user (admin session auth)
 // Supports pagination via query params: page (default 1), pageSize (default 50), mediaType (optional filter)
 func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request) {
@@ -4681,12 +4704,13 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 		if sourceFilter != "" && item.Source != sourceFilter {
 			continue
 		}
-		airDate, err := time.Parse("2006-01-02", item.AirDate)
-		if err != nil {
-			continue
-		}
-		airInTZ := airDate.In(loc)
-		if airInTZ.Before(todayStart) || airInTZ.After(cutoff) {
+		// Build full air datetime using air time + timezone when available.
+		// This prevents premature filtering of episodes that air later in the day
+		// and ensures correct date display when converting across timezones.
+		airDT := buildAirDateTime(item)
+		airInTZ := airDT.In(loc)
+		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
+		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
 			continue
 		}
 		adjusted := item

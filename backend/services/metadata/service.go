@@ -2236,6 +2236,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	if extended.Network != "" {
 		seriesTitle.Network = extended.Network
 	}
+	applyAirTimeFromTVDB(&seriesTitle, extended.AirsTime, extended.OriginalNetwork.Name, extended.OriginalNetwork.Country)
 
 	// Set series status (Continuing, Ended, Upcoming, etc.)
 	if extended.Status.Name != "" {
@@ -2642,6 +2643,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	if extended.Network != "" {
 		seriesTitle.Network = extended.Network
 	}
+	applyAirTimeFromTVDB(&seriesTitle, extended.AirsTime, extended.OriginalNetwork.Name, extended.OriginalNetwork.Country)
 	if extended.Status.Name != "" {
 		seriesTitle.Status = extended.Status.Name
 	}
@@ -2905,6 +2907,8 @@ func extractTitleFields(full *models.Title, fields []string) models.Title {
 			out.Status = full.Status
 		case "network":
 			out.Network = full.Network
+			out.AirsTime = full.AirsTime
+			out.AirsTimezone = full.AirsTimezone
 		case "certification":
 			out.Certification = full.Certification
 		case "language":
@@ -3205,6 +3209,7 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	if extended.Network != "" {
 		seriesTitle.Network = extended.Network
 	}
+	applyAirTimeFromTVDB(&seriesTitle, extended.AirsTime, extended.OriginalNetwork.Name, extended.OriginalNetwork.Country)
 
 	// Set series status (Continuing, Ended, Upcoming, etc.)
 	if extended.Status.Name != "" {

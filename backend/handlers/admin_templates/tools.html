@@ -4402,41 +4402,48 @@
 
     async function loadWorkers() {
         try {
-            const res = await fetch(basePath + '/api/cache/manager/status');
-            if (!res.ok) throw new Error('Failed to load worker status');
-            const status = await res.json();
-            renderWorkers(status);
+            const [cmRes, calRes] = await Promise.all([
+                fetch(basePath + '/api/cache/manager/status'),
+                fetch(basePath + '/api/calendar/worker/status'),
+            ]);
+            const cm = cmRes.ok ? await cmRes.json() : null;
+            const cal = calRes.ok ? await calRes.json() : null;
+            renderWorkers(cm, cal);
         } catch (err) {
             const el = document.getElementById('workersList');
             if (el) el.innerHTML = '<p class="text-muted">Could not load worker status.</p>';
         }
-        // Poll every 10s while warming/refreshing, 30s when idle
         clearTimeout(workersPollTimer);
         workersPollTimer = setTimeout(loadWorkers, 15000);
     }
 
-    function renderWorkers(cm) {
+    function workerStatusBadge(state, running) {
+        let statusClass = '';
+        let label = state || 'unknown';
+        if (state === 'idle') { statusClass = 'connected'; label = 'Idle'; }
+        else if (state === 'warming' || state === 'refreshing') { statusClass = 'connected'; label = state === 'warming' ? 'Warming...' : 'Refreshing...'; }
+        else if (state === 'stopped') { statusClass = 'disconnected'; label = 'Stopped'; }
+        return { statusClass, label };
+    }
+
+    function renderWorkers(cm, cal) {
         const el = document.getElementById('workersList');
         if (!el) return;
 
-        const badge = document.getElementById('workersCountBadge');
-        if (badge) badge.textContent = '1';
+        let workerCount = 0;
+        let html = '';
 
-        let statusClass = '';
-        let statusLabel = cm.status || 'unknown';
-        if (cm.status === 'idle') { statusClass = 'connected'; statusLabel = 'Idle'; }
-        else if (cm.status === 'warming' || cm.status === 'refreshing') { statusClass = 'connected'; statusLabel = cm.status === 'warming' ? 'Warming...' : 'Refreshing...'; }
-        else if (cm.status === 'stopped') { statusClass = 'disconnected'; statusLabel = 'Stopped'; }
+        // Metadata Cache Manager
+        if (cm) {
+            workerCount++;
+            const { statusClass, label: statusLabel } = workerStatusBadge(cm.status, cm.running);
+            const lastRefresh = cm.lastRefreshAt && cm.lastRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(cm.lastRefreshAt) : 'Never';
+            const duration = cm.lastRefreshMs > 0 ? (cm.lastRefreshMs / 1000).toFixed(1) + 's' : '';
+            const nextRefresh = cm.nextRefreshAt && cm.nextRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(cm.nextRefreshAt) : '';
 
-        const lastRefresh = cm.lastRefreshAt && cm.lastRefreshAt !== '0001-01-01T00:00:00Z'
-            ? formatRelativeTime(cm.lastRefreshAt)
-            : 'Never';
-        const duration = cm.lastRefreshMs > 0 ? (cm.lastRefreshMs / 1000).toFixed(1) + 's' : '';
-        const nextRefresh = cm.nextRefreshAt && cm.nextRefreshAt !== '0001-01-01T00:00:00Z'
-            ? formatRelativeTime(cm.nextRefreshAt)
-            : '';
-
-        el.innerHTML = `
+            html += `
             <div class="import-card" style="margin-bottom: 0.75rem;">
                 <div class="import-card-header">
                     <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1;">
@@ -4480,8 +4487,69 @@
                         </button>
                     </div>
                 </div>
-            </div>
-        `;
+            </div>`;
+        }
+
+        // Calendar Worker
+        if (cal) {
+            workerCount++;
+            const { statusClass, label: statusLabel } = workerStatusBadge(cal.state, cal.running);
+            const lastRefresh = cal.lastRefreshAt && cal.lastRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(cal.lastRefreshAt) : 'Never';
+            const duration = cal.lastRefreshMs > 0 ? (cal.lastRefreshMs / 1000).toFixed(1) + 's' : '';
+            const nextRefresh = cal.nextRefreshAt && cal.nextRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(cal.nextRefreshAt) : '';
+
+            html += `
+            <div class="import-card" style="margin-bottom: 0.75rem;">
+                <div class="import-card-header">
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1;">
+                        <h3 style="margin: 0;">Calendar Worker</h3>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                            <span class="type-badge" style="background: rgba(34, 197, 94, 0.2); color: var(--success); font-size: 0.7rem;">Episodes</span>
+                            <span class="type-badge" style="background: rgba(34, 197, 94, 0.1); color: var(--success); font-size: 0.65rem;">Movies</span>
+                        </div>
+                    </div>
+                    <span class="status-badge ${statusClass}" style="font-size: 0.75rem; margin-left: auto;">${cal.running ? 'Active' : 'Inactive'}</span>
+                </div>
+                <div class="import-card-body" style="padding: 0.75rem 1rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.6;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            <span>Every ${cal.refreshInterval || '?'}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-muted);">
+                            <span>Users: <strong>${cal.usersTracked || 0}</strong></span>
+                            <span>|</span>
+                            <span>Items: <strong>${cal.totalItems || 0}</strong></span>
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+                        <span class="status-badge ${statusClass}" style="font-size: 0.75rem;">${statusLabel}</span>
+                        <span class="text-muted" style="font-size: 0.8125rem;">Last: ${lastRefresh}${duration ? ' (' + duration + ')' : ''}</span>
+                        ${nextRefresh ? `<span class="text-muted" style="font-size: 0.8125rem;">Next: ${nextRefresh}</span>` : ''}
+                        ${cal.lastError ? `<span style="color: var(--danger); font-size: 0.8125rem;">${escapeHtml(cal.lastError)}</span>` : ''}
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <button class="btn btn-sm btn-secondary" onclick="refreshCalendar()" ${cal.state === 'refreshing' ? 'disabled' : ''}>
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.25rem;">
+                                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            ${cal.state === 'refreshing' ? 'Refreshing...' : 'Refresh Now'}
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        const badge = document.getElementById('workersCountBadge');
+        if (badge) badge.textContent = workerCount;
+
+        el.innerHTML = html || '<p class="text-muted">No workers available.</p>';
     }
 
     async function refreshTrendingCache() {
@@ -4489,6 +4557,17 @@
             const res = await fetch(basePath + '/api/cache/manager/refresh', { method: 'POST' });
             if (!res.ok) throw new Error('Failed to trigger refresh');
             showToast('Cache refresh started', 'success');
+            setTimeout(loadWorkers, 1000);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function refreshCalendar() {
+        try {
+            const res = await fetch(basePath + '/api/calendar/worker/refresh', { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to trigger calendar refresh');
+            showToast('Calendar refresh started', 'success');
             setTimeout(loadWorkers, 1000);
         } catch (err) {
             showToast(err.message, 'error');
