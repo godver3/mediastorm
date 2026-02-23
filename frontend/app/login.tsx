@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/components/AuthContext';
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import {
   SpatialNavigationRoot,
   SpatialNavigationNode,
@@ -255,7 +256,7 @@ export default function LoginScreen() {
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Server URL</Text>
                       <DefaultFocus>
-                        <SpatialNavigationFocusableView onSelect={() => serverUrlRef.current?.focus()}>
+                        <SpatialNavigationFocusableView onFocus={() => prefocusTextInputTV(serverUrlRef)} onSelect={() => focusTextInputTV(serverUrlRef)}>
                           {({ isFocused }: { isFocused: boolean }) => (
                             <Pressable
                               android_disableSound
@@ -279,6 +280,7 @@ export default function LoginScreen() {
                                 underlineColorAndroid="transparent"
                                 importantForAutofill="no"
                                 {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
+                                {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                               />
                             </Pressable>
                           )}
@@ -310,7 +312,7 @@ export default function LoginScreen() {
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Username</Text>
                       <DefaultFocus>
-                        <SpatialNavigationFocusableView onSelect={() => usernameRef.current?.focus()}>
+                        <SpatialNavigationFocusableView onFocus={() => prefocusTextInputTV(usernameRef)} onSelect={() => focusTextInputTV(usernameRef)}>
                           {({ isFocused }: { isFocused: boolean }) => (
                             <Pressable
                               android_disableSound
@@ -334,6 +336,7 @@ export default function LoginScreen() {
                                 underlineColorAndroid="transparent"
                                 importantForAutofill="no"
                                 {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
+                                {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                               />
                             </Pressable>
                           )}
@@ -343,7 +346,7 @@ export default function LoginScreen() {
 
                     <View style={styles.inputContainer}>
                       <Text style={styles.inputLabel}>Password</Text>
-                      <SpatialNavigationFocusableView onSelect={() => passwordRef.current?.focus()}>
+                      <SpatialNavigationFocusableView onFocus={() => prefocusTextInputTV(passwordRef)} onSelect={() => focusTextInputTV(passwordRef)}>
                         {({ isFocused }: { isFocused: boolean }) => (
                           <Pressable
                             android_disableSound
@@ -368,6 +371,7 @@ export default function LoginScreen() {
                               underlineColorAndroid="transparent"
                               importantForAutofill="no"
                               {...(Platform.OS === 'ios' && { keyboardAppearance: 'dark' })}
+                              {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                             />
                           </Pressable>
                         )}
@@ -820,11 +824,24 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
     tvInputBox: {
       backgroundColor: theme.colors.background.elevated,
       borderRadius: s(8),
-      borderWidth: 2,
+      borderWidth: 3,
       borderColor: 'transparent',
     },
     tvInputBoxFocused: {
       borderColor: theme.colors.accent.primary,
+      ...(isTvOS
+        ? {
+            shadowColor: theme.colors.accent.primary,
+            shadowOpacity: 0.4,
+            shadowOffset: { width: 0, height: 4 },
+            shadowRadius: 12,
+          }
+        : null),
+      ...(isAndroidTV
+        ? {
+            elevation: 8,
+          }
+        : null),
     },
     tvNativeInput: {
       fontSize: s(16),
@@ -833,13 +850,10 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       paddingLeft: s(2),
       paddingRight: s(10),
       paddingVertical: s(14),
-      backgroundColor: theme.colors.background.elevated,
-      borderRadius: s(8),
-      borderWidth: 2,
-      borderColor: 'transparent',
+      backgroundColor: 'transparent',
     },
     tvNativeInputFocused: {
-      borderColor: theme.colors.accent.primary,
+      // Focus styling handled by tvInputBox
     },
     tvInputWrapper: {
       width: '100%',

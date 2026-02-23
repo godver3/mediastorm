@@ -9,6 +9,7 @@ import {
   SpatialNavigationFocusableView,
   DefaultFocus,
 } from '@/services/tv-navigation';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { responsiveSize } from '@/theme/tokens/tvScale';
@@ -287,7 +288,7 @@ export const PinEntryModal: React.FC = () => {
 
             <SpatialNavigationNode orientation="vertical">
               <DefaultFocus>
-                <SpatialNavigationFocusableView onSelect={() => inputRef.current?.focus()}>
+                <SpatialNavigationFocusableView onFocus={() => prefocusTextInputTV(inputRef)} onSelect={() => focusTextInputTV(inputRef)}>
                   {({ isFocused }: { isFocused: boolean }) => (
                     <View style={[styles.pinInputWrapper, isFocused && { opacity: 1 }]}>
                       <TextInput
@@ -318,6 +319,7 @@ export const PinEntryModal: React.FC = () => {
                           Platform.isTV && {
                             keyboardAppearance: 'dark',
                           })}
+                        {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                       />
                     </View>
                   )}

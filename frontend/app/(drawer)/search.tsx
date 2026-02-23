@@ -31,6 +31,7 @@ import {
   View,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
@@ -768,9 +769,10 @@ export default function SearchScreen() {
             <View style={styles.headerRow}>
               <DefaultFocus>
                 <SpatialNavigationFocusableView
+                  onFocus={() => prefocusTextInputTV(inputRef)}
                   onSelect={() => {
                     // Programmatically focus the TextInput to show keyboard on TV
-                    inputRef.current?.focus();
+                    focusTextInputTV(inputRef);
                   }}
                   onBlur={() => {
                     // Blur the TextInput when spatial navigation moves away
@@ -820,6 +822,7 @@ export default function SearchScreen() {
                             Platform.isTV && {
                               keyboardAppearance: 'dark',
                             })}
+                          {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                         />
                         {showClearButton ? (
                           <Pressable

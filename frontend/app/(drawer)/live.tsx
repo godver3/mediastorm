@@ -29,6 +29,7 @@ import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -2292,7 +2293,7 @@ function LiveScreen() {
           <SpatialNavigationNode orientation="vertical">
             <View style={styles.filterModalInputContainer} focusable={false}>
               <DefaultFocus>
-                <SpatialNavigationFocusableView onSelect={() => filterInputRef.current?.focus()}>
+                <SpatialNavigationFocusableView onFocus={() => prefocusTextInputTV(filterInputRef)} onSelect={() => focusTextInputTV(filterInputRef)}>
                   {({ isFocused }: { isFocused: boolean }) => (
                     <Pressable
                       android_disableSound
@@ -2327,6 +2328,7 @@ function LiveScreen() {
                           Platform.isTV && {
                             keyboardAppearance: 'dark',
                           })}
+                        {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                       />
                     </Pressable>
                   )}

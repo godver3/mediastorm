@@ -39,6 +39,7 @@ import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
 import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import { isTV, tvScale } from '@/theme/tokens/tvScale';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -100,7 +101,8 @@ function _TextInputField({ label, value, onChange, options, errorMessage, styles
     <View style={styles.fieldRow as ViewStyle}>
       <Text style={styles.fieldLabel as TextStyle}>{label}</Text>
       <Pressable
-        onPress={() => inputRef.current?.focus()}
+        onFocus={() => prefocusTextInputTV(inputRef)}
+        onPress={() => focusTextInputTV(inputRef)}
         tvParallaxProperties={{ enabled: false }}
         style={({ focused }) => [{ flex: 1 }, focused && { opacity: 1 }]}>
         {({ focused }) => (
@@ -129,6 +131,7 @@ function _TextInputField({ label, value, onChange, options, errorMessage, styles
             underlineColorAndroid="transparent"
             importantForAutofill="no"
             disableFullscreenUI={true}
+            {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
           />
         )}
       </Pressable>
@@ -401,7 +404,8 @@ function TextInputModal({
         </Text>
 
         <Pressable
-          onPress={() => inputRef.current?.focus()}
+          onFocus={() => prefocusTextInputTV(inputRef)}
+          onPress={() => focusTextInputTV(inputRef)}
           hasTVPreferredFocus={true}
           tvParallaxProperties={{ enabled: false }}
           style={({ focused }) => [{ width: '100%' }, focused && { opacity: 1 }]}>
@@ -434,6 +438,7 @@ function TextInputModal({
                 Platform.isTV && {
                   keyboardAppearance: 'dark',
                 })}
+              {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
             />
           )}
         </Pressable>
@@ -1557,8 +1562,9 @@ function SettingsScreen() {
             return (
               <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
                 <SpatialNavigationFocusableView
+                  onFocus={() => prefocusTextInputTV(backendUrlInputRef)}
                   onSelect={() => {
-                    backendUrlInputRef.current?.focus();
+                    focusTextInputTV(backendUrlInputRef);
                   }}>
                   {({ isFocused }: { isFocused: boolean }) => (
                     <View style={[styles.tvGridInlineInputRow, isFocused && styles.tvGridInlineInputRowFocused]}>
@@ -1585,6 +1591,7 @@ function SettingsScreen() {
                           Platform.isTV && {
                             keyboardAppearance: 'dark',
                           })}
+                        {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                       />
                     </View>
                   )}

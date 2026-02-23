@@ -18,6 +18,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
 import { isTablet, responsiveSize } from '@/theme/tokens/tvScale';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
@@ -259,12 +260,12 @@ function TVAISection({
         {/* Search input — mirrors search page pattern: parallax disabled, Pressable wrapper */}
         <SpatialNavigationFocusableView
           onSelect={() => {
-            inputRef.current?.focus();
+            focusTextInputTV(inputRef);
           }}
           onBlur={() => {
             inputRef.current?.blur();
           }}
-          onFocus={() => onShelfFocus(shelfKey)}
+          onFocus={() => { onShelfFocus(shelfKey); prefocusTextInputTV(inputRef); }}
         >
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={styles.aiSearchInputWrapper}>
@@ -293,6 +294,7 @@ function TVAISection({
                     }
                   }}
                   returnKeyType="search"
+                  {...(Platform.OS === 'android' && Platform.isTV && { caretHidden: true })}
                 />
               </Pressable>
             </View>
