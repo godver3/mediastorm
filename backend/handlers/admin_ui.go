@@ -1182,8 +1182,11 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 	}
 
 	// Helper to match progress for a stream - returns full progress for media identification
+	// matchProgress uses a two-pass approach: first tries precise match (series name + S##E##),
+	// then falls back to name-only match picking the most recently updated entry.
 	matchProgress := func(filename, profileID, profileName string) *models.PlaybackProgress {
 		cleanedFilename := cleanFilenameForProgressMatch(filename)
+		lowerFilename := strings.ToLower(filename)
 
 		// Determine which user IDs to try for progress lookup
 		userIDsToTry := []string{}
@@ -1196,39 +1199,51 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			}
 		}
 
-		// Try to find matching progress
+		// Pass 1: Precise match — series name + S##E## pattern
 		for _, userID := range userIDsToTry {
 			if userProgress, ok := allProgress[userID]; ok {
 				for i := range userProgress {
 					progress := &userProgress[i]
-					progressName := ""
-					if progress.MediaType == "episode" {
-						progressName = progress.SeriesName
-						// Check for S##E## pattern match
-						if progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
-							sePattern := strings.ToLower(fmt.Sprintf("s%02de%02d", progress.SeasonNumber, progress.EpisodeNumber))
-							if strings.Contains(strings.ToLower(filename), sePattern) {
-								cleanedProgressName := cleanFilenameForProgressMatch(progressName)
-								if cleanedProgressName != "" && cleanedFilename != "" &&
-									strings.Contains(cleanedFilename, cleanedProgressName) {
-									return progress
-								}
+					if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
+						sePattern := strings.ToLower(fmt.Sprintf("s%02de%02d", progress.SeasonNumber, progress.EpisodeNumber))
+						if strings.Contains(lowerFilename, sePattern) {
+							cleanedProgressName := cleanFilenameForProgressMatch(progress.SeriesName)
+							if cleanedProgressName != "" && cleanedFilename != "" &&
+								strings.Contains(cleanedFilename, cleanedProgressName) {
+								return progress
 							}
 						}
-					} else {
-						progressName = progress.MovieName
-					}
-
-					cleanedProgressName := cleanFilenameForProgressMatch(progressName)
-					// Require minimum 3 chars to avoid false positives from short names (e.g. "Up", "Dr")
-					if len(cleanedProgressName) >= 3 && cleanedFilename != "" &&
-						strings.Contains(cleanedFilename, cleanedProgressName) {
-						return progress
+					} else if progress.MediaType != "episode" {
+						// Movies: match on name only (min 3 chars to avoid false positives)
+						cleanedProgressName := cleanFilenameForProgressMatch(progress.MovieName)
+						if len(cleanedProgressName) >= 3 && cleanedFilename != "" &&
+							strings.Contains(cleanedFilename, cleanedProgressName) {
+							return progress
+						}
 					}
 				}
 			}
 		}
-		return nil
+
+		// Pass 2: Name-only fallback for episodes — pick most recently updated match
+		var bestMatch *models.PlaybackProgress
+		for _, userID := range userIDsToTry {
+			if userProgress, ok := allProgress[userID]; ok {
+				for i := range userProgress {
+					progress := &userProgress[i]
+					if progress.MediaType == "episode" {
+						cleanedProgressName := cleanFilenameForProgressMatch(progress.SeriesName)
+						if cleanedProgressName != "" && cleanedFilename != "" &&
+							strings.Contains(cleanedFilename, cleanedProgressName) {
+							if bestMatch == nil || progress.UpdatedAt.After(bestMatch.UpdatedAt) {
+								bestMatch = &userProgress[i]
+							}
+						}
+					}
+				}
+			}
+		}
+		return bestMatch
 	}
 
 	streams := []map[string]interface{}{}

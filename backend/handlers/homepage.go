@@ -281,36 +281,49 @@ func (h *HomepageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-// findMatchingProgress finds a matching progress entry for a filename
+// findMatchingProgress finds a matching progress entry for a filename.
+// Uses a two-pass approach: first tries precise match (series name + S##E##),
+// then falls back to name-only match picking the most recently updated entry.
 func findMatchingProgress(progressList []models.PlaybackProgress, cleanedFilename, originalFilename string) *models.PlaybackProgress {
+	lowerOriginal := strings.ToLower(originalFilename)
+
+	// Pass 1: Precise match — series name + S##E## pattern
 	for i := range progressList {
 		progress := &progressList[i]
-		progressName := ""
-		if progress.MediaType == "episode" {
-			progressName = progress.SeriesName
-			// Also try to match season/episode from filename
-			if progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
-				sePattern := strings.ToLower(formatSeasonEpisode(progress.SeasonNumber, progress.EpisodeNumber))
-				if strings.Contains(strings.ToLower(originalFilename), sePattern) {
-					cleanedProgressName := cleanFilenameForMatch(progressName)
-					if cleanedProgressName != "" && cleanedFilename != "" &&
-						strings.Contains(cleanedFilename, cleanedProgressName) {
-						return progress
-					}
+		if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
+			sePattern := strings.ToLower(formatSeasonEpisode(progress.SeasonNumber, progress.EpisodeNumber))
+			if strings.Contains(lowerOriginal, sePattern) {
+				cleanedProgressName := cleanFilenameForMatch(progress.SeriesName)
+				if cleanedProgressName != "" && cleanedFilename != "" &&
+					strings.Contains(cleanedFilename, cleanedProgressName) {
+					return progress
 				}
 			}
-		} else {
-			progressName = progress.MovieName
-		}
-		cleanedProgressName := cleanFilenameForMatch(progressName)
-
-		// Check if progress name is contained in filename
-		if cleanedProgressName != "" && cleanedFilename != "" &&
-			strings.Contains(cleanedFilename, cleanedProgressName) {
-			return progress
+		} else if progress.MediaType != "episode" {
+			// Movies: match on name only
+			cleanedProgressName := cleanFilenameForMatch(progress.MovieName)
+			if cleanedProgressName != "" && cleanedFilename != "" &&
+				strings.Contains(cleanedFilename, cleanedProgressName) {
+				return progress
+			}
 		}
 	}
-	return nil
+
+	// Pass 2: Name-only fallback for episodes — pick most recently updated match
+	var bestMatch *models.PlaybackProgress
+	for i := range progressList {
+		progress := &progressList[i]
+		if progress.MediaType == "episode" {
+			cleanedProgressName := cleanFilenameForMatch(progress.SeriesName)
+			if cleanedProgressName != "" && cleanedFilename != "" &&
+				strings.Contains(cleanedFilename, cleanedProgressName) {
+				if bestMatch == nil || progress.UpdatedAt.After(bestMatch.UpdatedAt) {
+					bestMatch = &progressList[i]
+				}
+			}
+		}
+	}
+	return bestMatch
 }
 
 // fetchPosterURL fetches the poster URL from the metadata service
