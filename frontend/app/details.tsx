@@ -595,19 +595,21 @@ export default function DetailsScreen() {
     );
   }, [logoUrl]);
 
-  // Title area starts invisible. Fade in logo if it loads, or title text as fallback.
+  // Title area starts invisible. Wait for metadata + logo resolution before showing anything.
+  // Don't decide until metadata has loaded (logoUrl is derived from metadata, so it's null before that).
+  const metadataLoaded = isSeries ? !seriesDetailsLoading : !movieDetailsLoading;
   const logoReady = !!(logoUrl && logoDimensions);
-  const showTitleFallback = !logoUrl || logoLoadFailed;
+  const logoResolved = logoReady || (metadataLoaded && (!logoUrl || logoLoadFailed));
   const titleTextOpacity = useSharedValue(0);
   const logoOpacity = useSharedValue(0);
   useEffect(() => {
     if (logoReady) {
       logoOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
-    } else if (showTitleFallback) {
+    } else if (logoResolved) {
+      // Metadata loaded but no logo — show title text
       titleTextOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     }
-    // While logo is still loading (logoUrl set, not failed, no dimensions yet), both stay at 0
-  }, [logoReady, showTitleFallback]);
+  }, [logoReady, logoResolved]);
   const titleTextAnimatedStyle = useAnimatedStyle(() => ({ opacity: titleTextOpacity.value }));
   const logoAnimatedStyle = useAnimatedStyle(() => ({ opacity: logoOpacity.value }));
 
@@ -1668,30 +1670,17 @@ export default function DetailsScreen() {
     <>
       <View style={[styles.topContent, isTV && styles.topContentTV, isMobile && styles.topContentMobile]}>
         <View style={[styles.titleRow, { overflow: 'visible' }]}>
-          {isTV ? (
-            <>
-              {/* TV: title reserves layout height, logo grows upward via absolute positioning */}
-              <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
-              {logoUrl && logoDimensions && (
-                <Animated.View style={[{ position: 'absolute', bottom: 0, left: 0, padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
-                  <RNImage
-                    source={{ uri: logoUrl }}
-                    style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
-                    resizeMode="contain"
-                  />
-                </Animated.View>
-              )}
-            </>
-          ) : logoUrl && logoDimensions ? (
-            <Animated.View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
+          {/* Title text always renders to reserve layout height */}
+          <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
+          {/* Logo anchored at bottom of title row, grows upward */}
+          {logoUrl && logoDimensions && (
+            <Animated.View style={[{ position: 'absolute', bottom: 0, left: isTV ? 0 : -12, padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
                 style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
             </Animated.View>
-          ) : (
-            <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
           )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
@@ -2397,16 +2386,15 @@ export default function DetailsScreen() {
     <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme}>
       <View style={[styles.topContent, { overflow: 'visible' }]}>
         <View style={[styles.titleRow, { overflow: 'visible', marginLeft: -12 }]}>
-          {logoUrl && logoDimensions ? (
-            <Animated.View style={[{ padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
+          <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
+          {logoUrl && logoDimensions && (
+            <Animated.View style={[{ position: 'absolute', bottom: 0, left: 0, padding: 12, overflow: 'visible' }, logoGlowStyle, logoAnimatedStyle]}>
               <RNImage
                 source={{ uri: logoUrl }}
                 style={[logoStyle, isLogoDark ? { tintColor: 'white' } : undefined]}
                 resizeMode="contain"
               />
             </Animated.View>
-          ) : (
-            <Animated.Text style={[styles.title, titleTextAnimatedStyle]}>{title}</Animated.Text>
           )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (

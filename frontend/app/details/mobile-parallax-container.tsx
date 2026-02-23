@@ -105,18 +105,21 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
         {/* Spacer to push content below the poster initially */}
         <View style={styles.contentSpacer} />
 
-        {/* Content card - gradient from transparent to opaque */}
-        <LinearGradient
-          colors={[
-            'transparent',
-            `${theme.colors.background.base}40`,
-            `${theme.colors.background.base}B0`,
-            theme.colors.background.base,
-          ]}
-          locations={[0, 0.05, 0.15, 0.3]}
-          style={styles.contentCard}>
+        {/* Content card - gradient is a background layer so it doesn't clip children */}
+        <View style={styles.contentCard}>
+          <LinearGradient
+            colors={[
+              'transparent',
+              `${theme.colors.background.base}40`,
+              `${theme.colors.background.base}B0`,
+              theme.colors.background.base,
+            ]}
+            locations={[0, 0.05, 0.15, 0.3]}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
           {children}
-        </LinearGradient>
+        </View>
       </Animated.ScrollView>
     </View>
   );
