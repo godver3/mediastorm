@@ -498,6 +498,7 @@ func main() {
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/streams/sse", adminUIHandler.RequireAuth(adminUIHandler.GetStreamsSSE)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
@@ -670,6 +671,11 @@ func main() {
 		fmt.Println("💾 Backup management available at /admin/backup")
 	}
 
+	// Performance monitoring (admin-only)
+	r.HandleFunc("/admin/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.PerformancePage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceMetrics)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/performance/sse", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceSSE)).Methods(http.MethodGet)
+
 	fmt.Println("📊 Admin dashboard available at /admin")
 
 	// Register account UI routes (for regular/non-master accounts)
@@ -694,6 +700,7 @@ func main() {
 	// Protected account routes - Status APIs
 	r.HandleFunc("/account/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/streams/sse", adminUIHandler.RequireAuth(adminUIHandler.GetStreamsSSE)).Methods(http.MethodGet)
 
 	// Protected account routes - Profile APIs
 	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)

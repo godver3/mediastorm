@@ -1,0 +1,445 @@
+{{define "title"}}Performance - strmr Admin{{end}}
+
+{{define "content"}}
+<style>
+    .perf-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+    }
+    .perf-header h1 {
+        font-size: 1.75rem;
+        font-weight: 600;
+    }
+    .connection-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+    .connection-badge.live {
+        background: rgba(34, 197, 94, 0.1);
+        color: var(--success);
+    }
+    .connection-badge.polling {
+        background: rgba(245, 158, 11, 0.1);
+        color: var(--warning);
+    }
+    .connection-badge.disconnected {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--danger);
+    }
+    .connection-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .sparkline-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .sparkline-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1rem;
+    }
+    .sparkline-card h3 {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+    }
+    .sparkline-canvas {
+        width: 100%;
+        height: 80px;
+        display: block;
+    }
+    .detail-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .detail-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .detail-table td {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .detail-table td:first-child {
+        color: var(--text-secondary);
+        width: 50%;
+    }
+    .detail-table td:last-child {
+        text-align: right;
+        font-family: monospace;
+        font-size: 0.8125rem;
+    }
+    .detail-table tr:last-child td {
+        border-bottom: none;
+    }
+    @media (max-width: 1024px) {
+        .stats-row { grid-template-columns: repeat(2, 1fr); }
+        .sparkline-row { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+        .stats-row { grid-template-columns: 1fr 1fr; }
+        .detail-row { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 480px) {
+        .stats-row { grid-template-columns: 1fr; }
+    }
+</style>
+
+<div class="perf-header">
+    <h1>Performance</h1>
+    <span class="connection-badge disconnected" id="connBadge">
+        <span class="connection-dot"></span>
+        <span id="connLabel">Connecting</span>
+    </span>
+</div>
+
+<!-- Top stat cards -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-label">CPU</div>
+        <div class="stat-value" id="cpuPercent">--</div>
+        <div class="stat-subtext" id="cpuCores">--</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Heap Memory</div>
+        <div class="stat-value" id="heapAlloc">--</div>
+        <div class="stat-subtext" id="heapSys">--</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Goroutines</div>
+        <div class="stat-value" id="goroutines">--</div>
+        <div class="stat-subtext" id="openFDs">--</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="uptime">--</div>
+        <div class="stat-subtext" id="goVersion">--</div>
+    </div>
+</div>
+
+<!-- Sparkline charts -->
+<div class="sparkline-row">
+    <div class="sparkline-card">
+        <h3>CPU %</h3>
+        <canvas class="sparkline-canvas" id="cpuChart"></canvas>
+    </div>
+    <div class="sparkline-card">
+        <h3>Heap Memory</h3>
+        <canvas class="sparkline-canvas" id="heapChart"></canvas>
+    </div>
+    <div class="sparkline-card">
+        <h3>Goroutines</h3>
+        <canvas class="sparkline-canvas" id="goroutineChart"></canvas>
+    </div>
+</div>
+
+<!-- Detail tables -->
+<div class="detail-row">
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 10h10M7 14h6"/></svg>
+                Memory Breakdown
+            </h2>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <table class="detail-table">
+                <tr><td>Heap In Use</td><td id="heapInuse">--</td></tr>
+                <tr><td>Heap System</td><td id="heapSysDetail">--</td></tr>
+                <tr><td>Heap Idle</td><td id="heapIdle">--</td></tr>
+                <tr><td>Heap Released</td><td id="heapReleased">--</td></tr>
+                <tr><td>Heap Objects</td><td id="heapObjects">--</td></tr>
+                <tr><td>Stack In Use</td><td id="stackInuse">--</td></tr>
+                <tr><td>Stack System</td><td id="stackSys">--</td></tr>
+                <tr><td>MSpan In Use</td><td id="mSpanInuse">--</td></tr>
+                <tr><td>MCache In Use</td><td id="mCacheInuse">--</td></tr>
+                <tr><td>Total OS Reserved</td><td id="sysTotal">--</td></tr>
+                <tr><td>Total Allocated</td><td id="totalAlloc">--</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <div class="card">
+            <div class="card-header">
+                <h2>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                    Garbage Collection
+                </h2>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                <table class="detail-table">
+                    <tr><td>Total GC Runs</td><td id="numGC">--</td></tr>
+                    <tr><td>Last GC</td><td id="lastGC">--</td></tr>
+                    <tr><td>Last Pause</td><td id="lastPause">--</td></tr>
+                    <tr><td>Total Pause</td><td id="pauseTotal">--</td></tr>
+                    <tr><td>GC CPU %</td><td id="gcCPU">--</td></tr>
+                    <tr><td>Next GC Target</td><td id="nextGC">--</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    Runtime Info
+                </h2>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                <table class="detail-table">
+                    <tr><td>Go Version</td><td id="goVersionDetail">--</td></tr>
+                    <tr><td>Platform</td><td id="platform">--</td></tr>
+                    <tr><td>CPUs Available</td><td id="numCPU">--</td></tr>
+                    <tr><td>Cgo Calls</td><td id="numCgoCall">--</td></tr>
+                    <tr><td>Open FDs</td><td id="openFDsDetail">--</td></tr>
+                    <tr><td>Uptime</td><td id="uptimeDetail">--</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+(function() {
+    // --- Sparkline class ---
+    class Sparkline {
+        constructor(canvas, color, maxPoints) {
+            this.canvas = canvas;
+            this.ctx = canvas.getContext('2d');
+            this.color = color;
+            this.data = [];
+            this.maxPoints = maxPoints || 60;
+            this.resize();
+            window.addEventListener('resize', () => this.resize());
+        }
+        resize() {
+            const rect = this.canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            this.canvas.width = rect.width * dpr;
+            this.canvas.height = rect.height * dpr;
+            this.ctx.scale(dpr, dpr);
+            this.w = rect.width;
+            this.h = rect.height;
+            this.draw();
+        }
+        push(val) {
+            this.data.push(val);
+            if (this.data.length > this.maxPoints) this.data.shift();
+            this.draw();
+        }
+        draw() {
+            const ctx = this.ctx;
+            const w = this.w;
+            const h = this.h;
+            const data = this.data;
+            ctx.clearRect(0, 0, w, h);
+            if (data.length < 2) return;
+
+            const max = Math.max(...data) * 1.15 || 1;
+            const step = w / (this.maxPoints - 1);
+
+            // Filled area
+            ctx.beginPath();
+            const startX = w - (data.length - 1) * step;
+            ctx.moveTo(startX, h);
+            for (let i = 0; i < data.length; i++) {
+                ctx.lineTo(startX + i * step, h - (data[i] / max) * (h - 4));
+            }
+            ctx.lineTo(startX + (data.length - 1) * step, h);
+            ctx.closePath();
+            ctx.fillStyle = this.color + '20';
+            ctx.fill();
+
+            // Line
+            ctx.beginPath();
+            for (let i = 0; i < data.length; i++) {
+                const x = startX + i * step;
+                const y = h - (data[i] / max) * (h - 4);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Current value label
+            const last = data[data.length - 1];
+            const label = last >= 1048576 ? (last / 1048576).toFixed(1) + ' MB' :
+                          last >= 1024 ? (last / 1024).toFixed(0) + ' KB' :
+                          typeof last === 'number' && last % 1 !== 0 ? last.toFixed(1) :
+                          last.toLocaleString();
+            ctx.fillStyle = this.color;
+            ctx.font = 'bold 11px -apple-system, sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(label, w - 4, 14);
+        }
+    }
+
+    // --- Helpers ---
+    function formatBytes(b) {
+        if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+        if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+        if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+        return b + ' B';
+    }
+
+    function formatDuration(secs) {
+        const d = Math.floor(secs / 86400);
+        const h = Math.floor((secs % 86400) / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm ' + Math.floor(secs % 60) + 's';
+    }
+
+    function formatNanos(ns) {
+        if (ns >= 1e9) return (ns / 1e9).toFixed(2) + ' s';
+        if (ns >= 1e6) return (ns / 1e6).toFixed(2) + ' ms';
+        if (ns >= 1e3) return (ns / 1e3).toFixed(1) + ' \u00b5s';
+        return ns + ' ns';
+    }
+
+    function timeAgo(unixNanos) {
+        if (!unixNanos) return 'never';
+        const ms = unixNanos / 1e6;
+        const ago = Date.now() - ms;
+        if (ago < 1000) return 'just now';
+        if (ago < 60000) return Math.floor(ago / 1000) + 's ago';
+        if (ago < 3600000) return Math.floor(ago / 60000) + 'm ago';
+        return Math.floor(ago / 3600000) + 'h ago';
+    }
+
+    const $  = id => document.getElementById(id);
+
+    // --- Init sparklines ---
+    const cpuSpark = new Sparkline($('cpuChart'), '#6366f1');
+    const heapSpark = new Sparkline($('heapChart'), '#22c55e');
+    const goroutineSpark = new Sparkline($('goroutineChart'), '#f59e0b');
+
+    // --- Update DOM ---
+    function updateMetrics(d) {
+        // Top cards
+        $('cpuPercent').textContent = d.cpuPercent.toFixed(1) + '%';
+        $('cpuCores').textContent = d.numCPU + ' CPUs';
+        $('heapAlloc').textContent = formatBytes(d.heapAlloc);
+        $('heapSys').textContent = 'Sys: ' + formatBytes(d.heapSys);
+        $('goroutines').textContent = d.goroutines.toLocaleString();
+        $('openFDs').textContent = d.openFDs >= 0 ? d.openFDs + ' FDs' : 'FDs: n/a';
+        $('uptime').textContent = formatDuration(d.uptimeSeconds);
+        $('goVersion').textContent = d.goVersion;
+
+        // Sparklines
+        cpuSpark.push(d.cpuPercent);
+        heapSpark.push(d.heapAlloc);
+        goroutineSpark.push(d.goroutines);
+
+        // Memory table
+        $('heapInuse').textContent = formatBytes(d.heapInuse);
+        $('heapSysDetail').textContent = formatBytes(d.heapSys);
+        $('heapIdle').textContent = formatBytes(d.heapIdle);
+        $('heapReleased').textContent = formatBytes(d.heapReleased);
+        $('heapObjects').textContent = d.heapObjects.toLocaleString();
+        $('stackInuse').textContent = formatBytes(d.stackInuse);
+        $('stackSys').textContent = formatBytes(d.stackSys);
+        $('mSpanInuse').textContent = formatBytes(d.mSpanInuse);
+        $('mCacheInuse').textContent = formatBytes(d.mCacheInuse);
+        $('sysTotal').textContent = formatBytes(d.sys);
+        $('totalAlloc').textContent = formatBytes(d.totalAlloc);
+
+        // GC table
+        $('numGC').textContent = d.numGC.toLocaleString();
+        $('lastGC').textContent = timeAgo(d.lastGC);
+        $('lastPause').textContent = formatNanos(d.lastPauseNs);
+        $('pauseTotal').textContent = formatNanos(d.pauseTotalNs);
+        $('gcCPU').textContent = (d.gcCPUFraction * 100).toFixed(4) + '%';
+        $('nextGC').textContent = formatBytes(d.nextGC);
+
+        // Runtime table
+        $('goVersionDetail').textContent = d.goVersion;
+        $('platform').textContent = d.goos + '/' + d.goarch;
+        $('numCPU').textContent = d.numCPU;
+        $('numCgoCall').textContent = d.numCgoCall.toLocaleString();
+        $('openFDsDetail').textContent = d.openFDs >= 0 ? d.openFDs : 'n/a';
+        $('uptimeDetail').textContent = formatDuration(d.uptimeSeconds);
+    }
+
+    function setBadge(state) {
+        const badge = $('connBadge');
+        const label = $('connLabel');
+        badge.className = 'connection-badge ' + state;
+        label.textContent = state === 'live' ? 'Live' : state === 'polling' ? 'Polling' : 'Disconnected';
+    }
+
+    // --- SSE with polling fallback ---
+    let evtSource = null;
+    let pollTimer = null;
+    let useSSE = true;
+
+    function startSSE() {
+        if (evtSource) { evtSource.close(); evtSource = null; }
+        evtSource = new EventSource('{{.BasePath}}/api/performance/sse');
+        evtSource.onmessage = function(e) {
+            setBadge('live');
+            try { updateMetrics(JSON.parse(e.data)); } catch(err) {}
+        };
+        evtSource.onerror = function() {
+            evtSource.close();
+            evtSource = null;
+            useSSE = false;
+            setBadge('polling');
+            startPolling();
+        };
+    }
+
+    function startPolling() {
+        if (pollTimer) return;
+        function poll() {
+            fetch('{{.BasePath}}/api/performance')
+                .then(r => r.json())
+                .then(d => {
+                    setBadge('polling');
+                    updateMetrics(d);
+                })
+                .catch(() => setBadge('disconnected'));
+        }
+        poll();
+        pollTimer = setInterval(poll, 3000);
+    }
+
+    function stopAll() {
+        if (evtSource) { evtSource.close(); evtSource = null; }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    startSSE();
+    window.addEventListener('beforeunload', stopAll);
+})();
+</script>
+{{end}}
