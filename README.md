@@ -53,6 +53,8 @@ docker-compose up -d
 
 The backend will be available at `http://localhost:7777`. The default login is `admin`/`admin` for both the frontend app and the admin web UI.
 
+> **⚠️ Security Notice:** strmr is not designed to be directly exposed to the internet. For safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
+
 ### Frontend Apps
 
 The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV.
