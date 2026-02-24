@@ -2896,7 +2896,10 @@ export default function DetailsScreen() {
                       onSelect={handleMenuShuffleShow}>
                       {({ isFocused }: { isFocused: boolean }) => (
                         <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
-                          <Ionicons name="shuffle" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                          <View>
+                            <Ionicons name="shuffle" size={16} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} style={{ position: 'absolute', top: -4, left: -4, opacity: 0.35 }} />
+                            <Ionicons name="shuffle" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                          </View>
                           <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Shuffle Show</Text>
                         </View>
                       )}
@@ -2938,7 +2941,7 @@ export default function DetailsScreen() {
                     {({ isFocused }: { isFocused: boolean }) => (
                       <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
                         <Ionicons name="download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
-                        <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download</Text>
+                        <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download Selected</Text>
                       </View>
                     )}
                   </SpatialNavigationFocusableView>
@@ -2948,7 +2951,10 @@ export default function DetailsScreen() {
                     onSelect={handleMenuDownloadSeason}>
                     {({ isFocused }: { isFocused: boolean }) => (
                       <View style={[styles.moreOptionsItem, isFocused && styles.moreOptionsItemFocused]}>
-                        <Ionicons name="cloud-download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                          <View>
+                            <Ionicons name="download-outline" size={16} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} style={{ position: 'absolute', top: -4, left: -4, opacity: 0.35 }} />
+                            <Ionicons name="download-outline" size={20} color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary} />
+                          </View>
                         <Text style={[styles.moreOptionsTitle, { fontSize: theme.typography.body.md.fontSize }, isFocused && { color: theme.colors.text.inverse }]}>Download Season</Text>
                       </View>
                     )}
