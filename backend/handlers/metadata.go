@@ -53,10 +53,12 @@ type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
 }
 
-// historyServiceInterface provides access to watch history for filtering.
+// historyServiceInterface provides access to watch history for filtering and watch state enrichment.
 type historyServiceInterface interface {
 	GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error)
 	ListWatchHistory(userID string) ([]models.WatchHistoryItem, error)
+	ListContinueWatching(userID string) ([]models.SeriesWatchState, error)
+	ListPlaybackProgress(userID string) ([]models.PlaybackProgress, error)
 }
 
 // watchlistLister provides access to a user's watchlist for recommendations.
@@ -161,6 +163,17 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 				}
 				items = kids.FilterTrendingByRatings(items, movieRating, tvRating)
 			}
+		}
+	}
+
+	// Enrich with pre-computed watch state if user context is available
+	if userID != "" && h.HistoryService != nil {
+		wh, whErr := h.HistoryService.ListWatchHistory(userID)
+		if whErr == nil {
+			cw, _ := h.HistoryService.ListContinueWatching(userID)
+			pp, _ := h.HistoryService.ListPlaybackProgress(userID)
+			idx := buildWatchStateIndex(wh, cw, pp)
+			enrichTrendingItems(items, idx)
 		}
 	}
 

@@ -327,6 +327,8 @@ func main() {
 
 	// Wire up history service to metadata handler for hideWatched filtering
 	metadataHandler.SetHistoryService(historyService)
+	// Wire up history service to watchlist handler for watch state enrichment
+	watchlistHandler.SetHistoryService(historyService)
 	// Wire up users service to metadata handler for kids profile filtering
 	metadataHandler.SetUsersService(userService)
 	// Wire up watchlist service to metadata handler for AI recommendations

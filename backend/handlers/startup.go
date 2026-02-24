@@ -140,10 +140,27 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		resp.ContinueWatching = merged
 	}()
 
-	// 5. Watch history — excluded from startup bundle to keep payload small.
-	// WatchStatusContext will fetch this independently after the initial render.
-	// With ~3000 items (~1 MB), including it blocks the React Native JS bridge
-	// on low-power devices (Fire Stick) for 7+ seconds during deserialization.
+	// 5. Watch history + playback progress for server-side watch state enrichment.
+	// The full watch history is NOT sent to the client (too large for JS bridge),
+	// but we fetch it here to pre-compute watchState/unwatchedCount on each item.
+	var watchHistory []models.WatchHistoryItem
+	var playbackProgress []models.PlaybackProgress
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wh, err := h.history.ListWatchHistory(userID)
+		if err != nil {
+			log.Printf("[startup] watch history error for %s: %v", userID, err)
+			return
+		}
+		watchHistory = wh
+		pp, err := h.history.ListPlaybackProgress(userID)
+		if err != nil {
+			log.Printf("[startup] playback progress error for %s: %v", userID, err)
+			return
+		}
+		playbackProgress = pp
+	}()
 
 	// 6. Trending movies (slimmed — heavy Title fields stripped for startup)
 	wg.Add(1)
@@ -200,6 +217,16 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.TrendingSeries == nil {
 		resp.TrendingSeries = &DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0}
+	}
+
+	// Enrich items with pre-computed watch state (after all concurrent fetches complete)
+	idx := buildWatchStateIndex(watchHistory, resp.ContinueWatching, playbackProgress)
+	enrichWatchlistItems(resp.Watchlist, idx)
+	if resp.TrendingMovies != nil {
+		enrichTrendingItems(resp.TrendingMovies.Items, idx)
+	}
+	if resp.TrendingSeries != nil {
+		enrichTrendingItems(resp.TrendingSeries.Items, idx)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
