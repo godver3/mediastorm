@@ -13,6 +13,7 @@ type EpisodeReference struct {
 	Overview              string    `json:"overview,omitempty"`
 	RuntimeMinutes        int       `json:"runtimeMinutes,omitempty"`
 	AirDate               string    `json:"airDate,omitempty"`
+	AirDateTimeUTC        string    `json:"airDateTimeUTC,omitempty"`
 	WatchedAt             time.Time `json:"watchedAt,omitempty"`
 }
 

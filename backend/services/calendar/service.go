@@ -304,9 +304,12 @@ func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 	mdbItems := s.collectFromMDBLists(ctx, userID, sources, now, cutoff, seen)
 	items = append(items, mdbItems...)
 
-	// Sort by air date ascending
+	// Sort by full UTC datetime (not raw date string) so shows crossing
+	// date boundaries due to timezone conversion sort correctly.
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].AirDate < items[j].AirDate
+		ti := ParseAirDateTime(items[i].AirDate, items[i].AirTime, items[i].AirTimezone)
+		tj := ParseAirDateTime(items[j].AirDate, items[j].AirTime, items[j].AirTimezone)
+		return ti.Before(tj)
 	})
 
 	return items
@@ -545,7 +548,7 @@ func (s *Service) fetchUpcomingEpisodes(
 			if ep.AiredDate == "" {
 				continue
 			}
-			airDateTime := parseAirDateTime(ep.AiredDate, airsTime, airsTimezone)
+			airDateTime := ParseAirDateTime(ep.AiredDate, airsTime, airsTimezone)
 			if airDateTime.Before(now) || airDateTime.After(cutoff) {
 				continue
 			}
@@ -633,11 +636,11 @@ func buildExternalIDs(imdbID string, tmdbID, tvdbID int64) map[string]string {
 	return ids
 }
 
-// parseAirDateTime combines a date string with an optional air time and timezone
+// ParseAirDateTime combines a date string with an optional air time and timezone
 // to produce an accurate UTC datetime for comparison. If air time or timezone is
 // missing, falls back to end-of-day UTC (23:59) to avoid prematurely filtering
 // items that haven't actually aired yet.
-func parseAirDateTime(dateStr, airsTime, airsTimezone string) time.Time {
+func ParseAirDateTime(dateStr, airsTime, airsTimezone string) time.Time {
 	airDate, err := time.Parse("2006-01-02", strings.TrimSpace(dateStr))
 	if err != nil {
 		return time.Time{}

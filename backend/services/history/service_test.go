@@ -1306,3 +1306,607 @@ func TestHideFromContinueWatching_CanonicalIDMismatch(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Episode state invariant tests
+//
+// An episode must only ever be in one state: unwatched, watching (has progress),
+// or watched. Stale progress entries must be cleaned up when an episode is
+// marked as watched, regardless of ID format mismatches.
+// =============================================================================
+
+func TestEpisodeState_ImportClearsProgressSameIDs(t *testing.T) {
+	// Simplest case: player and Trakt use the same ID format.
+	// Progress should be cleared when the episode is imported as watched.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-state"
+	seriesID := "tvdb:series:100"
+	epID := seriesID + ":s01e01"
+
+	// Record playback progress (watching state)
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        epID,
+		Position:      300,
+		Duration:      2400,
+		SeriesID:      seriesID,
+		SeriesName:    "Test Series",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"tvdb": "100"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Verify progress exists
+	progress, _ := svc.ListPlaybackProgress(userID)
+	if len(progress) != 1 {
+		t.Fatalf("expected 1 progress, got %d", len(progress))
+	}
+
+	// Import as watched with the same IDs
+	watched := true
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        epID,
+		Name:          "Pilot",
+		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(),
+		SeriesID:      seriesID,
+		SeriesName:    "Test Series",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"tvdb": "100"},
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// Progress must be gone
+	progress, _ = svc.ListPlaybackProgress(userID)
+	if len(progress) != 0 {
+		t.Fatalf("expected progress cleared after import, got %d items: %+v", len(progress), progress)
+	}
+}
+
+func TestEpisodeState_ImportClearsProgressCrossIDs(t *testing.T) {
+	// Grey's Anatomy scenario: player uses numeric ID "1416", Trakt uses "tvdb:series:73762".
+	// Progress has externalIDs with tvdb:"73762", so clearEarlierEpisodesProgressLocked
+	// should match via external ID fallback.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-cross"
+	playerSeriesID := "1416"
+	traktSeriesID := "tvdb:series:73762"
+
+	// Player records progress with numeric seriesID
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        playerSeriesID + ":s22e08",
+		Position:      134,
+		Duration:      2548,
+		SeriesID:      playerSeriesID,
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  22,
+		EpisodeNumber: 8,
+		ExternalIDs:   map[string]string{"imdb": "tt0413573", "tvdb": "73762"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Trakt imports S22E10 as watched — should clear S22E08 progress (earlier episode)
+	watched := true
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        traktSeriesID + ":s22e10",
+		Name:          "Strip That Down",
+		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(),
+		SeriesID:      traktSeriesID,
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  22,
+		EpisodeNumber: 10,
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// S22E08 progress (earlier than S22E10) should be cleaned up
+	progress, _ := svc.ListPlaybackProgress(userID)
+	for _, p := range progress {
+		if p.SeasonNumber == 22 && p.EpisodeNumber == 8 {
+			t.Fatalf("S22E08 progress should have been cleared by import of S22E10 (cross-ID match)")
+		}
+	}
+}
+
+func TestEpisodeState_ImportDedupStillCleansProgress(t *testing.T) {
+	// When a Trakt sync re-imports an already-recorded episode (dedup skip),
+	// it should still clean up stale progress under a different ID format.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-dedup"
+	playerSeriesID := "1416"
+	traktSeriesID := "tvdb:series:73762"
+
+	// Player records progress with numeric ID
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        playerSeriesID + ":s01e05",
+		Position:      600,
+		Duration:      2400,
+		SeriesID:      playerSeriesID,
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+		ExternalIDs:   map[string]string{"tvdb": "73762"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// First import: Trakt marks S01E05 watched
+	watched := true
+	watchedAt := time.Now().UTC()
+	update := models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        traktSeriesID + ":s01e05",
+		Name:          "Episode 5",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeriesID:      traktSeriesID,
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+	}
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{update}); err != nil {
+		t.Fatalf("first ImportWatchHistory() error = %v", err)
+	}
+
+	// Re-add the progress (simulating a stale entry that wasn't cleaned)
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        playerSeriesID + ":s01e05",
+		Position:      600,
+		Duration:      2400,
+		SeriesID:      playerSeriesID,
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+		ExternalIDs:   map[string]string{"tvdb": "73762"},
+	}); err != nil {
+		t.Fatalf("re-add progress error = %v", err)
+	}
+
+	// Second import: same data (dedup). Should still clean stale progress.
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{update}); err != nil {
+		t.Fatalf("second ImportWatchHistory() error = %v", err)
+	}
+
+	progress, _ := svc.ListPlaybackProgress(userID)
+	for _, p := range progress {
+		if p.SeasonNumber == 1 && p.EpisodeNumber == 5 {
+			t.Fatalf("stale progress should be cleaned even on dedup import, got: %+v", p)
+		}
+	}
+}
+
+func TestEpisodeState_ContinueWatchingSkipsWatchedInProgress(t *testing.T) {
+	// When an in-progress episode is also in watch history (watched),
+	// continue watching should use the next unwatched episode instead.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:12345"
+	userID := "user-cw"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Test Show",
+				TVDBID: 12345,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+					{ID: "ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-08"},
+					{ID: "ep-3", Name: "Ep 3", SeasonNumber: 1, EpisodeNumber: 3, AiredDate: "2025-01-15"},
+				},
+			}},
+		},
+	})
+
+	// Create stale in-progress for S01E01 (should have been cleaned)
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e01",
+		Position:      300,
+		Duration:      2400,
+		SeriesID:      seriesID,
+		SeriesName:    "Test Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"tvdb": "12345"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mark S01E01 and S01E02 as watched in history
+	watched := true
+	for _, ep := range []int{1, 2} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e0" + string(rune('0'+ep)),
+			Name:          "Ep",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "Test Show",
+			SeasonNumber:  1,
+			EpisodeNumber: ep,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Continue watching should show S01E03 (next unwatched), NOT S01E01 (stale progress)
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "Test Show" {
+			if item.NextEpisode == nil {
+				t.Fatal("expected a next episode for Test Show")
+			}
+			if item.NextEpisode.SeasonNumber == 1 && item.NextEpisode.EpisodeNumber == 1 {
+				t.Fatal("continue watching should not show S01E01 (already watched) as next episode")
+			}
+			if item.NextEpisode.SeasonNumber != 1 || item.NextEpisode.EpisodeNumber != 3 {
+				t.Fatalf("expected next episode S01E03, got S%02dE%02d",
+					item.NextEpisode.SeasonNumber, item.NextEpisode.EpisodeNumber)
+			}
+			return
+		}
+	}
+	t.Fatal("Test Show not found in continue watching")
+}
+
+func TestEpisodeState_ContinueWatchingUpdatedAtUsesLatestTimestamp(t *testing.T) {
+	// When an in-progress episode is present, the continue watching updatedAt
+	// should reflect the most recent activity (watch history or progress).
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:55555"
+	userID := "user-ts"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Timestamp Show",
+				TVDBID: 55555,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+					{ID: "ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-08"},
+				},
+			}},
+		},
+	})
+
+	oldTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	recentTime := time.Now().UTC()
+
+	// Create in-progress entry with old timestamp
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e02",
+		Position:      100,
+		Duration:      2400,
+		Timestamp:     oldTime,
+		SeriesID:      seriesID,
+		SeriesName:    "Timestamp Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 2,
+		ExternalIDs:   map[string]string{"tvdb": "55555"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Manually set the progress updatedAt to old time
+	svc.mu.Lock()
+	if perUser, ok := svc.playbackProgress[userID]; ok {
+		for key, prog := range perUser {
+			if prog.SeasonNumber == 1 && prog.EpisodeNumber == 2 {
+				prog.UpdatedAt = oldTime
+				perUser[key] = prog
+			}
+		}
+	}
+	svc.mu.Unlock()
+
+	// Add watched episode with recent timestamp
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     recentTime,
+		SeriesID:      seriesID,
+		SeriesName:    "Timestamp Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "Timestamp Show" {
+			// UpdatedAt should be the recent watch history time, not the old progress time
+			if item.UpdatedAt.Before(recentTime.Add(-2 * time.Second)) {
+				t.Fatalf("updatedAt should reflect recent watch history (%v), got %v",
+					recentTime, item.UpdatedAt)
+			}
+			return
+		}
+	}
+	t.Fatal("Timestamp Show not found in continue watching")
+}
+
+func TestEpisodeState_MultipleStaleProgressCleanedOnBuild(t *testing.T) {
+	// When multiple stale progress entries exist for the same series,
+	// building continue watching should clean them all up.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:99999"
+	userID := "user-multi"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Multi Stale Show",
+				TVDBID: 99999,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+					{ID: "ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-08"},
+					{ID: "ep-3", Name: "Ep 3", SeasonNumber: 1, EpisodeNumber: 3, AiredDate: "2025-01-15"},
+					{ID: "ep-4", Name: "Ep 4", SeasonNumber: 1, EpisodeNumber: 4, AiredDate: "2025-01-22"},
+				},
+			}},
+		},
+	})
+
+	// Create stale progress for S01E01, S01E02, S01E03
+	for _, ep := range []int{1, 2, 3} {
+		if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e0" + string(rune('0'+ep)),
+			Position:      float64(ep * 100),
+			Duration:      2400,
+			SeriesID:      seriesID,
+			SeriesName:    "Multi Stale Show",
+			SeasonNumber:  1,
+			EpisodeNumber: ep,
+			ExternalIDs:   map[string]string{"tvdb": "99999"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Mark all 3 as watched in history
+	watched := true
+	for _, ep := range []int{1, 2, 3} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e0" + string(rune('0'+ep)),
+			Name:          "Ep",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "Multi Stale Show",
+			SeasonNumber:  1,
+			EpisodeNumber: ep,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Build continue watching — this should detect and clean stale entries
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	// Verify the show appears with S01E04 as next (not any stale episode)
+	for _, item := range items {
+		if item.SeriesTitle == "Multi Stale Show" {
+			if item.NextEpisode == nil {
+				t.Fatal("expected next episode S01E04")
+			}
+			if item.NextEpisode.EpisodeNumber != 4 {
+				t.Fatalf("expected next episode E04, got E%02d", item.NextEpisode.EpisodeNumber)
+			}
+		}
+	}
+
+	// Wait for async cleanup goroutine
+	time.Sleep(200 * time.Millisecond)
+
+	// All 3 stale progress entries should be cleaned
+	progress, _ := svc.ListPlaybackProgress(userID)
+	staleCount := 0
+	for _, p := range progress {
+		if p.SeriesID == seriesID && p.SeasonNumber > 0 {
+			staleCount++
+		}
+	}
+	if staleCount != 0 {
+		t.Fatalf("expected all stale progress entries cleaned, got %d remaining", staleCount)
+	}
+}
+
+func TestEpisodeState_ClearEarlierProgressCrossIDFormat(t *testing.T) {
+	// clearEarlierEpisodesProgressLocked should clear progress for earlier
+	// episodes even when the seriesIDs use different formats, via external ID fallback.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-earlier"
+
+	// Create progress entries for S01E01, S01E02, S01E03 under numeric ID
+	for _, ep := range []int{1, 2, 3} {
+		if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+			MediaType:     "episode",
+			ItemID:        "1416:s01e0" + string(rune('0'+ep)),
+			Position:      float64(ep * 100),
+			Duration:      2400,
+			SeriesID:      "1416",
+			SeriesName:    "Grey's Anatomy",
+			SeasonNumber:  1,
+			EpisodeNumber: ep,
+			ExternalIDs:   map[string]string{"tvdb": "73762", "imdb": "tt0413573"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Verify 3 progress entries exist
+	progress, _ := svc.ListPlaybackProgress(userID)
+	if len(progress) != 3 {
+		t.Fatalf("expected 3 progress entries, got %d", len(progress))
+	}
+
+	// Import S01E03 as watched using tvdb format (different from numeric "1416")
+	watched := true
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:73762:s01e03",
+		Name:          "Winning a Battle",
+		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(),
+		SeriesID:      "tvdb:series:73762",
+		SeriesName:    "Grey's Anatomy",
+		SeasonNumber:  1,
+		EpisodeNumber: 3,
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// All 3 progress entries should be cleared (E01, E02 are earlier; E03 is the current)
+	progress, _ = svc.ListPlaybackProgress(userID)
+	for _, p := range progress {
+		if p.SeriesName == "Grey's Anatomy" {
+			t.Fatalf("progress entry for S01E%02d should have been cleared (cross-ID), got: %+v",
+				p.EpisodeNumber, p)
+		}
+	}
+}
+
+func TestEpisodeState_UnreleasedEpisodeFallback(t *testing.T) {
+	// When all remaining episodes are unreleased, findNextUnwatchedEpisode
+	// should return the first unreleased one (for "coming soon" display).
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:77777"
+	userID := "user-unrel"
+
+	futureDate := time.Now().AddDate(0, 0, 3).Format("2006-01-02")
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Future Show",
+				TVDBID: 77777,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+					{ID: "ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: futureDate},
+				},
+			}},
+		},
+	})
+
+	// Mark S01E01 as watched
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(),
+		SeriesID:      seriesID,
+		SeriesName:    "Future Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	// Should include Future Show with S01E02 as next (unreleased fallback)
+	for _, item := range items {
+		if item.SeriesTitle == "Future Show" {
+			if item.NextEpisode == nil {
+				t.Fatal("expected unreleased S01E02 as fallback next episode")
+			}
+			if item.NextEpisode.EpisodeNumber != 2 {
+				t.Fatalf("expected next episode E02, got E%02d", item.NextEpisode.EpisodeNumber)
+			}
+			if item.NextEpisode.AirDate != futureDate {
+				t.Fatalf("expected air date %s, got %s", futureDate, item.NextEpisode.AirDate)
+			}
+			return
+		}
+	}
+	t.Fatal("Future Show not found in continue watching — unreleased fallback should prevent exclusion")
+}

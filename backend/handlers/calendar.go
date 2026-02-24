@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,18 +92,30 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 
 		// Build the full air datetime using air time + timezone when available.
 		// This prevents premature filtering of episodes that air later in the day.
-		airDT := buildAirDateTime(item)
+		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone)
 		airInTZ := airDT.In(loc)
 		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
 		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
 			continue
 		}
 
-		// Return the date adjusted to the user's timezone
+		// Return date, time, and timezone adjusted to the user's timezone
 		adjusted := item
 		adjusted.AirDate = airInTZ.Format("2006-01-02")
+		if item.AirTime != "" {
+			adjusted.AirTime = airInTZ.Format("15:04")
+			adjusted.AirTimezone = loc.String()
+		}
 		result = append(result, adjusted)
 	}
+
+	// Re-sort after TZ adjustment so items are ordered in the user's local time
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].AirDate != result[j].AirDate {
+			return result[i].AirDate < result[j].AirDate
+		}
+		return result[i].AirTime < result[j].AirTime
+	})
 
 	if result == nil {
 		result = []models.CalendarItem{}
@@ -121,32 +134,6 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 // Options handles CORS preflight.
 func (h *CalendarHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-}
-
-// buildAirDateTime constructs a full UTC datetime from a CalendarItem's date,
-// air time, and timezone. Falls back to end-of-day UTC when time info is missing.
-func buildAirDateTime(item models.CalendarItem) time.Time {
-	airDate, err := time.Parse("2006-01-02", item.AirDate)
-	if err != nil {
-		return time.Time{}
-	}
-
-	if item.AirTime != "" && item.AirTimezone != "" {
-		loc, err := time.LoadLocation(item.AirTimezone)
-		if err == nil {
-			parts := strings.SplitN(item.AirTime, ":", 2)
-			if len(parts) == 2 {
-				hour, e1 := strconv.Atoi(parts[0])
-				minute, e2 := strconv.Atoi(parts[1])
-				if e1 == nil && e2 == nil {
-					return time.Date(airDate.Year(), airDate.Month(), airDate.Day(), hour, minute, 0, 0, loc).UTC()
-				}
-			}
-		}
-	}
-
-	// Fallback: end-of-day UTC
-	return time.Date(airDate.Year(), airDate.Month(), airDate.Day(), 23, 59, 59, 0, time.UTC)
 }
 
 func (h *CalendarHandler) requireUser(w http.ResponseWriter, r *http.Request) (string, bool) {

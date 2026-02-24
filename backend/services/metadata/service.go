@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"novastream/models"
+	"novastream/services/calendar"
 )
 
 type Service struct {
@@ -2519,11 +2520,32 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		}
 	}
 
+	populateAiredDateTimeUTC(&details)
+
 	_ = s.cache.set(cacheID, details)
 
 	log.Printf("[metadata] series details complete tvdbId=%d seasons=%d", tvdbID, len(seasons))
 
 	return &details, nil
+}
+
+// populateAiredDateTimeUTC sets AiredDateTimeUTC on every episode using the
+// series' air time and timezone so the frontend can do precise UTC comparisons.
+func populateAiredDateTimeUTC(details *models.SeriesDetails) {
+	airsTime := details.Title.AirsTime
+	airsTimezone := details.Title.AirsTimezone
+	for i := range details.Seasons {
+		for j := range details.Seasons[i].Episodes {
+			ep := &details.Seasons[i].Episodes[j]
+			if ep.AiredDate == "" {
+				continue
+			}
+			utc := calendar.ParseAirDateTime(ep.AiredDate, airsTime, airsTimezone)
+			if !utc.IsZero() {
+				ep.AiredDateTimeUTC = utc.Format(time.RFC3339)
+			}
+		}
+	}
 }
 
 // SeriesDetailsLite is a lightweight variant of SeriesDetails optimised for
@@ -2805,6 +2827,8 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			details.Seasons = details.Seasons[:1]
 		}
 	}
+
+	populateAiredDateTimeUTC(&details)
 
 	_ = s.cache.set(cacheID, details)
 
