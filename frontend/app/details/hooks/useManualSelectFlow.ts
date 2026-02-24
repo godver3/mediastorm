@@ -97,7 +97,7 @@ export function useManualSelectFlow(params: UseManualSelectFlowParams): ManualSe
       const results = await fetchIndexerResults({ limit: 50, query: context?.query });
       setManualResults(results);
       if (!results || results.length === 0) {
-        if (episodeToSelect && isEpisodeUnreleased(episodeToSelect.airedDate)) {
+        if (episodeToSelect && isEpisodeUnreleased(episodeToSelect.airedDate, episodeToSelect.airedDateTimeUTC)) {
           const baseTitle = title.trim() || title;
           const episodeCode = `S${padNumber(episodeToSelect.seasonNumber)}E${padNumber(episodeToSelect.episodeNumber)}`;
           const episodeLabel = `${baseTitle} ${episodeCode}`;
@@ -142,7 +142,7 @@ export function useManualSelectFlow(params: UseManualSelectFlowParams): ManualSe
         const results = await fetchIndexerResults({ limit: 50, query: context.query });
         setManualResults(results);
         if (!results || results.length === 0) {
-          if (isEpisodeUnreleased(episode.airedDate)) {
+          if (isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC)) {
             const baseTitle = title.trim() || title;
             const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
             const episodeLabel = `${baseTitle} ${episodeCode}`;

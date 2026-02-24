@@ -210,7 +210,7 @@ export interface PlaybackResult {
     limit?: number;
     selectionMessage?: string | null;
     useDebugPlayer?: boolean;
-    targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string };
+    targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string; airedDateTimeUTC?: string };
   }) => Promise<void>;
   handleWatchNow: () => Promise<void>;
   handleLaunchDebugPlayer: () => Promise<void>;
@@ -1757,7 +1757,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
       limit?: number;
       selectionMessage?: string | null;
       useDebugPlayer?: boolean;
-      targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string };
+      targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string; airedDateTimeUTC?: string };
     }) => {
       if (isResolving) {
         return;
@@ -2033,7 +2033,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
         }
         const results = await fetchIndexerResults({ query: trimmedQuery, limit });
         if (!results || results.length === 0) {
-          if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+          if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate, targetEpisode.airedDateTimeUTC)) {
             setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
           } else {
             setSelectionError(`No results returned for ${friendlyLabel}.`);
@@ -2232,7 +2232,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
               }
 
               console.log(`[usePlayback] All ${prioritizedResults.length} candidates failed health checks. Stopping.`);
-              if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+              if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate, targetEpisode.airedDateTimeUTC)) {
                 setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
               } else {
                 const failureSummary = lastHealthFailureReason
@@ -2252,7 +2252,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
         }
 
         // Exhausted all candidates
-        if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+        if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate, targetEpisode.airedDateTimeUTC)) {
           setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
         } else if (lastHealthFailure) {
           const failureSummary = lastHealthFailureReason

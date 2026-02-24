@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"novastream/models"
+	"sort"
 	"strings"
 )
 
@@ -84,6 +85,24 @@ var networkTimezoneMap = map[string]string{
 	"Binge":            "Australia/Sydney",
 }
 
+// networkKeysByLength holds network keys sorted by length descending (then
+// alphabetical) so that partial matching always picks the longest (most
+// specific) match first, making the result deterministic.
+var networkKeysByLength []string
+
+func init() {
+	networkKeysByLength = make([]string, 0, len(networkTimezoneMap))
+	for k := range networkTimezoneMap {
+		networkKeysByLength = append(networkKeysByLength, k)
+	}
+	sort.Slice(networkKeysByLength, func(i, j int) bool {
+		if len(networkKeysByLength[i]) != len(networkKeysByLength[j]) {
+			return len(networkKeysByLength[i]) > len(networkKeysByLength[j])
+		}
+		return networkKeysByLength[i] < networkKeysByLength[j]
+	})
+}
+
 // countryTimezoneMap maps country codes to default IANA timezones.
 // Fallback when network name isn't in networkTimezoneMap.
 var countryTimezoneMap = map[string]string{
@@ -134,11 +153,11 @@ func inferTimezoneFromNetwork(networkName, country string) string {
 		if tz, ok := networkTimezoneMap[networkName]; ok {
 			return tz
 		}
-		// Partial match (case-insensitive)
+		// Partial match (case-insensitive), longest key first for determinism
 		lower := strings.ToLower(networkName)
-		for key, tz := range networkTimezoneMap {
+		for _, key := range networkKeysByLength {
 			if strings.Contains(lower, strings.ToLower(key)) {
-				return tz
+				return networkTimezoneMap[key]
 			}
 		}
 	}

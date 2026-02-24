@@ -59,7 +59,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isEpisodeComingSoon, isEpisodeUnreleased } from '@/app/details/utils';
+import { isEpisodeComingSoon, isEpisodeUnreleased, formatComingSoonLabel } from '@/app/details/utils';
 
 type CardData = {
   id: string | number;
@@ -82,7 +82,7 @@ type CardData = {
   releaseIcon?: ReleaseIconInfo; // Pre-computed release icon to avoid computation at render time
   watchState?: 'none' | 'partial' | 'complete'; // Watch state for series/movies
   unwatchedCount?: number; // Number of unwatched episodes for series
-  isUnreleased?: boolean; // Next episode hasn't aired yet (continue watching)
+  isUnreleased?: string; // Airtime label for coming-soon episodes (truthy = show badge)
 };
 
 type HeroContent = {
@@ -3306,7 +3306,7 @@ const ShelfCardContent = React.memo(
             {card.isUnreleased && (
               <View style={styles.unreleasedBadge}>
                 <Ionicons name="calendar-outline" size={isAndroidTV ? 12 : isTV ? 14 : 10} color="#000000" />
-                <Text style={styles.unreleasedBadgeText}>Soon</Text>
+                <Text style={styles.unreleasedBadgeText}>{card.isUnreleased}</Text>
               </View>
             )}
             {/* Progress bar at bottom */}
@@ -4715,8 +4715,8 @@ function mapContinueWatchingToCards(
       const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistItem?.overview || '';
 
       // Hide unreleased episodes that are too far out; show "coming soon" for those within the window
-      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate) : false;
-      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate) : false;
+      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate, next.airDateTimeUTC) : false;
+      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate, next.airDateTimeUTC) : false;
       if (unreleased && !comingSoon) {
         return null; // Too far out — hide from continue watching
       }
@@ -4746,7 +4746,7 @@ function mapContinueWatchingToCards(
         seriesOverview,
         watchState: seriesWatchState,
         unwatchedCount: seriesUnwatchedCount,
-        isUnreleased: comingSoon,
+        isUnreleased: comingSoon ? formatComingSoonLabel(next?.airDate, next?.airDateTimeUTC) : undefined,
       } as CardData;
     })
     .filter((card): card is CardData => card !== null);
@@ -4847,8 +4847,8 @@ function mapContinueWatchingToTitles(
       const label = next?.title ? `${item.seriesTitle} • ${code} – ${next.title}` : `${item.seriesTitle} • ${code}`;
 
       // Hide unreleased episodes that are too far out; show "coming soon" for those within the window
-      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate) : false;
-      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate) : false;
+      const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate, next.airDateTimeUTC) : false;
+      const comingSoon = unreleased && next?.airDate ? isEpisodeComingSoon(next.airDate, next.airDateTimeUTC) : false;
       if (unreleased && !comingSoon) {
         return null; // Too far out — hide from continue watching
       }
@@ -4872,9 +4872,9 @@ function mapContinueWatchingToTitles(
         tvdbId: parseNumeric(item.externalIds?.tvdb),
       };
 
-      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent, isUnreleased: comingSoon };
+      return { ...title, uniqueKey: `${item.seriesId}:${code}`, percentWatched: displayPercent, isUnreleased: comingSoon ? formatComingSoonLabel(next?.airDate, next?.airDateTimeUTC) : undefined };
     })
-    .filter((title): title is Title & { uniqueKey: string; percentWatched?: number; isUnreleased?: boolean } => title !== null);
+    .filter((title): title is Title & { uniqueKey: string; percentWatched?: number; isUnreleased?: string } => title !== null);
 }
 
 export default React.memo(IndexScreen);

@@ -1883,7 +1883,7 @@ export default function DetailsScreen() {
                 showReadyPip={playback.prequeueReady}
                 badge={(() => {
                   if (isSeries) {
-                    return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                    return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined;
                   }
                   return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
                 })()}
@@ -1981,7 +1981,7 @@ export default function DetailsScreen() {
               showReadyPip={playback.prequeueReady}
               badge={(() => {
                 if (isSeries) {
-                  return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined;
+                  return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined;
                 }
                 return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
               })()}
@@ -2123,7 +2123,7 @@ export default function DetailsScreen() {
                     const targetEp = activeEpisode || nextUpEpisode;
                     const errorLower = error.toLowerCase();
                     const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
-                    if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
+                    if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate, targetEp.airedDateTimeUTC)) {
                       const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
                       return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
                     }
@@ -2485,7 +2485,7 @@ export default function DetailsScreen() {
 
       {/* Mobile action buttons */}
       <View style={[styles.actionRow, styles.compactActionRow, { marginTop: theme.spacing.lg }]}>
-        <FocusablePressable focusKey="watch-now-mobile" icon="play" onSelect={playback.handleWatchNow} style={styles.iconActionButton} loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} showReadyPip={playback.prequeueReady} badge={(() => { if (isSeries) return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate) ? 'unreleased' : undefined; return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined; })()} />
+        <FocusablePressable focusKey="watch-now-mobile" icon="play" onSelect={playback.handleWatchNow} style={styles.iconActionButton} loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} showReadyPip={playback.prequeueReady} badge={(() => { if (isSeries) return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined; return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined; })()} />
         <FocusablePressable focusKey="manual-selection-mobile" icon="search" onSelect={manualSelect.handleManualSelect} style={styles.iconActionButton} disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)} />
         {isSeries && <FocusablePressable focusKey="watch-management-mobile" icon="checkmark-done" onSelect={() => watchActions.setBulkWatchModalVisible(true)} style={styles.iconActionButton} />}
         {(isMobile || isSeries || isInContinueWatching) && <FocusablePressable focusKey="more-options-mobile" icon="ellipsis-vertical" accessibilityLabel="More options" onSelect={() => setMoreOptionsVisible(true)} style={styles.iconActionButton} />}
@@ -2512,7 +2512,7 @@ export default function DetailsScreen() {
                   const targetEp = activeEpisode || nextUpEpisode;
                   const errorLower = error.toLowerCase();
                   const isNoUsableResultsError = errorLower === 'no results found' || errorLower.includes('does not match target');
-                  if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate)) {
+                  if (isSeries && targetEp && isNoUsableResultsError && isEpisodeUnreleased(targetEp.airedDate, targetEp.airedDateTimeUTC)) {
                     const episodeLabel = `S${String(targetEp.seasonNumber).padStart(2, '0')}E${String(targetEp.episodeNumber).padStart(2, '0')}`;
                     return formatUnreleasedMessage(episodeLabel, targetEp.airedDate);
                   }

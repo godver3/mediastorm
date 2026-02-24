@@ -3286,7 +3286,7 @@ export default function PlayerScreen() {
     if (shuffleMode && allEpisodes.length > 1) {
       // Shuffle mode: pick a random episode (different from current, excludes season 0/specials and unreleased)
       const shuffleableEpisodes = allEpisodes.filter(
-        (ep) => ep.seasonNumber !== 0 && !isEpisodeUnreleased(ep.airedDate),
+        (ep) => ep.seasonNumber !== 0 && !isEpisodeUnreleased(ep.airedDate, ep.airedDateTimeUTC),
       );
       if (shuffleableEpisodes.length > 0) {
         let randomIndex: number;
@@ -3303,7 +3303,7 @@ export default function PlayerScreen() {
     } else if (currentIndex >= 0 && currentIndex < allEpisodes.length - 1) {
       // Sequential mode: get next episode (skip unreleased)
       nextEpisode = allEpisodes[currentIndex + 1];
-      if (nextEpisode && isEpisodeUnreleased(nextEpisode.airedDate)) {
+      if (nextEpisode && isEpisodeUnreleased(nextEpisode.airedDate, nextEpisode.airedDateTimeUTC)) {
         console.log('[player] Skipping next episode prequeue - episode not yet released:', nextEpisode.airedDate);
         return;
       }
@@ -4357,7 +4357,7 @@ export default function PlayerScreen() {
 
       // No prequeue - fall back to existing logic
       // Shuffle mode: pick a random released episode (different from current)
-      const releasedEpisodes = allEpisodes.filter((ep) => !isEpisodeUnreleased(ep.airedDate));
+      const releasedEpisodes = allEpisodes.filter((ep) => !isEpisodeUnreleased(ep.airedDate, ep.airedDateTimeUTC));
       if (shuffleMode && releasedEpisodes.length > 1) {
         let randomIndex: number;
         let nextEp: SeriesEpisode;
@@ -4388,7 +4388,7 @@ export default function PlayerScreen() {
       const hasNext = currentIndex >= 0 && currentIndex < allEpisodes.length - 1;
       const nextEp = hasNext ? allEpisodes[currentIndex + 1] : null;
 
-      if (nextEp && !isEpisodeUnreleased(nextEp.airedDate)) {
+      if (nextEp && !isEpisodeUnreleased(nextEp.airedDate, nextEp.airedDateTimeUTC)) {
         console.log('🎬 Auto-playing next episode', {
           season: nextEp.seasonNumber,
           episode: nextEp.episodeNumber,
@@ -6034,7 +6034,7 @@ export default function PlayerScreen() {
   const hasNextEpisode =
     currentEpisodeIndex >= 0 &&
     currentEpisodeIndex < allEpisodes.length - 1 &&
-    !isEpisodeUnreleased(allEpisodes[currentEpisodeIndex + 1]?.airedDate);
+    !isEpisodeUnreleased(allEpisodes[currentEpisodeIndex + 1]?.airedDate, allEpisodes[currentEpisodeIndex + 1]?.airedDateTimeUTC);
 
   // Keep ref updated for use in callbacks defined earlier in the component
   hasNextEpisodeRef.current = hasNextEpisode;

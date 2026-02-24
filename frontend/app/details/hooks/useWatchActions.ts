@@ -39,7 +39,15 @@ interface UseWatchActionsParams {
   toggleWatchStatus: (
     mediaType: string,
     itemId: string,
-    metadata?: { name?: string; year?: number; externalIds?: Record<string, string> },
+    metadata?: {
+      name?: string;
+      year?: number;
+      externalIds?: Record<string, string>;
+      seasonNumber?: number;
+      episodeNumber?: number;
+      seriesId?: string;
+      seriesName?: string;
+    },
   ) => Promise<void>;
   bulkUpdateWatchStatus: (
     updates: Array<{
@@ -343,6 +351,11 @@ export function useWatchActions(params: UseWatchActionsParams): WatchActionsResu
         const episodeId = buildEpisodeItemId(episode);
         await toggleWatchStatus('episode', episodeId, {
           name: episode.name,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          seriesId: seriesIdentifier,
+          seriesName: title,
+          externalIds,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to update episode watched state.';
@@ -352,7 +365,7 @@ export function useWatchActions(params: UseWatchActionsParams): WatchActionsResu
         setWatchlistBusy(false);
       }
     },
-    [seriesIdentifier, toggleWatchStatus, buildEpisodeItemId],
+    [seriesIdentifier, toggleWatchStatus, buildEpisodeItemId, title, externalIds],
   );
 
   const isEpisodeWatchedFn = useCallback(

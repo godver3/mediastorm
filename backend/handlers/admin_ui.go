@@ -4814,7 +4814,7 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 		// Build full air datetime using air time + timezone when available.
 		// This prevents premature filtering of episodes that air later in the day
 		// and ensures correct date display when converting across timezones.
-		airDT := buildAirDateTime(item)
+		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone)
 		airInTZ := airDT.In(loc)
 		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
 		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
@@ -4822,6 +4822,10 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 		}
 		adjusted := item
 		adjusted.AirDate = airInTZ.Format("2006-01-02")
+		if item.AirTime != "" {
+			adjusted.AirTime = airInTZ.Format("15:04")
+			adjusted.AirTimezone = loc.String()
+		}
 		result = append(result, adjusted)
 	}
 	if result == nil {

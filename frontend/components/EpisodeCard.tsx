@@ -284,11 +284,11 @@ const EpisodeCard = memo(function EpisodeCard({ episode, percentWatched }: Episo
             </View>
           )}
           {airDate ? (
-            <View style={[styles.releaseDateOverlay, isEpisodeUnreleased(episode.airedDate) && styles.releaseDateOverlayUnreleased]}>
-              {isEpisodeUnreleased(episode.airedDate) && (
+            <View style={[styles.releaseDateOverlay, isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) && styles.releaseDateOverlayUnreleased]}>
+              {isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) && (
                 <Ionicons name="time" size={isTV ? 14 : 10} color="#000000" />
               )}
-              <Text style={[styles.releaseDateText, isEpisodeUnreleased(episode.airedDate) && styles.releaseDateTextUnreleased]}>{airDate}</Text>
+              <Text style={[styles.releaseDateText, isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) && styles.releaseDateTextUnreleased]}>{airDate}</Text>
             </View>
           ) : (
             (console.log('[EpisodeCard] No air date to display - airDate is:', airDate), null)

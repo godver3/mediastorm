@@ -185,6 +185,7 @@ export interface SeriesEpisode {
   episodeNumber: number;
   absoluteEpisodeNumber?: number;
   airedDate?: string;
+  airedDateTimeUTC?: string;
   runtimeMinutes?: number;
   image?: Image;
 }
@@ -609,6 +610,7 @@ export interface EpisodeReference {
   overview?: string;
   runtimeMinutes?: number;
   airDate?: string;
+  airDateTimeUTC?: string;
   watchedAt?: string;
 }
 

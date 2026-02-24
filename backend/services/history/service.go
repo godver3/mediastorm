@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"novastream/models"
+	"novastream/services/calendar"
 )
 
 var (
@@ -575,12 +576,68 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			var nextEpisode *models.EpisodeReference
 
 			// Priority 1: In-progress episode (resume watching)
+			// Skip if the in-progress episode is already marked as watched in history
+			// (e.g. Trakt sync marked it complete while stale playback progress remains).
+			inProgressAlreadyWatched := false
 			if t.inProgress != nil {
+				for _, ep := range t.episodes {
+					if ep.SeasonNumber == t.inProgress.SeasonNumber && ep.EpisodeNumber == t.inProgress.EpisodeNumber {
+						inProgressAlreadyWatched = true
+						break
+					}
+				}
+				if inProgressAlreadyWatched {
+					// Clean up all stale progress entries for this series where
+					// the episode is already in watch history.
+					watchedEps := make(map[string]bool, len(t.episodes))
+					for _, ep := range t.episodes {
+						watchedEps[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)] = true
+					}
+					seriesExtIDs := t.inProgress.ExternalIDs
+					userID := userID
+					go func() {
+						s.mu.Lock()
+						defer s.mu.Unlock()
+						perUser, ok := s.playbackProgress[userID]
+						if !ok {
+							return
+						}
+						var cleaned int
+						for key, prog := range perUser {
+							if prog.MediaType != "episode" || prog.SeasonNumber <= 0 {
+								continue
+							}
+							if !hasMatchingExternalID(prog.ExternalIDs, seriesExtIDs) {
+								continue
+							}
+							if watchedEps[episodeKey(prog.SeasonNumber, prog.EpisodeNumber)] {
+								log.Printf("[history] cleaning up stale progress %s (episode already watched)", key)
+								delete(perUser, key)
+								cleaned++
+							}
+						}
+						if cleaned > 0 {
+							_ = s.savePlaybackProgressLocked()
+						}
+					}()
+				}
+			}
+			if t.inProgress != nil && !inProgressAlreadyWatched {
 				// The in-progress episode IS the next episode to watch
 				nextEpisode = &models.EpisodeReference{
 					SeasonNumber:  t.inProgress.SeasonNumber,
 					EpisodeNumber: t.inProgress.EpisodeNumber,
 					Title:         t.inProgress.EpisodeName,
+				}
+
+				// Use the most recent timestamp between the in-progress entry and
+				// any watched episode (e.g. a Trakt sync may mark many episodes
+				// watched today while the in-progress entry is older).
+				updatedAt := t.inProgress.UpdatedAt
+				for _, ep := range t.episodes {
+					if ep.WatchedAt.After(updatedAt) {
+						updatedAt = ep.WatchedAt
+					}
 				}
 
 				// For in-progress, use the in-progress episode as both last and next
@@ -589,7 +646,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 					SeriesTitle: t.inProgress.SeriesName,
 					Year:        t.inProgress.Year,
 					ExternalIDs: t.inProgress.ExternalIDs,
-					UpdatedAt:   t.inProgress.UpdatedAt,
+					UpdatedAt:   updatedAt,
 					LastWatched: *nextEpisode,
 					NextEpisode: nextEpisode,
 				}
@@ -1122,8 +1179,11 @@ func (s *Service) findNextUnwatchedEpisode(
 		return allEpisodes[i].episode < allEpisodes[j].episode
 	})
 
-	// Find the last watched episode in the list, then scan forward for next unwatched
+	// Find the last watched episode in the list, then scan forward for next unwatched.
+	// Track the first unreleased episode as a fallback so the frontend can show
+	// "coming soon" instead of hiding the series entirely.
 	foundLast := false
+	var firstUnreleased *models.EpisodeReference
 	for _, ep := range allEpisodes {
 		if ep.season == lastWatched.SeasonNumber && ep.episode == lastWatched.EpisodeNumber {
 			foundLast = true
@@ -1131,32 +1191,52 @@ func (s *Service) findNextUnwatchedEpisode(
 		}
 
 		if foundLast {
-			// Skip unreleased episodes
+			key := episodeKey(ep.season, ep.episode)
+			if watchedSet[key] {
+				continue
+			}
+
+			// Check if this episode is unreleased using precise air time
+			isUnreleased := false
 			if ep.details.AiredDate != "" {
-				if airDate, err := time.Parse("2006-01-02", ep.details.AiredDate); err == nil {
-					if airDate.After(time.Now()) {
-						continue
-					}
+				airDateTime := calendar.ParseAirDateTime(ep.details.AiredDate, seriesDetails.Title.AirsTime, seriesDetails.Title.AirsTimezone)
+				if !airDateTime.IsZero() && airDateTime.After(time.Now()) {
+					isUnreleased = true
 				}
 			}
 
-			key := episodeKey(ep.season, ep.episode)
-			if !watchedSet[key] {
-				// Found next unwatched episode
-				return &models.EpisodeReference{
-					SeasonNumber:   ep.details.SeasonNumber,
-					EpisodeNumber:  ep.details.EpisodeNumber,
-					EpisodeID:      ep.details.ID,
-					Title:          ep.details.Name,
-					Overview:       ep.details.Overview,
-					RuntimeMinutes: ep.details.Runtime,
-					AirDate:        ep.details.AiredDate,
+			ref := &models.EpisodeReference{
+				SeasonNumber:   ep.details.SeasonNumber,
+				EpisodeNumber:  ep.details.EpisodeNumber,
+				EpisodeID:      ep.details.ID,
+				Title:          ep.details.Name,
+				Overview:       ep.details.Overview,
+				RuntimeMinutes: ep.details.Runtime,
+				AirDate:        ep.details.AiredDate,
+			}
+			if ep.details.AiredDate != "" {
+				utc := calendar.ParseAirDateTime(ep.details.AiredDate, seriesDetails.Title.AirsTime, seriesDetails.Title.AirsTimezone)
+				if !utc.IsZero() {
+					ref.AirDateTimeUTC = utc.Format(time.RFC3339)
 				}
 			}
+
+			if isUnreleased {
+				// Remember the first unreleased episode as fallback
+				if firstUnreleased == nil {
+					firstUnreleased = ref
+				}
+				continue
+			}
+
+			// Found a released, unwatched episode
+			return ref
 		}
 	}
 
-	return nil
+	// No released unwatched episode found — return the first upcoming one
+	// so the frontend can show it as "coming soon"
+	return firstUnreleased
 }
 
 // convertToEpisodeRef converts a WatchHistoryItem to an EpisodeReference.
@@ -1998,11 +2078,14 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			if incomingTime.IsZero() {
 				incomingTime = now
 			}
-			if existing.WatchedAt.After(incomingTime) {
-				continue
-			}
-			// Same timestamp means already recorded
-			if existing.WatchedAt.Equal(incomingTime) {
+			if existing.WatchedAt.After(incomingTime) || existing.WatchedAt.Equal(incomingTime) {
+				// Already recorded, but still clean up any stale playback progress
+				// that may exist under a different ID format.
+				if update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
+					if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
+						progressCleared = true
+					}
+				}
 				continue
 			}
 		}
@@ -2720,11 +2803,33 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 		return false
 	}
 
+	// Extract provider and numeric ID from seriesID (e.g. "tvdb:series:73762" -> "tvdb","73762")
+	// for fallback matching against progress entries that use a different ID format.
+	var idProvider, idValue string
+	parts := strings.Split(seriesID, ":")
+	if len(parts) >= 2 {
+		idProvider = strings.ToLower(parts[0])
+		idValue = parts[len(parts)-1]
+	}
+
 	anyCleared := false
 	for key, progress := range perUser {
-		// Only process episodes from the same series
-		if progress.MediaType != "episode" || progress.SeriesID != seriesID {
+		if progress.MediaType != "episode" {
 			continue
+		}
+		// Direct seriesID match, or fallback: check if the progress entry's external IDs
+		// contain a matching provider+value (handles cross-ID-format mismatches,
+		// e.g. Trakt imports with tvdb:series:73762 vs player progress with seriesId "1416").
+		if progress.SeriesID != seriesID {
+			matched := false
+			if idProvider != "" && idValue != "" {
+				if v, ok := progress.ExternalIDs[idProvider]; ok && v == idValue {
+					matched = true
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 
 		// Skip series-level hidden markers (no real episode data, just hidden state)

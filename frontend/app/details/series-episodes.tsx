@@ -739,7 +739,7 @@ export const SeriesEpisodes = ({
                             {episode.name || `Episode ${episode.episodeNumber}`}
                           </Text>
                           <View style={styles.episodeMetaRow}>
-                            {isEpisodeUnreleased(episode.airedDate) && (
+                            {isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) && (
                               <Ionicons name="time" size={12} color={isActive ? '#ffffff' : theme.colors.status.warning} />
                             )}
                             <Text style={[styles.episodeMeta, isActive && styles.episodeMetaFocused]} numberOfLines={1}>
@@ -850,7 +850,7 @@ export const SeriesEpisodes = ({
                                       {episode.name || `Episode ${episode.episodeNumber}`}
                                     </Text>
                                     <View style={styles.episodeMetaRow}>
-                                      {isEpisodeUnreleased(episode.airedDate) && (
+                                      {isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) && (
                                         <Ionicons name="time" size={12} color={isFocused ? '#ffffff' : theme.colors.status.warning} />
                                       )}
                                       <Text

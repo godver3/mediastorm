@@ -45,6 +45,25 @@ func TestApplyAirTimeFromTVDB(t *testing.T) {
 	}
 }
 
+func TestInferTimezoneFromNetwork_DeterministicPartialMatch(t *testing.T) {
+	// "BBC One" should always match the longer "BBC One" key (Europe/London),
+	// not the shorter "BBC" key — and it should be deterministic across runs.
+	for i := 0; i < 50; i++ {
+		got := inferTimezoneFromNetwork("BBC One", "")
+		if got != "Europe/London" {
+			t.Fatalf("iteration %d: inferTimezoneFromNetwork(\"BBC One\", \"\") = %q, want \"Europe/London\"", i, got)
+		}
+	}
+
+	// "Sky Atlantic HD" should match "Sky Atlantic" (longer) not "Sky"
+	for i := 0; i < 50; i++ {
+		got := inferTimezoneFromNetwork("Sky Atlantic HD", "")
+		if got != "Europe/London" {
+			t.Fatalf("iteration %d: inferTimezoneFromNetwork(\"Sky Atlantic HD\", \"\") = %q, want \"Europe/London\"", i, got)
+		}
+	}
+}
+
 func TestApplyAirTimeFromTVDB_NoTime(t *testing.T) {
 	title := &models.Title{Network: "HBO"}
 	applyAirTimeFromTVDB(title, "", "HBO", "usa")

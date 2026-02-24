@@ -274,7 +274,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                       <View style={[styles.watchedBadge, isFlashing && styles.watchedBadgeFlashing]}>
                         <Ionicons name={isWatched ? 'checkmark' : 'eye-outline'} size={14} color="#fff" />
                       </View>
-                    ) : isEpisodeUnreleased(episode.airedDate) ? (
+                    ) : isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) ? (
                       <View style={styles.unreleasedBadge}>
                         <Ionicons name="time" size={12} color="#000000" />
                       </View>

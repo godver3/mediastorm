@@ -630,7 +630,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                 }
 
                 const percentWatched = (item as any).percentWatched as number | undefined;
-                const itemIsUnreleased = (item as any).isUnreleased as boolean | undefined;
+                const itemIsUnreleased = (item as any).isUnreleased as string | undefined;
                 const showProgressBar = percentWatched !== undefined && percentWatched >= 5 && percentWatched < 100;
                 const imageUrl = item.backdrop?.url || item.poster?.url;
 
@@ -690,7 +690,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                           zIndex: 5,
                         }}>
                         <Ionicons name="calendar-outline" size={10} color="#000000" />
-                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#000000' }}>Soon</Text>
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#000000' }}>{itemIsUnreleased}</Text>
                       </View>
                     )}
                     {/* Text container with gradient */}

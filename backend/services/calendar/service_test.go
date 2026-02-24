@@ -570,12 +570,60 @@ func TestParseAirDateTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseAirDateTime(tt.dateStr, tt.airsTime, tt.airsTimezone)
+			got := ParseAirDateTime(tt.dateStr, tt.airsTime, tt.airsTimezone)
 			gotStr := got.Format("2006-01-02 15:04")
 			if gotStr != tt.wantUTC {
-				t.Errorf("parseAirDateTime(%q, %q, %q) = %s, want %s",
+				t.Errorf("ParseAirDateTime(%q, %q, %q) = %s, want %s",
 					tt.dateStr, tt.airsTime, tt.airsTimezone, gotStr, tt.wantUTC)
 			}
 		})
+	}
+}
+
+func TestBuildUserCalendar_UTCAwareSorting(t *testing.T) {
+	// Two items on the same date but different timezones.
+	// By string comparison they have the same AirDate, but by UTC datetime
+	// the Seoul item airs much earlier (13:00 UTC vs 02:00 UTC next day).
+	meta, wl, hist, us, users := defaultMocks()
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{
+			Name: "Seoul Show", TVDBID: 100,
+			AirsTime: "22:00", AirsTimezone: "Asia/Seoul",
+		},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Seoul Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(5)},
+			}},
+		},
+	}
+	meta.series[200] = &models.SeriesDetails{
+		Title: models.Title{
+			Name: "NYC Show", TVDBID: 200,
+			AirsTime: "21:00", AirsTimezone: "America/New_York",
+		},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "NYC Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(5)},
+			}},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tvdb:200", MediaType: "series", Name: "NYC Show", ExternalIDs: map[string]string{"tvdb": "200"}},
+		{ID: "tvdb:100", MediaType: "series", Name: "Seoul Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	// Seoul 22:00 KST = 13:00 UTC, NYC 21:00 EST = 02:00 UTC next day
+	// Seoul should sort first despite same AirDate string
+	if items[0].Title != "Seoul Show" {
+		t.Errorf("expected Seoul Show first (earlier in UTC), got %q", items[0].Title)
+	}
+	if items[1].Title != "NYC Show" {
+		t.Errorf("expected NYC Show second (later in UTC), got %q", items[1].Title)
 	}
 }

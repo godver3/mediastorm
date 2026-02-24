@@ -88,12 +88,27 @@ const COMING_SOON_WINDOW_DAYS = 7;
  * Returns true only when the air date is in the future AND within COMING_SOON_WINDOW_DAYS.
  * Episodes with no air date or beyond the window return false (should be hidden).
  */
-export const isEpisodeComingSoon = (airedDate?: string): boolean => {
+export const isEpisodeComingSoon = (airedDate?: string, airedDateTimeUTC?: string): boolean => {
   if (!airedDate) {
     return false; // No date — don't show
   }
 
   try {
+    // If UTC timestamp available, use precise comparison
+    if (airedDateTimeUTC) {
+      const airDateTime = new Date(airedDateTimeUTC);
+      if (!isNaN(airDateTime.getTime())) {
+        const now = new Date();
+        if (airDateTime <= now) {
+          return false; // Already aired
+        }
+        const cutoff = new Date(now);
+        cutoff.setDate(cutoff.getDate() + COMING_SOON_WINDOW_DAYS);
+        return airDateTime <= cutoff;
+      }
+    }
+
+    // Fallback to date-only logic
     const airDate = new Date(airedDate + 'T00:00:00');
     if (isNaN(airDate.getTime())) {
       return false;
@@ -116,18 +131,62 @@ export const isEpisodeComingSoon = (airedDate?: string): boolean => {
 };
 
 /**
+ * Format a compact airtime label for the coming-soon badge.
+ * Uses the UTC timestamp when available (displayed in local time), otherwise date only.
+ * Examples: "Today 7:00 PM", "Tmrw 3:30 PM", "Wed 9:00 PM", "Feb 26"
+ */
+export const formatComingSoonLabel = (airedDate?: string, airedDateTimeUTC?: string): string => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  if (airedDateTimeUTC) {
+    const dt = new Date(airedDateTimeUTC);
+    if (!isNaN(dt.getTime())) {
+      const timeStr = dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const dtDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+      if (dtDay.getTime() === today.getTime()) return `Today ${timeStr}`;
+      if (dtDay.getTime() === tomorrow.getTime()) return `Tmrw ${timeStr}`;
+      const dayName = dt.toLocaleDateString([], { weekday: 'short' });
+      return `${dayName} ${timeStr}`;
+    }
+  }
+
+  if (airedDate) {
+    const d = new Date(airedDate + 'T00:00:00');
+    if (!isNaN(d.getTime())) {
+      const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      if (dDay.getTime() === today.getTime()) return 'Today';
+      if (dDay.getTime() === tomorrow.getTime()) return 'Tmrw';
+      return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+  }
+
+  return 'Soon';
+};
+
+/**
  * Check if an episode hasn't aired yet based on its air date.
  * Returns true if:
  * - The episode has no air date (assumed unreleased)
  * - The episode's air date is in the future
  */
-export const isEpisodeUnreleased = (airedDate?: string): boolean => {
+export const isEpisodeUnreleased = (airedDate?: string, airedDateTimeUTC?: string): boolean => {
   if (!airedDate) {
     return true;
   }
 
   try {
-    // Parse the date string (format: YYYY-MM-DD)
+    // If UTC timestamp available, use precise comparison
+    if (airedDateTimeUTC) {
+      const airDateTime = new Date(airedDateTimeUTC);
+      if (!isNaN(airDateTime.getTime())) {
+        return airDateTime > new Date();
+      }
+    }
+
+    // Fallback to date-only logic
     const airDate = new Date(airedDate + 'T00:00:00');
     if (isNaN(airDate.getTime())) {
       return true; // Invalid date, assume unreleased

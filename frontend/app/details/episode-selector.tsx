@@ -160,7 +160,7 @@ export function EpisodeSelector({
                                     color={theme.colors.accent.primary}
                                   />
                                 </View>
-                              ) : isEpisodeUnreleased(episode.airedDate) ? (
+                              ) : isEpisodeUnreleased(episode.airedDate, episode.airedDateTimeUTC) ? (
                                 <View style={styles.watchedBadge}>
                                   <Ionicons
                                     name="time"

@@ -89,6 +89,7 @@ type SeriesEpisode struct {
 	EpisodeNumber         int    `json:"episodeNumber"`
 	AbsoluteEpisodeNumber int    `json:"absoluteEpisodeNumber,omitempty"`
 	AiredDate             string `json:"airedDate,omitempty"`
+	AiredDateTimeUTC      string `json:"airedDateTimeUTC,omitempty"`
 	Runtime               int    `json:"runtimeMinutes,omitempty"`
 	Image                 *Image `json:"image,omitempty"`
 }
