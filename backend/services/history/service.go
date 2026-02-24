@@ -395,6 +395,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 	hiddenSeriesIDs := make(map[string]bool)
 	for _, prog := range progressItems {
 		if prog.HiddenFromContinueWatching {
+			log.Printf("[history] buildCW: found hidden progress entry itemID=%q seriesID=%q mediaType=%q", prog.ItemID, prog.SeriesID, prog.MediaType)
 			// Add both the itemID (for movies) and seriesID (for episodes)
 			if prog.ItemID != "" {
 				hiddenSeriesIDs[prog.ItemID] = true
@@ -418,6 +419,9 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 				}
 			}
 		}
+	}
+	if len(hiddenSeriesIDs) > 0 {
+		log.Printf("[history] buildCW: hiddenSeriesIDs=%v", hiddenSeriesIDs)
 	}
 
 	// Map of seriesID -> in-progress episode (0-90% watched)
@@ -456,7 +460,7 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 		// Resolve to canonical ID so player and Trakt entries merge
 		seriesID = resolveCanonicalID(canonicalSeriesID, seriesID)
 
-		if isEpisode && seriesID != "" && prog.PercentWatched < 90 {
+		if isEpisode && seriesID != "" && prog.PercentWatched < 90 && !hiddenSeriesIDs[seriesID] {
 			// Keep the most recently updated in-progress episode per series
 			existing := inProgressBySeriesCache[seriesID]
 			if existing == nil || prog.UpdatedAt.After(existing.UpdatedAt) {
@@ -521,7 +525,14 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 		}
 	}
 
-	log.Printf("[history] continue watching: %d series to process, %d movies to process", len(seriesInfo), len(moviesToProcess))
+	log.Printf("[history] continue watching: %d series to process, %d movies to process, %d hidden IDs", len(seriesInfo), len(moviesToProcess), len(hiddenSeriesIDs))
+	for sid := range seriesInfo {
+		source := "watch-history"
+		if _, inProg := inProgressBySeriesCache[sid]; inProg {
+			source = "in-progress"
+		}
+		log.Printf("[history] buildCW: series %q (%s) passed hidden filter (source: %s)", seriesInfo[sid].SeriesName, sid, source)
+	}
 
 	// === PARALLEL METADATA LOOKUPS ===
 	// Use a semaphore to limit concurrent metadata requests
@@ -2273,9 +2284,38 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	// Clear hidden flag for related series entries when new progress is logged
 	// This ensures the series reappears in continue watching when user resumes watching
 	if update.SeriesID != "" {
+		// Extract provider/ID from the update's series ID for external ID matching
+		// (e.g. "tvdb:series:73562" → provider="tvdb", numericID="73562")
+		var unhideProvider, unhideNumericID string
+		sParts := strings.Split(update.SeriesID, ":")
+		if len(sParts) >= 2 {
+			unhideProvider = strings.ToLower(sParts[0])
+			unhideNumericID = sParts[len(sParts)-1]
+		}
+
 		for existingKey, existingProg := range perUser {
-			if existingProg.HiddenFromContinueWatching &&
-				(existingProg.ItemID == update.SeriesID || existingProg.SeriesID == update.SeriesID) {
+			if !existingProg.HiddenFromContinueWatching {
+				continue
+			}
+			match := existingProg.ItemID == update.SeriesID || existingProg.SeriesID == update.SeriesID
+			// Also match by external ID (handles canonical ID mismatches)
+			if !match && unhideProvider != "" && unhideNumericID != "" {
+				if extVal, ok := existingProg.ExternalIDs[unhideProvider]; ok && extVal == unhideNumericID {
+					match = true
+				}
+			}
+			// Also check reverse: does the update's external IDs match the marker's series ID?
+			if !match && len(update.ExternalIDs) > 0 {
+				markerParts := strings.Split(existingProg.SeriesID, ":")
+				if len(markerParts) >= 2 {
+					markerProvider := strings.ToLower(markerParts[0])
+					markerNumericID := markerParts[len(markerParts)-1]
+					if extVal, ok := update.ExternalIDs[markerProvider]; ok && extVal == markerNumericID {
+						match = true
+					}
+				}
+			}
+			if match {
 				existingProg.HiddenFromContinueWatching = false
 				perUser[existingKey] = existingProg
 			}
@@ -2555,16 +2595,22 @@ func (s *Service) clearPlaybackProgressEntryLocked(userID, mediaType, itemID str
 	}
 
 	key := makeWatchKey(mediaType, itemID)
-	if _, exists := perUser[key]; exists {
+	if entry, exists := perUser[key]; exists {
 		delete(perUser, key)
+		if entry.HiddenFromContinueWatching {
+			s.preserveSeriesHiddenMarkerLocked(perUser, entry)
+		}
 		return true
 	}
 
 	// Fall back to case-insensitive match (handles S/E casing differences)
 	target := strings.ToLower(key)
-	for existingKey := range perUser {
+	for existingKey, entry := range perUser {
 		if strings.ToLower(existingKey) == target {
 			delete(perUser, existingKey)
+			if entry.HiddenFromContinueWatching {
+				s.preserveSeriesHiddenMarkerLocked(perUser, entry)
+			}
 			return true
 		}
 	}
@@ -2589,15 +2635,37 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 
 	perUser := s.ensurePlaybackProgressUserLocked(userID)
 
+	// Extract provider and numeric ID from the seriesID being hidden
+	// (e.g., "tmdb:tv:958" → provider="tmdb", numericID="958";
+	//  "tvdb:series:73562" → provider="tvdb", numericID="73562")
+	// This lets us match progress entries that use a different ID format
+	// for the same show by checking their externalIDs map.
+	var hideProvider, hideNumericID string
+	parts := strings.Split(seriesID, ":")
+	if len(parts) >= 2 {
+		hideProvider = strings.ToLower(parts[0])
+		hideNumericID = parts[len(parts)-1]
+	}
+
 	// Find any progress entries for this series (both movies and episodes)
 	found := false
+	markedCount := 0
 	for key, progress := range perUser {
 		// For movies, the itemID matches seriesID directly
 		// For episodes, the seriesID field matches
-		if progress.ItemID == seriesID || progress.SeriesID == seriesID {
+		match := progress.ItemID == seriesID || progress.SeriesID == seriesID
+		// Also match by external ID (handles canonical ID mismatches like tmdb:tv:958 vs tvdb:series:73562)
+		if !match && hideProvider != "" && hideNumericID != "" {
+			if extVal, ok := progress.ExternalIDs[hideProvider]; ok && extVal == hideNumericID {
+				match = true
+			}
+		}
+		if match {
 			progress.HiddenFromContinueWatching = true
 			perUser[key] = progress
 			found = true
+			markedCount++
+			log.Printf("[history] HideFromContinueWatching: marked entry hidden key=%q itemID=%q seriesID=%q", key, progress.ItemID, progress.SeriesID)
 		}
 	}
 
@@ -2609,21 +2677,34 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 			mediaType = "movie"
 		}
 
+		// Collect external IDs from watch history entries for this series
+		// so the marker can be found by IMDB/TVDB when unhiding via a different ID format
+		markerExternalIDs := s.collectExternalIDsForSeriesLocked(userID, seriesID)
+
 		key := makeWatchKey(mediaType, seriesID)
 		perUser[key] = models.PlaybackProgress{
 			ID:                         key,
 			MediaType:                  mediaType,
 			ItemID:                     seriesID,
 			SeriesID:                   seriesID,
+			ExternalIDs:                markerExternalIDs,
 			UpdatedAt:                  time.Now().UTC(),
 			HiddenFromContinueWatching: true,
 		}
+		log.Printf("[history] HideFromContinueWatching: no existing entry found, created marker key=%q for seriesID=%q externalIDs=%v", key, seriesID, markerExternalIDs)
+	} else {
+		log.Printf("[history] HideFromContinueWatching: marked %d existing entries hidden for seriesID=%q", markedCount, seriesID)
 	}
 
 	// Invalidate continue watching cache
 	delete(s.continueWatchingCache, userID)
 
-	return s.savePlaybackProgressLocked()
+	if err := s.savePlaybackProgressLocked(); err != nil {
+		log.Printf("[history] HideFromContinueWatching: save failed: %v", err)
+		return err
+	}
+	log.Printf("[history] HideFromContinueWatching: saved successfully for user=%q seriesID=%q", userID, seriesID)
+	return nil
 }
 
 // clearEarlierEpisodesProgressLocked removes playback progress for the current episode
@@ -2646,6 +2727,11 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 			continue
 		}
 
+		// Skip series-level hidden markers (no real episode data, just hidden state)
+		if progress.HiddenFromContinueWatching && progress.SeasonNumber == 0 && progress.EpisodeNumber == 0 {
+			continue
+		}
+
 		// Check if this episode is the current one or earlier
 		isCurrentOrEarlier := false
 		if progress.SeasonNumber < seasonNumber {
@@ -2656,11 +2742,58 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 
 		if isCurrentOrEarlier {
 			delete(perUser, key)
+			if progress.HiddenFromContinueWatching {
+				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+			}
 			anyCleared = true
 		}
 	}
 
 	return anyCleared
+}
+
+// collectExternalIDsForSeriesLocked gathers external IDs (imdb, tvdb, tmdb) from
+// watch history and progress entries that match the given seriesID. This enriches
+// hidden markers so they can be found by cross-provider ID matching when unhiding.
+// Callers must hold s.mu before invoking this helper.
+func (s *Service) collectExternalIDsForSeriesLocked(userID, seriesID string) map[string]string {
+	collected := make(map[string]string)
+
+	// Check watch history
+	if perUser, ok := s.watchHistory[userID]; ok {
+		for _, item := range perUser {
+			if item.SeriesID == seriesID {
+				for _, k := range []string{"imdb", "tvdb", "tmdb"} {
+					if v, ok := item.ExternalIDs[k]; ok && v != "" {
+						collected[k] = v
+					}
+				}
+				if len(collected) > 0 {
+					break // one match is enough
+				}
+			}
+		}
+	}
+
+	// Also check playback progress
+	if perUser, ok := s.playbackProgress[userID]; ok {
+		for _, prog := range perUser {
+			if prog.SeriesID == seriesID {
+				for _, k := range []string{"imdb", "tvdb", "tmdb"} {
+					if v, ok := prog.ExternalIDs[k]; ok && v != "" {
+						if _, exists := collected[k]; !exists {
+							collected[k] = v
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+	return collected
 }
 
 // clearProgressByExternalIDMatchLocked removes playback progress entries for a specific
@@ -2689,11 +2822,51 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 		// Check if this progress entry shares any external ID with the update
 		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
 			delete(perUser, key)
+			if progress.HiddenFromContinueWatching {
+				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+			}
 			anyCleared = true
 		}
 	}
 
 	return anyCleared
+}
+
+// preserveSeriesHiddenMarkerLocked ensures the hidden-from-continue-watching state
+// survives when an episode's playback progress is cleared (e.g. by Trakt sync marking
+// the episode as watched). It creates a minimal series-level marker entry if one
+// doesn't already exist for this series.
+// Callers must hold s.mu before invoking this helper.
+func (s *Service) preserveSeriesHiddenMarkerLocked(perUser map[string]models.PlaybackProgress, deleted models.PlaybackProgress) {
+	seriesID := deleted.SeriesID
+	if seriesID == "" {
+		seriesID = deleted.ItemID
+	}
+	if seriesID == "" {
+		return
+	}
+
+	// Check if another hidden entry already covers this series
+	for _, p := range perUser {
+		if p.HiddenFromContinueWatching && p.SeriesID == seriesID {
+			return // already covered
+		}
+	}
+
+	// Create a minimal series-level hidden marker (same format as HideFromContinueWatching fallback)
+	mediaType := "episode"
+	if strings.Contains(seriesID, ":movie:") {
+		mediaType = "movie"
+	}
+	key := makeWatchKey(mediaType, seriesID)
+	perUser[key] = models.PlaybackProgress{
+		ID:                         key,
+		MediaType:                  mediaType,
+		ItemID:                     seriesID,
+		SeriesID:                   seriesID,
+		UpdatedAt:                  deleted.UpdatedAt,
+		HiddenFromContinueWatching: true,
+	}
 }
 
 // hasMatchingExternalID returns true if two external ID maps share at least one

@@ -1095,3 +1095,214 @@ func TestImportWatchHistory_Dedup(t *testing.T) {
 		t.Fatalf("expected 1 history item after dedup, got %d", len(history))
 	}
 }
+
+func TestHideFromContinueWatching_SurvivesProgressClear(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:73562"
+
+	// Step 1: Create playback progress for an episode (simulates partially watching)
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":S01E01",
+		Position:      30,
+		Duration:      1200,
+		SeriesID:      seriesID,
+		SeriesName:    "Beast Wars: Transformers",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Verify progress exists
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 1 {
+		t.Fatalf("expected 1 progress item, got %d", len(progress))
+	}
+
+	// Step 2: Hide series from continue watching
+	err = svc.HideFromContinueWatching(userID, seriesID)
+	if err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	// Verify the entry is hidden
+	progress, _ = svc.ListPlaybackProgress(userID)
+	hiddenCount := 0
+	for _, p := range progress {
+		if p.HiddenFromContinueWatching && (p.SeriesID == seriesID || p.ItemID == seriesID) {
+			hiddenCount++
+		}
+	}
+	if hiddenCount == 0 {
+		t.Fatal("expected at least one hidden progress entry for the series")
+	}
+
+	// Step 3: Mark the episode as watched (simulates Trakt sync importing it)
+	// This calls clearPlaybackProgressEntryLocked internally
+	watched := true
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e01",
+			Name:          "Beast Wars Pilot",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "Beast Wars: Transformers",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// Step 4: Verify the hidden state is preserved via a series-level marker
+	progress, _ = svc.ListPlaybackProgress(userID)
+	hiddenCount = 0
+	for _, p := range progress {
+		if p.HiddenFromContinueWatching && (p.SeriesID == seriesID || p.ItemID == seriesID) {
+			hiddenCount++
+		}
+	}
+	if hiddenCount == 0 {
+		t.Fatal("hidden state was lost after progress clear — series-level marker should have been preserved")
+	}
+}
+
+func TestHideFromContinueWatching_CanonicalIDMismatch(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Set up mock metadata service so buildContinueWatchingFromHistory can resolve series
+	mockMeta := &mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				Name:   "Beast Wars: Transformers",
+				Year:   1996,
+				IMDBID: "tt0115108",
+				TVDBID: 73562,
+				TMDBID: 958,
+			},
+			Seasons: []models.SeriesSeason{
+				{Number: 1, Episodes: []models.SeriesEpisode{
+					{Name: "Ep1", SeasonNumber: 1, EpisodeNumber: 1},
+					{Name: "Ep2", SeasonNumber: 1, EpisodeNumber: 2},
+				}},
+			},
+		},
+	}
+	svc.SetMetadataService(mockMeta)
+
+	userID := "user-1"
+	tvdbSeriesID := "tvdb:series:73562"
+	tmdbSeriesID := "tmdb:tv:958"
+
+	// Create playback progress with tvdb series ID and shared IMDB external ID
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        tvdbSeriesID + ":S01E01",
+		Position:      30,
+		Duration:      1200,
+		SeriesID:      tvdbSeriesID,
+		SeriesName:    "Beast Wars: Transformers",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"imdb": "tt0115108", "tvdb": "73562"},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Also add a watched episode via Trakt-style tmdb ID (this creates the canonical link)
+	watched := true
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        tmdbSeriesID + ":s01e01",
+			Name:          "Beast Wars Pilot",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      tmdbSeriesID,
+			SeriesName:    "Beast Wars: Transformers",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"imdb": "tt0115108", "tmdb": "958"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	// Verify Beast Wars appears in continue watching before hiding
+	cwItems, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	foundBefore := false
+	var cwSeriesID string
+	for _, item := range cwItems {
+		if strings.Contains(item.SeriesTitle, "Beast Wars") {
+			foundBefore = true
+			cwSeriesID = item.SeriesID
+		}
+	}
+	if !foundBefore {
+		t.Fatal("expected Beast Wars in continue watching before hide")
+	}
+
+	// Hide using the seriesID from the CW response (could be canonical tmdb ID)
+	err = svc.HideFromContinueWatching(userID, cwSeriesID)
+	if err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	// Verify Beast Wars is gone from continue watching
+	cwItems, err = svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() after hide error = %v", err)
+	}
+	for _, item := range cwItems {
+		if strings.Contains(item.SeriesTitle, "Beast Wars") {
+			t.Fatalf("Beast Wars (seriesID=%q) still in continue watching after hiding with %q", item.SeriesID, cwSeriesID)
+		}
+	}
+
+	// Now play an episode using the tvdb ID (as the player would) — should unhide
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        tvdbSeriesID + ":S01E02",
+		Position:      60,
+		Duration:      1200,
+		SeriesID:      tvdbSeriesID,
+		SeriesName:    "Beast Wars: Transformers",
+		SeasonNumber:  1,
+		EpisodeNumber: 2,
+		ExternalIDs:   map[string]string{"imdb": "tt0115108", "tvdb": "73562"},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() after hide error = %v", err)
+	}
+
+	// Verify the hidden marker was cleared
+	progress, _ := svc.ListPlaybackProgress(userID)
+	for _, p := range progress {
+		if p.HiddenFromContinueWatching && (p.SeriesID == tmdbSeriesID || p.SeriesID == tvdbSeriesID) {
+			t.Fatalf("hidden marker still present after playing episode: key=%q seriesID=%q", p.ID, p.SeriesID)
+		}
+	}
+}
