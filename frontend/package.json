@@ -41,6 +41,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/native": "^7.0.14",
     "@react-navigation/native-stack": "^7.3.16",
+    "app-exit": "file:./modules/app-exit",
     "expo": "~54.0.33",
     "expo-blur": "~15.0.8",
     "expo-build-properties": "~1.0.10",
@@ -63,7 +64,6 @@
     "expo-system-ui": "~6.0.9",
     "expo-updates": "~29.0.16",
     "expo-web-browser": "~15.0.10",
-    "app-exit": "file:./modules/app-exit",
     "ksplayer": "file:./modules/ksplayer",
     "mpv-player": "file:./modules/mpv-player",
     "now-playing-manager": "file:./modules/now-playing-manager",
@@ -112,6 +112,7 @@
     "lint-staged": "^15.2.10",
     "patch-package": "^8.0.0",
     "prettier": "^3.3.3",
+    "react-devtools": "^7.0.1",
     "react-native-pixel-perfect": "^1.0.2",
     "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"

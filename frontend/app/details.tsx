@@ -43,8 +43,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Platform, Pressable, Text, View, unstable_batchedUpdates } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView, DefaultFocus } from '@/services/tv-navigation';
@@ -301,6 +301,113 @@ const CertificationBadge = ({
     </View>
   );
 };
+
+// Memoized ratings row — data rarely changes mid-session, prevents re-renders from parent state churn
+const MemoizedRatingsRow = memo(function MemoizedRatingsRow({
+  ratings,
+  shouldShowSkeleton,
+  iconSize,
+  baseUrl,
+  styles,
+}: {
+  ratings: Rating[];
+  shouldShowSkeleton: boolean;
+  iconSize: number;
+  baseUrl: string;
+  styles: ReturnType<typeof createDetailsStyles>;
+}) {
+  if (ratings.length === 0 && !shouldShowSkeleton) return null;
+  return (
+    <View style={styles.ratingsRow}>
+      {ratings.length > 0 ? (
+        ratings.map((rating) => {
+          const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
+          return (
+            <RatingBadge key={rating.source} rating={rating} config={config} iconSize={iconSize} styles={styles} />
+          );
+        })
+      ) : (
+        <Text style={styles.ratingValue}>{'\u2014'}</Text>
+      )}
+    </View>
+  );
+});
+
+// Memoized genres row — data rarely changes mid-session
+const MemoizedGenresRow = memo(function MemoizedGenresRow({
+  certification,
+  genres,
+  tvScale,
+  separatorColor,
+  styles,
+}: {
+  certification: string | null | undefined;
+  genres: string[];
+  tvScale: number;
+  separatorColor: string;
+  styles: ReturnType<typeof createDetailsStyles>;
+}) {
+  if (!certification && genres.length === 0) return null;
+  return (
+    <View style={styles.genresRow}>
+      {certification && (
+        <View style={[styles.genreBadge, { backgroundColor: 'rgba(70, 130, 180, 0.35)', borderColor: 'rgba(100, 160, 210, 0.5)' }]}>
+          <Text style={styles.genreText}>{certification}</Text>
+        </View>
+      )}
+      {certification && genres.length > 0 && (
+        <Text style={{ color: separatorColor, fontSize: 14 * tvScale, marginHorizontal: 0, fontWeight: '900' }}>|</Text>
+      )}
+      {genres.map((genre) => (
+        <View key={genre} style={styles.genreBadge}>
+          <Text style={styles.genreText}>{genre}</Text>
+        </View>
+      ))}
+    </View>
+  );
+});
+
+// Memoized release info row — data rarely changes mid-session
+const MemoizedReleaseInfo = memo(function MemoizedReleaseInfo({
+  releaseRows,
+  releaseSkeletonRows,
+  shouldShowSkeleton,
+  errorMessage,
+  isSeries,
+  runtimeMinutes,
+  iconSize,
+  iconColor,
+  styles,
+}: {
+  releaseRows: { key: string; icon: keyof typeof Ionicons.glyphMap; value: string }[];
+  releaseSkeletonRows: { key: string; icon: keyof typeof Ionicons.glyphMap; value: string }[];
+  shouldShowSkeleton: boolean;
+  errorMessage: string | null;
+  isSeries: boolean;
+  runtimeMinutes: number | undefined;
+  iconSize: number;
+  iconColor: string;
+  styles: ReturnType<typeof createDetailsStyles>;
+}) {
+  if (releaseRows.length === 0 && !shouldShowSkeleton && !errorMessage && (isSeries || !runtimeMinutes)) return null;
+  return (
+    <View style={styles.releaseInfoRow}>
+      {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
+        <View key={row.key} style={styles.releaseInfoItem}>
+          <Ionicons name={row.icon} size={iconSize} color={iconColor} style={styles.releaseInfoIcon} />
+          <Text style={styles.releaseInfoValue}>{row.value}</Text>
+        </View>
+      ))}
+      {!isSeries && runtimeMinutes && (
+        <View style={styles.releaseInfoItem}>
+          <Ionicons name="time-outline" size={iconSize} color={iconColor} style={styles.releaseInfoIcon} />
+          <Text style={styles.releaseInfoValue}>{runtimeMinutes} min</Text>
+        </View>
+      )}
+      {errorMessage && <Text style={styles.releaseInfoError}>{errorMessage}</Text>}
+    </View>
+  );
+});
 
 export default function DetailsScreen() {
   const params = useLocalSearchParams<LocalParams>();
@@ -583,16 +690,20 @@ export default function DetailsScreen() {
       return;
     }
     setLogoLoadFailed(false);
-    RNImage.getSize(
-      logoUrl,
-      (width, height) => {
-        setLogoDimensions({ width, height });
-      },
-      () => {
-        setLogoDimensions(null);
-        setLogoLoadFailed(true);
-      }
-    );
+    // Defer image measurement until after navigation animation completes
+    const task = InteractionManager.runAfterInteractions(() => {
+      RNImage.getSize(
+        logoUrl,
+        (width, height) => {
+          setLogoDimensions({ width, height });
+        },
+        () => {
+          setLogoDimensions(null);
+          setLogoLoadFailed(true);
+        }
+      );
+    });
+    return () => task.cancel();
   }, [logoUrl]);
 
   // Title area starts invisible. Wait for metadata + logo resolution before showing anything.
@@ -726,25 +837,29 @@ export default function DetailsScreen() {
       };
     }
 
-    RNImage.getSize(
-      headerImage,
-      (width, height) => {
-        if (cancelled) return;
-        if (!width || !height) {
+    // Defer image measurement until after navigation animation completes
+    const task = InteractionManager.runAfterInteractions(() => {
+      RNImage.getSize(
+        headerImage,
+        (width, height) => {
+          if (cancelled) return;
+          if (!width || !height) {
+            setHeaderImageDimensions(null);
+            return;
+          }
+          setHeaderImageDimensions({ width, height });
+        },
+        (error) => {
+          if (cancelled) return;
+          console.warn('[Details] Unable to measure header image size', error);
           setHeaderImageDimensions(null);
-          return;
-        }
-        setHeaderImageDimensions({ width, height });
-      },
-      (error) => {
-        if (cancelled) return;
-        console.warn('[Details] Unable to measure header image size', error);
-        setHeaderImageDimensions(null);
-      },
-    );
+        },
+      );
+    });
 
     return () => {
       cancelled = true;
+      task.cancel();
     };
   }, [headerImage, shouldMeasureHeaderImage]);
 
@@ -1242,8 +1357,11 @@ export default function DetailsScreen() {
       if (titleId) {
         const nextEp = playbackNavigation.consumeNextEpisode(titleId);
         if (nextEp) {
-          setNextEpisodeFromPlayback(nextEp);
-          setIsShuffleMode(nextEp.shuffleMode);
+          // Batch all setState calls to prevent multiple renders from focus effect
+          unstable_batchedUpdates(() => {
+            setNextEpisodeFromPlayback(nextEp);
+            setIsShuffleMode(nextEp.shuffleMode);
+          });
           playback.pendingShuffleModeRef.current = nextEp.shuffleMode;
 
           // Store prequeue data from navigation if present
@@ -1285,6 +1403,9 @@ export default function DetailsScreen() {
   const ratings = detailsRatings;
   const genres = detailsGenres;
   const certification = detailsCertification;
+
+  // Stable baseUrl for rating icons — only changes if backend URL changes
+  const ratingBaseUrl = useMemo(() => apiService.getBaseUrl().replace(/\/$/, ''), []);
 
   const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
 
@@ -1700,45 +1821,20 @@ export default function DetailsScreen() {
             </Animated.View>
           )}
         </View>
-        {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
-          <View style={styles.ratingsRow}>
-            {ratings.length > 0 ? (
-              ratings.map((rating) => {
-                const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-                const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
-                const iconSize = Math.round((isTV ? 17 : 14) * tvScale);
-                return (
-                  <RatingBadge
-                    key={rating.source}
-                    rating={rating}
-                    config={config}
-                    iconSize={iconSize}
-                    styles={styles}
-                  />
-                );
-              })
-            ) : (
-              <Text style={styles.ratingValue}>{'\u2014'}</Text>
-            )}
-          </View>
-        )}
-        {(certification || genres.length > 0) && (
-          <View style={styles.genresRow}>
-            {certification && (
-              <View style={[styles.genreBadge, { backgroundColor: 'rgba(70, 130, 180, 0.35)', borderColor: 'rgba(100, 160, 210, 0.5)' }]}>
-                <Text style={styles.genreText}>{certification}</Text>
-              </View>
-            )}
-            {certification && genres.length > 0 && (
-              <Text style={{ color: theme.colors.text.secondary, fontSize: 14 * tvScale, marginHorizontal: 0, fontWeight: '900' }}>|</Text>
-            )}
-            {genres.map((genre) => (
-              <View key={genre} style={styles.genreBadge}>
-                <Text style={styles.genreText}>{genre}</Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <MemoizedRatingsRow
+          ratings={ratings}
+          shouldShowSkeleton={shouldShowRatingsSkeleton}
+          iconSize={Math.round((isTV ? 17 : 14) * tvScale)}
+          baseUrl={ratingBaseUrl}
+          styles={styles}
+        />
+        <MemoizedGenresRow
+          certification={certification}
+          genres={genres}
+          tvScale={tvScale}
+          separatorColor={theme.colors.text.secondary}
+          styles={styles}
+        />
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
           <View
             style={{
@@ -1797,23 +1893,17 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage || (!isSeries && movieDetails?.runtimeMinutes)) && (
-          <View style={styles.releaseInfoRow}>
-            {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
-              <View key={row.key} style={styles.releaseInfoItem}>
-                <Ionicons name={row.icon} size={14 * tvScale} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
-                <Text style={styles.releaseInfoValue}>{row.value}</Text>
-              </View>
-            ))}
-            {!isSeries && movieDetails?.runtimeMinutes && (
-              <View style={styles.releaseInfoItem}>
-                <Ionicons name="time-outline" size={14 * tvScale} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
-                <Text style={styles.releaseInfoValue}>{movieDetails.runtimeMinutes} min</Text>
-              </View>
-            )}
-            {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
-          </View>
-        )}
+        <MemoizedReleaseInfo
+          releaseRows={releaseRows}
+          releaseSkeletonRows={releaseSkeletonRows}
+          shouldShowSkeleton={shouldShowReleaseSkeleton}
+          errorMessage={releaseErrorMessage}
+          isSeries={isSeries}
+          runtimeMinutes={movieDetails?.runtimeMinutes}
+          iconSize={Math.round(14 * tvScale)}
+          iconColor={theme.colors.text.secondary}
+          styles={styles}
+        />
         {isMobile ? (
           <Pressable
             onPress={() => {
@@ -2414,39 +2504,20 @@ export default function DetailsScreen() {
             </Animated.View>
           )}
         </View>
-        {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
-          <View style={styles.ratingsRow}>
-            {ratings.length > 0 ? (
-              ratings.map((rating) => {
-                const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
-                const config = getRatingConfig(rating.source, baseUrl, rating.value, rating.max);
-                const iconSize = 14;
-                return (
-                  <RatingBadge key={rating.source} rating={rating} config={config} iconSize={iconSize} styles={styles} />
-                );
-              })
-            ) : (
-              <Text style={styles.ratingValue}>{'\u2014'}</Text>
-            )}
-          </View>
-        )}
-        {(certification || genres.length > 0) && (
-          <View style={styles.genresRow}>
-            {certification && (
-              <View style={[styles.genreBadge, { backgroundColor: 'rgba(70, 130, 180, 0.35)', borderColor: 'rgba(100, 160, 210, 0.5)' }]}>
-                <Text style={styles.genreText}>{certification}</Text>
-              </View>
-            )}
-            {certification && genres.length > 0 && (
-              <Text style={{ color: theme.colors.text.secondary, fontSize: 14, marginHorizontal: 0, fontWeight: '900' }}>|</Text>
-            )}
-            {genres.map((genre) => (
-              <View key={genre} style={styles.genreBadge}>
-                <Text style={styles.genreText}>{genre}</Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <MemoizedRatingsRow
+          ratings={ratings}
+          shouldShowSkeleton={shouldShowRatingsSkeleton}
+          iconSize={14}
+          baseUrl={ratingBaseUrl}
+          styles={styles}
+        />
+        <MemoizedGenresRow
+          certification={certification}
+          genres={genres}
+          tvScale={1}
+          separatorColor={theme.colors.text.secondary}
+          styles={styles}
+        />
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
             {contentPreference.audioLanguage && (
@@ -2463,23 +2534,17 @@ export default function DetailsScreen() {
             )}
           </View>
         )}
-        {(releaseRows.length > 0 || shouldShowReleaseSkeleton || releaseErrorMessage || (!isSeries && movieDetails?.runtimeMinutes)) && (
-          <View style={styles.releaseInfoRow}>
-            {(releaseRows.length > 0 ? releaseRows : releaseSkeletonRows).map((row) => (
-              <View key={row.key} style={styles.releaseInfoItem}>
-                <Ionicons name={row.icon} size={14} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
-                <Text style={styles.releaseInfoValue}>{row.value}</Text>
-              </View>
-            ))}
-            {!isSeries && movieDetails?.runtimeMinutes && (
-              <View style={styles.releaseInfoItem}>
-                <Ionicons name="time-outline" size={14} color={theme.colors.text.secondary} style={styles.releaseInfoIcon} />
-                <Text style={styles.releaseInfoValue}>{movieDetails.runtimeMinutes} min</Text>
-              </View>
-            )}
-            {releaseErrorMessage && <Text style={styles.releaseInfoError}>{releaseErrorMessage}</Text>}
-          </View>
-        )}
+        <MemoizedReleaseInfo
+          releaseRows={releaseRows}
+          releaseSkeletonRows={releaseSkeletonRows}
+          shouldShowSkeleton={shouldShowReleaseSkeleton}
+          errorMessage={releaseErrorMessage}
+          isSeries={isSeries}
+          runtimeMinutes={movieDetails?.runtimeMinutes}
+          iconSize={14}
+          iconColor={theme.colors.text.secondary}
+          styles={styles}
+        />
         <Text style={[styles.description, { maxWidth: '100%' }]}>{displayDescription}</Text>
       </View>
 

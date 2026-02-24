@@ -1,9 +1,8 @@
-import { useBackendSettings } from '@/components/BackendSettingsContext';
-import { useContinueWatching } from '@/components/ContinueWatchingContext';
+import { useBackendSettings, useRetryCountdown } from '@/components/BackendSettingsContext';
+import { useContinueWatchingActions, useContinueWatchingData } from '@/components/ContinueWatchingContext';
 import { useStartupData } from '@/components/StartupDataContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import { markNavStart } from '@/utils/nav-timing';
-import { FloatingHero } from '@/components/FloatingHero';
 import MediaGrid from '@/components/MediaGrid';
 import { getMovieReleaseIcon, type ReleaseIconInfo } from '@/components/MediaItem';
 import { useMovieReleases } from '@/components/MovieReleasesContext';
@@ -13,10 +12,9 @@ import { useToast } from '@/components/ToastContext';
 import { TvModal } from '@/components/TvModal';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import { useWatchlist } from '@/components/WatchlistContext';
-import { useWatchStatus } from '@/components/WatchStatusContext';
+import { useWatchlistActions, useWatchlistData } from '@/components/WatchlistContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, type MetadataProgressSnapshot, type MetadataProgressTask, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
+import { apiService, type MetadataProgressSnapshot, type MetadataProgressTask, type Rating, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import {
   DefaultFocus,
@@ -47,6 +45,7 @@ import {
   StyleSheet,
   Text,
   View,
+  unstable_batchedUpdates,
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
@@ -272,96 +271,24 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
-// Enrich titles with watch status data for the watchState badge
-// Returns isWatched for movies, watchState for series (none/partial/complete)
-function enrichWithWatchStatus<T extends { id: string; mediaType: string; percentWatched?: number }>(
-  titles: T[],
-  isWatched: (mediaType: string, id: string) => boolean,
-  watchStatusItems: WatchStatusItem[],
-  continueWatchingItems?: SeriesWatchState[],
-): (T & { isWatched?: boolean; watchState?: 'none' | 'partial' | 'complete' })[] {
-  const enrichStart = isAndroidTV ? performance.now() : 0;
-  const result = titles.map((title) => {
-    if (title.mediaType === 'movie') {
-      const movieWatched = isWatched('movie', title.id);
-      const percentWatched = title.percentWatched ?? 0;
-      // Determine watch state: complete if marked watched or >=90%, partial if has progress
-      const watchState: 'none' | 'partial' | 'complete' =
-        movieWatched || percentWatched >= 90 ? 'complete' : percentWatched > 0 ? 'partial' : 'none';
-      return {
-        ...title,
-        isWatched: movieWatched,
-        watchState,
-      };
-    }
-    if (title.mediaType === 'series' || title.mediaType === 'tv') {
-      // Check if series itself is marked watched
-      const seriesWatched = isWatched('series', title.id);
-
-      // Check for auto-complete using backend-provided episode counts
-      const cwItem = continueWatchingItems?.find((cw) => cw.seriesId === title.id);
-      const totalEpisodes = cwItem?.totalEpisodeCount ?? 0;
-      const watchedEpisodes = cwItem?.watchedEpisodeCount ?? 0;
-      const allEpisodesWatched = totalEpisodes > 0 && watchedEpisodes >= totalEpisodes;
-
-      // Check if any non-special episodes (season > 0) of this series are fully watched
-      const hasWatchedEpisodes = watchStatusItems.some(
-        (item) =>
-          item.mediaType === 'episode' &&
-          item.seriesId === title.id &&
-          item.watched &&
-          (item.seasonNumber ?? 0) > 0, // Exclude season 0 (specials)
-      );
-
-      // Check if series has partial progress from continue watching (episode in progress)
-      const hasPartialProgress =
-        cwItem &&
-        ((cwItem.percentWatched ?? 0) > 0 || // Has overall progress
-          (cwItem.resumePercent ?? 0) > 0 || // Has resume position
-          watchedEpisodes > 0 || // Has watched some episodes (from backend)
-          (cwItem.watchedEpisodes && Object.keys(cwItem.watchedEpisodes).length > 0)); // Has any watched episodes in map
-
-      // Determine watch state:
-      // - complete: series marked watched OR all released episodes watched
-      // - partial: has fully watched episodes OR has partial episode progress
-      // - none: no watch activity
-      const watchState: 'none' | 'partial' | 'complete' =
-        seriesWatched || allEpisodesWatched
-          ? 'complete'
-          : hasWatchedEpisodes || hasPartialProgress
-            ? 'partial'
-            : 'none';
-
-      // Calculate unwatched count for badge display
-      const unwatchedCount = totalEpisodes > 0 ? totalEpisodes - watchedEpisodes : undefined;
-
-      return {
-        ...title,
-        isWatched: seriesWatched || allEpisodesWatched,
-        watchState,
-        unwatchedCount,
-      };
-    }
-    return title;
-  });
-  if (isAndroidTV && enrichStart) {
-    console.log(`[IndexPage:Perf] enrichWithWatchStatus: ${titles.length} titles, ${watchStatusItems.length} history items → ${(performance.now() - enrichStart).toFixed(1)}ms`);
-  }
-  return result;
+// Apply pre-computed watch state from backend to derive isWatched flag.
+// The backend now computes watchState/unwatchedCount server-side, so we only
+// need to read the pre-computed field and set the legacy isWatched boolean.
+function applyWatchState<T>(titles: T[]): T[] {
+  return titles.map((t) => ({
+    ...t,
+    isWatched: (t as unknown as { watchState?: string }).watchState === 'complete',
+  }));
 }
 
-// Helper to enrich TrendingItem[] with watch status (enriches the .title property of each item)
-function enrichTrendingItemsWithWatchStatus(
-  items: TrendingItem[],
-  isWatched: (mediaType: string, id: string) => boolean,
-  watchStatusItems: WatchStatusItem[],
-  continueWatchingItems?: SeriesWatchState[],
-): TrendingItem[] {
-  const titles = items.map((item) => item.title);
-  const enrichedTitles = enrichWithWatchStatus(titles, isWatched, watchStatusItems, continueWatchingItems);
-  return items.map((item, index) => ({
+// Helper to apply pre-computed watch state to TrendingItem[] (enriches .title property)
+function applyTrendingWatchState(items: TrendingItem[]): TrendingItem[] {
+  return items.map((item) => ({
     ...item,
-    title: enrichedTitles[index] as Title,
+    title: {
+      ...item.title,
+      isWatched: item.title.watchState === 'complete',
+    } as Title,
   }));
 }
 
@@ -566,8 +493,8 @@ function IndexScreen() {
     userSettings,
     lastLoadedAt: settingsLastLoadedAt,
     isBackendReachable,
-    retryCountdown,
   } = useBackendSettings();
+  const retryCountdown = useRetryCountdown();
   const { startupData, ready: startupReady, progress: metadataProgress, refreshStartup } = useStartupData();
 
   // Extract hideUnreleased settings for trending shelves from settings
@@ -592,14 +519,14 @@ function IndexScreen() {
     items: watchlistItems,
     loading: watchlistLoading,
     error: watchlistError,
-    refresh: refreshWatchlist,
-  } = useWatchlist();
+  } = useWatchlistData();
+  const { refresh: refreshWatchlist } = useWatchlistActions();
   const {
     items: continueWatchingItems,
     loading: continueWatchingLoading,
     error: continueWatchingError,
-    refresh: refreshContinueWatching,
-  } = useContinueWatching();
+  } = useContinueWatchingData();
+  const { refresh: refreshContinueWatching } = useContinueWatchingActions();
   const { refresh: refreshUserProfiles, activeUserId, activeUser, pendingPinUserId, profileSelectorVisibleRef, profileSelectorVisible, profileChangeGeneration } =
     useUserProfiles();
   const {
@@ -612,7 +539,6 @@ function IndexScreen() {
     error: trendingTVShowsError,
     refetch: refetchTrendingTVShows,
   } = useTrendingTVShows(activeUserId ?? undefined, true, trendingTVHideUnreleased, hideWatched);
-  const { isWatched, items: watchStatusItems } = useWatchStatus();
   const safeAreaInsets = useSafeAreaInsets();
   // Use Reanimated's animated ref for UI thread scrolling
   const scrollViewRef = useAnimatedRef<Animated.ScrollView>();
@@ -1239,6 +1165,17 @@ function IndexScreen() {
   // Track which IDs we've already queued for year fetching (prevents re-fetch cascade)
   const fetchedYearIdsRef = useRef<Set<string>>(new Set());
 
+  // Ref-based overview map for continue watching memos — breaks the watchlistItems dependency.
+  // Updated via effect so watchlist changes don't cascade into continue watching recomputation.
+  const watchlistOverviewMapRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const map = new Map<string, string>();
+    for (const item of watchlistItems ?? []) {
+      if (item.overview) map.set(item.id, item.overview);
+    }
+    watchlistOverviewMapRef.current = map;
+  }, [watchlistItems]);
+
   // Movie release data from context (persists across navigation)
   const { releases: movieReleases, hasRelease: hasMovieRelease, queueReleaseFetch } = useMovieReleases();
 
@@ -1249,12 +1186,12 @@ function IndexScreen() {
         `[IndexPage] useMemo: watchlistCards recomputing (${watchlistItems?.length ?? 0} items, ${watchlistYears.size} years, ${movieReleases.size} releases)`,
       );
     }
-    // Enrich with watch status before mapping to CardData (for TV shelf badges)
+    // Apply pre-computed watch state from backend before mapping to CardData
     const trendingItems = mapWatchlistToTrendingItems(watchlistItems, watchlistYears);
-    const enrichedItems = enrichTrendingItemsWithWatchStatus(trendingItems, isWatched, watchStatusItems, continueWatchingItems);
+    const enrichedItems = applyTrendingWatchState(trendingItems);
     // Filter out watched items if hideWatched is enabled
     const filteredItems = hideWatched
-      ? enrichedItems.filter((item) => !isWatched(item.title.mediaType, item.title.id))
+      ? enrichedItems.filter((item) => item.title.watchState !== 'complete')
       : enrichedItems;
     const allCards = mapTrendingToCards(filteredItems, movieReleases);
     const knownTotal = startupData?.watchlistTotal ?? allCards.length;
@@ -1267,7 +1204,7 @@ function IndexScreen() {
     const exploreCard = createExploreCard('watchlist', allCards, knownTotal > allCards.length ? knownTotal - MAX_SHELF_ITEMS_ON_HOME : undefined);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems, hideWatched, startupData?.watchlistTotal]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, hideWatched, startupData?.watchlistTotal]);
   const continueWatchingCards = useMemo(() => {
     const memoStart = isAndroidTV ? performance.now() : 0;
     if (DEBUG_INDEX_RENDERS) {
@@ -1275,7 +1212,7 @@ function IndexScreen() {
         `[IndexPage] useMemo: continueWatchingCards recomputing (${continueWatchingItems?.length ?? 0} items, ${seriesOverviews.size} overviews)`,
       );
     }
-    const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistItems, movieReleases);
+    const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistOverviewMapRef.current, movieReleases);
     const knownTotal = startupData?.continueWatchingTotal ?? allCards.length;
     if (isAndroidTV) {
       console.log(`[IndexPage:Perf] continueWatchingCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
@@ -1286,7 +1223,7 @@ function IndexScreen() {
     const exploreCard = createExploreCard('continue-watching', allCards, knownTotal > allCards.length ? knownTotal - MAX_SHELF_ITEMS_ON_HOME : undefined, (card) => card.backdropUrl || card.headerImage || card.cardImage);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, startupData?.continueWatchingTotal]);
+  }, [continueWatchingItems, seriesOverviews, movieReleases, exploreCardPosition, startupData?.continueWatchingTotal]);
 
   // Merged: fetch series overviews + missing watchlist years in a single effect
   // Both are deferred by SECONDARY_FETCH_DELAY_MS and update secondaryData in one startTransition
@@ -1606,9 +1543,9 @@ function IndexScreen() {
           homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
         };
       });
-      // Enrich with watch status if badge is enabled
+      // Apply pre-computed watch status if badge is enabled
       const allTitles = shouldEnrichWatchStatus
-        ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+        ? applyWatchState(titlesWithReleases)
         : titlesWithReleases;
       const shelf = customShelves.find((s) => s.id === shelfId);
       // Use filtered total for display, unfiltered total for explore card decision
@@ -1653,7 +1590,7 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListState, movieReleases, exploreCardPosition, customShelves, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [customListState, movieReleases, exploreCardPosition, customShelves, shouldEnrichWatchStatus]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
@@ -1671,13 +1608,13 @@ function IndexScreen() {
       }
       return title;
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     const enrichedTitles = shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(titlesWithReleases)
       : titlesWithReleases;
     // Filter out watched items if hideWatched is enabled
     const allTitles = hideWatched
-      ? enrichedTitles.filter((title) => !isWatched(title.mediaType, title.id))
+      ? enrichedTitles.filter((title) => title.watchState !== 'complete')
       : enrichedTitles;
     const knownTotal = startupData?.watchlistTotal ?? allTitles.length;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -1705,9 +1642,9 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems, hideWatched, startupData?.watchlistTotal]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, hideWatched, startupData?.watchlistTotal]);
   const continueWatchingTitles = useMemo(() => {
-    const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
+    const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistOverviewMapRef.current);
     // Merge cached release data for movies
     const titlesWithReleases = baseTitles.map((title) => {
       if (title.mediaType === 'movie') {
@@ -1722,9 +1659,9 @@ function IndexScreen() {
       }
       return title;
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     const allTitles = shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(titlesWithReleases)
       : titlesWithReleases;
     const knownTotal = startupData?.continueWatchingTotal ?? allTitles.length;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -1752,7 +1689,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, startupData?.continueWatchingTotal]);
+  }, [continueWatchingItems, seriesOverviews, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, startupData?.continueWatchingTotal]);
   const trendingMovieTitles = useMemo(() => {
     const titlesWithReleases =
       trendingMovies?.map((item) => {
@@ -1765,9 +1702,9 @@ function IndexScreen() {
           homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
         };
       }) ?? [];
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     const allTitles = shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(titlesWithReleases)
       : titlesWithReleases;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
@@ -1793,7 +1730,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [trendingMovies, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [trendingMovies, movieReleases, exploreCardPosition, shouldEnrichWatchStatus]);
 
   const trendingShowTitles = useMemo(() => {
     const baseTitles =
@@ -1801,9 +1738,9 @@ function IndexScreen() {
         ...item.title,
         uniqueKey: `show:${item.title.id}`,
       })) ?? [];
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     const allTitles = shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
@@ -1829,12 +1766,13 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [trendingTVShows, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [trendingTVShows, exploreCardPosition, shouldEnrichWatchStatus]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
   const [enrichedHeroState, setEnrichedHeroState] = useState<{ data: EnrichedHeroData | null; loading: boolean }>({ data: null, loading: false });
   const enrichedHeroData = enrichedHeroState.data;
   const enrichedLoading = enrichedHeroState.loading;
+
   const enrichedCacheRef = useRef<Map<string, EnrichedHeroData>>(new Map());
   const enrichedAbortRef = useRef<AbortController | null>(null);
   const heroContentOpacity = useSharedValue(0);
@@ -1917,6 +1855,13 @@ function IndexScreen() {
 
   // heroImageDimensions effect removed — orientation is now computed inline in TVHero
 
+  // Keep a ref of all shelf cards — avoids recreating the concatenated array inline
+  // and lets the focused card effect depend only on focusedDesktopCard.
+  const allShelfCardsRef = useRef<CardData[]>([]);
+  useEffect(() => {
+    allShelfCardsRef.current = [...continueWatchingCards, ...watchlistCards, ...trendingMovieCards, ...trendingShowCards];
+  }, [continueWatchingCards, watchlistCards, trendingMovieCards, trendingShowCards]);
+
   // Update focused card when cards array changes (e.g., episode progress updates)
   useEffect(() => {
     if (!focusedDesktopCard) {
@@ -1928,8 +1873,7 @@ function IndexScreen() {
     const focusedRawId = String(focusedDesktopCard.id);
     const focusedStableId = focusedRawId.includes(':S') ? focusedRawId.split(':S')[0] : focusedRawId;
 
-    const allCards = [...continueWatchingCards, ...watchlistCards, ...trendingMovieCards, ...trendingShowCards];
-    const updatedCard = allCards.find((card) => {
+    const updatedCard = allShelfCardsRef.current.find((card) => {
       const cardRawId = String(card.id);
       const cardStableId = cardRawId.includes(':S') ? cardRawId.split(':S')[0] : cardRawId;
       return cardStableId === focusedStableId;
@@ -2420,8 +2364,11 @@ function IndexScreen() {
         heroContentOpacity.value = withTiming(0, { duration: debounceMs });
       }
       focusDebounceRef.current = setTimeout(() => {
-        setEnrichedHeroState((prev) => ({ ...prev, loading: true }));
-        setFocusedDesktopCard(card);
+        // Batch to prevent two separate renders from setTimeout (not auto-batched on RN bridge)
+        unstable_batchedUpdates(() => {
+          setEnrichedHeroState((prev) => ({ ...prev, loading: true }));
+          setFocusedDesktopCard(card);
+        });
       }, debounceMs);
     },
     [closeMenu, scrollToShelf, heroContentOpacity],
@@ -3043,22 +2990,6 @@ function IndexScreen() {
           </View>
         </SpatialNavigationNode>
       </Animated.ScrollView>
-      {!Platform.isTV && (
-        <FloatingHero
-          data={
-            focusedDesktopCard
-              ? {
-                  title: focusedDesktopCard.title,
-                  description: focusedDesktopCard.description,
-                  headerImage: focusedDesktopCard.headerImage,
-                  year: focusedDesktopCard.year,
-                  mediaType: focusedDesktopCard.mediaType,
-                }
-              : null
-          }
-        />
-      )}
-
       {/* Version Mismatch Warning Modal (TV) */}
       <TvModal visible={isVersionMismatchVisible} onRequestClose={handleDismissVersionMismatch}>
         <View style={desktopStyles.styles.tvModalContainer} focusable={false}>
@@ -4534,9 +4465,6 @@ function mapTrendingToCards(
           })
         : undefined;
 
-    // Extract watchState and unwatchedCount if they exist (from enriched titles)
-    const enrichedTitle = item.title as Title & { watchState?: 'none' | 'partial' | 'complete'; unwatchedCount?: number };
-
     return {
       id: item.title.id,
       title: item.title.name,
@@ -4559,8 +4487,8 @@ function mapTrendingToCards(
       theatricalRelease,
       homeRelease,
       releaseIcon,
-      watchState: enrichedTitle.watchState,
-      unwatchedCount: enrichedTitle.unwatchedCount,
+      watchState: item.title.watchState,
+      unwatchedCount: item.title.unwatchedCount,
     };
   });
 }
@@ -4583,6 +4511,8 @@ function mapWatchlistToTrendingItems(items?: WatchlistItem[], cachedYears?: Map<
       tmdbId: item.externalIds?.tmdb ? Number(item.externalIds.tmdb) : undefined,
       tvdbId: item.externalIds?.tvdb ? Number(item.externalIds.tvdb) : undefined,
       year: item.year && item.year > 0 ? item.year : (cachedYears?.get(item.id) ?? 0),
+      watchState: item.watchState,
+      unwatchedCount: item.unwatchedCount,
     } as Title,
   }));
 }
@@ -4623,7 +4553,7 @@ function wasLastEpisodeWatchedRecently(item: SeriesWatchState): boolean {
 function mapContinueWatchingToCards(
   items?: SeriesWatchState[],
   seriesOverviews?: Map<string, string>,
-  watchlistItems?: WatchlistItem[],
+  watchlistOverviews?: Map<string, string>,
   cachedReleases?: Map<string, { theatricalRelease?: Title['theatricalRelease']; homeRelease?: Title['homeRelease'] }>,
 ): CardData[] {
   if (!items) {
@@ -4710,9 +4640,8 @@ function mapContinueWatchingToCards(
       // Series - show next episode info
       const code = formatEpisodeCode(next?.seasonNumber, next?.episodeNumber);
       const baseSeriesId = item.seriesId;
-      const watchlistItem = watchlistItems?.find((w) => w.id === baseSeriesId);
-      // Prefer overview from API response, then async-fetched cache, then watchlist
-      const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistItem?.overview || '';
+      // Prefer overview from API response, then async-fetched cache, then watchlist overview map
+      const seriesOverview = item.overview || seriesOverviews?.get(baseSeriesId) || watchlistOverviews?.get(baseSeriesId) || '';
 
       // Hide unreleased episodes that are too far out; show "coming soon" for those within the window
       const unreleased = next?.airDate ? isEpisodeUnreleased(next.airDate, next.airDateTimeUTC) : false;
@@ -4783,6 +4712,8 @@ function mapWatchlistToTitles(
       tvdbId: parseNumeric(item.externalIds?.tvdb),
       popularity: undefined,
       network: undefined,
+      watchState: item.watchState,
+      unwatchedCount: item.unwatchedCount,
     };
 
     return { ...title, uniqueKey: `${item.mediaType}:${item.id}` };
@@ -4792,7 +4723,7 @@ function mapWatchlistToTitles(
 function mapContinueWatchingToTitles(
   items?: SeriesWatchState[],
   seriesOverviews?: Map<string, string>,
-  watchlistItems?: WatchlistItem[],
+  watchlistOverviews?: Map<string, string>,
 ): Array<Title & { uniqueKey: string; percentWatched?: number }> {
   if (!items) {
     return [];
@@ -4853,10 +4784,9 @@ function mapContinueWatchingToTitles(
         return null; // Too far out — hide from continue watching
       }
 
-      // Try to get series overview from cache, watchlist, or fall back to empty string
+      // Try to get series overview from cache, watchlist overview map, or fall back to empty string
       const cachedOverview = seriesOverviews?.get(item.seriesId);
-      const watchlistItem = watchlistItems?.find((w) => w.id === item.seriesId);
-      const seriesOverview = cachedOverview ?? watchlistItem?.overview ?? '';
+      const seriesOverview = cachedOverview ?? watchlistOverviews?.get(item.seriesId) ?? '';
 
       const title: Title = {
         id: item.seriesId,

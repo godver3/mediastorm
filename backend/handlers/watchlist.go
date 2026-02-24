@@ -27,13 +27,19 @@ type userService interface {
 }
 
 type WatchlistHandler struct {
-	Service  watchlistService
-	Users    userService
-	DemoMode bool
+	Service        watchlistService
+	Users          userService
+	DemoMode       bool
+	HistoryService historyService
 }
 
 func NewWatchlistHandler(service watchlistService, users userService, demoMode bool) *WatchlistHandler {
 	return &WatchlistHandler{Service: service, Users: users, DemoMode: demoMode}
+}
+
+// SetHistoryService sets the history service for watch state enrichment on list responses.
+func (h *WatchlistHandler) SetHistoryService(service historyService) {
+	h.HistoryService = service
 }
 
 func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +52,17 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Enrich with pre-computed watch state if history service is available
+	if h.HistoryService != nil {
+		wh, whErr := h.HistoryService.ListWatchHistory(userID)
+		cw, _ := h.HistoryService.ListContinueWatching(userID)
+		pp, _ := h.HistoryService.ListPlaybackProgress(userID)
+		if whErr == nil {
+			idx := buildWatchStateIndex(wh, cw, pp)
+			enrichWatchlistItems(items, idx)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

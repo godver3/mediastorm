@@ -11,19 +11,25 @@ import {
   type WatchlistUpsertPayload,
 } from '@/services/api';
 
-interface WatchlistContextValue {
+interface WatchlistData {
   items: WatchlistItem[];
   loading: boolean;
   error: string | null;
-  refresh: (options?: { silent?: boolean }) => Promise<void>;
-  addToWatchlist: (payload: WatchlistUpsertPayload) => Promise<WatchlistItem>;
-  removeFromWatchlist: (mediaType: string, id: string) => Promise<void>;
-  updateWatchlistState: (mediaType: string, id: string, update: WatchlistStateUpdate) => Promise<WatchlistItem>;
   isInWatchlist: (mediaType: string, id: string) => boolean;
   getItem: (mediaType: string, id: string) => WatchlistItem | undefined;
 }
 
-const WatchlistContext = createContext<WatchlistContextValue | undefined>(undefined);
+interface WatchlistActions {
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
+  addToWatchlist: (payload: WatchlistUpsertPayload) => Promise<WatchlistItem>;
+  removeFromWatchlist: (mediaType: string, id: string) => Promise<void>;
+  updateWatchlistState: (mediaType: string, id: string, update: WatchlistStateUpdate) => Promise<WatchlistItem>;
+}
+
+type WatchlistContextValue = WatchlistData & WatchlistActions;
+
+const WatchlistDataContext = createContext<WatchlistData | undefined>(undefined);
+const WatchlistActionsContext = createContext<WatchlistActions | undefined>(undefined);
 
 const toKey = (mediaType: string, id: string) => `${mediaType.toLowerCase()}:${id}`;
 
@@ -200,32 +206,71 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [requireUserId],
   );
 
-  const value = useMemo<WatchlistContextValue>(() => {
-    const index = new Map(state.items.map((item) => [toKey(item.mediaType, item.id), item]));
+  // Stabilize items identity — only produce a new array reference when content actually changes.
+  // This prevents context consumers from re-rendering when setState produces a new array
+  // reference with identical content (e.g., after a silent refresh returns the same data).
+  const prevItemsRef = useRef<WatchlistItem[]>([]);
+  const stableItems = useMemo(() => {
+    if (state.items === prevItemsRef.current) return prevItemsRef.current;
+    if (state.items.length === prevItemsRef.current.length) {
+      let same = true;
+      for (let i = 0; i < state.items.length; i++) {
+        if (state.items[i] !== prevItemsRef.current[i]) { same = false; break; }
+      }
+      if (same) return prevItemsRef.current;
+    }
+    prevItemsRef.current = state.items;
+    return state.items;
+  }, [state.items]);
+
+  const dataMemo = useMemo<WatchlistData>(() => {
+    const index = new Map(stableItems.map((item) => [toKey(item.mediaType, item.id), item]));
 
     const isInWatchlist = (mediaType: string, id: string) => index.has(toKey(mediaType, id));
     const getItem = (mediaType: string, id: string) => index.get(toKey(mediaType, id));
 
     return {
-      items: state.items,
+      items: stableItems,
       loading: state.loading,
       error: state.error,
+      isInWatchlist,
+      getItem,
+    };
+  }, [stableItems, state.loading, state.error]);
+
+  const actionsMemo = useMemo<WatchlistActions>(
+    () => ({
       refresh,
       addToWatchlist,
       removeFromWatchlist,
       updateWatchlistState,
-      isInWatchlist,
-      getItem,
-    };
-  }, [state, refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState]);
+    }),
+    [refresh, addToWatchlist, removeFromWatchlist, updateWatchlistState],
+  );
 
-  return <WatchlistContext.Provider value={value}>{children}</WatchlistContext.Provider>;
+  return (
+    <WatchlistActionsContext.Provider value={actionsMemo}>
+      <WatchlistDataContext.Provider value={dataMemo}>{children}</WatchlistDataContext.Provider>
+    </WatchlistActionsContext.Provider>
+  );
+};
+
+export const useWatchlistData = (): WatchlistData => {
+  const context = useContext(WatchlistDataContext);
+  if (!context) {
+    throw new Error('useWatchlistData must be used within a WatchlistProvider');
+  }
+  return context;
+};
+
+export const useWatchlistActions = (): WatchlistActions => {
+  const context = useContext(WatchlistActionsContext);
+  if (!context) {
+    throw new Error('useWatchlistActions must be used within a WatchlistProvider');
+  }
+  return context;
 };
 
 export const useWatchlist = (): WatchlistContextValue => {
-  const context = useContext(WatchlistContext);
-  if (!context) {
-    throw new Error('useWatchlist must be used within a WatchlistProvider');
-  }
-  return context;
+  return { ...useWatchlistData(), ...useWatchlistActions() };
 };

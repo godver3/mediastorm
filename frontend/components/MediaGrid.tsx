@@ -265,6 +265,50 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
   });
 };
 
+// Memoized wrapper that gives each MediaItem stable callback references.
+// Without this, inline `() => onItemPress?.(item)` creates a new function
+// every parent render, defeating MediaItem's memo() across 100+ items.
+interface MediaGridItemProps {
+  item: DisplayTitle;
+  onItemPressRef: React.RefObject<((item: DisplayTitle) => void) | undefined>;
+  onItemLongPress?: (item: DisplayTitle) => void;
+  onFocus?: () => void;
+  badgeVisibility?: string[];
+  watchStateIconStyle?: 'colored' | 'white';
+  style?: any;
+}
+
+const MediaGridItem = React.memo(function MediaGridItem({
+  item,
+  onItemPressRef,
+  onItemLongPress,
+  onFocus,
+  badgeVisibility,
+  watchStateIconStyle,
+  style,
+}: MediaGridItemProps) {
+  const handlePress = useCallback(() => {
+    onItemPressRef.current?.(item);
+  }, [item, onItemPressRef]);
+
+  const handleLongPress = useMemo(
+    () => (onItemLongPress ? () => onItemLongPress(item) : undefined),
+    [item, onItemLongPress],
+  );
+
+  return (
+    <MediaItem
+      title={item}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      onFocus={onFocus}
+      badgeVisibility={badgeVisibility}
+      watchStateIconStyle={watchStateIconStyle}
+      style={style}
+    />
+  );
+});
+
 const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid({
     title,
     items,
@@ -290,6 +334,10 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
     const theme = useTheme();
     const { width: screenWidth, height: screenHeight } = useTVDimensions();
     const isCompact = theme.breakpoint === 'compact';
+
+    // Stable ref for onItemPress — lets MediaGridItem callbacks survive parent re-renders
+    const onItemPressRef = useRef(onItemPress);
+    onItemPressRef.current = onItemPress;
 
     // Tablet-specific carousel card sizing
     const isLandscape = screenWidth > screenHeight;
@@ -395,6 +443,16 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
         styles.emptyText,
       ],
     );
+
+    // Memoize row slicing so new array references aren't created every render,
+    // which would trigger spatial navigation recalculation on TV.
+    const rows = useMemo(() => {
+      const result: DisplayTitle[][] = [];
+      for (let i = 0; i < items.length; i += columns) {
+        result.push(items.slice(i, i + columns));
+      }
+      return result;
+    }, [items, columns]);
 
     const renderContent = () => {
       if (loading) {
@@ -771,7 +829,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                 );
               }
 
-              // Portrait cards use MediaItem
+              // Portrait cards use MediaGridItem for stable callbacks
               return (
                 <View
                   style={[
@@ -781,10 +839,10 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                       marginRight: index === items.length - 1 ? 0 : gap,
                     },
                   ]}>
-                  <MediaItem
-                    title={item}
-                    onPress={() => onItemPress?.(item)}
-                    onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
+                  <MediaGridItem
+                    item={item}
+                    onItemPressRef={onItemPressRef}
+                    onItemLongPress={onItemLongPress}
                     badgeVisibility={badgeVisibility}
                     watchStateIconStyle={watchStateIconStyle}
                     style={{ width: actualCardWidth, height: actualCardHeight }}
@@ -794,12 +852,6 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
             }}
           />
         );
-      }
-
-      // Build explicit rows like the Search screen for predictable TV navigation
-      const rows: DisplayTitle[][] = [];
-      for (let i = 0; i < items.length; i += columns) {
-        rows.push(items.slice(i, i + columns));
       }
 
       // Key changes when row count or listKey changes, forcing spatial navigation to recalculate layout
@@ -843,9 +895,9 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                       {row.map((item, colIndex) => {
                         const index = rowIndex * columns + colIndex;
                         const content = (
-                          <MediaItem
-                            title={item}
-                            onPress={() => onItemPress?.(item)}
+                          <MediaGridItem
+                            item={item}
+                            onItemPressRef={onItemPressRef}
                             onFocus={() => scrollToRow(rowKey)}
                             badgeVisibility={badgeVisibility}
                             watchStateIconStyle={watchStateIconStyle}

@@ -3,12 +3,15 @@ import { apiService, WatchStatusItem, WatchStatusUpdate } from '../services/api'
 import { useStartupData } from './StartupDataContext';
 import { useUserProfiles } from './UserProfilesContext';
 
-interface WatchStatusContextValue {
+interface WatchStatusData {
   items: WatchStatusItem[];
   loading: boolean;
   error: string | null;
   isWatched: (mediaType: string, id: string) => boolean;
   getItem: (mediaType: string, id: string) => WatchStatusItem | undefined;
+}
+
+interface WatchStatusActions {
   toggleWatchStatus: (mediaType: string, id: string, metadata?: Partial<WatchStatusUpdate>) => Promise<void>;
   updateWatchStatus: (update: WatchStatusUpdate) => Promise<void>;
   bulkUpdateWatchStatus: (updates: WatchStatusUpdate[]) => Promise<void>;
@@ -16,7 +19,10 @@ interface WatchStatusContextValue {
   refresh: () => Promise<void>;
 }
 
-const WatchStatusContext = createContext<WatchStatusContextValue | undefined>(undefined);
+type WatchStatusContextValue = WatchStatusData & WatchStatusActions;
+
+const WatchStatusDataContext = createContext<WatchStatusData | undefined>(undefined);
+const WatchStatusActionsContext = createContext<WatchStatusActions | undefined>(undefined);
 
 interface WSState {
   items: WatchStatusItem[];
@@ -219,30 +225,51 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [activeUser?.id],
   );
 
-  // Memoize context value to prevent unnecessary consumer re-renders
-  const value = useMemo<WatchStatusContextValue>(
+  const dataMemo = useMemo<WatchStatusData>(
     () => ({
       items: state.items,
       loading: state.loading,
       error: state.error,
       isWatched,
       getItem,
+    }),
+    [state, isWatched, getItem],
+  );
+
+  const actionsMemo = useMemo<WatchStatusActions>(
+    () => ({
       toggleWatchStatus,
       updateWatchStatus,
       bulkUpdateWatchStatus,
       removeWatchStatus,
       refresh,
     }),
-    [state, isWatched, getItem, toggleWatchStatus, updateWatchStatus, bulkUpdateWatchStatus, removeWatchStatus, refresh],
+    [toggleWatchStatus, updateWatchStatus, bulkUpdateWatchStatus, removeWatchStatus, refresh],
   );
 
-  return <WatchStatusContext.Provider value={value}>{children}</WatchStatusContext.Provider>;
+  return (
+    <WatchStatusActionsContext.Provider value={actionsMemo}>
+      <WatchStatusDataContext.Provider value={dataMemo}>{children}</WatchStatusDataContext.Provider>
+    </WatchStatusActionsContext.Provider>
+  );
+};
+
+export const useWatchStatusData = (): WatchStatusData => {
+  const context = useContext(WatchStatusDataContext);
+  if (!context) {
+    throw new Error('useWatchStatusData must be used within a WatchStatusProvider');
+  }
+  return context;
+};
+
+export const useWatchStatusActions = (): WatchStatusActions => {
+  const context = useContext(WatchStatusActionsContext);
+  if (!context) {
+    throw new Error('useWatchStatusActions must be used within a WatchStatusProvider');
+  }
+  return context;
 };
 
 export const useWatchStatus = (): WatchStatusContextValue => {
-  const context = useContext(WatchStatusContext);
-  if (!context) {
-    throw new Error('useWatchStatus must be used within a WatchStatusProvider');
-  }
-  return context;
+  return { ...useWatchStatusData(), ...useWatchStatusActions() };
 };

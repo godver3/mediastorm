@@ -34,6 +34,7 @@ import { MenuProvider } from '../components/MenuContext';
 import { ContinueWatchingProvider } from '../components/ContinueWatchingContext';
 import { PinEntryModal } from '../components/PinEntryModal';
 import { ProfileSelectorModal } from '../components/ProfileSelectorModal';
+import { useUserProfiles } from '../components/UserProfilesContext';
 import { StartupDataProvider } from '../components/StartupDataContext';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
@@ -54,6 +55,23 @@ startupTiming.mark('imports_done');
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * LazyModals defers mounting PinEntryModal and ProfileSelectorModal
+ * until user profiles have loaded, avoiding ~50 detached fibers and
+ * their associated render cost (~2s each) on startup.
+ */
+function LazyModals() {
+  const { loading, pendingPinUserId } = useUserProfiles();
+  // ProfileSelectorModal needs to mount once users are loaded (it starts visible)
+  // PinEntryModal only needs to mount when a PIN check is pending
+  return (
+    <>
+      {!loading && <ProfileSelectorModal />}
+      {!!pendingPinUserId && <PinEntryModal />}
+    </>
+  );
+}
 
 /**
  * AuthGate renders the login screen when unauthenticated,
@@ -91,8 +109,7 @@ function AuthGate() {
   // Show main app when authenticated
   return (
     <UserProfilesProvider>
-      <PinEntryModal />
-      <ProfileSelectorModal />
+      <LazyModals />
       <StartupDataProvider>
         <LiveProvider>
           <MultiscreenProvider>

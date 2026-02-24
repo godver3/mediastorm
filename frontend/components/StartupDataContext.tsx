@@ -93,8 +93,8 @@ export const StartupDataProvider: React.FC<{ children: React.ReactNode }> = ({ c
           `Settings: ${data.userSettings ? 'yes' : 'no'}`
         );
 
-        // Estimate object size by re-serializing sections (only on TV for perf debugging)
-        if (Platform.isTV) {
+        // Estimate object size by re-serializing sections (dev builds only — 6x JSON.stringify is expensive)
+        if (__DEV__ && Platform.isTV) {
           const sizeOf = (obj: unknown) => {
             try { return JSON.stringify(obj)?.length ?? 0; } catch { return 0; }
           };

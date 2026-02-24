@@ -1,9 +1,13 @@
 /**
  * MarqueeText - Animated scrolling text for truncated content
  * Scrolls horizontally when focused to reveal full text
+ *
+ * Uses refs for layout measurement to avoid React commits.
+ * Only the shared values (translateX, measuredTextWidth) drive animation
+ * on the UI thread via Reanimated.
  */
 
-import React, { memo, useCallback, useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -38,46 +42,39 @@ const MarqueeText = memo(function MarqueeText({
   speed = 25,
   pauseDuration = 800,
 }: MarqueeTextProps) {
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [fullTextWidth, setFullTextWidth] = useState(0);
+  // Refs for layout measurements — no React commits
+  const containerWidthRef = useRef(0);
+  const fullTextWidthRef = useRef(0);
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+
+  // Shared values drive Animated.Text on the UI thread
   const translateX = useSharedValue(0);
+  const measuredTextWidth = useSharedValue(0);
 
-  // Check if truncated
-  const isTruncated = fullTextWidth > containerWidth + 2 && containerWidth > 0;
-  const scrollDistance = Math.max(0, fullTextWidth - containerWidth + 10);
+  // Reads refs + focusedRef, starts/stops animation directly
+  const updateAnimation = useCallback(() => {
+    const cw = containerWidthRef.current;
+    const tw = fullTextWidthRef.current;
+    const isTruncated = tw > cw + 2 && cw > 0;
+    const scrollDistance = Math.max(0, tw - cw + 10);
 
-  // Handle container layout
-  const onContainerLayout = useCallback((e: { nativeEvent: { layout: { width: number } } }) => {
-    setContainerWidth(e.nativeEvent.layout.width);
-  }, []);
-
-  // Measure the full text width from the unconstrained hidden text
-  const onMeasureLayout = useCallback((e: { nativeEvent: { layout: { width: number } } }) => {
-    setFullTextWidth(e.nativeEvent.layout.width);
-  }, []);
-
-  // Start/stop animation based on focus and truncation
-  useEffect(() => {
-    if (focused && isTruncated && scrollDistance > 0) {
+    if (focusedRef.current && isTruncated && scrollDistance > 0) {
       const duration = (scrollDistance / speed) * 1000;
 
       translateX.value = withDelay(
         delay,
         withRepeat(
           withSequence(
-            // Scroll to end
             withTiming(-scrollDistance, {
               duration,
               easing: Easing.linear,
             }),
-            // Pause at end
             withTiming(-scrollDistance, { duration: pauseDuration }),
-            // Scroll back to start
             withTiming(0, {
               duration,
               easing: Easing.linear,
             }),
-            // Pause at start
             withTiming(0, { duration: pauseDuration }),
           ),
           -1,
@@ -88,14 +85,33 @@ const MarqueeText = memo(function MarqueeText({
       cancelAnimation(translateX);
       translateX.value = withTiming(0, { duration: 100 });
     }
+  }, [speed, delay, pauseDuration, translateX]);
 
+  // Handle container layout — write ref, trigger animation recalc
+  const onContainerLayout = useCallback((e: { nativeEvent: { layout: { width: number } } }) => {
+    containerWidthRef.current = e.nativeEvent.layout.width;
+    updateAnimation();
+  }, [updateAnimation]);
+
+  // Measure full text width — write ref + shared value, trigger animation recalc
+  const onMeasureLayout = useCallback((e: { nativeEvent: { layout: { width: number } } }) => {
+    fullTextWidthRef.current = e.nativeEvent.layout.width;
+    measuredTextWidth.value = e.nativeEvent.layout.width;
+    updateAnimation();
+  }, [updateAnimation, measuredTextWidth]);
+
+  // Re-run animation when focus changes
+  useEffect(() => {
+    updateAnimation();
     return () => {
       cancelAnimation(translateX);
     };
-  }, [focused, isTruncated, scrollDistance, speed, delay, pauseDuration, translateX]);
+  }, [focused, updateAnimation, translateX]);
 
+  // Single animated style combining transform + width
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
+    width: measuredTextWidth.value || undefined,
   }));
 
   // Flatten style array if needed
@@ -104,7 +120,7 @@ const MarqueeText = memo(function MarqueeText({
   return (
     <View style={[styles.container, containerStyle]} onLayout={onContainerLayout}>
       {/* Visible animated text - single line, scrolls horizontally when truncated */}
-      <Animated.Text style={[style, animatedStyle, { width: fullTextWidth || undefined }]} numberOfLines={1}>{children}</Animated.Text>
+      <Animated.Text style={[style, animatedStyle]} numberOfLines={1}>{children}</Animated.Text>
       {/* Measurement wrapper - positioned off screen with no width constraint */}
       <View style={styles.measureWrapper} pointerEvents="none">
         <Text style={[flatStyle, styles.measureText]} onLayout={onMeasureLayout}>

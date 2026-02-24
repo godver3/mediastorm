@@ -1,14 +1,13 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
-import { useContinueWatching } from '@/components/ContinueWatchingContext';
+import { useContinueWatchingActions, useContinueWatchingData } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import MediaGrid, { type MediaGridHandle } from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import { useWatchlist } from '@/components/WatchlistContext';
-import { useWatchStatus } from '@/components/WatchStatusContext';
+import { useWatchlistActions, useWatchlistData } from '@/components/WatchlistContext';
 import { CategoryFilterModal } from '@/components/CategoryFilterModal';
 import { SEASONAL_LISTS } from '@/constants/seasonal';
-import { apiService, type Title, type TrendingItem, type PersonDetails, type WatchStatusItem, type SeriesWatchState } from '@/services/api';
+import { apiService, type Title, type TrendingItem, type PersonDetails, type SeriesWatchState } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import {
   DefaultFocus,
@@ -101,77 +100,14 @@ const SpatialFilterButton = ({
   );
 };
 
-// Enrich titles with watch status data for the watchState badge
-// Returns isWatched for movies, watchState for series (none/partial/complete)
-function enrichWithWatchStatus<T extends { id: string; mediaType: string; percentWatched?: number }>(
-  titles: T[],
-  isWatched: (mediaType: string, id: string) => boolean,
-  watchStatusItems: WatchStatusItem[],
-  continueWatchingItems?: SeriesWatchState[],
-): (T & { isWatched?: boolean; watchState?: 'none' | 'partial' | 'complete' })[] {
-  return titles.map((title) => {
-    if (title.mediaType === 'movie') {
-      const movieWatched = isWatched('movie', title.id);
-      const percentWatched = title.percentWatched ?? 0;
-      // Determine watch state: complete if marked watched or >=90%, partial if has progress
-      const watchState: 'none' | 'partial' | 'complete' =
-        movieWatched || percentWatched >= 90 ? 'complete' : percentWatched > 0 ? 'partial' : 'none';
-      return {
-        ...title,
-        isWatched: movieWatched,
-        watchState,
-      };
-    }
-    if (title.mediaType === 'series' || title.mediaType === 'tv') {
-      // Check if series itself is marked watched
-      const seriesWatched = isWatched('series', title.id);
-
-      // Check for auto-complete using backend-provided episode counts
-      const cwItem = continueWatchingItems?.find((cw) => cw.seriesId === title.id);
-      const totalEpisodes = cwItem?.totalEpisodeCount ?? 0;
-      const watchedEpisodes = cwItem?.watchedEpisodeCount ?? 0;
-      const allEpisodesWatched = totalEpisodes > 0 && watchedEpisodes >= totalEpisodes;
-
-      // Check if any non-special episodes (season > 0) of this series are fully watched
-      const hasWatchedEpisodes = watchStatusItems.some(
-        (item) =>
-          item.mediaType === 'episode' &&
-          item.seriesId === title.id &&
-          item.watched &&
-          (item.seasonNumber ?? 0) > 0, // Exclude season 0 (specials)
-      );
-
-      // Check if series has partial progress from continue watching (episode in progress)
-      const hasPartialProgress =
-        cwItem &&
-        ((cwItem.percentWatched ?? 0) > 0 || // Has overall progress
-          (cwItem.resumePercent ?? 0) > 0 || // Has resume position
-          watchedEpisodes > 0 || // Has watched some episodes (from backend)
-          (cwItem.watchedEpisodes && Object.keys(cwItem.watchedEpisodes).length > 0)); // Has any watched episodes in map
-
-      // Determine watch state:
-      // - complete: series marked watched OR all released episodes watched
-      // - partial: has fully watched episodes OR has partial episode progress
-      // - none: no watch activity
-      const watchState: 'none' | 'partial' | 'complete' =
-        seriesWatched || allEpisodesWatched
-          ? 'complete'
-          : hasWatchedEpisodes || hasPartialProgress
-            ? 'partial'
-            : 'none';
-
-      // Calculate unwatched count for badge display
-      const unwatchedCount = totalEpisodes > 0 ? totalEpisodes - watchedEpisodes : undefined;
-
-      return {
-        ...title,
-        isWatched: seriesWatched || allEpisodesWatched,
-        watchState,
-        unwatchedCount,
-      };
-    }
-    return title;
-  });
+// Apply pre-computed watch state from backend to derive isWatched flag.
+// The backend now computes watchState/unwatchedCount server-side, so we only
+// need to read the pre-computed field and set the legacy isWatched boolean.
+function applyWatchState<T>(titles: T[]): T[] {
+  return titles.map((t) => ({
+    ...t,
+    isWatched: (t as unknown as { watchState?: string }).watchState === 'complete',
+  }));
 }
 
 export default function WatchlistScreen() {
@@ -222,10 +158,12 @@ export default function WatchlistScreen() {
   }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves, shelfId]);
 
   // Watchlist data
-  const { items, loading: watchlistLoading, error: watchlistError, refresh: refreshWatchlist } = useWatchlist();
+  const { items, loading: watchlistLoading, error: watchlistError } = useWatchlistData();
+  const { refresh: refreshWatchlist } = useWatchlistActions();
 
   // Continue watching data
-  const { items: continueWatchingItems, loading: continueWatchingLoading, refresh: refreshContinueWatching } = useContinueWatching();
+  const { items: continueWatchingItems, loading: continueWatchingLoading } = useContinueWatchingData();
+  const { refresh: refreshContinueWatching } = useContinueWatchingActions();
 
   // The startup bundle caps watchlist/continue-watching to 20 items.
   // When this page needs the full list, silently refresh the context.
@@ -238,8 +176,6 @@ export default function WatchlistScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
   }, []);
 
-  // Watch status data for watchState badge
-  const { isWatched, items: watchStatusItems } = useWatchStatus();
 
   // Badge visibility settings
   const badgeVisibility = useMemo(
@@ -821,9 +757,9 @@ export default function WatchlistScreen() {
       }
       return title;
     });
-    // Always enrich with watch status on watchlist page (needed for watch status filter + badge)
-    return enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems);
-  }, [items, watchlistYears, watchlistMetadata, movieReleases, isWatched, watchStatusItems, continueWatchingItems]);
+    // Always apply pre-computed watch status on watchlist page (needed for watch status filter + badge)
+    return applyWatchState(titlesWithReleases);
+  }, [items, watchlistYears, watchlistMetadata, movieReleases]);
 
   // Map continue watching items to titles
   const continueWatchingTitles = useMemo((): WatchlistTitle[] => {
@@ -851,11 +787,11 @@ export default function WatchlistScreen() {
         percentWatched: displayPercent,
       };
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
-  }, [continueWatchingItems, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems]);
+  }, [continueWatchingItems, movieReleases, shouldEnrichWatchStatus]);
 
   // Map explore items (trending movies, trending TV, custom lists) to titles
   const exploreTitles = useMemo((): WatchlistTitle[] => {
@@ -873,11 +809,11 @@ export default function WatchlistScreen() {
         homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
       };
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
-  }, [needsProgressiveLoading, exploreItems, isTrendingMovies, isTrendingTV, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [needsProgressiveLoading, exploreItems, isTrendingMovies, isTrendingTV, movieReleases, shouldEnrichWatchStatus]);
 
   // Map collection items to titles
   const collectionTitles = useMemo((): WatchlistTitle[] => {
@@ -892,11 +828,11 @@ export default function WatchlistScreen() {
         homeRelease: item.homeRelease ?? cachedReleases?.homeRelease,
       };
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
-  }, [isCollectionMode, collectionItems, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [isCollectionMode, collectionItems, movieReleases, shouldEnrichWatchStatus]);
 
   // Map person filmography to titles, sorted based on user preference
   const personTitles = useMemo((): WatchlistTitle[] => {
@@ -924,11 +860,11 @@ export default function WatchlistScreen() {
         homeRelease: item.homeRelease ?? cachedReleases?.homeRelease,
       };
     });
-    // Enrich with watch status if badge is enabled
+    // Apply pre-computed watch status if badge is enabled
     return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
-  }, [isPersonMode, personDetails, movieReleases, filmographySort, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [isPersonMode, personDetails, movieReleases, filmographySort, shouldEnrichWatchStatus]);
 
   // Map similar/recommendation items to titles
   const similarTitles = useMemo((): WatchlistTitle[] => {
@@ -944,16 +880,16 @@ export default function WatchlistScreen() {
       };
     });
     return shouldEnrichWatchStatus
-      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      ? applyWatchState(baseTitles)
       : baseTitles;
-  }, [isSimilarShelf, similarItems, movieReleases, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [isSimilarShelf, similarItems, movieReleases, shouldEnrichWatchStatus]);
 
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
     if (!isExploreMode) {
-      // Personal watchlist - apply hideWatched filter
+      // Personal watchlist - apply hideWatched filter using pre-computed watch state
       if (hideWatched) {
-        return watchlistTitles.filter((title) => !isWatched(title.mediaType, title.id));
+        return watchlistTitles.filter((title) => title.watchState !== 'complete');
       }
       return watchlistTitles;
     }
@@ -963,7 +899,7 @@ export default function WatchlistScreen() {
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [isExploreMode, isPersonMode, isCollectionMode, isSimilarShelf, shelfId, watchlistTitles, personTitles, collectionTitles, similarTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles, hideWatched, isWatched]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, isSimilarShelf, shelfId, watchlistTitles, personTitles, collectionTitles, similarTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles, hideWatched]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {

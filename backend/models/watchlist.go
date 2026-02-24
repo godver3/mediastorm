@@ -17,6 +17,8 @@ type WatchlistItem struct {
 	RuntimeMinutes int               `json:"runtimeMinutes,omitempty"`
 	SyncSource     string            `json:"syncSource,omitempty"` // e.g., "plex:<accountId>:<taskId>" for synced items
 	SyncedAt       *time.Time        `json:"syncedAt,omitempty"`   // when last synced from external source
+	WatchState     string            `json:"watchState,omitempty"`     // "none" | "partial" | "complete"
+	UnwatchedCount *int              `json:"unwatchedCount,omitempty"` // series only: total - watched
 }
 
 // WatchlistUpsert captures data required to insert or update a watchlist item.

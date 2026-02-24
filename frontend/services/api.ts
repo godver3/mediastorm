@@ -154,6 +154,8 @@ export interface Title {
   runtimeMinutes?: number; // Runtime in minutes (movies only)
   collection?: Collection; // Movie collection (movies only)
   genres?: string[]; // Genre names from TMDB
+  watchState?: 'none' | 'partial' | 'complete'; // Pre-computed by backend
+  unwatchedCount?: number; // Series only: total - watched episodes
 }
 
 export interface TrendingItem {
@@ -551,6 +553,8 @@ export interface WatchlistItem {
   externalIds?: Record<string, string>;
   genres?: string[];
   runtimeMinutes?: number;
+  watchState?: 'none' | 'partial' | 'complete'; // Pre-computed by backend
+  unwatchedCount?: number; // Series only: total - watched episodes
 }
 
 export interface WatchlistUpsertPayload {

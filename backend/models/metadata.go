@@ -68,6 +68,8 @@ type Title struct {
 	RuntimeMinutes  int         `json:"runtimeMinutes,omitempty"` // Runtime in minutes (movies only)
 	Collection      *Collection `json:"collection,omitempty"`     // Movie collection (movies only)
 	Genres          []string    `json:"genres,omitempty"`         // Genre names from TMDB
+	WatchState      string      `json:"watchState,omitempty"`     // "none" | "partial" | "complete"
+	UnwatchedCount  *int        `json:"unwatchedCount,omitempty"` // series only: total - watched
 }
 
 type TrendingItem struct {

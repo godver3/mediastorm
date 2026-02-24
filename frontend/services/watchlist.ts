@@ -41,6 +41,8 @@ export function mapWatchlistToTitles(
       tvdbId: parseNumeric(item.externalIds?.tvdb),
       popularity: undefined,
       network: undefined,
+      watchState: item.watchState,
+      unwatchedCount: item.unwatchedCount,
     };
 
     return {

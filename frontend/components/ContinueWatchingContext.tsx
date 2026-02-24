@@ -5,16 +5,22 @@ import { useStartupData } from '@/components/StartupDataContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { apiService, type ApiError, type EpisodeWatchPayload, type SeriesWatchState } from '@/services/api';
 
-interface ContinueWatchingContextValue {
+interface ContinueWatchingData {
   items: SeriesWatchState[];
   loading: boolean;
   error: string | null;
+}
+
+interface ContinueWatchingActions {
   refresh: (options?: { silent?: boolean }) => Promise<void>;
   recordEpisodeWatch: (payload: EpisodeWatchPayload) => Promise<SeriesWatchState>;
   hideFromContinueWatching: (seriesId: string) => Promise<void>;
 }
 
-const ContinueWatchingContext = createContext<ContinueWatchingContextValue | undefined>(undefined);
+type ContinueWatchingContextValue = ContinueWatchingData & ContinueWatchingActions;
+
+const ContinueWatchingDataContext = createContext<ContinueWatchingData | undefined>(undefined);
+const ContinueWatchingActionsContext = createContext<ContinueWatchingActions | undefined>(undefined);
 
 const normaliseItems = (items: SeriesWatchState[] | null | undefined) => {
   if (!items) {
@@ -245,25 +251,62 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
     [requireUserId],
   );
 
-  const value = useMemo<ContinueWatchingContextValue>(
+  // Stabilize items identity — only produce a new array reference when content actually changes.
+  const prevItemsRef = useRef<SeriesWatchState[]>([]);
+  const stableItems = useMemo(() => {
+    if (state.items === prevItemsRef.current) return prevItemsRef.current;
+    if (state.items.length === prevItemsRef.current.length) {
+      let same = true;
+      for (let i = 0; i < state.items.length; i++) {
+        if (state.items[i] !== prevItemsRef.current[i]) { same = false; break; }
+      }
+      if (same) return prevItemsRef.current;
+    }
+    prevItemsRef.current = state.items;
+    return state.items;
+  }, [state.items]);
+
+  const dataMemo = useMemo<ContinueWatchingData>(
     () => ({
-      items: state.items,
+      items: stableItems,
       loading: state.loading,
       error: state.error,
+    }),
+    [stableItems, state.loading, state.error],
+  );
+
+  const actionsMemo = useMemo<ContinueWatchingActions>(
+    () => ({
       refresh,
       recordEpisodeWatch,
       hideFromContinueWatching,
     }),
-    [state, refresh, recordEpisodeWatch, hideFromContinueWatching],
+    [refresh, recordEpisodeWatch, hideFromContinueWatching],
   );
 
-  return <ContinueWatchingContext.Provider value={value}>{children}</ContinueWatchingContext.Provider>;
+  return (
+    <ContinueWatchingActionsContext.Provider value={actionsMemo}>
+      <ContinueWatchingDataContext.Provider value={dataMemo}>{children}</ContinueWatchingDataContext.Provider>
+    </ContinueWatchingActionsContext.Provider>
+  );
+};
+
+export const useContinueWatchingData = (): ContinueWatchingData => {
+  const context = useContext(ContinueWatchingDataContext);
+  if (!context) {
+    throw new Error('useContinueWatchingData must be used within a ContinueWatchingProvider');
+  }
+  return context;
+};
+
+export const useContinueWatchingActions = (): ContinueWatchingActions => {
+  const context = useContext(ContinueWatchingActionsContext);
+  if (!context) {
+    throw new Error('useContinueWatchingActions must be used within a ContinueWatchingProvider');
+  }
+  return context;
 };
 
 export const useContinueWatching = (): ContinueWatchingContextValue => {
-  const context = useContext(ContinueWatchingContext);
-  if (!context) {
-    throw new Error('useContinueWatching must be used within a ContinueWatchingProvider');
-  }
-  return context;
+  return { ...useContinueWatchingData(), ...useContinueWatchingActions() };
 };

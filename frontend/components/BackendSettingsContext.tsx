@@ -212,7 +212,6 @@ interface BackendSettingsContextValue {
   settings: BackendSettings | null;
   lastLoadedAt: number | null;
   isBackendReachable: boolean;
-  retryCountdown: number | null;
   refreshSettings: () => Promise<void>;
   setBackendUrl: (url: string) => Promise<void>;
   updateBackendSettings: (settings: BackendSettings) => Promise<BackendSettings>;
@@ -228,6 +227,10 @@ interface BackendSettingsContextValue {
 }
 
 const BackendSettingsContext = createContext<BackendSettingsContextValue | undefined>(undefined);
+
+// Satellite context for retryCountdown — updates every 1s during connection failures.
+// Separated to avoid recreating the main context value on every tick.
+const RetryCountdownContext = createContext<number | null>(null);
 
 const formatErrorMessage = (err: unknown) => {
   if (err instanceof Error) {
@@ -813,7 +816,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       settings,
       lastLoadedAt,
       isBackendReachable,
-      retryCountdown,
       refreshSettings,
       setBackendUrl: setBackendUrlHandler,
       updateBackendSettings,
@@ -834,7 +836,6 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       settings,
       lastLoadedAt,
       isBackendReachable,
-      retryCountdown,
       refreshSettings,
       setBackendUrlHandler,
       updateBackendSettings,
@@ -848,7 +849,13 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
     ],
   );
 
-  return <BackendSettingsContext.Provider value={value}>{children}</BackendSettingsContext.Provider>;
+  return (
+    <BackendSettingsContext.Provider value={value}>
+      <RetryCountdownContext.Provider value={retryCountdown}>
+        {children}
+      </RetryCountdownContext.Provider>
+    </BackendSettingsContext.Provider>
+  );
 };
 
 export const useBackendSettings = () => {
@@ -857,4 +864,10 @@ export const useBackendSettings = () => {
     throw new Error('useBackendSettings must be used within a BackendSettingsProvider');
   }
   return context;
+};
+
+/** Reads the retry countdown (seconds until next reconnect attempt, or null).
+ *  Isolated from the main context so 1-second ticks don't cascade re-renders. */
+export const useRetryCountdown = (): number | null => {
+  return useContext(RetryCountdownContext);
 };

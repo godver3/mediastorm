@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 
 import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import { Image } from './Image';
@@ -419,17 +419,17 @@ const MediaItem = memo(function MediaItem({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const isCompact = theme.breakpoint === 'compact';
 
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     onPress?.();
-  };
+  }, [onPress]);
 
-  const handleLongPress = () => {
+  const handleLongPress = useCallback(() => {
     onLongPress?.();
-  };
+  }, [onLongPress]);
 
-  const handleFocus = () => {
+  const handleFocus = useCallback(() => {
     onFocus?.();
-  };
+  }, [onFocus]);
 
   // Compute badge data
   const releaseIcon = title.mediaType === 'movie' ? getMovieReleaseIcon(title) : getSeriesStatusIcon(title.status);
