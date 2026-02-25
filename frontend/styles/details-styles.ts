@@ -363,7 +363,8 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginBottom: isTV ? 0 : 0,
     },
     prequeueInfoMinHeight: {
-      minHeight: isTV ? tvScale * 55 : 45,
+      // Reserve enough height for filename + track selection row to prevent layout shift when tracks load
+      minHeight: isTV ? tvScale * 90 : 45,
     },
     prequeueFilename: {
       ...theme.typography.body.sm,

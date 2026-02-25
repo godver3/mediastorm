@@ -43,8 +43,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Platform, Pressable, Text, View, unstable_batchedUpdates } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Platform, Pressable, StyleSheet, Text, View, unstable_batchedUpdates } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView, DefaultFocus } from '@/services/tv-navigation';
@@ -1832,12 +1832,7 @@ export default function DetailsScreen() {
     && !playback.resumeModalVisible && !watchActions.bulkWatchModalVisible
     && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible;
 
-  // Force spatial nav tree to rebuild when track selectors appear.
-  // Track selectors mount late (after prequeue resolves) and would register
-  // after episodes/cast/similar in the LRUD tree, breaking focus order.
-  // Changing the key causes a one-time remount that re-registers all nodes in DOM order.
-  const spatialNavKey = (playback.prequeueDisplayInfo?.audioTracks?.length ?? 0) > 0 ||
-    (playback.prequeueDisplayInfo?.subtitleTracks?.length ?? 0) > 0 ? 'with-tracks' : 'base';
+
 
   // ===== Render helpers =====
   const renderDetailsContent = () => (
@@ -2257,6 +2252,7 @@ export default function DetailsScreen() {
                     <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
                   )}
                   {(playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
+                    <SpatialNavigationNode orientation="horizontal">
                     <View style={styles.prequeueTrackRow}>
                       {playback.prequeueDisplayInfo.audioTracks && playback.prequeueDisplayInfo.audioTracks.length > 0 && (
                         Platform.isTV ? (
@@ -2379,12 +2375,18 @@ export default function DetailsScreen() {
                         )
                       )}
                     </View>
+                    </SpatialNavigationNode>
                   ) : null}
                 </>
               )}
             </>
           )}
         </Animated.View>
+        {/* TV sections below tracks — keyed so they re-register in the LRUD tree
+            AFTER track focusables mount, fixing directional navigation order.
+            Only the sections remount (not the scroll view), so no scroll position reset. */}
+        <React.Fragment key={isTV ? ((playback.prequeueDisplayInfo?.audioTracks?.length ?? 0) > 0 ||
+          (playback.prequeueDisplayInfo?.subtitleTracks?.length ?? 0) > 0 ? 'with-tracks' : 'base') : undefined}>
         {/* TV Episode Carousel */}
         {Platform.isTV && isSeries && (
           <View ref={(ref) => { sectionRefs.current['episodes'] = ref; sectionRefs.current['seasons'] = ref; }} style={{ minHeight: Math.round(tvScale * 416) }}>
@@ -2444,6 +2446,7 @@ export default function DetailsScreen() {
             />
           </View>
         )}
+        </React.Fragment>
         {!Platform.isTV && activeEpisode && (
           <View style={styles.episodeCardContainer}>
             <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />
@@ -2860,19 +2863,23 @@ export default function DetailsScreen() {
                           <View style={{ height: tvSpacerHeight }} />
                           {/* Content area with gradient background */}
                           <Animated.View style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}>
-                            <LinearGradient
-                              colors={[
-                                'transparent',
-                                'rgba(0, 0, 0, 0.6)',
-                                'rgba(0, 0, 0, 0.85)',
-                                theme.colors.background.base,
-                              ]}
-                              locations={[0, 0.1, 0.25, 0.45]}
-                              style={styles.tvContentGradient}>
+                            {/* Gradient is a background layer so it doesn't clip children (e.g. tall logos) */}
+                            <View style={[styles.tvContentGradient, { overflow: 'visible' }]}>
+                              <LinearGradient
+                                colors={[
+                                  'transparent',
+                                  'rgba(0, 0, 0, 0.6)',
+                                  'rgba(0, 0, 0, 0.85)',
+                                  theme.colors.background.base,
+                                ]}
+                                locations={[0, 0.1, 0.25, 0.45]}
+                                style={StyleSheet.absoluteFill}
+                                pointerEvents="none"
+                              />
                               <View style={styles.tvContentInner}>
                                 {renderDetailsContent()}
                               </View>
-                            </LinearGradient>
+                            </View>
                           </Animated.View>
                         </Animated.ScrollView>
                       </>
@@ -2900,7 +2907,7 @@ export default function DetailsScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       {Platform.isTV ? (
-        <SpatialNavigationRoot isActive={isSpatialNavActive} key={spatialNavKey}>
+        <SpatialNavigationRoot isActive={isSpatialNavActive}>
           {detailsContent}
         </SpatialNavigationRoot>
       ) : (
