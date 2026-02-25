@@ -162,6 +162,13 @@ export function tvValue<T>(options: { tv: T; mobile: T }): T {
 export const TV_REFERENCE_WIDTH = 1920;
 
 /**
+ * Reference height for responsive TV sizing.
+ * All TV scroll offsets should target this height (1080p tvOS).
+ * Values will scale proportionally to actual screen height.
+ */
+export const TV_REFERENCE_HEIGHT = 1080;
+
+/**
  * Screen-width-based responsive sizing for TV platforms.
  * Design everything for 1920px width (tvOS 1080p), and it automatically
  * scales to match the actual screen width on any TV platform.

@@ -381,9 +381,9 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
   useEffect(() => {
     const isLoading = prequeueDisplayInfo && !prequeueReady && prequeueDisplayInfo.status !== 'failed';
     if (isLoading) {
-      prequeuePulseOpacity.value = 0.4;
+      prequeuePulseOpacity.value = 0.5;
       prequeuePulseOpacity.value = withRepeat(
-        withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
         -1,
         true,
       );

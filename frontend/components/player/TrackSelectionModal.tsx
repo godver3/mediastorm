@@ -23,6 +23,8 @@ interface TrackSelectionModalProps {
   focusKeyPrefix?: string;
   /** Optional callback to open subtitle search modal */
   onSearchSubtitles?: () => void;
+  /** Use native Modal on TV for proper focus trapping and back button (default: false for player compatibility) */
+  useNativeModal?: boolean;
 }
 
 export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
@@ -35,6 +37,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   onClose,
   focusKeyPrefix = 'track',
   onSearchSubtitles,
+  useNativeModal = false,
 }) => {
   const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
@@ -577,7 +580,23 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     </View>
   );
 
+  // TV with native Modal: proper focus trapping and back button handling.
+  // Used on details page where there's no parent Modal.
+  if (Platform.isTV && useNativeModal) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="fade"
+        transparent
+        onRequestClose={handleClose}
+        hardwareAccelerated>
+        {modalContent}
+      </Modal>
+    );
+  }
+
   // TV: pseudo-modal (no native Modal window) — avoids nested Modal focus issues.
+  // Used in player controls where native Modal may conflict with the player overlay.
   // Renders invisible first, measures position, then shows at correct full-screen offset.
   if (Platform.isTV) {
     return (

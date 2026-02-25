@@ -7,7 +7,6 @@ import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import MobileTabBar from '@/components/MobileTabBar';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
-import { TvModal } from '@/components/TvModal';
 import { useWatchlist } from '@/components/WatchlistContext';
 import { useWatchStatus } from '@/components/WatchStatusContext';
 import EpisodeCard from '@/components/EpisodeCard';
@@ -37,14 +36,14 @@ import {
   type Trailer,
 } from '@/services/api';
 import { useTheme } from '@/theme';
-import { getTVScaleMultiplier, isTablet, isAndroidTV as isAndroidTVPlatform } from '@/theme/tokens/tvScale';
+import { getTVScaleMultiplier, isTablet, isAndroidTV as isAndroidTVPlatform, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Platform, Pressable, StyleSheet, Text, View, unstable_batchedUpdates } from 'react-native';
+import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Modal, Platform, Pressable, StyleSheet, Text, View, unstable_batchedUpdates } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView, DefaultFocus } from '@/services/tv-navigation';
@@ -55,6 +54,7 @@ import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
   withTiming,
+  withRepeat,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -1619,6 +1619,21 @@ export default function DetailsScreen() {
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
 
+  // Scroll-down hint — pulses gently, fades out when focus leaves actions area
+  const scrollIndicatorPulse = useSharedValue(0.3);
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    scrollIndicatorPulse.value = withRepeat(
+      withTiming(0.7, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true,
+    );
+  }, []);
+  const tvScrollIndicatorVisible = useSharedValue(1);
+  const tvScrollIndicatorStyle = useAnimatedStyle(() => ({
+    opacity: scrollIndicatorPulse.value * tvScrollIndicatorVisible.value,
+  }));
+
   const scrollToSection = useCallback(
     (sectionKey: string, animated = true) => {
       if (!Platform.isTV) return;
@@ -1627,18 +1642,19 @@ export default function DetailsScreen() {
       // 'actions' sits near the bottom so the backdrop art stays visible above.
       // Other sections sit near the top with a small inset.
       const getSectionViewportOffset = (key: string): number => {
-        if (key === 'actions') {
-          // Place action row near the bottom of the screen (higher value = lower on screen)
-          const actionsRatio = isAndroidTVPlatform ? 0.85 : 0.88;
-          return Math.round(windowHeight * actionsRatio) + (isAndroidTVPlatform ? 10 : -30);
-        }
-        // Episodes, cast, similar — small offset from top so heading is visible
-        return Math.round(windowHeight * 0.12);
+        // Design values: pixel offsets from top of viewport on 1080p.
+        // Scaled proportionally to actual viewport height.
+        const scale = windowHeight / TV_REFERENCE_HEIGHT;
+        if (key === 'actions') return Math.round(900 * scale);
+        if (key === 'seasons') return Math.round(540 * scale);
+        // Episodes, cast, similar — near top with heading visible
+        return Math.round(130 * scale);
       };
 
       const performScroll = (rawY: number, key: string) => {
         const viewportOffset = getSectionViewportOffset(key);
         const targetY = Math.max(0, rawY - viewportOffset);
+        console.log(`[scrollToSection] key=${key} rawY=${rawY} windowHeight=${windowHeight} scale=${(windowHeight / TV_REFERENCE_HEIGHT).toFixed(3)} viewportOffset=${viewportOffset} targetY=${targetY} isAndroidTV=${isAndroidTVPlatform}`);
         tvScrollViewRef.current?.scrollTo({ y: targetY, animated });
       };
 
@@ -1683,13 +1699,15 @@ export default function DetailsScreen() {
         trailersHook.dismissTrailerAutoPlay();
       }
       currentTVFocusAreaRef.current = area;
+      // Hide/show scroll indicator based on focus area
+      tvScrollIndicatorVisible.value = withTiming(area === 'actions' ? 1 : 0, { duration: 300 });
       if (area === 'actions') {
         scrollToSection('actions');
       } else {
         scrollToSection(area);
       }
     },
-    [trailersHook.dismissTrailerAutoPlay, scrollToSection],
+    [trailersHook.dismissTrailerAutoPlay, scrollToSection, tvScrollIndicatorVisible],
   );
 
   // Stable focus-area callbacks — prevents TVActionButton/TVCastSection/TVMoreLikeThisSection memo() defeats
@@ -1738,8 +1756,11 @@ export default function DetailsScreen() {
   // On Android TV, bypass the gate when nav params provide enough content to render immediately
   // (title text fallback + backdrop from params). This eliminates ~3s blank screen on Fire Stick.
   const hasNavParamContent = !!title && !!(headerImageParam || posterUrlParam || backdropUrlParam);
+  // On TV, also wait for ratings/certification to avoid layout shift in the action row area.
+  // The Android TV nav-param fast-path still requires metadata to finish loading.
+  const isRatingsReady = !isMetadataLoading || detailsRatings.length > 0 || detailsCertification != null;
   const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current &&
-    !(isAndroidTV && hasNavParamContent) &&
+    !(isAndroidTV && hasNavParamContent && isRatingsReady) &&
     (isMetadataLoading || !isPosterReady);
   if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
     hasBeenDisplayedRef.current = true;
@@ -1778,15 +1799,13 @@ export default function DetailsScreen() {
       sectionPositionsRef.current = {};
     }
     lastTVContentHeightRef.current = height;
-  }, []);
+  }, [scrollToSection]);
 
-  // TV spacer — fixed height (pushes content below the hero image)
-  // Android TV has roughly half the dp coordinate space of tvOS (due to ~2x density),
-  // so we use a smaller ratio to keep the action row visible on screen
+  // TV spacer — pushes content below the hero image.
+  // Design value targets 1080p (tvOS baseline), scales proportionally to viewport.
   const tvSpacerHeight = useMemo(() => {
     if (!Platform.isTV) return 0;
-    const ratio = isAndroidTVPlatform ? 0.45 : 0.7;
-    return Math.round(windowHeight * ratio);
+    return Math.round(756 * (windowHeight / TV_REFERENCE_HEIGHT));
   }, [windowHeight]);
 
   // Track if we've already triggered the fade-in
@@ -2913,6 +2932,20 @@ export default function DetailsScreen() {
       ) : (
         detailsContent
       )}
+      {Platform.isTV && (
+        <Animated.View
+          style={[{
+            position: 'absolute',
+            bottom: tvScale * 12,
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+          }, tvScrollIndicatorStyle]}
+          pointerEvents="none"
+        >
+          <Ionicons name="chevron-down" size={32 * tvScale} color="white" />
+        </Animated.View>
+      )}
       <TrailerModal
         visible={trailerModalVisible}
         trailer={activeTrailer}
@@ -2971,8 +3004,9 @@ export default function DetailsScreen() {
         theme={theme}
       />
       {/* More Options Menu */}
-      <TvModal visible={moreOptionsVisible} onRequestClose={() => setMoreOptionsVisible(false)}>
+      <Modal transparent visible={moreOptionsVisible} onRequestClose={() => setMoreOptionsVisible(false)} animationType="fade">
         <SpatialNavigationRoot isActive={moreOptionsVisible}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.85)' }}>
           <View style={styles.moreOptionsModal}>
             <View style={styles.moreOptionsHeader}>
               <Text style={styles.moreOptionsTitle}>More Options</Text>
@@ -3060,8 +3094,9 @@ export default function DetailsScreen() {
               </View>
             </SpatialNavigationNode>
           </View>
+          </View>
         </SpatialNavigationRoot>
-      </TvModal>
+      </Modal>
       <EpisodeSelector
         visible={episodeSelectorVisible}
         onClose={() => setEpisodeSelectorVisible(false)}
@@ -3082,6 +3117,7 @@ export default function DetailsScreen() {
           playback.setShowAudioTrackModal(false);
         }}
         onClose={() => playback.setShowAudioTrackModal(false)}
+        useNativeModal
       />
       {/* Subtitle Track Selection Modal */}
       <TrackSelectionModal
@@ -3094,6 +3130,7 @@ export default function DetailsScreen() {
           playback.setShowSubtitleTrackModal(false);
         }}
         onClose={() => playback.setShowSubtitleTrackModal(false)}
+        useNativeModal
       />
       {/* Black overlay for smooth transition to player */}
       {playback.showBlackOverlay && (
