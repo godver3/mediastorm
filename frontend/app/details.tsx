@@ -1647,7 +1647,7 @@ export default function DetailsScreen() {
     );
   }, []);
   const tvScrollIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: tvScrollIndicatorVisible.value * tvScrollIndicatorPulse.value,
+    opacity: tvScrollIndicatorVisible.value * tvScrollIndicatorPulse.value * trailersHook.immersiveContentOpacity.value,
   }));
 
   const scrollToSection = useCallback(
@@ -3001,7 +3001,7 @@ export default function DetailsScreen() {
             left: 0,
             right: 0,
             alignItems: 'center',
-          }, tvScrollIndicatorStyle, autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined]}
+          }, tvScrollIndicatorStyle]}
           pointerEvents="none"
         >
           <Ionicons name="chevron-down" size={32 * tvScale} color="white" />

@@ -38,6 +38,7 @@ export interface TrailersResult {
 
   // Animated style for immersive fade
   immersiveContentStyle: ReturnType<typeof useAnimatedStyle>;
+  immersiveContentOpacity: Animated.SharedValue<number>;
 }
 
 export function useTrailers(params: UseTrailersParams): TrailersResult {
@@ -212,5 +213,6 @@ export function useTrailers(params: UseTrailersParams): TrailersResult {
     trailerAutoPlayDismissed,
     dismissTrailerAutoPlay,
     immersiveContentStyle,
+    immersiveContentOpacity,
   };
 }
