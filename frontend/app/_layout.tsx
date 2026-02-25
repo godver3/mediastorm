@@ -63,11 +63,15 @@ SplashScreen.preventAutoHideAsync();
  */
 function LazyModals() {
   const { loading, pendingPinUserId } = useUserProfiles();
-  // ProfileSelectorModal needs to mount once users are loaded (it starts visible)
-  // PinEntryModal only needs to mount when a PIN check is pending
+  // Wait for the first load before mounting ProfileSelectorModal (startup optimisation),
+  // but once mounted keep it mounted so subsequent loading toggles (e.g. refresh()
+  // after player exit) don't cause an unmount/remount cycle that resets visible=true.
+  const hasLoadedOnce = useRef(false);
+  if (!loading) hasLoadedOnce.current = true;
+
   return (
     <>
-      {!loading && <ProfileSelectorModal />}
+      {hasLoadedOnce.current && <ProfileSelectorModal />}
       {!!pendingPinUserId && <PinEntryModal />}
     </>
   );

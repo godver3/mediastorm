@@ -211,10 +211,11 @@ export const ProfileSelectorModal: React.FC = () => {
     }
   }, [loading, hasMultipleUsers, isEnabled]);
 
-  // Show when app returns from background.
-  // Track when the app left 'active' so we can ignore brief inactive blips
-  // (e.g. iOS fullScreenModal dismiss triggers active→inactive→active).
+  // Show when app returns from background (user actually left the app).
+  // We track whether the app hit 'background' — mere 'inactive' blips (Control
+  // Center, Notification Center, incoming calls, player dismiss) are ignored.
   const leftActiveAtRef = useRef<number>(0);
+  const wentToBackgroundRef = useRef(false);
   useEffect(() => {
     if (!isEnabled || !hasMultipleUsers) {
       return;
@@ -223,16 +224,21 @@ export const ProfileSelectorModal: React.FC = () => {
       console.log(`[ProfileSelector] AppState: ${appStateRef.current} → ${nextAppState}, pathname=${pathnameRef.current}`);
       if (appStateRef.current === 'active' && nextAppState !== 'active') {
         leftActiveAtRef.current = Date.now();
+        wentToBackgroundRef.current = false;
+      }
+      if (nextAppState === 'background') {
+        wentToBackgroundRef.current = true;
       }
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        // Only show if the app was away for >2s — brief inactive blips from
-        // screen transitions (e.g. player dismiss) are ignored.
-        // Also skip if the player is active (PiP return to foreground).
         const awayMs = Date.now() - leftActiveAtRef.current;
         const onRNPlayer = pathnameRef.current === '/player';
-        console.log(`[ProfileSelector] Resume check: awayMs=${awayMs}, onRNPlayer=${onRNPlayer}`);
-        if (awayMs <= 2000 || onRNPlayer) {
-          console.log(`[ProfileSelector] Skipping modal (awayMs<=2000 or on player)`);
+        const didBackground = wentToBackgroundRef.current;
+        console.log(`[ProfileSelector] Resume check: awayMs=${awayMs}, onRNPlayer=${onRNPlayer}, didBackground=${didBackground}`);
+        // Only show if the app truly went to background (not just inactive from
+        // Control Center / Notification Center / player dismiss), was away for
+        // >2s, and isn't on the player screen.
+        if (!didBackground || awayMs <= 2000 || onRNPlayer) {
+          console.log(`[ProfileSelector] Skipping modal (didBackground=${didBackground}, awayMs<=2000=${awayMs <= 2000}, onPlayer=${onRNPlayer})`);
           appStateRef.current = nextAppState;
           return;
         }
