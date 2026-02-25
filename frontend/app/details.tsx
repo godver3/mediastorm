@@ -1726,6 +1726,26 @@ export default function DetailsScreen() {
     [trailersHook.dismissTrailerAutoPlay, scrollToSection, tvScrollIndicatorVisible],
   );
 
+  // Reset focus and section positions when returning from playback on TV.
+  // This is necessary because on Android TV, the entire content tree is unmounted
+  // while playback is active to save memory. When returning, we need to ensure
+  // that the auto-focused action button triggers the correct scroll.
+  useEffect(() => {
+    if (isDetailsPageActive && Platform.isTV) {
+      currentTVFocusAreaRef.current = null;
+      sectionPositionsRef.current = {};
+
+      // On some platforms/versions, the focus event might not fire if the element
+      // remained focused while the screen was backgrounded.
+      // Delay slightly to ensure layout is ready after re-mounting or refocusing,
+      // then manually trigger the focus area logic to ensure scroll position is correct.
+      const timer = setTimeout(() => {
+        handleTVFocusAreaChange('actions');
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isDetailsPageActive, handleTVFocusAreaChange]);
+
   // Stable focus-area callbacks — prevents TVActionButton/TVCastSection/TVMoreLikeThisSection memo() defeats
   const handleActionsFocus = useCallback(() => handleTVFocusAreaChange('actions'), [handleTVFocusAreaChange]);
   const handleCastFocus = useCallback(() => handleTVFocusAreaChange('cast'), [handleTVFocusAreaChange]);
