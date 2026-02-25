@@ -58,6 +58,7 @@ type historyServiceInterface interface {
 	GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error)
 	ListWatchHistory(userID string) ([]models.WatchHistoryItem, error)
 	ListContinueWatching(userID string) ([]models.SeriesWatchState, error)
+	ListSeriesStates(userID string) ([]models.SeriesWatchState, error)
 	ListPlaybackProgress(userID string) ([]models.PlaybackProgress, error)
 }
 
@@ -170,7 +171,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	if userID != "" && h.HistoryService != nil {
 		wh, whErr := h.HistoryService.ListWatchHistory(userID)
 		if whErr == nil {
-			cw, _ := h.HistoryService.ListContinueWatching(userID)
+			cw, _ := h.HistoryService.ListSeriesStates(userID)
 			pp, _ := h.HistoryService.ListPlaybackProgress(userID)
 			idx := buildWatchStateIndex(wh, cw, pp)
 			enrichTrendingItems(items, idx)

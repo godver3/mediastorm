@@ -15,6 +15,7 @@ import (
 type historyService interface {
 	RecordEpisode(userID string, payload models.EpisodeWatchPayload) (models.SeriesWatchState, error)
 	ListContinueWatching(userID string) ([]models.SeriesWatchState, error)
+	ListSeriesStates(userID string) ([]models.SeriesWatchState, error)
 	GetSeriesWatchState(userID, seriesID string) (*models.SeriesWatchState, error)
 	HideFromContinueWatching(userID, seriesID string) error
 

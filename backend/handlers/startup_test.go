@@ -72,6 +72,9 @@ func (m *mockHistoryService) RecordEpisode(userID string, payload models.Episode
 func (m *mockHistoryService) ListContinueWatching(userID string) ([]models.SeriesWatchState, error) {
 	return m.continueWatching, m.cwErr
 }
+func (m *mockHistoryService) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
+	return m.continueWatching, m.cwErr
+}
 func (m *mockHistoryService) GetSeriesWatchState(userID, seriesID string) (*models.SeriesWatchState, error) {
 	return nil, nil
 }

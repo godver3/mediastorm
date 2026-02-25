@@ -262,7 +262,7 @@ func (s *Service) RecordEpisode(userID string, payload models.EpisodeWatchPayloa
 
 	// Build and return current state from watch history
 	ctx := context.Background()
-	states, err := s.buildContinueWatchingFromHistory(ctx, userID)
+	states, err := s.buildSeriesStatesFromHistory(ctx, userID, true)
 	if err != nil {
 		return models.SeriesWatchState{}, err
 	}
@@ -313,10 +313,25 @@ func (s *Service) GetSeriesWatchState(userID, seriesID string) (*models.SeriesWa
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+	// Try deprecated map first for backward compatibility
 	if perUser, ok := s.states[userID]; ok {
 		if state, ok := perUser[seriesID]; ok {
+			s.mu.RUnlock()
+			return &state, nil
+		}
+	}
+	s.mu.RUnlock()
+
+	// Not in deprecated map, compute from current history
+	// We use the same logic as ListSeriesStates but filter to the specific seriesID.
+	// This ensures consistency across the app.
+	states, err := s.ListSeriesStates(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, state := range states {
+		if state.SeriesID == seriesID {
 			return &state, nil
 		}
 	}
@@ -343,9 +358,9 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 		return cached.items, nil
 	}
 
-	// Cache miss or expired - rebuild
+	// Cache miss or expired - rebuild (only in-progress items for continue watching)
 	ctx := context.Background()
-	items, err := s.buildContinueWatchingFromHistory(ctx, userID)
+	items, err := s.buildSeriesStatesFromHistory(ctx, userID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -362,10 +377,25 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 	return items, nil
 }
 
-// buildContinueWatchingFromHistory generates continue watching list from watch history and playback progress.
+// ListSeriesStates returns the watch state for ALL series the user has watched,
+// including those with no next episode (fully watched).
+func (s *Service) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, ErrUserIDRequired
+	}
+
+	// We don't cache "all series" states currently as it's typically used
+	// for the watchlist and we want the most fresh state.
+	ctx := context.Background()
+	return s.buildSeriesStatesFromHistory(ctx, userID, false)
+}
+
+// buildSeriesStatesFromHistory generates watch state for series from watch history and playback progress.
+// If onlyInProgress is true, it only returns series with an available next episode or active progress.
 // Prioritizes in-progress episodes (partially watched) over completed episodes.
 // Metadata lookups are parallelized for better performance.
-func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID string) ([]models.SeriesWatchState, error) {
+func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID string, onlyInProgress bool) ([]models.SeriesWatchState, error) {
 	s.mu.RLock()
 	metadataSvc := s.metadataService
 	s.mu.RUnlock()
@@ -717,8 +747,8 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 
 				// Find next unwatched episode
 				nextEpisode = s.findNextUnwatchedEpisode(seriesDetails, mostRecentEpisode, episodes)
-				if nextEpisode == nil {
-					// No next episode available, skip this series
+				if nextEpisode == nil && onlyInProgress {
+					// No next episode available and only in-progress requested, skip this series
 					return
 				}
 

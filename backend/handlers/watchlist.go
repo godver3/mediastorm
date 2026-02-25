@@ -57,7 +57,7 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Enrich with pre-computed watch state if history service is available
 	if h.HistoryService != nil {
 		wh, whErr := h.HistoryService.ListWatchHistory(userID)
-		cw, _ := h.HistoryService.ListContinueWatching(userID)
+		cw, _ := h.HistoryService.ListSeriesStates(userID)
 		pp, _ := h.HistoryService.ListPlaybackProgress(userID)
 		if whErr == nil {
 			idx := buildWatchStateIndex(wh, cw, pp)

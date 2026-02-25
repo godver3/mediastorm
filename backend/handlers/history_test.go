@@ -28,6 +28,10 @@ func (f *fakeHistoryService) ListContinueWatching(userID string) ([]models.Serie
 	return f.items, f.err
 }
 
+func (f *fakeHistoryService) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
+	return f.items, f.err
+}
+
 func (f *fakeHistoryService) GetSeriesWatchState(userID, seriesID string) (*models.SeriesWatchState, error) {
 	if f.err != nil {
 		return nil, f.err

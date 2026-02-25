@@ -71,7 +71,7 @@ func setupAdminUIHandler(t *testing.T) (*handlers.AdminUIHandler, string) {
 	configManager := config.NewManager(settingsPath)
 
 	// Create admin UI handler
-	handler := handlers.NewAdminUIHandler(settingsPath, nil, usersService, userSettingsService, configManager)
+	handler := handlers.NewAdminUIHandler(settingsPath, "", nil, usersService, userSettingsService, configManager)
 
 	// Set up additional services
 	accountsService, err := accounts.NewService(tmpDir)
