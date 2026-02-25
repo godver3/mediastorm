@@ -2,12 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import {
-  SpatialNavigationRoot,
-  SpatialNavigationNode,
-  SpatialNavigationFocusableView,
-  DefaultFocus,
-} from '@/services/tv-navigation';
+import { SpatialNavigationRoot } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -410,7 +405,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
         <Text style={styles.modalTitle}>Stream Information</Text>
       </View>
 
-      <SpatialNavigationNode orientation="vertical">
+      <View>
         {/* Scrollable sections list with manual scroll on focus */}
         <ScrollView
           ref={tvScrollViewRef}
@@ -418,34 +413,32 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           contentContainerStyle={styles.tvListContent}
           scrollEnabled={false}
           showsVerticalScrollIndicator={false}>
-          {visibleSections.map((section, index) => {
-            const sectionItem = (
-              <SpatialNavigationFocusableView
-                key={section.key}
-                onFocus={() => handleSectionFocus(index)}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
-                    <Text style={styles.sectionTitle}>{section.title}</Text>
-                    {section.content}
-                  </View>
-                )}
-              </SpatialNavigationFocusableView>
-            );
-            return index === 0 ? <DefaultFocus key={section.key}>{sectionItem}</DefaultFocus> : sectionItem;
-          })}
+          {visibleSections.map((section, index) => (
+            <Pressable
+              key={section.key}
+              onFocus={() => handleSectionFocus(index)}
+              hasTVPreferredFocus={index === 0}>
+              {({ focused }: { focused: boolean }) => (
+                <View style={[styles.tvSection, focused && styles.sectionFocused]}>
+                  <Text style={styles.sectionTitle}>{section.title}</Text>
+                  {section.content}
+                </View>
+              )}
+            </Pressable>
+          ))}
         </ScrollView>
 
         {/* Close button */}
         <View style={styles.tvModalFooter}>
-          <SpatialNavigationFocusableView onSelect={handleClose}>
-            {({ isFocused }: { isFocused: boolean }) => (
-              <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+          <Pressable onPress={handleClose}>
+            {({ focused }: { focused: boolean }) => (
+              <View style={[styles.closeButton, focused && styles.closeButtonFocused]}>
+                <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
               </View>
             )}
-          </SpatialNavigationFocusableView>
+          </Pressable>
         </View>
-      </SpatialNavigationNode>
+      </View>
     </View>
   );
 
@@ -487,17 +480,15 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           zIndex: 1000,
           opacity: tvOverlayReady ? 1 : 0,
         }}
-        pointerEvents={tvOverlayReady ? 'auto' : 'none'}>
-        <SpatialNavigationRoot isActive={visible && tvOverlayReady}>
-          <View style={styles.overlay}>
-            <Pressable
-              style={styles.backdrop}
-              onPress={handleClose}
-              focusable={false}
-            />
-            {tvModalContent}
-          </View>
-        </SpatialNavigationRoot>
+        pointerEvents="box-none">
+        <View style={styles.overlay}>
+          <Pressable
+            style={styles.backdrop}
+            onPress={handleClose}
+            focusable={false}
+          />
+          {tvModalContent}
+        </View>
       </View>
     );
   }
