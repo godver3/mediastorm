@@ -415,7 +415,7 @@ export default function DetailsScreen() {
   const pathname = usePathname();
 
   const theme = useTheme();
-  const styles = useMemo(() => createDetailsStyles(theme), [theme]);
+  const styles = useMemo(() => createDetailsStyles(theme, windowHeight), [theme, windowHeight]);
   const isWeb = Platform.OS === 'web';
   const isTV = Platform.isTV;
   const isMobile = !isWeb && !isTV;
@@ -1625,10 +1625,19 @@ export default function DetailsScreen() {
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
 
-  // Scroll-down hint — static for now (animations disabled for testing)
+  // Scroll-down hint — pulses gently when visible
   const tvScrollIndicatorVisible = useSharedValue(1);
+  const tvScrollIndicatorPulse = useSharedValue(1);
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    tvScrollIndicatorPulse.value = withRepeat(
+      withTiming(0.3, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true,
+    );
+  }, []);
   const tvScrollIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: 0.5 * tvScrollIndicatorVisible.value,
+    opacity: tvScrollIndicatorVisible.value * tvScrollIndicatorPulse.value,
   }));
 
   const scrollToSection = useCallback(

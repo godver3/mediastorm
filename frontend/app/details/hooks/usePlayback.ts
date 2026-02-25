@@ -377,13 +377,18 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
     }
   }, [!!prequeueDisplayInfo]);
 
-  // Start/stop pulse animation based on prequeue status (disabled for testing)
+  // Start/stop pulse animation based on prequeue status
   useEffect(() => {
     const isLoading = prequeueDisplayInfo && !prequeueReady && prequeueDisplayInfo.status !== 'failed';
     if (isLoading) {
-      prequeuePulseOpacity.value = 0.7;
+      prequeuePulseOpacity.value = withRepeat(
+        withTiming(0.4, { duration: 750, easing: Easing.inOut(Easing.ease) }),
+        -1,
+        true,
+      );
     } else {
-      prequeuePulseOpacity.value = 1;
+      cancelAnimation(prequeuePulseOpacity);
+      prequeuePulseOpacity.value = withTiming(1, { duration: 200 });
     }
   }, [prequeueDisplayInfo?.status, prequeueReady]);
 

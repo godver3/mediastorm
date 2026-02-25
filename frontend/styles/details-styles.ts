@@ -1,10 +1,12 @@
 import { Platform, StyleSheet } from 'react-native';
 import type { NovaTheme } from '@/theme';
-import { isTV, isAndroidTV, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { isTV, isAndroidTV, getTVScaleMultiplier, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 
-export const createDetailsStyles = (theme: NovaTheme) => {
+export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
   // Unified TV scaling - tvOS is baseline (1.0), Android TV auto-derives for spacing/layout
   const tvScale = isTV ? getTVScaleMultiplier() : 1;
+  // Viewport-height-based scale — consistent sizing across tvOS and Android TV
+  const tvViewportScale = isTV && screenHeight > 0 ? screenHeight / TV_REFERENCE_HEIGHT : tvScale;
   // Text scale for UI elements with hardcoded pixel values (ratings, release info, etc.)
   const tvTextScale = isTV ? 1.2 * tvScale : 1;
   // Title/description scale - these use theme typography which is mobile-sized
@@ -510,9 +512,9 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     },
     progressIndicator: {
       paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.md * tvTextScale,
+      paddingVertical: theme.spacing.md * tvViewportScale,
       backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.md * tvTextScale,
+      borderRadius: theme.radius.md * tvViewportScale,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.accent.primary,
       justifyContent: 'center',
@@ -520,8 +522,8 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       alignSelf: 'stretch',
     },
     progressIndicatorCompact: {
-      paddingHorizontal: theme.spacing.sm * tvTextScale,
-      paddingVertical: theme.spacing.sm * tvTextScale,
+      paddingHorizontal: theme.spacing.sm * tvViewportScale,
+      paddingVertical: theme.spacing.sm * tvViewportScale,
       minWidth: theme.spacing['2xl'] * 1.5,
       alignSelf: 'stretch',
     },
@@ -529,18 +531,9 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       ...theme.typography.label.md,
       color: theme.colors.accent.primary,
       fontWeight: '600',
-      ...(isTV
-        ? {
-            // Design for tvOS at 1.375x, Android TV auto-scales
-            fontSize: Math.round(theme.typography.label.md.fontSize * tvTextScale),
-            lineHeight: Math.round(theme.typography.label.md.lineHeight * tvTextScale),
-          }
-        : null),
     },
     progressIndicatorTextCompact: {
       ...theme.typography.label.md,
-      fontSize: Math.round(theme.typography.label.md.fontSize * tvTextScale),
-      lineHeight: Math.round(theme.typography.label.md.lineHeight * tvTextScale),
     },
     // Mobile episode overview styles
     episodeOverviewTitle: {
@@ -577,9 +570,9 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     // More Options Menu Modal — matches BulkWatchModal visual style
     moreOptionsModal: {
       width: Platform.isTV ? '50%' : theme.breakpoint === 'compact' ? '90%' : '80%',
-      maxWidth: Platform.isTV ? 700 : 440,
+      maxWidth: Platform.isTV ? Math.round(700 * tvViewportScale) : 440,
       backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.lg,
+      borderRadius: Math.round(theme.radius.lg * tvViewportScale),
       overflow: 'hidden' as const,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
@@ -596,35 +589,29 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       }),
     },
     moreOptionsHeader: {
-      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
-      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+      paddingHorizontal: Math.round((Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl']) * tvViewportScale),
+      paddingVertical: Math.round((Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl) * tvViewportScale),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border.subtle,
     },
     moreOptionsTitle: {
       ...theme.typography.title.lg,
       color: theme.colors.text.primary,
-      ...(isTV
-        ? {
-            fontSize: theme.typography.title.lg.fontSize * tvScale,
-            lineHeight: theme.typography.title.lg.lineHeight * tvScale,
-          }
-        : {}),
     },
     moreOptionsContent: {
-      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
-      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+      paddingHorizontal: Math.round((Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl']) * tvViewportScale),
+      paddingVertical: Math.round((Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl) * tvViewportScale),
     },
     moreOptionsItem: {
       width: '100%' as const,
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
-      gap: Platform.isTV ? theme.spacing.lg : theme.spacing.md,
+      gap: Math.round((Platform.isTV ? theme.spacing.lg : theme.spacing.md) * tvViewportScale),
       backgroundColor: 'rgba(255, 255, 255, 0.08)' as const,
-      borderRadius: theme.radius.md,
-      paddingVertical: Platform.isTV ? theme.spacing.xl : theme.spacing.md,
-      paddingHorizontal: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.lg,
-      marginBottom: Platform.isTV ? theme.spacing.lg : theme.spacing.md,
+      borderRadius: Math.round(theme.radius.md * tvViewportScale),
+      paddingVertical: Math.round((Platform.isTV ? theme.spacing.xl : theme.spacing.md) * tvViewportScale),
+      paddingHorizontal: Math.round((Platform.isTV ? theme.spacing['2xl'] : theme.spacing.lg) * tvViewportScale),
+      marginBottom: Math.round((Platform.isTV ? theme.spacing.lg : theme.spacing.md) * tvViewportScale),
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
     },
@@ -633,23 +620,23 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       borderColor: theme.colors.accent.primary,
     },
     moreOptionsFooter: {
-      paddingHorizontal: Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl'],
-      paddingVertical: Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl,
+      paddingHorizontal: Math.round((Platform.isTV ? theme.spacing['3xl'] : theme.spacing['2xl']) * tvViewportScale),
+      paddingVertical: Math.round((Platform.isTV ? theme.spacing['2xl'] : theme.spacing.xl) * tvViewportScale),
       borderTopWidth: 1,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'flex-end' as const,
     },
     moreOptionsCancelButton: {
-      paddingHorizontal: theme.spacing['2xl'],
-      paddingVertical: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      paddingHorizontal: Math.round(theme.spacing['2xl'] * tvViewportScale),
+      paddingVertical: Math.round(theme.spacing.md * tvViewportScale),
+      borderRadius: Math.round(theme.radius.md * tvViewportScale),
       alignItems: 'center' as const,
     },
     moreOptionsCancelFocused: {
       backgroundColor: theme.colors.accent.primary,
     },
     moreOptionsCancelButtonText: {
-      fontSize: theme.typography.body.md.fontSize * tvScale,
+      ...theme.typography.body.md,
       color: theme.colors.text.secondary,
     },
   });

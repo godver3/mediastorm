@@ -41,7 +41,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 }) => {
   const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
+  const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const hasOptions = options.length > 0;
 
   const selectedLabel = useMemo(() => options.find((option) => option.id === selectedId)?.label, [options, selectedId]);
@@ -637,20 +637,25 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   );
 };
 
-const createStyles = (theme: NovaTheme, screenWidth: number) => {
+const TV_REFERENCE_HEIGHT = 1080;
+
+const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: number) => {
   // Responsive breakpoints
   const isNarrow = screenWidth < 400;
   const isMedium = screenWidth >= 400 && screenWidth < 600;
 
+  // Viewport-height-based scale for TV — consistent across tvOS and Android TV
+  const tvS = Platform.isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
+
   // Responsive width: fill more on narrow screens
   const modalWidth = isNarrow ? '95%' : isMedium ? '90%' : '80%';
-  const modalMaxWidth = isNarrow ? 400 : 720;
+  const modalMaxWidth = isNarrow ? 400 : Math.round(720 * tvS);
 
   // Responsive padding - minimize on narrow screens so cards fill width
-  const horizontalPadding = isNarrow ? theme.spacing.sm : theme.spacing.xl;
-  const itemPadding = isNarrow ? theme.spacing.md : theme.spacing.lg;
-  const itemMarginHorizontal = isNarrow ? 0 : isMedium ? theme.spacing.sm : theme.spacing.xl;
-  const listPadding = isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.md : theme.spacing['3xl'];
+  const horizontalPadding = isNarrow ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
+  const itemPadding = isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS);
+  const itemMarginHorizontal = isNarrow ? 0 : isMedium ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
+  const listPadding = isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.md : Math.round(theme.spacing['3xl'] * tvS);
 
   return StyleSheet.create({
     overlay: {
@@ -668,17 +673,17 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       maxWidth: modalMaxWidth,
       maxHeight: '85%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: isNarrow ? theme.radius.lg : theme.radius.xl,
+      borderRadius: isNarrow ? theme.radius.lg : Math.round(theme.radius.xl * tvS),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
     },
     modalHeader: {
       paddingHorizontal: horizontalPadding,
-      paddingVertical: isNarrow ? theme.spacing.lg : theme.spacing.xl,
+      paddingVertical: isNarrow ? theme.spacing.lg : Math.round(theme.spacing.xl * tvS),
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
-      gap: theme.spacing.xs,
+      gap: Math.round(theme.spacing.xs * tvS),
     },
     modalTitle: {
       ...theme.typography.title.xl,
@@ -695,21 +700,21 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     optionsList: {
       paddingHorizontal: listPadding,
-      paddingVertical: isNarrow ? theme.spacing.lg : theme.spacing['2xl'],
+      paddingVertical: isNarrow ? theme.spacing.lg : Math.round(theme.spacing['2xl'] * tvS),
     },
     optionItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingVertical: itemPadding,
-      paddingHorizontal: isNarrow ? theme.spacing.md : theme.spacing.xl,
-      borderRadius: theme.radius.md,
+      paddingHorizontal: isNarrow ? theme.spacing.md : Math.round(theme.spacing.xl * tvS),
+      borderRadius: Math.round(theme.radius.md * tvS),
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
-      gap: isNarrow ? theme.spacing.md : theme.spacing.lg,
+      gap: isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS),
       marginHorizontal: itemMarginHorizontal,
-      marginBottom: theme.spacing.md,
+      marginBottom: Math.round(theme.spacing.md * tvS),
     },
     optionItemFocused: {
       backgroundColor: theme.colors.accent.primary,
@@ -731,6 +736,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.lg,
       color: theme.colors.text.primary,
       fontWeight: '600',
+      ...(Platform.isTV ? { fontSize: theme.typography.body.lg.fontSize } : null),
     },
     optionLabelFocused: {
       color: theme.colors.text.inverse,
@@ -757,9 +763,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.inverse,
     },
     optionStatusBadge: {
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.xs,
-      borderRadius: theme.radius.sm,
+      paddingHorizontal: Math.round(theme.spacing.md * tvS),
+      paddingVertical: Math.round(theme.spacing.xs * tvS),
+      borderRadius: Math.round(theme.radius.sm * tvS),
       backgroundColor: 'rgba(0, 0, 0, 0.3)',
     },
     optionStatusBadgeFocused: {
@@ -788,18 +794,18 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       flexDirection: 'row',
       flexWrap: 'wrap',
       paddingHorizontal: horizontalPadding,
-      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
+      paddingVertical: isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS),
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: theme.spacing.md,
+      gap: Math.round(theme.spacing.md * tvS),
     },
     closeButton: {
-      minWidth: isNarrow ? 100 : 150,
-      paddingHorizontal: isNarrow ? theme.spacing.lg : theme.spacing.xl,
-      paddingVertical: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      minWidth: isNarrow ? 100 : Math.round(150 * tvS),
+      paddingHorizontal: isNarrow ? theme.spacing.lg : Math.round(theme.spacing.xl * tvS),
+      paddingVertical: Math.round(theme.spacing.md * tvS),
+      borderRadius: Math.round(theme.radius.md * tvS),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.surface,
@@ -816,6 +822,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
+      ...(Platform.isTV ? { fontSize: theme.typography.body.md.fontSize } : null),
     },
     closeButtonTextFocused: {
       color: theme.colors.text.inverse,
