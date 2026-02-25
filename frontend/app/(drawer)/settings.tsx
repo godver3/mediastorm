@@ -55,6 +55,7 @@ import { APP_VERSION } from '@/version';
 import { Stack, router } from 'expo-router';
 import { useKonamiCode, KONAMI_SEQUENCE } from '@/hooks/useKonamiCode';
 import { SpaceShooterGame } from '@/components/SpaceShooterGame';
+import { DPad } from '@/components/DPad';
 
 // expo-updates may not be available in all builds (e.g., development builds without it)
 // Use a getter to lazily load the module only when actually accessed
@@ -783,7 +784,7 @@ function SettingsScreen() {
   // Easter egg: Konami code activates space shooter game
   const [showSpaceShooter, setShowSpaceShooter] = useState(false);
   const KONAMI_DEBUG = false; // Set to true to show debug overlay
-  const { onTouchStart, onTouchEnd, debugInfo } = useKonamiCode(() => {
+  const { handleInput, debugInfo } = useKonamiCode(() => {
     setShowSpaceShooter(true);
   }, KONAMI_DEBUG);
 
@@ -1892,7 +1893,7 @@ function SettingsScreen() {
         )}
         {/* Mobile Layout: ScrollView with all content */}
         {!Platform.isTV && (
-          <View style={styles.mobileContainer} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          <View style={styles.mobileContainer}>
             <ScrollView
               style={styles.container}
               contentContainerStyle={styles.contentContainer}
@@ -2096,6 +2097,7 @@ function SettingsScreen() {
                 </View>
               )}
 
+              <DPad onInput={handleInput} />
             </ScrollView>
           </View>
         )}

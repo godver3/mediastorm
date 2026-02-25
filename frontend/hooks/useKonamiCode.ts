@@ -151,6 +151,7 @@ export function useKonamiCode(onActivate: () => void, debug = false) {
   return {
     onTouchStart,
     onTouchEnd,
+    handleInput: checkInput,
     resetSequence,
     debugInfo,
   };
