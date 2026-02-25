@@ -97,7 +97,7 @@ const HERO_PLACEHOLDER: HeroContent = {
 };
 
 const EXPLORE_CARD_ID_PREFIX = '__explore__';
-const MAX_SHELF_ITEMS_ON_HOME = 20;
+const MAX_SHELF_ITEMS_ON_HOME = 14;
 
 // Simple hash function for seeded randomness
 function simpleHash(str: string): number {
@@ -3180,7 +3180,7 @@ const ShelfCardContent = React.memo(
                 />
               ))}
             </View>
-            <View style={isLandscape ? styles.landscapeCardTextContainer : [styles.cardTextContainer, { position: 'absolute', bottom: 0, left: 0, right: 0 }]}>
+            <View style={isLandscape ? styles.landscapeCardTextContainer : [styles.cardTextContainer, { position: 'absolute', bottom: isAndroidTV ? -4 : 0, left: 0, right: 0 }]}>
               <LinearGradient
                 pointerEvents="none"
                 colors={isAndroidTV ? GRADIENT_COLORS_ANDROID_TV : GRADIENT_COLORS_DEFAULT}
@@ -3516,7 +3516,7 @@ function VirtualizedShelf({
             data={cards}
             renderItem={renderItem}
             itemSize={itemSize}
-            additionalItemsRendered={4}
+            additionalItemsRendered={2}
             orientation="horizontal"
             scrollDuration={300}
           />
@@ -3901,7 +3901,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
     cardTextContainer: {
       position: 'absolute',
-      bottom: 0,
+      bottom: isAndroidTV ? -4 : 0,
       left: 0,
       right: 0,
       padding: theme.spacing.md,
@@ -3996,7 +3996,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
     landscapeCardTextContainer: {
       position: 'absolute',
-      bottom: 0,
+      bottom: isAndroidTV ? -4 : 0,
       left: 0,
       right: 0,
       padding: theme.spacing.md,

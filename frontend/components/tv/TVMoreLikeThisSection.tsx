@@ -128,7 +128,7 @@ const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
               data={titlesToShow}
               renderItem={renderTitleCard}
               itemSize={CARD_WIDTH + CARD_GAP}
-              additionalItemsRendered={4}
+              additionalItemsRendered={2}
               orientation="horizontal"
               scrollDuration={300}
             />

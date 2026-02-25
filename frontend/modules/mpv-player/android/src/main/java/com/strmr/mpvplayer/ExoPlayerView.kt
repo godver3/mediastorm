@@ -1,9 +1,14 @@
 package com.strmr.mpvplayer
 
+import android.app.ActivityManager
+import android.content.ComponentCallbacks2
+import android.content.Context
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.FrameLayout
@@ -15,11 +20,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.facebook.react.bridge.Arguments
@@ -38,12 +45,19 @@ import com.facebook.react.uimanager.ThemedReactContext
 class ExoPlayerView(
     context: ThemedReactContext,
     private val eventEmitter: (String, WritableMap?) -> Unit
-) : FrameLayout(context), PlayerViewDelegate {
+) : FrameLayout(context), PlayerViewDelegate, ComponentCallbacks2 {
 
     companion object {
         private const val TAG = "ExoPlayerView"
         private const val PROGRESS_INTERVAL_MS = 500L
+
+        // Memory tier thresholds — match MpvPlayerView
+        private const val LOW_RAM_THRESHOLD_MB = 2048L   // <= 2 GB
+        private const val MID_RAM_THRESHOLD_MB = 3072L   // <= 3 GB
     }
+
+    private val isLowRamDevice: Boolean
+    private val totalMb: Long
 
     override var isHDR: Boolean = false
 
@@ -80,6 +94,11 @@ class ExoPlayerView(
 
     // Auth headers for HTTP requests
     private var currentHeaders: Map<String, String>? = null
+
+    // Video aspect ratio — used to letterbox the SurfaceView
+    private var videoWidth = 0
+    private var videoHeight = 0
+    private var videoPixelRatio = 1f
 
     // External subtitle URL
     private var pendingExternalSubUrl: String? = null
@@ -124,10 +143,95 @@ class ExoPlayerView(
     }
 
     init {
+        // Detect device memory — match MpvPlayerView's tiered approach
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(memInfo)
+        totalMb = memInfo.totalMem / (1024 * 1024)
+        isLowRamDevice = am.isLowRamDevice || totalMb <= LOW_RAM_THRESHOLD_MB
+
         // Tag identically to mpv so PipManagerModule can find it
         surfaceView.tag = "mpv_player_surface"
         surfaceView.holder.addCallback(surfaceCallback)
-        addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
+            gravity = Gravity.CENTER
+        })
+
+        // Register for system memory pressure callbacks
+        context.applicationContext.registerComponentCallbacks(this)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Recalculate SurfaceView size when container resizes
+        if (videoWidth > 0 && videoHeight > 0) {
+            updateSurfaceSize()
+        }
+    }
+
+    /**
+     * Resize the SurfaceView to maintain the video's aspect ratio within this container,
+     * centered with letterboxing (black bars).
+     */
+    private fun updateSurfaceSize() {
+        if (videoWidth <= 0 || videoHeight <= 0) return
+        val containerW = width
+        val containerH = height
+        if (containerW <= 0 || containerH <= 0) return
+
+        // Account for non-square pixels (e.g. anamorphic content)
+        val displayWidth = (videoWidth * videoPixelRatio)
+        val videoAspect = displayWidth / videoHeight
+
+        val containerAspect = containerW.toFloat() / containerH
+
+        val (targetW, targetH) = if (videoAspect > containerAspect) {
+            // Video is wider than container — fit to width, letterbox top/bottom
+            containerW to (containerW / videoAspect).toInt()
+        } else {
+            // Video is taller than container — fit to height, pillarbox left/right
+            (containerH * videoAspect).toInt() to containerH
+        }
+
+        val lp = surfaceView.layoutParams as LayoutParams
+        lp.width = targetW
+        lp.height = targetH
+        lp.gravity = Gravity.CENTER
+        surfaceView.layoutParams = lp
+
+        Log.d(TAG, "Surface resized: ${targetW}x${targetH} (video=${videoWidth}x${videoHeight}, container=${containerW}x${containerH})")
+    }
+
+    /**
+     * Build a LoadControl with buffer limits tuned to device RAM.
+     * DV content is high bitrate — default 50s buffer can easily exhaust
+     * low-RAM devices like Fire Stick.
+     */
+    private fun buildLoadControl(): DefaultLoadControl {
+        val (minBufferMs, maxBufferMs, backBufferMs) = when {
+            isLowRamDevice -> {
+                Log.d(TAG, "Low-RAM device (${totalMb}MB) — tight buffer limits")
+                Triple(5_000, 15_000, 0)
+            }
+            totalMb <= MID_RAM_THRESHOLD_MB -> {
+                Log.d(TAG, "Mid-RAM device (${totalMb}MB) — moderate buffer limits")
+                Triple(10_000, 30_000, 10_000)
+            }
+            else -> {
+                Log.d(TAG, "High-RAM device (${totalMb}MB) — standard buffer limits")
+                Triple(15_000, 50_000, 30_000)
+            }
+        }
+
+        return DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                minBufferMs,
+                maxBufferMs,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+            )
+            .setBackBuffer(backBufferMs, false)
+            .build()
     }
 
     private fun initializePlayer(uri: String, headers: Map<String, String>?) {
@@ -165,9 +269,12 @@ class ExoPlayerView(
 
         val mediaSourceFactory = DefaultMediaSourceFactory(httpFactory)
 
+        val loadControl = buildLoadControl()
+
         player = ExoPlayer.Builder(ctx, renderersFactory)
             .setTrackSelector(trackSelector!!)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .build()
             .also { exo ->
                 // Explicitly connect to the surface (not setVideoSurfaceView)
@@ -238,6 +345,14 @@ class ExoPlayerView(
 
         override fun onTracksChanged(tracks: Tracks) {
             buildTrackList(tracks)
+        }
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            videoWidth = videoSize.width
+            videoHeight = videoSize.height
+            videoPixelRatio = videoSize.pixelWidthHeightRatio
+            Log.d(TAG, "Video size: ${videoWidth}x${videoHeight}, pixelRatio=$videoPixelRatio")
+            updateSurfaceSize()
         }
 
         override fun onCues(cueGroup: CueGroup) {
@@ -420,6 +535,9 @@ class ExoPlayerView(
         Log.d(TAG, "Destroying ExoPlayerView")
         stopProgressTimer()
         surfaceView.holder.removeCallback(surfaceCallback)
+        try {
+            context.applicationContext.unregisterComponentCallbacks(this)
+        } catch (_: Exception) {}
         releasePlayer()
     }
 
@@ -593,5 +711,32 @@ class ExoPlayerView(
             putString("message", "[ExoPlayer-DV] $message")
         }
         emitEvent("onDebugLog", data)
+    }
+
+    // ========== ComponentCallbacks2 (memory pressure) ==========
+
+    override fun onTrimMemory(level: Int) {
+        if (destroyed) return
+        // Log memory pressure but do NOT pause playback — on low-RAM Android TV devices,
+        // CRITICAL trim callbacks fire during normal 4K DV playback. The tiered
+        // DefaultLoadControl buffer limits (set in buildLoadControl) are the real
+        // OOM protection. Pausing here would prevent video from ever playing.
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
+                Log.w(TAG, "CRITICAL memory pressure (level=$level) — LoadControl buffer limits active")
+                emitDebugLog("Memory pressure CRITICAL (level=$level), buffer limits active")
+            }
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                Log.w(TAG, "Low memory pressure (level=$level)")
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        // Required by ComponentCallbacks2, no action needed
+    }
+
+    override fun onLowMemory() {
+        onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL)
     }
 }

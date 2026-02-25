@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import {
@@ -119,6 +119,7 @@ const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles>
 export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info, onClose }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   // Build display values
   const mediaTitle = useMemo(() => {
@@ -288,6 +289,30 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     tvScrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
   }, []);
 
+  // TV: measure component position so overlay can cover the full screen.
+  // Renders invisible (opacity 0) first, measures, then shows at correct position.
+  const tvOverlayRef = useRef<View>(null);
+  const [tvOverlayReady, setTvOverlayReady] = useState(false);
+  const [tvOffset, setTvOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (Platform.isTV && visible) {
+      setTvOverlayReady(false);
+      requestAnimationFrame(() => {
+        tvOverlayRef.current?.measureInWindow((x, y) => {
+          if (x !== undefined && y !== undefined) {
+            setTvOffset({ x, y });
+          }
+          setTvOverlayReady(true);
+        });
+      });
+    }
+    if (!visible) {
+      setTvOverlayReady(false);
+      setTvOffset({ x: 0, y: 0 });
+    }
+  }, [visible]);
+
   if (!visible) {
     return null;
   }
@@ -447,11 +472,23 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     </View>
   );
 
-  // TV: pseudo-modal (no native Modal window) — avoids nested Modal focus issues
+  // TV: pseudo-modal (no native Modal window) — avoids nested Modal focus issues.
+  // Renders invisible first, measures position, then shows at correct full-screen offset.
   if (Platform.isTV) {
     return (
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        <SpatialNavigationRoot isActive={visible}>
+      <View
+        ref={tvOverlayRef}
+        style={{
+          position: 'absolute',
+          top: -tvOffset.y,
+          left: -tvOffset.x,
+          width: screenWidth,
+          height: screenHeight,
+          zIndex: 1000,
+          opacity: tvOverlayReady ? 1 : 0,
+        }}
+        pointerEvents={tvOverlayReady ? 'auto' : 'none'}>
+        <SpatialNavigationRoot isActive={visible && tvOverlayReady}>
           <View style={styles.overlay}>
             <Pressable
               style={styles.backdrop}

@@ -105,6 +105,7 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
           ref={ref}
           {...restProps}
           disabled={disabled || loading}
+          focusable={disabled ? false : undefined}
           onPress={onSelect}
           onFocus={onFocus}
           android_disableSound

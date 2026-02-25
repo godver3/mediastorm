@@ -8,11 +8,12 @@ import { tvScale } from '@/theme/tokens/tvScale';
 interface GoBackButtonProps {
   onSelect: () => void;
   onFocus?: () => void;
+  disabled?: boolean;
 }
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
-const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
+const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus, disabled }) => {
   const theme = useTheme();
   const styles = useMemo(() => useExitButtonStyles(theme), [theme]);
 
@@ -22,6 +23,8 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
       <Pressable
         onPress={onSelect}
         onFocus={onFocus}
+        disabled={disabled}
+        focusable={disabled ? false : undefined}
         android_disableSound
         style={({ focused }) => [styles.exitBtn, styles.androidTvButton, focused && styles.androidTvButtonFocused]}>
         {({ focused }) => (
@@ -38,6 +41,7 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus }) => {
       focusKey="exit-button"
       onSelect={onSelect}
       onFocus={onFocus}
+      disabled={disabled}
       style={styles.exitBtn}
     />
   );

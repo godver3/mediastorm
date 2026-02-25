@@ -156,7 +156,7 @@ const TVCastSection = memo(function TVCastSection({
               data={castToShow}
               renderItem={renderCastCard}
               itemSize={CARD_WIDTH + CARD_GAP}
-              additionalItemsRendered={4}
+              additionalItemsRendered={2}
               orientation="horizontal"
               scrollDuration={300}
             />

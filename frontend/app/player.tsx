@@ -6458,7 +6458,7 @@ export default function PlayerScreen() {
                         pointerEvents="box-none"
                         renderToHardwareTextureAndroid={true}>
                         <View style={styles.overlayTopRow} pointerEvents="box-none">
-                          <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
+                          <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen} />
                           <MediaInfoDisplay
                             mediaType={mediaType}
                             title={title || ''}
@@ -6585,7 +6585,7 @@ export default function PlayerScreen() {
                     ]}
                     pointerEvents="box-none">
                     <View style={styles.overlayTopRow} pointerEvents="box-none">
-                      <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} />
+                      <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen} />
                       <MediaInfoDisplay
                         mediaType={mediaType}
                         title={title || ''}

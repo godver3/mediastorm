@@ -1692,6 +1692,42 @@ export default function DetailsScreen() {
     [trailersHook.dismissTrailerAutoPlay, scrollToSection],
   );
 
+  // Stable focus-area callbacks — prevents TVActionButton/TVCastSection/TVMoreLikeThisSection memo() defeats
+  const handleActionsFocus = useCallback(() => handleTVFocusAreaChange('actions'), [handleTVFocusAreaChange]);
+  const handleCastFocus = useCallback(() => handleTVFocusAreaChange('cast'), [handleTVFocusAreaChange]);
+  const handleSimilarFocus = useCallback(() => handleTVFocusAreaChange('similar'), [handleTVFocusAreaChange]);
+  const handleActionsFocusDismissTrailer = useCallback(() => {
+    handleTVFocusAreaChange('actions');
+    trailersHook.dismissTrailerAutoPlay();
+  }, [handleTVFocusAreaChange, trailersHook.dismissTrailerAutoPlay]);
+
+  // Stable TVTrailerBackdrop callbacks — prevents re-render on every DetailsScreen commit
+  const handleTrailerBackdropEnd = useCallback(() => {
+    trailersHook.setIsBackdropTrailerPlaying(false);
+    trailersHook.setIsTrailerImmersiveMode(false);
+  }, [trailersHook.setIsBackdropTrailerPlaying, trailersHook.setIsTrailerImmersiveMode]);
+
+  const handleTrailerBackdropError = useCallback(() => {
+    trailersHook.setIsBackdropTrailerPlaying(false);
+    trailersHook.setIsTrailerImmersiveMode(false);
+  }, [trailersHook.setIsBackdropTrailerPlaying, trailersHook.setIsTrailerImmersiveMode]);
+
+  // Stable modal-open callbacks
+  const handleOpenSeasonSelector = useCallback(() => {
+    trailersHook.dismissTrailerAutoPlay();
+    setSeasonSelectorVisible(true);
+  }, [trailersHook.dismissTrailerAutoPlay]);
+  const handleOpenMoreOptions = useCallback(() => setMoreOptionsVisible(true), []);
+  const handleEnterImmersiveMode = useCallback(() => trailersHook.setIsTrailerImmersiveMode(true), [trailersHook.setIsTrailerImmersiveMode]);
+
+  // Memoized badge for play button — avoids recreating on every render
+  const playBadge = useMemo(() => {
+    if (isSeries) {
+      return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined;
+    }
+    return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
+  }, [isSeries, activeEpisode, nextUpEpisode, movieDetails?.homeRelease, movieDetails?.theatricalRelease]);
+
   // On Android TV (low-RAM devices), unmount heavy content when the player is active
   const isAndroidTV = Platform.OS === 'android' && Platform.isTV;
 
@@ -1967,61 +2003,53 @@ export default function DetailsScreen() {
               <TVActionButton
                 icon="play"
                 onSelect={playback.handleWatchNow}
-                onFocus={() => handleTVFocusAreaChange('actions')}
+                onFocus={handleActionsFocus}
                 disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
                 loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
                 showReadyPip={playback.prequeueReady}
-                badge={(() => {
-                  if (isSeries) {
-                    return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined;
-                  }
-                  return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-                })()}
+                badge={playBadge}
                 variant="primary"
                 autoFocus
               />
               <TVActionButton
                 icon="search"
                 onSelect={manualSelect.handleManualSelect}
-                onFocus={() => handleTVFocusAreaChange('actions')}
+                onFocus={handleActionsFocus}
                 disabled={isSeries && episodeManager.episodesLoading}
               />
               {shouldShowDebugPlayerButton && (
                 <TVActionButton
                   icon="bug"
                   onSelect={playback.handleLaunchDebugPlayer}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onFocus={handleActionsFocus}
                   disabled={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
                 />
               )}
               {isSeries && (
                 <TVActionButton
                   icon="list"
-                  onSelect={() => {
-                    trailersHook.dismissTrailerAutoPlay();
-                    setSeasonSelectorVisible(true);
-                  }}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onSelect={handleOpenSeasonSelector}
+                  onFocus={handleActionsFocus}
                 />
               )}
               {(isSeries || isInContinueWatching) && (
                 <TVActionButton
                   icon="ellipsis-vertical"
-                  onSelect={() => setMoreOptionsVisible(true)}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onSelect={handleOpenMoreOptions}
+                  onFocus={handleActionsFocus}
                 />
               )}
               <TVActionButton
                 icon={watchActions.isWatchlisted ? 'bookmark' : 'bookmark-outline'}
                 onSelect={watchActions.handleToggleWatchlist}
-                onFocus={() => handleTVFocusAreaChange('actions')}
+                onFocus={handleActionsFocus}
                 loading={watchActions.watchlistBusy}
                 disabled={!watchActions.canToggleWatchlist || watchActions.watchlistBusy}
               />
               <TVActionButton
                 icon={watchActions.isWatched ? 'eye' : 'eye-outline'}
                 onSelect={watchActions.handleToggleWatched}
-                onFocus={() => handleTVFocusAreaChange('actions')}
+                onFocus={handleActionsFocus}
                 loading={watchActions.watchlistBusy}
                 disabled={watchActions.watchlistBusy}
               />
@@ -2029,7 +2057,7 @@ export default function DetailsScreen() {
                 <TVActionButton
                   icon="videocam"
                   onSelect={handleWatchTrailer}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onFocus={handleActionsFocus}
                   loading={trailersLoading}
                   disabled={trailerButtonDisabled}
                 />
@@ -2038,14 +2066,14 @@ export default function DetailsScreen() {
                 <TVActionButton
                   icon="albums"
                   onSelect={handleViewCollection}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onFocus={handleActionsFocus}
                 />
               )}
               {showTrailerFullscreen && (
                 <TVActionButton
                   icon="expand"
-                  onSelect={() => trailersHook.setIsTrailerImmersiveMode(true)}
-                  onFocus={() => handleTVFocusAreaChange('actions')}
+                  onSelect={handleEnterImmersiveMode}
+                  onFocus={handleActionsFocus}
                 />
               )}
               {displayProgress !== null && displayProgress > 0 && !activeEpisode && (
@@ -2069,12 +2097,7 @@ export default function DetailsScreen() {
               loading={playback.isResolving || (isSeries && episodeManager.episodesLoading)}
               style={useCompactActionLayout ? styles.iconActionButton : styles.primaryActionButton}
               showReadyPip={playback.prequeueReady}
-              badge={(() => {
-                if (isSeries) {
-                  return isEpisodeUnreleased((activeEpisode || nextUpEpisode)?.airedDate, (activeEpisode || nextUpEpisode)?.airedDateTimeUTC) ? 'unreleased' : undefined;
-                }
-                return isMovieUnreleased(movieDetails?.homeRelease, movieDetails?.theatricalRelease) ? 'unreleased' : undefined;
-              })()}
+              badge={playBadge}
             />
             <FocusablePressable
               focusKey="manual-select"
@@ -2239,7 +2262,7 @@ export default function DetailsScreen() {
                         Platform.isTV ? (
                           <SpatialNavigationFocusableView
                             onSelect={() => playback.setShowAudioTrackModal(true)}
-                            onFocus={() => { handleTVFocusAreaChange('actions'); trailersHook.dismissTrailerAutoPlay(); }}>
+                            onFocus={handleActionsFocusDismissTrailer}>
                             {({ isFocused }: { isFocused: boolean }) => (
                               <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
                                 <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
@@ -2318,7 +2341,7 @@ export default function DetailsScreen() {
                         Platform.isTV ? (
                           <SpatialNavigationFocusableView
                             onSelect={() => playback.setShowSubtitleTrackModal(true)}
-                            onFocus={() => { handleTVFocusAreaChange('actions'); trailersHook.dismissTrailerAutoPlay(); }}>
+                            onFocus={handleActionsFocusDismissTrailer}>
                             {({ isFocused }: { isFocused: boolean }) => (
                               <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
                                 <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
@@ -2403,7 +2426,7 @@ export default function DetailsScreen() {
               credits={credits}
               isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
               maxCast={10}
-              onFocus={() => handleTVFocusAreaChange('cast')}
+              onFocus={handleCastFocus}
               compactMargin
               onCastMemberPress={isKidsProfile ? undefined : handleCastMemberPress}
             />
@@ -2416,7 +2439,7 @@ export default function DetailsScreen() {
               titles={similarContent}
               isLoading={similarLoading}
               maxTitles={20}
-              onFocus={() => handleTVFocusAreaChange('similar')}
+              onFocus={handleSimilarFocus}
               onTitlePress={isKidsProfile ? undefined : handleSimilarTitlePress}
             />
           </View>
@@ -2763,14 +2786,8 @@ export default function DetailsScreen() {
                         trailerStreamUrl={trailersHook.trailerStreamUrl}
                         isPlaying={trailersHook.isBackdropTrailerPlaying}
                         isImmersive={trailersHook.isTrailerImmersiveMode}
-                        onEnd={() => {
-                          trailersHook.setIsBackdropTrailerPlaying(false);
-                          trailersHook.setIsTrailerImmersiveMode(false);
-                        }}
-                        onError={() => {
-                          trailersHook.setIsBackdropTrailerPlaying(false);
-                          trailersHook.setIsTrailerImmersiveMode(false);
-                        }}
+                        onEnd={handleTrailerBackdropEnd}
+                        onError={handleTrailerBackdropError}
                       />
                     ) : (
                       <Animated.View

@@ -445,6 +445,7 @@ const Controls: React.FC<ControlsProps> = ({
             isMobile && styles.bottomControlsMobile,
             isMobile && isLandscape && styles.bottomControlsMobileLandscape,
           ]}
+          pointerEvents={activeMenu !== null ? 'none' : 'auto'}
           renderToHardwareTextureAndroid={isTvPlatform}>
           {!isLiveTV && (
             <SpatialNavigationNode orientation="horizontal">
@@ -458,7 +459,7 @@ const Controls: React.FC<ControlsProps> = ({
                         onSelect={onPlayPause}
                         onFocus={handlePlayPauseFocus}
                         style={styles.controlButton}
-                        disabled={isSeeking}
+                        disabled={isSeeking || activeMenu !== null}
                       />
                     </DefaultFocus>
                     {onSkipBackward && (
@@ -469,7 +470,7 @@ const Controls: React.FC<ControlsProps> = ({
                           onSelect={onSkipBackward}
                           onFocus={handleSkipBackFocus}
                           style={styles.controlButton}
-                          disabled={isSeeking}
+                          disabled={isSeeking || activeMenu !== null}
                         />
                         <Text style={styles.tvSkipLabel}>{seekBackwardSeconds}s</Text>
                       </View>
@@ -482,7 +483,7 @@ const Controls: React.FC<ControlsProps> = ({
                           onSelect={onSkipForward}
                           onFocus={handleSkipForwardFocus}
                           style={styles.controlButton}
-                          disabled={isSeeking}
+                          disabled={isSeeking || activeMenu !== null}
                         />
                         <Text style={styles.tvSkipLabel}>{seekForwardSeconds}s</Text>
                       </View>
@@ -509,7 +510,7 @@ const Controls: React.FC<ControlsProps> = ({
                       onSelect={onToggleFullscreen}
                       onFocus={handleFullscreenFocus}
                       style={styles.controlButton}
-                      disabled={isSeeking}
+                      disabled={isSeeking || activeMenu !== null}
                     />
                   )}
                 </View>
