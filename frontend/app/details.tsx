@@ -1848,7 +1848,8 @@ export default function DetailsScreen() {
   // Spatial navigation: disable when any modal with its own SpatialNavigationRoot is open
   const isSpatialNavActive = isDetailsPageActive && !seasonSelectorVisible && !trailerModalVisible
     && !playback.resumeModalVisible && !watchActions.bulkWatchModalVisible
-    && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible;
+    && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible
+    && !playback.showAudioTrackModal && !playback.showSubtitleTrackModal;
 
 
 

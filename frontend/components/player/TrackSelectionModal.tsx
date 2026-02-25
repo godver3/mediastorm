@@ -592,7 +592,9 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         transparent
         onRequestClose={handleClose}
         hardwareAccelerated>
-        {modalContent}
+        <SpatialNavigationRoot isActive={visible}>
+          {modalContent}
+        </SpatialNavigationRoot>
       </Modal>
     );
   }
