@@ -1625,6 +1625,16 @@ export default function DetailsScreen() {
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
 
+  // Invalidate cached section positions when track buttons appear/disappear,
+  // since the extra height shifts everything below.
+  const tvTrackCount = (playback.prequeueDisplayInfo?.audioTracks?.length ?? 0) +
+    (playback.prequeueDisplayInfo?.subtitleTracks?.length ?? 0);
+  useEffect(() => {
+    if (Platform.isTV) {
+      sectionPositionsRef.current = {};
+    }
+  }, [tvTrackCount]);
+
   // Scroll-down hint — pulses gently when visible
   const tvScrollIndicatorVisible = useSharedValue(1);
   const tvScrollIndicatorPulse = useSharedValue(1);
@@ -2279,48 +2289,9 @@ export default function DetailsScreen() {
                    !playback.prequeueDisplayInfo.audioTracks?.length && (
                     <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
                   )}
-                  {(playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
-                    <SpatialNavigationNode orientation="horizontal">
+                  {!Platform.isTV && (playback.prequeueDisplayInfo.audioTracks?.length || playback.prequeueDisplayInfo.subtitleTracks?.length) ? (
                     <View style={styles.prequeueTrackRow}>
                       {playback.prequeueDisplayInfo.audioTracks && playback.prequeueDisplayInfo.audioTracks.length > 0 && (
-                        Platform.isTV ? (
-                          <SpatialNavigationFocusableView
-                            onSelect={() => playback.setShowAudioTrackModal(true)}
-                            onFocus={handleActionsFocusDismissTrailer}>
-                            {({ isFocused }: { isFocused: boolean }) => (
-                              <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                                <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                                <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
-                                  {(() => {
-                                    const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
-                                    const track = selectedIdx !== undefined && selectedIdx >= 0
-                                      ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
-                                      : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                                    if (!track) return 'Default';
-                                    return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                                  })()}
-                                </Text>
-                                {(() => {
-                                  const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
-                                  const track = selectedIdx !== undefined && selectedIdx >= 0
-                                    ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
-                                    : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                                  if (track?.codec) {
-                                    return (
-                                      <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                                        {track.codec.toUpperCase()}
-                                      </Text>
-                                    );
-                                  }
-                                  return null;
-                                })()}
-                                {playback.prequeueDisplayInfo!.audioTracks!.length > 1 && (
-                                  <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
-                                )}
-                              </View>
-                            )}
-                          </SpatialNavigationFocusableView>
-                        ) : (
                           <Pressable
                             onPress={() => playback.setShowAudioTrackModal(true)}
                             onFocus={() => trailersHook.dismissTrailerAutoPlay()}
@@ -2356,33 +2327,11 @@ export default function DetailsScreen() {
                               <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
                             )}
                           </Pressable>
-                        )
                       )}
                       {(playback.prequeueDisplayInfo.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo.subtitleTracks?.length ?? 0) > 0 && (
                         <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>
                       )}
                       {playback.prequeueDisplayInfo.subtitleTracks && playback.prequeueDisplayInfo.subtitleTracks.length > 0 && (
-                        Platform.isTV ? (
-                          <SpatialNavigationFocusableView
-                            onSelect={() => playback.setShowSubtitleTrackModal(true)}
-                            onFocus={handleActionsFocusDismissTrailer}>
-                            {({ isFocused }: { isFocused: boolean }) => (
-                              <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                                <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                                <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
-                                  {(() => {
-                                    const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
-                                    if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                                    const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
-                                    if (!track) return 'Off';
-                                    return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                                  })()}
-                                </Text>
-                                <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
-                              </View>
-                            )}
-                          </SpatialNavigationFocusableView>
-                        ) : (
                           <Pressable
                             onPress={() => playback.setShowSubtitleTrackModal(true)}
                             onFocus={() => trailersHook.dismissTrailerAutoPlay()}
@@ -2400,21 +2349,90 @@ export default function DetailsScreen() {
                             </Text>
                             <Ionicons name="chevron-forward" size={12 * tvScale} color={theme.colors.text.muted} />
                           </Pressable>
-                        )
                       )}
                     </View>
-                    </SpatialNavigationNode>
                   ) : null}
                 </>
               )}
             </>
           )}
         </Animated.View>
-        {/* TV sections below tracks — keyed so they re-register in the LRUD tree
-            AFTER track focusables mount, fixing directional navigation order.
-            Only the sections remount (not the scroll view), so no scroll position reset. */}
-        <React.Fragment key={isTV ? ((playback.prequeueDisplayInfo?.audioTracks?.length ?? 0) > 0 ||
-          (playback.prequeueDisplayInfo?.subtitleTracks?.length ?? 0) > 0 ? 'with-tracks' : 'base') : undefined}>
+        {/* TV track selection — SpatialNavigationNode always mounted so it registers
+            in the LRUD tree before episodes/cast/similar. LRUD skips it when empty;
+            focusable children appear when prequeue tracks load. No key-based remounting
+            needed, so no scroll/focus disruption. */}
+        {Platform.isTV && (
+          <SpatialNavigationNode orientation="horizontal">
+            {(playback.prequeueDisplayInfo?.audioTracks?.length || playback.prequeueDisplayInfo?.subtitleTracks?.length) ? (
+              <View style={styles.tvTrackSelectionContainer}>
+                {playback.prequeueDisplayInfo!.audioTracks && playback.prequeueDisplayInfo!.audioTracks.length > 0 && (
+                  <SpatialNavigationFocusableView
+                    onSelect={() => playback.setShowAudioTrackModal(true)}
+                    onFocus={handleActionsFocusDismissTrailer}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                        <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                        <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                          {(() => {
+                            const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                            const track = selectedIdx !== undefined && selectedIdx >= 0
+                              ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                              : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                            if (!track) return 'Default';
+                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                          })()}
+                        </Text>
+                        {(() => {
+                          const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                          const track = selectedIdx !== undefined && selectedIdx >= 0
+                            ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                            : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                          if (track?.codec) {
+                            return (
+                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                {track.codec.toUpperCase()}
+                              </Text>
+                            );
+                          }
+                          return null;
+                        })()}
+                        {playback.prequeueDisplayInfo!.audioTracks!.length > 1 && (
+                          <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                        )}
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+                {(playback.prequeueDisplayInfo!.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo!.subtitleTracks?.length ?? 0) > 0 && (
+                  <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>
+                )}
+                {playback.prequeueDisplayInfo!.subtitleTracks && playback.prequeueDisplayInfo!.subtitleTracks.length > 0 && (
+                  <SpatialNavigationFocusableView
+                    onSelect={() => playback.setShowSubtitleTrackModal(true)}
+                    onFocus={handleActionsFocusDismissTrailer}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                        <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                        <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                          {(() => {
+                            const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
+                            if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                            const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
+                            if (!track) return 'Off';
+                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                          })()}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                )}
+              </View>
+            ) : (
+              <View style={styles.tvTrackSelectionPlaceholder} />
+            )}
+          </SpatialNavigationNode>
+        )}
         {/* TV Episode Carousel */}
         {Platform.isTV && isSeries && (
           <View ref={(ref) => { sectionRefs.current['episodes'] = ref; sectionRefs.current['seasons'] = ref; }} style={{ minHeight: Math.round(tvScale * 416) }}>
@@ -2474,7 +2492,6 @@ export default function DetailsScreen() {
             />
           </View>
         )}
-        </React.Fragment>
         {!Platform.isTV && activeEpisode && (
           <View style={styles.episodeCardContainer}>
             <EpisodeCard episode={activeEpisode} percentWatched={displayProgress} />

@@ -365,8 +365,8 @@ export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
       marginBottom: isTV ? 0 : 0,
     },
     prequeueInfoMinHeight: {
-      // Reserve enough height for filename + track selection row to prevent layout shift when tracks load
-      minHeight: isTV ? tvScale * 90 : 45,
+      // Reserve enough height for filename to prevent layout shift (TV track buttons are outside this container)
+      minHeight: isTV ? tvScale * 45 : 45,
     },
     prequeueFilename: {
       ...theme.typography.body.sm,
@@ -436,9 +436,18 @@ export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
     },
     tvTrackSelectionContainer: {
       // Match prequeueInfoContainer positioning for TV
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: theme.spacing.sm,
       marginLeft: tvScale * 48,
-      marginTop: -(tvScale * 30), // Pull up into the prequeueInfoMinHeight reserved space
+      marginTop: -(tvScale * 16),
       marginBottom: tvScale * 16, // Space before next section
+    },
+    tvTrackSelectionPlaceholder: {
+      // Same total height as tvTrackSelectionContainer + button row to prevent layout shift
+      marginTop: -(tvScale * 16),
+      marginBottom: tvScale * 16,
+      height: tvScale * 32, // Matches track button row height (paddingVertical + text + icon)
     },
     episodeNavigationRow: {
       flexDirection: 'row',
