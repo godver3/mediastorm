@@ -545,9 +545,11 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: isMobile ? '92%' : isTV ? '90%' : '70%',
-      maxWidth: isMobile ? undefined : isTV ? Math.round(1600 * tvS) : 600,
-      maxHeight: isTV ? '90%' : '85%',
+      width: isMobile ? '95%' : isTV ? '90%' : '85%',
+      maxWidth: isMobile ? 450 : isTV ? Math.round(1800 * tvS) : 1400,
+      minWidth: Math.round(isMobile ? 320 : (isTV ? 1000 * tvS : 600 * tvS)),
+      minHeight: Math.round(isMobile ? 400 : (isTV ? 700 * tvS : 550 * tvS)),
+      maxHeight: Math.round(screenHeight * 0.9),
       backgroundColor: theme.colors.background.elevated,
       borderRadius: isTV ? Math.round(theme.radius.xl * tvS) : theme.radius.xl,
       borderWidth: 2,
@@ -584,7 +586,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
       paddingVertical: Math.round(theme.spacing.xl * tvS),
     },
     tvListContainer: {
-      maxHeight: Math.round(600 * tvS),
+      maxHeight: Math.round(720 * tvS),
       width: '100%',
       overflow: 'hidden',
     },

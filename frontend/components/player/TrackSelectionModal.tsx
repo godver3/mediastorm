@@ -81,7 +81,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
   const tvOptionsHeight = useMemo(() => {
     if (!Platform.isTV) return undefined;
     // Cap at a reasonable portion of the screen
-    return Math.min(Math.round(540 * tvS), screenHeight * 0.5);
+    return Math.min(Math.round(720 * tvS), screenHeight * 0.7);
   }, [screenHeight, tvS]);
 
   // Reset scroll position when modal opens/closes
@@ -283,10 +283,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     if (containerHeight === 0 || contentHeight === 0) return;
 
     // Item spacing (marginBottom)
-    const itemSpacing = Math.round(theme.spacing.md * tvS);
+    const itemSpacing = Platform.isTV ? Math.round(theme.spacing.lg * tvS) : theme.spacing.md;
+    // Vertical padding from optionsList
+    const listPaddingVertical = Math.round(theme.spacing['2xl'] * tvS);
 
     // Calculate cumulative Y position from measured layouts (more robust for TV)
-    let itemY = 0;
+    let itemY = listPaddingVertical;
     for (let i = 0; i < index; i++) {
       const layout = itemLayoutsRef.current[i];
       if (layout) {
@@ -301,7 +303,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     pendingFocusIndexRef.current = null;
 
     const itemHeight = layout.height;
-    const itemBottom = itemY + itemHeight;
+    const itemBottom = itemY + itemHeight + itemSpacing;
 
     const currentScroll = currentScrollRef.current;
     const visibleTop = currentScroll;
@@ -318,6 +320,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     }
 
     const maxScroll = Math.max(0, contentHeight - containerHeight);
+    
+    // For the last item, ensure we scroll to the very end to show bottom padding
+    if (index === options.length - 1 && newScroll > maxScroll - 100 * tvS) {
+      newScroll = maxScroll;
+    }
+    
     newScroll = Math.max(0, Math.min(newScroll, maxScroll));
 
     if (Math.abs(newScroll - currentScroll) > 1) {
@@ -368,10 +376,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     if (containerHeight === 0 || contentHeight === 0) return;
 
     // Item spacing (marginBottom)
-    const itemSpacing = Math.round(theme.spacing.md * tvS);
+    const itemSpacing = Platform.isTV ? Math.round(theme.spacing.lg * tvS) : theme.spacing.md;
+    // Vertical padding from optionsList
+    const listPaddingVertical = Math.round(theme.spacing['2xl'] * tvS);
 
     // Calculate cumulative Y position
-    let itemY = 0;
+    let itemY = listPaddingVertical;
     for (let i = 0; i < index; i++) {
       const layout = itemLayoutsRef.current[i];
       if (layout) {
@@ -383,7 +393,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     if (!layout) return;
 
     const itemHeight = layout.height;
-    const itemBottom = itemY + itemHeight;
+    const itemBottom = itemY + itemHeight + itemSpacing;
 
     const currentScroll = currentScrollRef.current;
     const visibleTop = currentScroll;
@@ -399,6 +409,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     }
 
     const maxScroll = Math.max(0, contentHeight - containerHeight);
+    
+    // For the last item, ensure we scroll to the very end to show bottom padding
+    if (index === options.length - 1 && newScroll > maxScroll - 100 * tvS) {
+      newScroll = maxScroll;
+    }
+    
     newScroll = Math.max(0, Math.min(newScroll, maxScroll));
 
     if (Math.abs(newScroll - currentScroll) > 1) {
@@ -711,8 +727,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
   const tvS = Platform.isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
 
   // Responsive width: fill more on narrow screens
-  const modalWidth = Platform.isTV ? '90%' : (isNarrow ? '95%' : isMedium ? '90%' : '80%');
-  const modalMaxWidth = Platform.isTV ? Math.round(1600 * tvS) : (isNarrow ? 400 : Math.round(1100 * tvS));
+  const modalWidth = Platform.isTV ? '90%' : (isNarrow ? '95%' : isMedium ? '92%' : '85%');
+  const modalMaxWidth = Platform.isTV ? Math.round(1800 * tvS) : (isNarrow ? 450 : Math.round(1400 * tvS));
 
   // Responsive padding - minimize on narrow screens so cards fill width
   const horizontalPadding = isNarrow ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
@@ -735,6 +751,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     modalContainer: {
       width: modalWidth,
       maxWidth: modalMaxWidth,
+      minWidth: Math.round(isNarrow ? 320 : (Platform.isTV ? 1000 * tvS : 600 * tvS)),
+      minHeight: Math.round(isNarrow ? 240 : (Platform.isTV ? 500 * tvS : 400 * tvS)),
       maxHeight: Math.round(screenHeight * 0.9),
       backgroundColor: theme.colors.background.elevated,
       borderRadius: Platform.isTV ? Math.round(theme.radius.xl * tvS) : (isNarrow ? theme.radius.lg : theme.radius.xl),
