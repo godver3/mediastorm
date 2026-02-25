@@ -987,6 +987,12 @@ export default function DetailsScreen() {
     }
   }, [playback.prequeueId]);
 
+  // Disable parallax during trailer playback to reduce GPU load on Android TV
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    tvParallaxEnabled.value = trailersHook.isBackdropTrailerPlaying ? 0 : 1;
+  }, [trailersHook.isBackdropTrailerPlaying]);
+
   // Bridge: don't auto-start trailer when content prequeue is active
   useEffect(() => {
     if (
@@ -1619,19 +1625,10 @@ export default function DetailsScreen() {
   const showTrailerFullscreen = Platform.isTV && autoPlayTrailersTV && trailersHook.isBackdropTrailerPlaying && !trailersHook.isTrailerImmersiveMode;
   const tvScrollY = useSharedValue(0);
 
-  // Scroll-down hint — pulses gently, fades out when focus leaves actions area
-  const scrollIndicatorPulse = useSharedValue(0.3);
-  useEffect(() => {
-    if (!Platform.isTV) return;
-    scrollIndicatorPulse.value = withRepeat(
-      withTiming(0.7, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
-      -1,
-      true,
-    );
-  }, []);
+  // Scroll-down hint — static for now (animations disabled for testing)
   const tvScrollIndicatorVisible = useSharedValue(1);
   const tvScrollIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: scrollIndicatorPulse.value * tvScrollIndicatorVisible.value,
+    opacity: 0.5 * tvScrollIndicatorVisible.value,
   }));
 
   const scrollToSection = useCallback(
@@ -1779,9 +1776,11 @@ export default function DetailsScreen() {
   // Fade in background and content on all platforms
   const backgroundOpacity = useSharedValue(0);
   const contentOpacity = useSharedValue(0);
+  // Disable parallax during trailer playback to reduce GPU load
+  const tvParallaxEnabled = useSharedValue(1);
   const backgroundAnimatedStyle = useAnimatedStyle(() => ({
     opacity: backgroundOpacity.value,
-    ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 }] } : {}),
+    ...(Platform.isTV ? { transform: [{ translateY: -tvScrollY.value * 0.4 * tvParallaxEnabled.value }] } : {}),
   }));
   const contentAnimatedStyle = useAnimatedStyle(() => ({
     opacity: contentOpacity.value,
@@ -2925,6 +2924,16 @@ export default function DetailsScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
+      {/* Android TV focus anchor — details page is outside the drawer layout,
+          so it needs its own native focusable element for D-pad events to flow */}
+      {Platform.OS === 'android' && Platform.isTV && (
+        <Pressable
+          style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+          accessible={false}
+          importantForAccessibility="no"
+          focusable={true}
+        />
+      )}
       {Platform.isTV ? (
         <SpatialNavigationRoot isActive={isSpatialNavActive}>
           {detailsContent}
@@ -3003,8 +3012,9 @@ export default function DetailsScreen() {
         onSeasonSelect={seasonDownloadMode ? handleSeasonDownloadSearch : (isMobile ? handleMobileSeasonSelect : handleSeasonSelectorSelect)}
         theme={theme}
       />
-      {/* More Options Menu */}
-      <Modal transparent visible={moreOptionsVisible} onRequestClose={() => setMoreOptionsVisible(false)} animationType="fade">
+      {/* More Options Menu — only mount when visible to avoid Android TV focus issues */}
+      {moreOptionsVisible && (
+      <Modal transparent visible onRequestClose={() => setMoreOptionsVisible(false)} animationType="fade">
         <SpatialNavigationRoot isActive={moreOptionsVisible}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.85)' }}>
           <View style={styles.moreOptionsModal}>
@@ -3097,6 +3107,7 @@ export default function DetailsScreen() {
           </View>
         </SpatialNavigationRoot>
       </Modal>
+      )}
       <EpisodeSelector
         visible={episodeSelectorVisible}
         onClose={() => setEpisodeSelectorVisible(false)}

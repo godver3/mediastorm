@@ -582,10 +582,12 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   // TV with native Modal: proper focus trapping and back button handling.
   // Used on details page where there's no parent Modal.
+  // Only mount when visible — Android TV focus system breaks with hidden native Modals.
   if (Platform.isTV && useNativeModal) {
+    if (!visible) return null;
     return (
       <Modal
-        visible={visible}
+        visible
         animationType="fade"
         transparent
         onRequestClose={handleClose}
