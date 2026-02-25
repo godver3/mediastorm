@@ -1,0 +1,364 @@
+{{define "title"}}Logs - strmr Admin{{end}}
+
+{{define "content"}}
+<style>
+    .log-entry {
+        display: flex;
+        align-items: flex-start;
+        line-height: 1.4;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        padding: 4px 0;
+    }
+    .log-entry:last-child {
+        border-bottom: none;
+    }
+    .log-prefix {
+        display: flex;
+        flex-shrink: 0;
+        white-space: nowrap;
+        margin-right: 12px;
+        color: var(--text-muted);
+    }
+    .log-time { color: #888; margin-right: 8px; font-size: 0.85em; }
+    .log-level { font-weight: bold; margin-right: 8px; min-width: 45px; display: inline-block; }
+    .log-level.info { color: #00ca00; }
+    .log-level.error { color: #ff3b3b; }
+    .log-level.warn { color: #ffcc00; }
+    .log-level.debug { color: #3b82f6; }
+    .log-source { font-weight: 500; margin-right: 8px; }
+    .log-file { opacity: 0.7; font-style: italic; margin-right: 8px; }
+    .log-msg { color: #eee; flex-grow: 1; word-break: break-all; }
+    .log-hidden { display: none; }
+    
+    .source-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        margin-right: 4px;
+        margin-bottom: 4px;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    .source-tag:hover { opacity: 0.8; }
+    .source-tag.disabled { opacity: 0.3; text-decoration: line-through; }
+    
+    .search-container {
+        position: relative;
+        flex: 1;
+        min-width: 200px;
+    }
+    .search-container svg {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        color: var(--text-muted);
+    }
+    #logSearch {
+        padding-left: 34px;
+    }
+</style>
+
+<div class="page-header">
+    <h1>System Logs</h1>
+    <p>View real-time backend logs with source coloring and filtering</p>
+</div>
+
+<div class="card">
+    <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10 9 9 9 8 9"/>
+                </svg>
+                Backend Logs
+            </h2>
+        </div>
+        
+        <div class="search-container">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="logSearch" class="form-input" placeholder="Search logs..." oninput="filterLogs()">
+        </div>
+
+        <div class="card-header-actions" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <select id="linesCount" class="form-select" style="width: auto; padding: 0.25rem 0.5rem;" onchange="fetchLogs()">
+                <option value="100">100 lines</option>
+                <option value="500" selected>500 lines</option>
+                <option value="1000">1000 lines</option>
+                <option value="2000">2000 lines</option>
+                <option value="5000">5000 lines</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="fetchLogs()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+                Refresh
+            </button>
+            <label class="toggle">
+                <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
+                <span class="toggle-slider"></span>
+                <span style="font-size: 0.875rem; color: var(--text-secondary);">Auto</span>
+            </label>
+        </div>
+    </div>
+    <div style="display: flex; align-items: flex-start; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); padding: 0.5rem 1rem; gap: 12px;">
+        <button class="btn btn-secondary btn-sm" onclick="toggleAllSources()" style="flex-shrink: 0; padding: 2px 8px; font-size: 11px; height: 24px;">Toggle All</button>
+        <div id="sourceLegend" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+            <!-- Sources will be populated here -->
+        </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div id="logContainer" style="background: #0d1117; color: #c9d1d9; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; padding: 1rem; height: calc(100vh - 300px); overflow-y: auto; white-space: pre-wrap; word-break: break-all;">
+            <div style="color: #666;">Loading logs...</div>
+        </div>
+    </div>
+    <div class="card-footer" style="padding: 0.5rem 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between;">
+        <span id="logStats">Lines: 0</span>
+        <span id="filteredStats"></span>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    let autoRefreshInterval = null;
+    let rawLogLines = [];
+    let sources = new Map();
+    const sourceColors = [
+        '#ff7b72', '#ffa657', '#f2cc60', '#7ee787', '#a5d6ff', '#d2a8ff', '#ff7eb6', 
+        '#79c0ff', '#58a6ff', '#1f6feb', '#238636', '#9e6a03', '#8b1c1c', '#6e7681'
+    ];
+    let colorIndex = 0;
+
+    function getSourceColor(source) {
+        if (!sources.has(source)) {
+            sources.set(source, {
+                color: sourceColors[colorIndex % sourceColors.length],
+                enabled: true
+            });
+            colorIndex++;
+            updateLegend();
+        }
+        return sources.get(source).color;
+    }
+
+    function updateLegend() {
+        const legend = document.getElementById('sourceLegend');
+        legend.innerHTML = '';
+        
+        Array.from(sources.keys()).sort().forEach(source => {
+            const data = sources.get(source);
+            const tag = document.createElement('span');
+            tag.className = `source-tag ${data.enabled ? '' : 'disabled'}`;
+            tag.style.backgroundColor = `${data.color}22`;
+            tag.style.border = `1px solid ${data.color}44`;
+            tag.style.color = data.color;
+            tag.textContent = source;
+            tag.onclick = () => {
+                data.enabled = !data.enabled;
+                tag.classList.toggle('disabled');
+                renderLogs();
+            };
+            legend.appendChild(tag);
+        });
+    }
+
+    function parseLogLine(line) {
+        const result = {
+            time: '',
+            level: 'INFO',
+            source: 'system',
+            file: '',
+            message: line,
+            raw: line
+        };
+
+        let workingLine = line;
+
+        // 1. Extract time (e.g., 2026/02/25 10:00:00 or 2026-02-25T10:00:00Z)
+        const timeMatch = workingLine.match(/^(\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/);
+        if (timeMatch) {
+            result.time = timeMatch[1];
+            workingLine = workingLine.substring(timeMatch[1].length).trim();
+        }
+
+        // 2. Extract level (e.g., INFO, level=info, ERROR)
+        const levelMatch = workingLine.match(/^(?:level=)?(INFO|ERROR|WARN|DEBUG|FATAL)/i);
+        if (levelMatch) {
+            result.level = levelMatch[1].toUpperCase();
+            workingLine = workingLine.substring(levelMatch[0].length).trim();
+        }
+
+        // 3. Extract filename:line: prefix if present
+        const filePrefixMatch = workingLine.match(/^([^ ]+\.go:\d+: )/);
+        if (filePrefixMatch) {
+            result.file = filePrefixMatch[1];
+            workingLine = workingLine.substring(filePrefixMatch[1].length).trim();
+        }
+
+        // 4. Extract source (e.g., [source] or source=name)
+        const sourceBracketMatch = workingLine.match(/^\[([^\]]+)\]/);
+        const sourceKeyMatch = workingLine.match(/\bsource=([^ ]+)/);
+        
+        if (sourceBracketMatch) {
+            result.source = sourceBracketMatch[1];
+            result.message = workingLine.substring(sourceBracketMatch[0].length).trim();
+        } else if (sourceKeyMatch) {
+            result.source = sourceKeyMatch[1];
+            result.message = workingLine;
+        } else {
+            result.message = workingLine;
+        }
+
+        // 5. Extract message (e.g., msg="message" or just the rest)
+        const msgMatch = result.message.match(/\bmsg="([^"]+)"/);
+        if (msgMatch) {
+            result.message = msgMatch[1];
+        }
+
+        return result;
+    }
+
+    function toggleAllSources() {
+        const anyDisabled = Array.from(sources.values()).some(s => !s.enabled);
+        const newState = anyDisabled; // If any disabled, enable all. If all enabled, disable all.
+        sources.forEach(s => s.enabled = newState);
+        updateLegend();
+        renderLogs();
+    }
+
+    function renderLogs() {
+        const container = document.getElementById('logContainer');
+        const searchTerm = document.getElementById('logSearch').value.toLowerCase();
+        const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 50;
+        
+        const fragment = document.createDocumentFragment();
+        let visibleCount = 0;
+
+        rawLogLines.forEach(line => {
+            if (!line || line.trim() === '') return;
+            
+            const parsed = parseLogLine(line);
+            const sourceData = sources.get(parsed.source) || { enabled: true };
+            
+            // Filtering
+            const matchesSearch = line.toLowerCase().includes(searchTerm);
+            const matchesSource = sourceData.enabled;
+
+            if (matchesSearch && matchesSource) {
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+                
+                const prefix = document.createElement('div');
+                prefix.className = 'log-prefix';
+
+                if (parsed.time) {
+                    const timeSpan = document.createElement('span');
+                    timeSpan.className = 'log-time';
+                    timeSpan.textContent = parsed.time;
+                    prefix.appendChild(timeSpan);
+                }
+
+                const levelSpan = document.createElement('span');
+                levelSpan.className = `log-level ${parsed.level.toLowerCase()}`;
+                levelSpan.textContent = parsed.level;
+                prefix.appendChild(levelSpan);
+
+                if (parsed.file) {
+                    const fileSpan = document.createElement('span');
+                    fileSpan.className = 'log-file';
+                    fileSpan.textContent = parsed.file;
+                    prefix.appendChild(fileSpan);
+                }
+
+                const sourceSpan = document.createElement('span');
+                sourceSpan.className = 'log-source';
+                sourceSpan.style.color = getSourceColor(parsed.source);
+                sourceSpan.textContent = `[${parsed.source}]`;
+                prefix.appendChild(sourceSpan);
+
+                entry.appendChild(prefix);
+
+                const msgSpan = document.createElement('div');
+                msgSpan.className = 'log-msg';
+                msgSpan.textContent = parsed.message;
+                entry.appendChild(msgSpan);
+
+                fragment.appendChild(entry);
+                visibleCount++;
+            }
+        });
+
+        container.innerHTML = '';
+        container.appendChild(fragment);
+        
+        document.getElementById('logStats').textContent = `Total: ${rawLogLines.length}`;
+        document.getElementById('filteredStats').textContent = searchTerm || Array.from(sources.values()).some(v => !v.enabled) 
+            ? `Showing: ${visibleCount}` 
+            : '';
+
+        if (isAtBottom) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    async function fetchLogs() {
+        const lines = document.getElementById('linesCount').value;
+        const container = document.getElementById('logContainer');
+        
+        try {
+            const data = await apiCall(`{{.BasePath}}/api/logs?lines=${lines}`);
+            if (data.lines) {
+                rawLogLines = data.lines;
+                // Discover sources from new data
+                rawLogLines.forEach(line => {
+                    const parsed = parseLogLine(line);
+                    getSourceColor(parsed.source);
+                });
+                renderLogs();
+            } else if (data.error) {
+                container.innerHTML = `<div style="color: var(--danger);">${data.error}</div>`;
+            }
+        } catch (err) {
+            container.innerHTML = `<div style="color: var(--danger);">Failed to fetch logs: ${err.message}</div>`;
+        }
+    }
+
+    function filterLogs() {
+        renderLogs();
+    }
+
+    function toggleAutoRefresh() {
+        const checkbox = document.getElementById('autoRefresh');
+        if (checkbox.checked) {
+            fetchLogs();
+            autoRefreshInterval = setInterval(fetchLogs, 3000);
+        } else {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+    }
+
+    // Initial fetch
+    fetchLogs();
+
+    // Clean up interval on page leave
+    window.addEventListener('beforeunload', () => {
+        if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+    });
+</script>
+{{end}}

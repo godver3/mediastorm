@@ -473,7 +473,7 @@ func main() {
 	adminLoginLimiter := api.NewIPRateLimiter(rate.Every(12*time.Second), 5)
 
 	// Register admin UI routes
-	adminUIHandler := handlers.NewAdminUIHandler(configPath, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
+	adminUIHandler := handlers.NewAdminUIHandler(configPath, settings.Log.File, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 	adminUIHandler.SetWatchlistService(watchlistService)
@@ -679,6 +679,8 @@ func main() {
 
 	// Performance monitoring (admin-only)
 	r.HandleFunc("/admin/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.PerformancePage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/logs", adminUIHandler.RequireAuth(adminUIHandler.LogsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/logs", adminUIHandler.RequireAuth(adminUIHandler.GetLogs)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceMetrics)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/performance/sse", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceSSE)).Methods(http.MethodGet)
 
