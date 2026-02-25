@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SpatialNavigationRoot } from '@/services/tv-navigation';
+import { SpatialNavigationRoot, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -55,122 +55,6 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   const contentHeightRef = useRef(0);
 
-  // Try to scroll to pending focus if all measurements are ready
-  const tryScrollToPendingFocus = useCallback((animated: boolean) => {
-    const index = pendingFocusIndexRef.current;
-    if (index === null) return;
-
-    const layout = itemLayoutsRef.current[index];
-    const containerHeight = containerHeightRef.current;
-    const contentHeight = contentHeightRef.current;
-
-    // Need all measurements before we can scroll
-    if (!layout || containerHeight === 0 || contentHeight === 0) return;
-
-    // All measurements ready - perform the scroll
-    pendingFocusIndexRef.current = null;
-
-    const itemY = layout.y;
-    const itemHeight = layout.height;
-    const itemBottom = itemY + itemHeight;
-
-    const currentScroll = currentScrollRef.current;
-    const visibleTop = currentScroll;
-    const visibleBottom = currentScroll + containerHeight;
-
-    let newScroll = currentScroll;
-
-    if (itemY < visibleTop) {
-      newScroll = itemY;
-    } else if (itemBottom > visibleBottom) {
-      newScroll = itemBottom - containerHeight;
-    }
-
-    const maxScroll = Math.max(0, contentHeight - containerHeight);
-    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
-
-    if (newScroll !== currentScroll) {
-      currentScrollRef.current = newScroll;
-      if (animated) {
-        Animated.timing(scrollOffsetRef, {
-          toValue: -newScroll,
-          duration: 200,
-          useNativeDriver: true,
-        }).start();
-      } else {
-        scrollOffsetRef.setValue(-newScroll);
-      }
-    }
-  }, [scrollOffsetRef]);
-
-  const handleItemLayout = useCallback((index: number, y: number, height: number) => {
-    itemLayoutsRef.current[index] = { y, height };
-    // Check if this completes our pending scroll
-    tryScrollToPendingFocus(false);
-  }, [tryScrollToPendingFocus]);
-
-  const handleContentLayout = useCallback((height: number) => {
-    contentHeightRef.current = height;
-    // Check if this completes our pending scroll
-    tryScrollToPendingFocus(false);
-  }, [tryScrollToPendingFocus]);
-
-  const handleContainerLayout = useCallback((height: number) => {
-    containerHeightRef.current = height;
-    // Check if this completes our pending scroll
-    tryScrollToPendingFocus(false);
-  }, [tryScrollToPendingFocus]);
-
-  const scrollToIndex = useCallback((index: number, animated: boolean) => {
-    const layout = itemLayoutsRef.current[index];
-    if (!layout) return;
-
-    const containerHeight = containerHeightRef.current;
-    const contentHeight = contentHeightRef.current;
-    if (containerHeight === 0 || contentHeight === 0) return;
-
-    const itemY = layout.y;
-    const itemHeight = layout.height;
-    const itemBottom = itemY + itemHeight;
-
-    const currentScroll = currentScrollRef.current;
-    const visibleTop = currentScroll;
-    const visibleBottom = currentScroll + containerHeight;
-
-    let newScroll = currentScroll;
-
-    if (itemY < visibleTop) {
-      newScroll = itemY;
-    } else if (itemBottom > visibleBottom) {
-      newScroll = itemBottom - containerHeight;
-    }
-
-    const maxScroll = Math.max(0, contentHeight - containerHeight);
-    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
-
-    if (newScroll !== currentScroll) {
-      currentScrollRef.current = newScroll;
-      if (animated) {
-        Animated.timing(scrollOffsetRef, {
-          toValue: -newScroll,
-          duration: 200,
-          useNativeDriver: true,
-        }).start();
-      } else {
-        scrollOffsetRef.setValue(-newScroll);
-      }
-    }
-  }, [scrollOffsetRef]);
-
-  const handleItemFocus = useCallback((index: number) => {
-    if (!Platform.isTV) return;
-
-    // Store pending focus - will scroll when all measurements are ready
-    // or immediately if already ready
-    pendingFocusIndexRef.current = index;
-    tryScrollToPendingFocus(true);
-  }, [tryScrollToPendingFocus]);
-
   const resolvedSubtitle = useMemo(() => {
     if (subtitle) {
       return subtitle;
@@ -183,6 +67,16 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     }
     return 'Select a track';
   }, [hasOptions, selectedLabel, subtitle]);
+
+  // Viewport-height-based scale for TV
+  const tvS = Platform.isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
+
+  // Calculate a fixed height for the options area on TV to prevent collapsing
+  const tvOptionsHeight = useMemo(() => {
+    if (!Platform.isTV) return undefined;
+    // Cap at a reasonable portion of the screen
+    return Math.min(Math.round(540 * tvS), screenHeight * 0.5);
+  }, [screenHeight, tvS]);
 
   // Reset scroll position when modal opens/closes
   useEffect(() => {
@@ -371,6 +265,150 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     }
   }, [visible]);
 
+  // Try to scroll to pending focus if all measurements are ready
+  const tryScrollToPendingFocus = useCallback((animated: boolean) => {
+    const index = pendingFocusIndexRef.current;
+    if (index === null) return;
+
+    const containerHeight = containerHeightRef.current;
+    const contentHeight = contentHeightRef.current;
+
+    // Need all measurements before we can scroll
+    if (containerHeight === 0 || contentHeight === 0) return;
+
+    // Item spacing (marginBottom)
+    const itemSpacing = Math.round(theme.spacing.md * tvS);
+
+    // Calculate cumulative Y position from measured layouts (more robust for TV)
+    let itemY = 0;
+    for (let i = 0; i < index; i++) {
+      const layout = itemLayoutsRef.current[i];
+      if (layout) {
+        itemY += layout.height + itemSpacing;
+      }
+    }
+
+    const layout = itemLayoutsRef.current[index];
+    if (!layout) return;
+
+    // All measurements ready - perform the scroll
+    pendingFocusIndexRef.current = null;
+
+    const itemHeight = layout.height;
+    const itemBottom = itemY + itemHeight;
+
+    const currentScroll = currentScrollRef.current;
+    const visibleTop = currentScroll;
+    const visibleBottom = currentScroll + containerHeight;
+
+    let newScroll = currentScroll;
+
+    // Keep item in view with some padding
+    const padding = 40 * tvS;
+    if (itemY < visibleTop + padding) {
+      newScroll = Math.max(0, itemY - padding);
+    } else if (itemBottom > visibleBottom - padding) {
+      newScroll = itemBottom - containerHeight + padding;
+    }
+
+    const maxScroll = Math.max(0, contentHeight - containerHeight);
+    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
+
+    if (Math.abs(newScroll - currentScroll) > 1) {
+      currentScrollRef.current = newScroll;
+      if (animated) {
+        Animated.timing(scrollOffsetRef, {
+          toValue: -newScroll,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        scrollOffsetRef.setValue(-newScroll);
+      }
+    }
+  }, [scrollOffsetRef, theme.spacing.md, tvS]);
+
+  const handleItemLayout = useCallback((index: number, _y: number, height: number) => {
+    // We only care about height, we'll calculate Y ourselves to be robust
+    itemLayoutsRef.current[index] = { y: 0, height };
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const handleContentLayout = useCallback((height: number) => {
+    contentHeightRef.current = height;
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const handleContainerLayout = useCallback((height: number) => {
+    containerHeightRef.current = height;
+    // Check if this completes our pending scroll
+    tryScrollToPendingFocus(false);
+  }, [tryScrollToPendingFocus]);
+
+  const handleItemFocus = useCallback((index: number) => {
+    if (!Platform.isTV) return;
+
+    // Store pending focus - will scroll when all measurements are ready
+    // or immediately if already ready
+    pendingFocusIndexRef.current = index;
+    tryScrollToPendingFocus(true);
+  }, [tryScrollToPendingFocus]);
+
+  const scrollToIndex = useCallback((index: number, animated: boolean) => {
+    const containerHeight = containerHeightRef.current;
+    const contentHeight = contentHeightRef.current;
+    if (containerHeight === 0 || contentHeight === 0) return;
+
+    // Item spacing (marginBottom)
+    const itemSpacing = Math.round(theme.spacing.md * tvS);
+
+    // Calculate cumulative Y position
+    let itemY = 0;
+    for (let i = 0; i < index; i++) {
+      const layout = itemLayoutsRef.current[i];
+      if (layout) {
+        itemY += layout.height + itemSpacing;
+      }
+    }
+
+    const layout = itemLayoutsRef.current[index];
+    if (!layout) return;
+
+    const itemHeight = layout.height;
+    const itemBottom = itemY + itemHeight;
+
+    const currentScroll = currentScrollRef.current;
+    const visibleTop = currentScroll;
+    const visibleBottom = currentScroll + containerHeight;
+
+    let newScroll = currentScroll;
+
+    const padding = 40 * tvS;
+    if (itemY < visibleTop + padding) {
+      newScroll = Math.max(0, itemY - padding);
+    } else if (itemBottom > visibleBottom - padding) {
+      newScroll = itemBottom - containerHeight + padding;
+    }
+
+    const maxScroll = Math.max(0, contentHeight - containerHeight);
+    newScroll = Math.max(0, Math.min(newScroll, maxScroll));
+
+    if (Math.abs(newScroll - currentScroll) > 1) {
+      currentScrollRef.current = newScroll;
+      if (animated) {
+        Animated.timing(scrollOffsetRef, {
+          toValue: -newScroll,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        scrollOffsetRef.setValue(-newScroll);
+      }
+    }
+  }, [scrollOffsetRef, theme.spacing.md, tvS]);
+
   if (!visible) {
     return null;
   }
@@ -387,13 +425,14 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
           key={option.id}
           onPress={() => handleOptionSelect(option.id)}
           onFocus={() => handleItemFocus(index)}
+          onLayout={(event) => {
+            const { y, height } = event.nativeEvent.layout;
+            handleItemLayout(index, y, height);
+          }}
+          android_disableSound={true}
           hasTVPreferredFocus={shouldHaveInitialFocus}>
           {({ focused }: { focused: boolean }) => (
             <View
-              onLayout={(event) => {
-                const { y, height } = event.nativeEvent.layout;
-                handleItemLayout(index, y, height);
-              }}
               style={[
                 styles.optionItem,
                 focused && !isSelected && styles.optionItemFocused,
@@ -490,6 +529,7 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         style={styles.backdrop}
         onPress={Platform.isTV ? undefined : handleClose}
         focusable={false}
+        android_disableSound={true}
       />
       <View style={styles.modalContainer}>
         <View style={styles.modalHeader}>
@@ -499,50 +539,63 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
         {Platform.isTV ? (
           // TV: Use native Pressable for focus management
-          <View>
+          <>
             {/* Options list with animated scrolling */}
-            <View
-              style={[styles.optionsScrollView, { overflow: 'hidden' }]}
-              onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
-              <Animated.View
-                onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
-                style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }] }]}>
-                {hasOptions ? (
-                  options.map((option, index) => renderOption(option, index))
-                ) : (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-                  </View>
-                )}
-              </Animated.View>
-            </View>
+            <SpatialNavigationNode orientation="vertical">
+              <View
+                style={[
+                  styles.optionsScrollView,
+                  {
+                    overflow: 'hidden',
+                    maxHeight: tvOptionsHeight,
+                  },
+                ]}
+                onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
+                <Animated.View
+                  onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
+                  style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }], width: '100%' }]}>
+                  {hasOptions ? (
+                    options.map((option, index) => renderOption(option, index))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                    </View>
+                  )}
+                </Animated.View>
+              </View>
+            </SpatialNavigationNode>
             {/* Footer with optional Search Online and Close button */}
-            <View style={styles.modalFooter}>
-              {onSearchSubtitles && (
-                <Pressable onPress={() => {
-                  console.log('[TrackSelectionModal] Search Online pressed');
-                  handleSearchSubtitles();
-                }}>
+            <SpatialNavigationNode orientation="horizontal">
+              <View style={styles.modalFooter}>
+                {onSearchSubtitles && (
+                  <Pressable
+                    onPress={() => {
+                      console.log('[TrackSelectionModal] Search Online pressed');
+                      handleSearchSubtitles();
+                    }}
+                    android_disableSound={true}>
+                    {({ focused }: { focused: boolean }) => (
+                      <View style={[styles.closeButton, styles.searchButton, focused && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>
+                          Search Online
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+                )}
+                <Pressable
+                  onPress={handleClose}
+                  android_disableSound={true}
+                  hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}>
                   {({ focused }: { focused: boolean }) => (
-                    <View style={[styles.closeButton, styles.searchButton, focused && styles.closeButtonFocused]}>
-                      <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>
-                        Search Online
-                      </Text>
+                    <View style={[styles.closeButton, focused && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
                     </View>
                   )}
                 </Pressable>
-              )}
-              <Pressable
-                onPress={handleClose}
-                hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}>
-                {({ focused }: { focused: boolean }) => (
-                  <View style={[styles.closeButton, focused && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          </View>
+              </View>
+            </SpatialNavigationNode>
+          </>
         ) : (
           <>
             <ScrollView style={styles.optionsScrollView} contentContainerStyle={styles.optionsList}>
@@ -671,12 +724,13 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     modalContainer: {
       width: modalWidth,
       maxWidth: modalMaxWidth,
-      maxHeight: '85%',
+      maxHeight: Math.round(screenHeight * 0.85),
       backgroundColor: theme.colors.background.elevated,
       borderRadius: isNarrow ? theme.radius.lg : Math.round(theme.radius.xl * tvS),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
+      flexShrink: 1,
     },
     modalHeader: {
       paddingHorizontal: horizontalPadding,
