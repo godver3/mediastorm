@@ -25,7 +25,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV, isTablet, getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { isTV, isTablet, getTVScaleMultiplier, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
@@ -3584,22 +3584,29 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
   const landscapeCardHeight = Math.round(cardHeight * 0.6);
   const landscapeCardWidth = Math.round(landscapeCardHeight * (16 / 9)); // 16:9 aspect ratio
 
-  // Progress badge scaling - designed for tvOS at 1.25x, Android TV at 1.3x
-  const badgeScale = isTV ? 1.25 * tvScale : 1.0;
-  const androidTVBadgeScale = 1.3; // Badge for Android TV
+  // Viewport-height-based scale for TVs — consistent sizing across platforms
+  // Design for tvOS at 1080p (TV_REFERENCE_HEIGHT = 1080)
+  const tvViewportScale = isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1.0;
+
+  // Progress badge scaling - base 1.25x (tvOS design) scaled by viewport ratio.
+  // We do NOT multiply by tvScale here because tvViewportScale ALREADY
+  // compensates for the density/logical resolution differences between Android TV and tvOS.
+  const badgeScale = isTV ? 1.25 * tvViewportScale : 1.0;
+  const androidTVBadgeScale = 1.3; // Kept for backwards compatibility with other Android TV styles
   const androidTVTitleScale = 0.74; // Title text scale for Android TV
   const androidTVMetaScale = 0.9; // Year text scale for Android TV
   const badgePaddingH = Math.round(theme.spacing.sm * badgeScale);
   const badgePaddingV = Math.round(theme.spacing.xs * badgeScale);
   const badgeRadius = Math.round(theme.radius.sm * badgeScale);
-  const badgeTextFontSize = Math.round(theme.typography.caption.sm.fontSize * badgeScale);
-  const badgeTextLineHeight = Math.round(theme.typography.caption.sm.lineHeight * badgeScale);
-  // Android TV specific badge sizing (2x larger)
-  const androidTVBadgePaddingH = Math.round(theme.spacing.sm * androidTVBadgeScale);
-  const androidTVBadgePaddingV = Math.round(theme.spacing.xs * androidTVBadgeScale);
-  const androidTVBadgeRadius = Math.round(theme.radius.sm * androidTVBadgeScale);
-  const androidTVBadgeTextFontSize = Math.round(theme.typography.caption.sm.fontSize * androidTVBadgeScale);
-  const androidTVBadgeTextLineHeight = Math.round(theme.typography.caption.sm.lineHeight * androidTVBadgeScale);
+  // Use base size 14 for all badge text/icons for consistency
+  const badgeTextFontSize = Math.round(14 * badgeScale);
+  const badgeTextLineHeight = Math.round(18 * badgeScale);
+  // Android TV specific badge sizing (now using aligned badgeScale)
+  const androidTVBadgePaddingH = Math.round(theme.spacing.sm * badgeScale);
+  const androidTVBadgePaddingV = Math.round(theme.spacing.xs * badgeScale);
+  const androidTVBadgeRadius = Math.round(theme.radius.sm * badgeScale);
+  const androidTVBadgeTextFontSize = Math.round(14 * badgeScale);
+  const androidTVBadgeTextLineHeight = Math.round(18 * badgeScale);
 
   const cardSpacing = theme.spacing.lg;
 

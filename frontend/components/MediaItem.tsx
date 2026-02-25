@@ -2,13 +2,13 @@ import { memo, useCallback, useMemo } from 'react';
 
 import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 import { Image } from './Image';
-import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Dimensions, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Title } from '../services/api';
 import type { NovaTheme } from '../theme';
 import { useTheme } from '../theme';
-import { isTV, isAndroidTV, getTVScaleMultiplier } from '../theme/tokens/tvScale';
+import { isTV, isAndroidTV, getTVScaleMultiplier, TV_REFERENCE_HEIGHT } from '../theme/tokens/tvScale';
 import { LinearGradient } from 'expo-linear-gradient';
 
 interface MediaItemProps {
@@ -100,7 +100,7 @@ const getWatchStateIcon = (
   watchState?: 'none' | 'partial' | 'complete',
   mediaType?: string,
   iconStyle?: 'colored' | 'white',
-): { icon: string; color: string } | null => {
+): { icon: keyof typeof MaterialCommunityIcons.glyphMap; color: string } | null => {
   const useWhite = iconStyle === 'white';
   const greenColor = useWhite ? '#ffffff' : '#4ade80';
   const yellowColor = useWhite ? '#ffffff' : '#facc15';
@@ -109,9 +109,9 @@ const getWatchStateIcon = (
   if (watchState) {
     switch (watchState) {
       case 'complete':
-        return { icon: '\u25CF', color: greenColor }; // Full circle - fully watched
+        return { icon: 'circle', color: greenColor }; // Full circle - fully watched
       case 'partial':
-        return { icon: '\u25D0', color: yellowColor }; // Half circle - partially watched
+        return { icon: 'circle-half-full', color: yellowColor }; // Half circle - partially watched
       case 'none':
         return null; // Don't show badge for unwatched
       default:
@@ -120,7 +120,7 @@ const getWatchStateIcon = (
   }
   // Fallback for movies without watchState (legacy: only isWatched boolean)
   if (mediaType === 'movie' && isWatched !== undefined) {
-    return isWatched ? { icon: '\u25CF', color: greenColor } : null;
+    return isWatched ? { icon: 'circle', color: greenColor } : null;
   }
   return null;
 };
@@ -130,6 +130,16 @@ const createStyles = (theme: NovaTheme) => {
   const yearLineHeight = theme.typography.caption.sm.lineHeight;
   // Unified TV scaling - tvOS is baseline, Android TV auto-derives
   const tvTextScale = isTV ? getTVScaleMultiplier() : 1;
+
+  // Viewport-height-based scale for TVs — consistent sizing across platforms
+  const { height: windowHeight } = Dimensions.get('window');
+  // Design for tvOS at 1080p (TV_REFERENCE_HEIGHT = 1080)
+  const tvViewportScale = isTV ? windowHeight / TV_REFERENCE_HEIGHT : 1.0;
+
+  // Dedicated badge scaling - base 1.25x (tvOS design) scaled by viewport ratio.
+  // We do NOT multiply by tvTextScale here because tvViewportScale ALREADY
+  // compensates for the density/logical resolution differences between Android TV and tvOS.
+  const badgeScale = isTV ? 1.25 * tvViewportScale : 1.0;
 
   const titleMinHeight = titleLineHeight * 2;
   const infoMinHeight = titleMinHeight + yearLineHeight + theme.spacing.md * 2 + theme.spacing.xs;
@@ -308,17 +318,15 @@ const createStyles = (theme: NovaTheme) => {
       top: theme.spacing.sm,
       right: theme.spacing.sm,
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      // Design badge for tvOS at 1.25x scale, Android TV auto-derives
-      paddingHorizontal: Math.round(theme.spacing.sm * (isTV ? 1.25 * tvTextScale : 1)),
-      paddingVertical: Math.round(theme.spacing.xs * (isTV ? 1.25 * tvTextScale : 1)),
-      borderRadius: Math.round(theme.radius.sm * (isTV ? 1.25 * tvTextScale : 1)),
+      paddingHorizontal: Math.round(theme.spacing.sm * badgeScale),
+      paddingVertical: Math.round(theme.spacing.xs * badgeScale),
+      borderRadius: Math.round(theme.radius.sm * badgeScale),
       zIndex: 2,
     },
     progressBadgeText: {
       ...theme.typography.caption.sm,
-      // Design text for tvOS at 1.25x scale, Android TV auto-derives
-      fontSize: Math.round(theme.typography.caption.sm.fontSize * (isTV ? 1.25 * tvTextScale : 1)),
-      lineHeight: Math.round(theme.typography.caption.sm.lineHeight * (isTV ? 1.25 * tvTextScale : 1)),
+      fontSize: Math.round(14 * badgeScale),
+      lineHeight: Math.round(18 * badgeScale),
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
@@ -329,18 +337,18 @@ const createStyles = (theme: NovaTheme) => {
       left: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
       zIndex: 2,
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: Math.round(theme.spacing.sm * (isTV ? 1.25 * tvTextScale : 1)),
-      paddingVertical: Math.round(theme.spacing.xs * (isTV ? 1.25 * tvTextScale : 1)),
-      borderRadius: Math.round(theme.radius.sm * (isTV ? 1.25 * tvTextScale : 1)),
+      paddingHorizontal: Math.round(theme.spacing.sm * badgeScale),
+      paddingVertical: Math.round(theme.spacing.xs * badgeScale),
+      borderRadius: Math.round(theme.radius.sm * badgeScale),
       flexDirection: 'column',
       alignItems: 'center',
-      gap: Math.round(2 * (isTV ? 1.25 * tvTextScale : 1)),
+      gap: Math.round(2 * badgeScale),
     },
     // Individual badge item style (no background, just layout)
     topLeftBadgeItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: Math.round(4 * (isTV ? 1.25 * tvTextScale : 1)),
+      gap: Math.round(4 * badgeScale),
     },
     // Release status badge (legacy - kept for backwards compatibility, now uses topLeftBadge)
     releaseStatusBadge: {
@@ -348,22 +356,22 @@ const createStyles = (theme: NovaTheme) => {
       top: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
       left: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: Math.round(theme.spacing.sm * (isTV ? 1.25 * tvTextScale : 1)),
-      paddingVertical: Math.round(theme.spacing.xs * (isTV ? 1.25 * tvTextScale : 1)),
-      borderRadius: Math.round(theme.radius.sm * (isTV ? 1.25 * tvTextScale : 1)),
+      paddingHorizontal: Math.round(theme.spacing.sm * badgeScale),
+      paddingVertical: Math.round(theme.spacing.xs * badgeScale),
+      borderRadius: Math.round(theme.radius.sm * badgeScale),
       zIndex: 2,
     },
     releaseStatusIcon: {
-      fontSize: Math.round(14 * (isTV ? 1.25 * tvTextScale : 1)),
+      fontSize: Math.round(14 * badgeScale),
     },
     // Watch state icon style
     watchStateIcon: {
-      fontSize: Math.round(14 * (isTV ? 1.25 * tvTextScale : 1)),
+      fontSize: Math.round(14 * badgeScale),
     },
     unwatchedCountText: {
       ...theme.typography.caption.sm,
-      fontSize: Math.round(theme.typography.caption.sm.fontSize * (isTV ? 1.25 * tvTextScale : 1)),
-      lineHeight: Math.round(theme.typography.caption.sm.lineHeight * (isTV ? 1.25 * tvTextScale : 1)),
+      fontSize: Math.round(14 * badgeScale),
+      lineHeight: Math.round(18 * badgeScale),
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
@@ -489,19 +497,23 @@ const MediaItem = memo(function MediaItem({
               ((shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
                 (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)))) && (
               <View style={styles.topLeftBadgeContainer}>
-                {/* Watch state badge */}
-                {(shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
-                  (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
-                    <View style={styles.topLeftBadgeItem}>
-                      {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
-                        <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
-                      )}
-                      {shouldShowBadge('unwatchedCount', badgeVisibility) &&
-                        (title.mediaType === 'series' || title.mediaType === 'tv') &&
-                        title.unwatchedCount !== undefined &&
-                        title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
-                    </View>
+            {/* Watch state badge */}
+            {(shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+              (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
+                <View style={styles.topLeftBadgeItem}>
+                  {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
+                    <MaterialCommunityIcons
+                      name={watchStateData.icon}
+                      size={styles.watchStateIcon.fontSize}
+                      color={watchStateData.color}
+                    />
                   )}
+                  {shouldShowBadge('unwatchedCount', badgeVisibility) &&
+                    (title.mediaType === 'series' || title.mediaType === 'tv') &&
+                    title.unwatchedCount !== undefined &&
+                    title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
+                </View>
+              )}
                 {/* Release status badge */}
                 {shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && typeof releaseIcon === 'object' && (
                   <View style={styles.topLeftBadgeItem}>
@@ -604,7 +616,11 @@ const MediaItem = memo(function MediaItem({
               (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
                 <View style={styles.topLeftBadgeItem}>
                   {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
-                    <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
+                    <MaterialCommunityIcons
+                      name={watchStateData.icon}
+                      size={styles.watchStateIcon.fontSize}
+                      color={watchStateData.color}
+                    />
                   )}
                   {shouldShowBadge('unwatchedCount', badgeVisibility) &&
                     (title.mediaType === 'series' || title.mediaType === 'tv') &&
