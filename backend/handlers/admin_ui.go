@@ -786,7 +786,9 @@ type AdminUIHandler struct {
 	backupTemplate        *template.Template
 	calendarTemplate      *template.Template
 	performanceTemplate   *template.Template
+	logsTemplate          *template.Template
 	settingsPath          string
+	logFile               string
 	hlsManager            *HLSManager
 	usersService          *users.Service
 	userSettingsService   *user_settings.Service
@@ -859,7 +861,7 @@ func (h *AdminUIHandler) SetCalendarService(cs *calendar.Service) {
 }
 
 // NewAdminUIHandler creates a new admin UI handler
-func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager) *AdminUIHandler {
+func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, usersService *users.Service, userSettingsService *user_settings.Service, configManager *config.Manager) *AdminUIHandler {
 	funcMap := template.FuncMap{
 		"json": func(v interface{}) template.JS {
 			b, _ := json.Marshal(v)
@@ -994,7 +996,9 @@ func NewAdminUIHandler(settingsPath string, hlsManager *HLSManager, usersService
 		backupTemplate:       createPageTemplate("backup.html"),
 		calendarTemplate:     createPageTemplate("calendar.html"),
 		performanceTemplate:  createPageTemplate("performance.html"),
+		logsTemplate:         createPageTemplate("logs.html"),
 		settingsPath:         settingsPath,
+		logFile:              logFile,
 		hlsManager:          hlsManager,
 		usersService:        usersService,
 		userSettingsService: userSettingsService,
@@ -6321,4 +6325,75 @@ func (h *AdminUIHandler) GetPerformanceSSE(w http.ResponseWriter, r *http.Reques
 			flusher.Flush()
 		}
 	}
+}
+
+// LogsPage serves the logs admin page.
+func (h *AdminUIHandler) LogsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	if !isAdmin {
+		http.Redirect(w, r, basePath, http.StatusFound)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/logs",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Version:     GetBackendVersion(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.logsTemplate == nil {
+		http.Error(w, "Logs template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.logsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Logs template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// GetLogs returns the last N lines of the backend log file.
+func (h *AdminUIHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
+	isAdmin, _, _, _ := h.getPageRoleInfo(r)
+	if !isAdmin {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if h.logFile == "" {
+		http.Error(w, "Log file not configured", http.StatusInternalServerError)
+		return
+	}
+
+	linesCount := 500
+	if l := r.URL.Query().Get("lines"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil && val > 0 {
+			linesCount = val
+		}
+	}
+	if linesCount > 5000 {
+		linesCount = 5000
+	}
+
+	file, err := os.Open(h.logFile)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to open log file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	lines, err := readLastNLines(file, linesCount)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read log file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"lines": lines,
+	})
 }
