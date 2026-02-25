@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SpatialNavigationRoot, SpatialNavigationNode } from '@/services/tv-navigation';
+import {
+  SpatialNavigationRoot,
+  SpatialNavigationNode,
+  SpatialNavigationFocusableView,
+  DefaultFocus,
+} from '@/services/tv-navigation';
+import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -418,34 +424,30 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     const shouldHaveInitialFocus = option.id === defaultFocusOptionId;
 
     if (Platform.isTV) {
-      // TV: Use native Pressable for focus management (SpatialNavigationFocusableView
-      // doesn't work reliably when backing controls are disabled)
-      return (
-        <Pressable
-          key={option.id}
-          onPress={() => handleOptionSelect(option.id)}
-          onFocus={() => handleItemFocus(index)}
-          onLayout={(event) => {
-            const { y, height } = event.nativeEvent.layout;
-            handleItemLayout(index, y, height);
-          }}
-          android_disableSound={true}
-          hasTVPreferredFocus={shouldHaveInitialFocus}>
-          {({ focused }: { focused: boolean }) => (
+      // TV: Use SpatialNavigationFocusableView for proper focus management
+      const content = (
+        <SpatialNavigationFocusableView
+          onSelect={() => handleOptionSelect(option.id)}
+          onFocus={() => handleItemFocus(index)}>
+          {({ isFocused }: { isFocused: boolean }) => (
             <View
+              onLayout={(event) => {
+                const { y, height } = event.nativeEvent.layout;
+                handleItemLayout(index, y, height);
+              }}
               style={[
                 styles.optionItem,
-                focused && !isSelected && styles.optionItemFocused,
-                isSelected && !focused && styles.optionItemSelected,
-                isSelected && focused && styles.optionItemSelectedFocused,
+                isFocused && !isSelected && styles.optionItemFocused,
+                isSelected && !isFocused && styles.optionItemSelected,
+                isSelected && isFocused && styles.optionItemSelectedFocused,
               ]}>
               <View style={styles.optionTextContainer}>
                 <Text
                   style={[
                     styles.optionLabel,
-                    focused && !isSelected && styles.optionLabelFocused,
-                    isSelected && !focused && styles.optionLabelSelected,
-                    isSelected && focused && styles.optionLabelSelectedFocused,
+                    isFocused && !isSelected && styles.optionLabelFocused,
+                    isSelected && !isFocused && styles.optionLabelSelected,
+                    isSelected && isFocused && styles.optionLabelSelectedFocused,
                   ]}>
                   {option.label}
                 </Text>
@@ -453,23 +455,28 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                   <Text
                     style={[
                       styles.optionDescription,
-                      focused && !isSelected && styles.optionDescriptionFocused,
-                      isSelected && !focused && styles.optionDescriptionSelected,
-                      isSelected && focused && styles.optionDescriptionSelectedFocused,
+                      isFocused && !isSelected && styles.optionDescriptionFocused,
+                      isSelected && !isFocused && styles.optionDescriptionSelected,
+                      isSelected && isFocused && styles.optionDescriptionSelectedFocused,
                     ]}>
                     {option.description}
                   </Text>
                 ) : null}
               </View>
               {isSelected ? (
-                <View style={[styles.optionStatusBadge, focused && styles.optionStatusBadgeFocused]}>
-                  <Text style={[styles.optionStatusText, focused && styles.optionStatusTextFocused]}>Selected</Text>
+                <View style={[styles.optionStatusBadge, isFocused && styles.optionStatusBadgeFocused]}>
+                  <Text style={[styles.optionStatusText, isFocused && styles.optionStatusTextFocused]}>Selected</Text>
                 </View>
               ) : null}
             </View>
           )}
-        </Pressable>
+        </SpatialNavigationFocusableView>
       );
+
+      if (shouldHaveInitialFocus) {
+        return <DefaultFocus key={option.id}>{content}</DefaultFocus>;
+      }
+      return <View key={option.id}>{content}</View>;
     }
 
     // Non-TV: Use Pressable
@@ -531,105 +538,106 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
         focusable={false}
         android_disableSound={true}
       />
-      <View style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          {resolvedSubtitle ? <Text style={styles.modalSubtitle}>{resolvedSubtitle}</Text> : null}
-        </View>
+      <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{title}</Text>
+            {resolvedSubtitle ? <Text style={styles.modalSubtitle}>{resolvedSubtitle}</Text> : null}
+          </View>
 
-        {Platform.isTV ? (
-          // TV: Use native Pressable for focus management
-          <>
-            {/* Options list with animated scrolling */}
+          {Platform.isTV ? (
+            // TV: Use SpatialNavigationFocusableView for proper focus management
             <SpatialNavigationNode orientation="vertical">
-              <View
-                style={[
-                  styles.optionsScrollView,
-                  {
-                    overflow: 'hidden',
-                    maxHeight: tvOptionsHeight,
-                  },
-                ]}
-                onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
-                <Animated.View
-                  onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
-                  style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }], width: '100%' }]}>
-                  {hasOptions ? (
-                    options.map((option, index) => renderOption(option, index))
-                  ) : (
-                    <View style={styles.emptyState}>
-                      <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-                    </View>
+              {/* Options list with animated scrolling */}
+              <SpatialNavigationNode orientation="vertical">
+                <View
+                  style={[
+                    styles.optionsScrollView,
+                    {
+                      overflow: 'hidden',
+                      maxHeight: tvOptionsHeight,
+                    },
+                  ]}
+                  onLayout={(e) => handleContainerLayout(e.nativeEvent.layout.height)}>
+                  <Animated.View
+                    onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}
+                    style={[styles.optionsList, { transform: [{ translateY: scrollOffsetRef }], width: '100%' }]}>
+                    {hasOptions ? (
+                      options.map((option, index) => renderOption(option, index))
+                    ) : (
+                      <View style={styles.emptyState}>
+                        <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                      </View>
+                    )}
+                  </Animated.View>
+                </View>
+              </SpatialNavigationNode>
+              {/* Footer with optional Search Online and Close button */}
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.modalFooter}>
+                  {onSearchSubtitles && (
+                    <SpatialNavigationFocusableView
+                      onSelect={() => {
+                        console.log('[TrackSelectionModal] Search Online pressed');
+                        handleSearchSubtitles();
+                      }}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
+                          <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
+                            Search Online
+                          </Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
                   )}
-                </Animated.View>
-              </View>
+                  <SpatialNavigationFocusableView onSelect={handleClose}>
+                    {({ isFocused }: { isFocused: boolean }) => {
+                      const button = (
+                        <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                          <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                        </View>
+                      );
+                      return !hasOptions && !onSearchSubtitles ? <DefaultFocus>{button}</DefaultFocus> : button;
+                    }}
+                  </SpatialNavigationFocusableView>
+                </View>
+              </SpatialNavigationNode>
             </SpatialNavigationNode>
-            {/* Footer with optional Search Online and Close button */}
-            <SpatialNavigationNode orientation="horizontal">
+          ) : (
+            <>
+              <ScrollView style={styles.optionsScrollView} contentContainerStyle={styles.optionsList}>
+                {hasOptions ? (
+                  options.map((option, index) => renderOption(option, index))
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>No embedded subtitles</Text>
+                  </View>
+                )}
+              </ScrollView>
               <View style={styles.modalFooter}>
                 {onSearchSubtitles && (
-                  <Pressable
-                    onPress={() => {
-                      console.log('[TrackSelectionModal] Search Online pressed');
-                      handleSearchSubtitles();
-                    }}
-                    android_disableSound={true}>
-                    {({ focused }: { focused: boolean }) => (
-                      <View style={[styles.closeButton, styles.searchButton, focused && styles.closeButtonFocused]}>
-                        <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>
+                  <Pressable onPress={handleSearchSubtitles}>
+                    {({ pressed }) => (
+                      <View style={[styles.closeButton, styles.searchButton, pressed && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>
                           Search Online
                         </Text>
                       </View>
                     )}
                   </Pressable>
                 )}
-                <Pressable
-                  onPress={handleClose}
-                  android_disableSound={true}
-                  hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}>
-                  {({ focused }: { focused: boolean }) => (
-                    <View style={[styles.closeButton, focused && styles.closeButtonFocused]}>
-                      <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
+                <Pressable onPress={handleClose}>
+                  {({ pressed }) => (
+                    <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
+                      <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
                     </View>
                   )}
                 </Pressable>
               </View>
-            </SpatialNavigationNode>
-          </>
-        ) : (
-          <>
-            <ScrollView style={styles.optionsScrollView} contentContainerStyle={styles.optionsList}>
-              {hasOptions ? (
-                options.map((option, index) => renderOption(option, index))
-              ) : (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No embedded subtitles</Text>
-                </View>
-              )}
-            </ScrollView>
-            <View style={styles.modalFooter}>
-              {onSearchSubtitles && (
-                <Pressable onPress={handleSearchSubtitles}>
-                  {({ pressed }) => (
-                    <View style={[styles.closeButton, styles.searchButton, pressed && styles.closeButtonFocused]}>
-                      <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>
-                        Search Online
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
-              )}
-              <Pressable onPress={handleClose}>
-                {({ pressed }) => (
-                  <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
-                    <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          </>
-        )}
-      </View>
+            </>
+          )}
+        </View>
+      </TVFocusGuard>
     </View>
   );
 
@@ -669,7 +677,9 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
           opacity: tvOverlayReady ? 1 : 0,
         }}
         pointerEvents="box-none">
-        {modalContent}
+        <SpatialNavigationRoot isActive={visible}>
+          {modalContent}
+        </SpatialNavigationRoot>
       </View>
     );
   }
@@ -701,12 +711,13 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
   const tvS = Platform.isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
 
   // Responsive width: fill more on narrow screens
-  const modalWidth = isNarrow ? '95%' : isMedium ? '90%' : '80%';
-  const modalMaxWidth = isNarrow ? 400 : Math.round(720 * tvS);
+  const modalWidth = Platform.isTV ? '90%' : (isNarrow ? '95%' : isMedium ? '90%' : '80%');
+  const modalMaxWidth = Platform.isTV ? Math.round(1600 * tvS) : (isNarrow ? 400 : Math.round(1100 * tvS));
 
   // Responsive padding - minimize on narrow screens so cards fill width
   const horizontalPadding = isNarrow ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
-  const itemPadding = isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS);
+  const verticalPadding = isNarrow ? theme.spacing.lg : Math.round(theme.spacing['2xl'] * tvS);
+  const itemPadding = isNarrow ? theme.spacing.md : Math.round(theme.spacing.xl * tvS);
   const itemMarginHorizontal = isNarrow ? 0 : isMedium ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
   const listPadding = isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.md : Math.round(theme.spacing['3xl'] * tvS);
 
@@ -724,9 +735,9 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     modalContainer: {
       width: modalWidth,
       maxWidth: modalMaxWidth,
-      maxHeight: Math.round(screenHeight * 0.85),
+      maxHeight: Math.round(screenHeight * 0.9),
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: isNarrow ? theme.radius.lg : Math.round(theme.radius.xl * tvS),
+      borderRadius: Platform.isTV ? Math.round(theme.radius.xl * tvS) : (isNarrow ? theme.radius.lg : theme.radius.xl),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
@@ -734,7 +745,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     },
     modalHeader: {
       paddingHorizontal: horizontalPadding,
-      paddingVertical: isNarrow ? theme.spacing.lg : Math.round(theme.spacing.xl * tvS),
+      paddingVertical: verticalPadding,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       gap: Math.round(theme.spacing.xs * tvS),
@@ -742,11 +753,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
-      fontSize: isNarrow ? 18 : theme.typography.title.xl.fontSize,
+      fontSize: Platform.isTV ? Math.round(36 * tvS) : (isNarrow ? 18 : theme.typography.title.xl.fontSize),
     },
     modalSubtitle: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+      fontSize: Platform.isTV ? Math.round(18 * tvS) : (isNarrow ? 12 : theme.typography.body.sm.fontSize),
     },
     optionsScrollView: {
       flexGrow: 1,
@@ -754,21 +766,21 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     },
     optionsList: {
       paddingHorizontal: listPadding,
-      paddingVertical: isNarrow ? theme.spacing.lg : Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Platform.isTV ? Math.round(theme.spacing['2xl'] * tvS) : (isNarrow ? theme.spacing.lg : theme.spacing.xl),
     },
     optionItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingVertical: itemPadding,
-      paddingHorizontal: isNarrow ? theme.spacing.md : Math.round(theme.spacing.xl * tvS),
+      paddingHorizontal: Platform.isTV ? Math.round(theme.spacing['2xl'] * tvS) : (isNarrow ? theme.spacing.md : theme.spacing.xl),
       borderRadius: Math.round(theme.radius.md * tvS),
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
       gap: isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS),
       marginHorizontal: itemMarginHorizontal,
-      marginBottom: Math.round(theme.spacing.md * tvS),
+      marginBottom: Platform.isTV ? Math.round(theme.spacing.lg * tvS) : theme.spacing.md,
     },
     optionItemFocused: {
       backgroundColor: theme.colors.accent.primary,
@@ -790,7 +802,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
       ...theme.typography.body.lg,
       color: theme.colors.text.primary,
       fontWeight: '600',
-      ...(Platform.isTV ? { fontSize: theme.typography.body.lg.fontSize } : null),
+      fontSize: Platform.isTV ? Math.round(24 * tvS) : (isNarrow ? 16 : theme.typography.body.lg.fontSize),
     },
     optionLabelFocused: {
       color: theme.colors.text.inverse,
@@ -806,6 +818,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: numbe
     optionDescription: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+      fontSize: Platform.isTV ? Math.round(16 * tvS) : (isNarrow ? 12 : theme.typography.body.sm.fontSize),
     },
     optionDescriptionFocused: {
       color: theme.colors.text.inverse,

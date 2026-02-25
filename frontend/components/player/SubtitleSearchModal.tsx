@@ -18,6 +18,7 @@ import {
   SpatialNavigationFocusableView,
   DefaultFocus,
 } from '@/services/tv-navigation';
+import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -73,8 +74,8 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   mediaReleaseName,
 }) => {
   const theme = useTheme();
-  const { width: screenWidth } = useWindowDimensions();
-  const styles = useMemo(() => createStyles(theme, screenWidth), [theme, screenWidth]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage || 'en');
 
   // Sync selectedLanguage with currentLanguage prop when it changes
@@ -484,93 +485,101 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
             onPress={handleClose}
             focusable={false}
           />
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Search Subtitles</Text>
-              {!isLoading && (
-                <Text style={styles.modalSubtitle}>
-                  {error ? error : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
-                </Text>
-              )}
-            </View>
+          <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Search Subtitles</Text>
+                {!isLoading && (
+                  <Text style={styles.modalSubtitle}>
+                    {error ? error : `Found ${sortedResults.length} subtitles in ${currentLanguageName}`}
+                  </Text>
+                )}
+              </View>
 
-            {Platform.isTV ? (
-              <SpatialNavigationNode orientation="vertical">
-                <View style={styles.languageSelector}>
-                  <Text style={styles.languageLabel}>Language:</Text>
-                  <SpatialNavigationNode orientation="horizontal">
+              {Platform.isTV ? (
+                <SpatialNavigationNode orientation="vertical">
+                  <View style={styles.languageSelector}>
+                    <Text style={styles.languageLabel}>Language:</Text>
+                    <SpatialNavigationNode orientation="horizontal">
+                      <ScrollView
+                        ref={languageScrollViewRef}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.languageScrollView}
+                        contentContainerStyle={styles.languageList}
+                        scrollEnabled={false}>
+                        {LANGUAGES.map((lang, index) => renderLanguageChip(lang, index))}
+                      </ScrollView>
+                    </SpatialNavigationNode>
+                  </View>
+
+                  <SpatialNavigationNode orientation="vertical">
+                    {renderResultsList()}
+                  </SpatialNavigationNode>
+
+                  <View style={styles.modalFooter}>
+                    <SpatialNavigationFocusableView onSelect={handleClose}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                          <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  </View>
+                </SpatialNavigationNode>
+              ) : (
+                <>
+                  <View style={styles.languageSelector}>
+                    <Text style={styles.languageLabel}>Language:</Text>
                     <ScrollView
                       ref={languageScrollViewRef}
                       horizontal
                       showsHorizontalScrollIndicator={false}
                       style={styles.languageScrollView}
-                      contentContainerStyle={styles.languageList}
-                      scrollEnabled={false}>
+                      contentContainerStyle={styles.languageList}>
                       {LANGUAGES.map((lang, index) => renderLanguageChip(lang, index))}
                     </ScrollView>
-                  </SpatialNavigationNode>
-                </View>
+                  </View>
 
-                <SpatialNavigationNode orientation="vertical">
                   {renderResultsList()}
-                </SpatialNavigationNode>
 
-                <View style={styles.modalFooter}>
-                  <SpatialNavigationFocusableView onSelect={handleClose}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                      </View>
-                    )}
-                  </SpatialNavigationFocusableView>
-                </View>
-              </SpatialNavigationNode>
-            ) : (
-              <>
-                <View style={styles.languageSelector}>
-                  <Text style={styles.languageLabel}>Language:</Text>
-                  <ScrollView
-                    ref={languageScrollViewRef}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.languageScrollView}
-                    contentContainerStyle={styles.languageList}>
-                    {LANGUAGES.map((lang, index) => renderLanguageChip(lang, index))}
-                  </ScrollView>
-                </View>
-
-                {renderResultsList()}
-
-                <View style={styles.modalFooter}>
-                  <Pressable onPress={handleClose}>
-                    {({ pressed }) => (
-                      <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
-                        <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
-                      </View>
-                    )}
-                  </Pressable>
-                </View>
-              </>
-            )}
-          </View>
+                  <View style={styles.modalFooter}>
+                    <Pressable onPress={handleClose}>
+                      {({ pressed }) => (
+                        <View style={[styles.closeButton, pressed && styles.closeButtonFocused]}>
+                          <Text style={[styles.closeButtonText, pressed && styles.closeButtonTextFocused]}>Close</Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  </View>
+                </>
+              )}
+            </View>
+          </TVFocusGuard>
         </View>
       </SpatialNavigationRoot>
     </Modal>
   );
 };
 
-const createStyles = (theme: NovaTheme, screenWidth: number) => {
+const TV_REFERENCE_HEIGHT = 1080;
+
+const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: number) => {
   // Responsive breakpoints
   const isNarrow = screenWidth < 400;
   const isMedium = screenWidth >= 400 && screenWidth < 600;
 
+  // Viewport-height-based scale for TV
+  const tvS = Platform.isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
+
   // Responsive width: fill more on narrow screens
-  const modalWidth = isNarrow ? '95%' : isMedium ? '92%' : '85%';
-  const modalMaxWidth = isNarrow ? 420 : 800;
+  const modalWidth = Platform.isTV ? '90%' : (isNarrow ? '95%' : isMedium ? '92%' : '85%');
+  const modalMaxWidth = Platform.isTV ? Math.round(1600 * tvS) : (isNarrow ? 420 : Math.round(1100 * tvS));
 
   // Responsive padding - minimize on narrow screens so cards fill width
-  const horizontalPadding = isNarrow ? theme.spacing.sm : theme.spacing.xl;
-  const resultMargin = isNarrow ? 0 : isMedium ? theme.spacing.xs : theme.spacing.sm;
+  const horizontalPadding = isNarrow ? theme.spacing.sm : Math.round(theme.spacing.xl * tvS);
+  const verticalPadding = isNarrow ? theme.spacing.md : Math.round(theme.spacing.lg * tvS);
+  const resultMargin = isNarrow ? 0 : isMedium ? theme.spacing.xs : Math.round(theme.spacing.sm * tvS);
 
   return StyleSheet.create({
     overlay: {
@@ -588,14 +597,14 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       maxWidth: modalMaxWidth,
       maxHeight: '90%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: isNarrow ? theme.radius.lg : theme.radius.xl,
+      borderRadius: Platform.isTV ? Math.round(theme.radius.xl * tvS) : (isNarrow ? theme.radius.lg : theme.radius.xl),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
     },
     modalHeader: {
       paddingHorizontal: horizontalPadding,
-      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
+      paddingVertical: verticalPadding,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       gap: theme.spacing.xs,
@@ -603,15 +612,16 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
-      fontSize: isNarrow ? 18 : theme.typography.title.xl.fontSize,
+      fontSize: Platform.isTV ? Math.round(36 * tvS) : (isNarrow ? 18 : Math.round(36 * tvS)),
     },
     modalSubtitle: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+      fontSize: Platform.isTV ? Math.round(18 * tvS) : (isNarrow ? 12 : Math.round(18 * tvS)),
     },
     languageSelector: {
       paddingHorizontal: horizontalPadding,
-      paddingVertical: theme.spacing.md,
+      paddingVertical: Math.round(theme.spacing.md * tvS),
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
       flexDirection: 'row',
@@ -623,26 +633,27 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.secondary,
       fontWeight: '600',
       paddingRight: theme.spacing.md,
+      fontSize: isNarrow ? 12 : Math.round(18 * tvS),
     },
     languageScrollView: {
       flex: 1,
-      minHeight: 36,
+      minHeight: Math.round(36 * tvS),
     },
     languageList: {
       alignItems: 'center',
       paddingRight: theme.spacing.md,
     },
     languageChip: {
-      paddingHorizontal: theme.spacing.md,
-      height: 32,
+      paddingHorizontal: Math.round(theme.spacing.md * tvS),
+      height: Math.round(40 * tvS),
       justifyContent: 'center',
       alignItems: 'center',
-      borderRadius: theme.radius.sm,
+      borderRadius: Math.round(theme.radius.sm * tvS),
       backgroundColor: 'rgba(255, 255, 255, 0.08)',
-      marginRight: theme.spacing.sm,
+      marginRight: Math.round(theme.spacing.sm * tvS),
       borderWidth: 2,
       borderColor: 'transparent',
-      minWidth: 100,
+      minWidth: Math.round(120 * tvS),
     },
     languageChipSelected: {
       backgroundColor: theme.colors.accent.primary,
@@ -654,6 +665,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     languageChipText: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+      fontSize: isNarrow ? 12 : Math.round(18 * tvS),
     },
     languageChipTextSelected: {
       color: theme.colors.text.inverse,
@@ -667,13 +679,13 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       flexShrink: 1,
     },
     resultsList: {
-      padding: isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.sm : theme.spacing.lg,
+      padding: isNarrow ? theme.spacing.xs : isMedium ? theme.spacing.sm : Math.round(theme.spacing.lg * tvS),
     },
     resultItem: {
-      padding: isNarrow ? theme.spacing.sm : theme.spacing.md,
+      padding: isNarrow ? theme.spacing.sm : Math.round(theme.spacing.lg * tvS),
       marginHorizontal: resultMargin,
-      marginBottom: theme.spacing.sm,
-      borderRadius: theme.radius.md,
+      marginBottom: Math.round(theme.spacing.sm * tvS),
+      borderRadius: Math.round(theme.radius.md * tvS),
       backgroundColor: 'rgba(255, 255, 255, 0.06)',
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
@@ -699,11 +711,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.primary,
       fontWeight: '600',
       textTransform: 'uppercase',
-      fontSize: 10,
+      fontSize: isNarrow ? 10 : Math.round(14 * tvS),
     },
     resultLanguage: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
+      fontSize: isNarrow ? 12 : Math.round(16 * tvS),
     },
     hiBadge: {
       paddingHorizontal: theme.spacing.sm,
@@ -715,11 +728,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.sm,
       color: theme.colors.text.inverse,
       fontWeight: '600',
-      fontSize: 10,
+      fontSize: isNarrow ? 10 : Math.round(14 * tvS),
     },
     resultRelease: {
       ...theme.typography.body.md,
       color: theme.colors.text.primary,
+      fontSize: isNarrow ? 14 : Math.round(20 * tvS),
     },
     resultTextFocused: {
       color: theme.colors.text.inverse,
@@ -732,7 +746,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     resultDownloads: {
       ...theme.typography.body.sm,
       color: theme.colors.text.secondary,
-      fontSize: 12,
+      fontSize: isNarrow ? 12 : Math.round(16 * tvS),
     },
     loadingContainer: {
       padding: theme.spacing['3xl'],
@@ -767,16 +781,16 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
     },
     modalFooter: {
       paddingHorizontal: horizontalPadding,
-      paddingVertical: isNarrow ? theme.spacing.md : theme.spacing.lg,
+      paddingVertical: verticalPadding,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
     },
     closeButton: {
-      minWidth: isNarrow ? 140 : 200,
-      paddingHorizontal: isNarrow ? theme.spacing.xl : theme.spacing['2xl'],
-      paddingVertical: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      minWidth: isNarrow ? 140 : Math.round(200 * tvS),
+      paddingHorizontal: isNarrow ? theme.spacing.xl : Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Math.round(theme.spacing.md * tvS),
+      borderRadius: Math.round(theme.radius.md * tvS),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.surface,
@@ -790,6 +804,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number) => {
       ...theme.typography.body.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
+      fontSize: isNarrow ? 14 : Math.round(20 * tvS),
     },
     closeButtonTextFocused: {
       color: theme.colors.text.inverse,

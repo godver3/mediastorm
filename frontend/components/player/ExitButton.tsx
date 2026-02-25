@@ -17,24 +17,8 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus, disabled }
   const theme = useTheme();
   const styles = useMemo(() => useExitButtonStyles(theme), [theme]);
 
-  // Android TV: Use native Pressable with tvScale sizing
-  if (isAndroidTV) {
-    return (
-      <Pressable
-        onPress={onSelect}
-        onFocus={onFocus}
-        disabled={disabled}
-        focusable={disabled ? false : undefined}
-        android_disableSound
-        style={({ focused }) => [styles.exitBtn, styles.androidTvButton, focused && styles.androidTvButtonFocused]}>
-        {({ focused }) => (
-          <Text style={[styles.androidTvText, focused && styles.androidTvTextFocused]}>Exit</Text>
-        )}
-      </Pressable>
-    );
-  }
-
-  // tvOS and mobile: Use FocusablePressable
+  // Use FocusablePressable for all platforms.
+  // It now handles TV platforms (tvOS and Android TV) via SpatialNavigationFocusableView internally.
   return (
     <FocusablePressable
       text={'Exit'}

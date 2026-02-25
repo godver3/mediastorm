@@ -3,7 +3,7 @@ import SeekBar from '@/components/player/SeekBar';
 import VolumeControl from '@/components/player/VolumeControl';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import { StreamInfoModal, type StreamInfoData } from '@/components/player/StreamInfoModal';
-import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
+import { DefaultFocus, SpatialNavigationNode, useSpatialNavigator } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -72,15 +72,17 @@ interface ControlsProps {
   nextProgram?: EPGProgram;
   /** Ref that parent can call to close the active child modal (used by TVControlsModal onRequestClose) */
   closeModalRef?: React.MutableRefObject<(() => void) | null>;
+  activeMenu?: ActiveMenu;
+  onActiveMenuChange?: (menu: ActiveMenu) => void;
 }
 
-type TrackOption = {
+export type TrackOption = {
   id: string;
   label: string;
   description?: string;
 };
 
-type ActiveMenu = 'audio' | 'subtitles' | 'info' | null;
+export type ActiveMenu = 'audio' | 'subtitles' | 'info' | null;
 
 const Controls: React.FC<ControlsProps> = ({
   paused,
@@ -128,6 +130,8 @@ const Controls: React.FC<ControlsProps> = ({
   currentProgram,
   nextProgram,
   closeModalRef,
+  activeMenu = null,
+  onActiveMenuChange,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -138,7 +142,8 @@ const Controls: React.FC<ControlsProps> = ({
   const allowTrackSelection = true; // Allow track selection on all platforms including tvOS
   const isLandscape = width >= height;
   const _isSeekable = Number.isFinite(duration) && duration > 0;
-  const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
+  const spatialNavigator = useSpatialNavigator();
+  const lastFocusedKeyRef = useRef<string | null>(null);
 
   // Flash animation for skip buttons (triggered by double-tap on mobile)
   const skipBackwardScale = useRef(new Animated.Value(1)).current;
@@ -232,26 +237,27 @@ const Controls: React.FC<ControlsProps> = ({
   // Guard to prevent modal from immediately reopening when focus returns to the button on tvOS
   const menuClosingGuardRef = useRef(false);
 
-  useEffect(() => {
-    activeMenuRef.current = activeMenu;
-  }, [activeMenu]);
-
   const openMenu = useCallback(
-    (menu: Exclude<ActiveMenu, null>) => {
+    (menu: Exclude<ActiveMenu, null>, focusKey?: string) => {
       // On TV platforms, check if we just closed a menu (prevents focus-return re-triggering)
       if (Platform.isTV && menuClosingGuardRef.current) {
         console.log('[Controls] openMenu blocked by closing guard', { menu });
         return;
       }
-      console.log('[Controls] openMenu called', { menu, currentActiveMenu: activeMenuRef.current });
-      setActiveMenu(menu);
+      console.log('[Controls] openMenu called', { menu, currentActiveMenu: activeMenu, focusKey });
+
+      if (focusKey) {
+        lastFocusedKeyRef.current = focusKey;
+      }
+
+      onActiveMenuChange?.(menu);
       onModalStateChange?.(true);
     },
-    [onModalStateChange],
+    [onModalStateChange, activeMenu, onActiveMenuChange],
   );
 
   const closeMenu = useCallback(() => {
-    console.log('[Controls] closeMenu called', { currentActiveMenu: activeMenuRef.current });
+    console.log('[Controls] closeMenu called', { currentActiveMenu: activeMenu, lastFocus: lastFocusedKeyRef.current });
     // Set guard to prevent immediate re-opening on TV platforms
     if (Platform.isTV) {
       menuClosingGuardRef.current = true;
@@ -259,9 +265,22 @@ const Controls: React.FC<ControlsProps> = ({
         menuClosingGuardRef.current = false;
       }, 400);
     }
-    setActiveMenu(null);
+    onActiveMenuChange?.(null);
     onModalStateChange?.(false);
-  }, [onModalStateChange]);
+
+    // Grab focus back to the button that opened the menu
+    if (Platform.isTV && lastFocusedKeyRef.current) {
+      const keyToFocus = lastFocusedKeyRef.current;
+      // Delay slightly to ensure the modal root is gone and tree is updated
+      setTimeout(() => {
+        if (keyToFocus) {
+          console.log('[Controls] grabbing focus back to', keyToFocus);
+          spatialNavigator.grabFocus(keyToFocus);
+        }
+      }, 50);
+      lastFocusedKeyRef.current = null;
+    }
+  }, [onModalStateChange, spatialNavigator, activeMenu, onActiveMenuChange]);
 
   // Expose closeMenu to parent via ref (used by TVControlsModal's onRequestClose)
   useEffect(() => {
@@ -279,19 +298,19 @@ const Controls: React.FC<ControlsProps> = ({
   // On tvOS, we need careful timing to transition focus between modals.
   const handleOpenSubtitleSearch = useCallback(() => {
     // Close this modal first
-    setActiveMenu(null);
+    onActiveMenuChange?.(null);
     // Open the SubtitleSearchModal immediately (no delay needed since both
     // state updates will be batched by React and rendered together)
     onSearchSubtitles?.();
-  }, [onSearchSubtitles]);
+  }, [onSearchSubtitles, onActiveMenuChange]);
 
   useEffect(
     () => () => {
-      if (activeMenuRef.current !== null) {
+      if (activeMenu !== null) {
         onModalStateChange?.(false);
       }
     },
-    [onModalStateChange],
+    [onModalStateChange, activeMenu],
   );
 
   const handleSelectTrack = useCallback(
@@ -350,9 +369,12 @@ const Controls: React.FC<ControlsProps> = ({
   const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
 
   // Memoize menu openers to stabilize onSelect props
-  const handleOpenAudioMenu = useCallback(() => openMenu('audio'), [openMenu]);
-  const handleOpenSubtitlesMenu = useCallback(() => openMenu('subtitles'), [openMenu]);
-  const handleOpenInfoMenu = useCallback(() => openMenu('info'), [openMenu]);
+  const handleOpenAudioMenu = useCallback(() => openMenu('audio', 'audio-track-button'), [openMenu]);
+  const handleOpenSubtitlesMenu = useCallback(
+    () => openMenu('subtitles', hasAudioSelection ? 'subtitle-track-button-secondary' : 'subtitle-track-button'),
+    [openMenu, hasAudioSelection],
+  );
+  const handleOpenInfoMenu = useCallback(() => openMenu('info', 'info-button'), [openMenu]);
 
   return (
     <>
@@ -800,22 +822,7 @@ const Controls: React.FC<ControlsProps> = ({
             )}
         </View>
       </SpatialNavigationNode>
-      {activeMenu === 'audio' || activeMenu === 'subtitles' ? (
-        <TrackSelectionModal
-          visible={true}
-          title={activeMenu === 'audio' ? 'Audio Tracks' : 'Subtitles'}
-          subtitle={trackModalSubtitle}
-          options={activeOptions}
-          selectedId={selectedTrackId}
-          onSelect={handleSelectTrack}
-          onClose={closeMenu}
-          focusKeyPrefix={activeMenu}
-          onSearchSubtitles={activeMenu === 'subtitles' && !isLiveTV ? handleOpenSubtitleSearch : undefined}
-        />
-      ) : null}
-      {activeMenu === 'info' && streamInfo ? (
-        <StreamInfoModal visible={true} info={streamInfo} onClose={closeMenu} />
-      ) : null}
+      {/* Modal rendering removed - now handled by parent (player.tsx) for better TV focus layering */}
     </>
   );
 };

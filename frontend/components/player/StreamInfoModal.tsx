@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SpatialNavigationRoot } from '@/services/tv-navigation';
+import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView } from '@/services/tv-navigation';
+import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -113,8 +114,8 @@ const InfoRow: React.FC<InfoRowProps & { styles: ReturnType<typeof createStyles>
 
 export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info, onClose }) => {
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
 
   // Build display values
   const mediaTitle = useMemo(() => {
@@ -405,40 +406,41 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
         <Text style={styles.modalTitle}>Stream Information</Text>
       </View>
 
-      <View>
+      <SpatialNavigationNode orientation="vertical">
         {/* Scrollable sections list with manual scroll on focus */}
-        <ScrollView
-          ref={tvScrollViewRef}
-          style={styles.tvListContainer}
-          contentContainerStyle={styles.tvListContent}
-          scrollEnabled={false}
-          showsVerticalScrollIndicator={false}>
-          {visibleSections.map((section, index) => (
-            <Pressable
-              key={section.key}
-              onFocus={() => handleSectionFocus(index)}
-              hasTVPreferredFocus={index === 0}>
-              {({ focused }: { focused: boolean }) => (
-                <View style={[styles.tvSection, focused && styles.sectionFocused]}>
-                  <Text style={styles.sectionTitle}>{section.title}</Text>
-                  {section.content}
-                </View>
-              )}
-            </Pressable>
-          ))}
-        </ScrollView>
+        <SpatialNavigationNode orientation="vertical">
+          <ScrollView
+            ref={tvScrollViewRef}
+            style={styles.tvListContainer}
+            contentContainerStyle={styles.tvListContent}
+            scrollEnabled={false}
+            showsVerticalScrollIndicator={false}>
+            {visibleSections.map((section, index) => (
+              <SpatialNavigationFocusableView
+                key={section.key}
+                onFocus={() => handleSectionFocus(index)}>
+                {({ isFocused }: { isFocused: boolean }) => (
+                  <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
+                    <Text style={styles.sectionTitle}>{section.title}</Text>
+                    {section.content}
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
+            ))}
+          </ScrollView>
+        </SpatialNavigationNode>
 
         {/* Close button */}
         <View style={styles.tvModalFooter}>
-          <Pressable onPress={handleClose}>
-            {({ focused }: { focused: boolean }) => (
-              <View style={[styles.closeButton, focused && styles.closeButtonFocused]}>
-                <Text style={[styles.closeButtonText, focused && styles.closeButtonTextFocused]}>Close</Text>
+          <SpatialNavigationFocusableView onSelect={handleClose}>
+            {({ isFocused }: { isFocused: boolean }) => (
+              <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
               </View>
             )}
-          </Pressable>
+          </SpatialNavigationFocusableView>
         </View>
-      </View>
+      </SpatialNavigationNode>
     </View>
   );
 
@@ -481,14 +483,18 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
           opacity: tvOverlayReady ? 1 : 0,
         }}
         pointerEvents="box-none">
-        <View style={styles.overlay}>
-          <Pressable
-            style={styles.backdrop}
-            onPress={handleClose}
-            focusable={false}
-          />
-          {tvModalContent}
-        </View>
+        <SpatialNavigationRoot isActive={visible}>
+          <View style={styles.overlay}>
+            <Pressable
+              style={styles.backdrop}
+              onPress={handleClose}
+              focusable={false}
+            />
+            <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']}>
+              {tvModalContent}
+            </TVFocusGuard>
+          </View>
+        </SpatialNavigationRoot>
       </View>
     );
   }
@@ -516,9 +522,14 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
   );
 };
 
-const createStyles = (theme: NovaTheme) => {
+const TV_REFERENCE_HEIGHT = 1080;
+
+const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: number) => {
   const isMobile = Platform.OS !== 'web' && !Platform.isTV;
   const isTV = Platform.isTV;
+
+  // Viewport-height-based scale for TV
+  const tvS = isTV ? screenHeight / TV_REFERENCE_HEIGHT : 1;
 
   return StyleSheet.create({
     overlay: {
@@ -528,17 +539,17 @@ const createStyles = (theme: NovaTheme) => {
       backgroundColor: 'rgba(0, 0, 0, 0.85)',
       zIndex: 1000,
       // Add horizontal padding for TV
-      paddingHorizontal: isTV ? 120 : 0,
+      paddingHorizontal: isTV ? Math.round(120 * tvS) : 0,
     },
     backdrop: {
       ...StyleSheet.absoluteFillObject,
     },
     modalContainer: {
-      width: isMobile ? '92%' : isTV ? '100%' : '70%',
-      maxWidth: isMobile ? undefined : isTV ? 700 : 600,
+      width: isMobile ? '92%' : isTV ? '90%' : '70%',
+      maxWidth: isMobile ? undefined : isTV ? Math.round(1600 * tvS) : 600,
       maxHeight: isTV ? '90%' : '85%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.xl,
+      borderRadius: isTV ? Math.round(theme.radius.xl * tvS) : theme.radius.xl,
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       overflow: 'hidden',
@@ -550,14 +561,15 @@ const createStyles = (theme: NovaTheme) => {
       borderBottomColor: theme.colors.border.subtle,
     },
     tvModalHeader: {
-      paddingHorizontal: theme.spacing['2xl'],
-      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Math.round(theme.spacing.xl * tvS),
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.border.subtle,
     },
     modalTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
+      fontSize: isTV ? Math.round(36 * tvS) : theme.typography.title.xl.fontSize,
     },
     contentScrollView: {
       flexGrow: 1,
@@ -568,18 +580,18 @@ const createStyles = (theme: NovaTheme) => {
       paddingVertical: theme.spacing.lg,
     },
     tvContentContainer: {
-      paddingHorizontal: theme.spacing['2xl'],
-      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Math.round(theme.spacing.xl * tvS),
     },
     tvListContainer: {
-      maxHeight: 450,
+      maxHeight: Math.round(600 * tvS),
       width: '100%',
       overflow: 'hidden',
     },
     tvListContent: {
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing.lg,
-      gap: theme.spacing.md,
+      paddingVertical: Math.round(theme.spacing.md * tvS),
+      paddingHorizontal: Math.round(theme.spacing.lg * tvS),
+      gap: Math.round(theme.spacing.md * tvS),
     },
     section: {
       marginBottom: theme.spacing.lg,
@@ -588,8 +600,8 @@ const createStyles = (theme: NovaTheme) => {
       marginHorizontal: -theme.spacing.sm,
     },
     tvSection: {
-      borderRadius: theme.radius.lg,
-      padding: theme.spacing.lg,
+      borderRadius: Math.round(theme.radius.lg * tvS),
+      padding: Math.round(theme.spacing.lg * tvS),
       backgroundColor: 'rgba(255, 255, 255, 0.03)',
     },
     sectionFocused: {
@@ -602,6 +614,7 @@ const createStyles = (theme: NovaTheme) => {
       textTransform: 'uppercase',
       letterSpacing: 1,
       marginBottom: theme.spacing.sm,
+      fontSize: isTV ? Math.round(18 * tvS) : theme.typography.body.md.fontSize,
     },
     infoRow: {
       flexDirection: 'row',
@@ -617,6 +630,7 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
       flex: 1,
+      fontSize: isTV ? Math.round(18 * tvS) : theme.typography.body.md.fontSize,
     },
     infoValue: {
       ...theme.typography.body.md,
@@ -624,6 +638,7 @@ const createStyles = (theme: NovaTheme) => {
       fontWeight: '500',
       flex: 2,
       textAlign: 'right',
+      fontSize: isTV ? Math.round(18 * tvS) : theme.typography.body.md.fontSize,
     },
     modalFooter: {
       paddingHorizontal: theme.spacing.xl,
@@ -633,8 +648,8 @@ const createStyles = (theme: NovaTheme) => {
       alignItems: 'center',
     },
     tvModalFooter: {
-      paddingHorizontal: theme.spacing['2xl'],
-      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Math.round(theme.spacing.xl * tvS),
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
       alignItems: 'center',
@@ -660,10 +675,10 @@ const createStyles = (theme: NovaTheme) => {
       color: theme.colors.text.inverse,
     },
     closeButton: {
-      minWidth: 200,
-      paddingHorizontal: theme.spacing['2xl'],
-      paddingVertical: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      minWidth: Math.round(200 * tvS),
+      paddingHorizontal: Math.round(theme.spacing['2xl'] * tvS),
+      paddingVertical: Math.round(theme.spacing.md * tvS),
+      borderRadius: Math.round(theme.radius.md * tvS),
       borderWidth: 2,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.surface,
@@ -677,6 +692,7 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.body.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
+      fontSize: isTV ? Math.round(20 * tvS) : theme.typography.body.md.fontSize,
     },
     closeButtonTextFocused: {
       color: theme.colors.text.inverse,

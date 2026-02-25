@@ -1,12 +1,13 @@
 import { clearMemoryCache as clearImageMemoryCache, clearDiskCache as clearImageDiskCache } from '@/components/Image';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import LoadingIndicator from '@/components/LoadingIndicator';
-import Controls from '@/components/player/Controls';
+import Controls, { type ActiveMenu } from '@/components/player/Controls';
 import ExitButton from '@/components/player/ExitButton';
 import TVControlsModal from '@/components/player/TVControlsModal';
 import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
+import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import SubtitleOverlay, { SubtitleCuesRange, SubtitleDebugInfo } from '@/components/player/SubtitleOverlay';
 import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
 import { SubtitleStatusOverlay, type AutoSubtitleStatus } from '@/components/player/SubtitleStatusOverlay';
@@ -579,6 +580,7 @@ export default function PlayerScreen() {
   const [autoSubtitleMessage, setAutoSubtitleMessage] = useState<string | null>(null);
   const autoSubtitleTriggeredRef = useRef(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
   const isModalOpenRef = useRef(isModalOpen);
   const handleModalStateChange = useCallback((open: boolean) => {
     console.log('[player] handleModalStateChange', { open });
@@ -6465,9 +6467,9 @@ export default function PlayerScreen() {
                     } else {
                       hideControls({ immediate: true });
                     }
-                  }}
-                  isChildModalOpen={isModalOpen}
-                  isSeeking={isTVSeeking}>
+                    }}
+                    isChildModalOpen={isModalOpen || activeMenu !== null}
+                    isSeeking={isTVSeeking}>
                   <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
                     <Animated.View
                       style={tvOverlayAnimatedStyle}
@@ -6490,7 +6492,7 @@ export default function PlayerScreen() {
                         pointerEvents="box-none"
                         renderToHardwareTextureAndroid={true}>
                         <View style={styles.overlayTopRow} pointerEvents="box-none">
-                          <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen} />
+                          <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen || activeMenu !== null} />
                           <MediaInfoDisplay
                             mediaType={mediaType}
                             title={title || ''}
@@ -6543,6 +6545,8 @@ export default function PlayerScreen() {
                             }}
                             onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                             onModalStateChange={handleModalStateChange}
+                            activeMenu={activeMenu}
+                            onActiveMenuChange={setActiveMenu}
                             closeModalRef={closeActiveModalRef}
                             onScrubStart={handleSeekBarScrubStart}
                             onScrubEnd={handleSeekBarScrubEnd}
@@ -6587,6 +6591,44 @@ export default function PlayerScreen() {
                     currentLanguage={subtitleSearchLanguage}
                     mediaReleaseName={releaseName}
                   />
+
+                  {/* TV pseudo-modals for track selection and info */}
+                  {(activeMenu === 'audio' || activeMenu === 'subtitles') && (
+                    <TrackSelectionModal
+                      visible={true}
+                      title={activeMenu === 'audio' ? 'Audio Tracks' : 'Subtitles'}
+                      subtitle={activeMenu === 'audio' 
+                        ? (audioTrackOptions.find(t => t.id === selectedAudioTrackId)?.label ? `Current track: ${audioTrackOptions.find(t => t.id === selectedAudioTrackId)?.label}` : 'Select an audio track')
+                        : (subtitleTrackOptions.find(t => t.id === selectedSubtitleTrackId)?.label ? `Current subtitles: ${subtitleTrackOptions.find(t => t.id === selectedSubtitleTrackId)?.label}` : 'Select a subtitle track')
+                      }
+                      options={activeMenu === 'audio' ? audioTrackOptions : subtitleTrackOptions}
+                      selectedId={activeMenu === 'audio' ? selectedAudioTrackId : selectedSubtitleTrackId}
+                      onSelect={(id) => {
+                        if (activeMenu === 'audio') {
+                          setSelectedAudioTrackId(id);
+                          saveContentLanguagePreference({ audioTrackId: id });
+                        } else {
+                          setSelectedSubtitleTrackId(id);
+                          if (id !== 'external') {
+                            externalSubtitleUrlRef.current = null;
+                            setExternalSubtitleUrl(null);
+                          }
+                          saveContentLanguagePreference({ subtitleTrackId: id });
+                        }
+                        closeActiveModalRef.current?.();
+                      }}
+                      onClose={() => closeActiveModalRef.current?.()}
+                      focusKeyPrefix={activeMenu}
+                      onSearchSubtitles={activeMenu === 'subtitles' && !isLiveTV ? handleOpenSubtitleSearch : undefined}
+                    />
+                  )}
+                  {activeMenu === 'info' && fullStreamInfo && (
+                    <StreamInfoModal 
+                      visible={true} 
+                      info={fullStreamInfo} 
+                      onClose={() => closeActiveModalRef.current?.()} 
+                    />
+                  )}
                 </TVControlsModal>
               ) : (
                 <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
@@ -6671,6 +6713,8 @@ export default function PlayerScreen() {
                         }}
                         onSearchSubtitles={isLiveTV ? undefined : handleOpenSubtitleSearch}
                         onModalStateChange={handleModalStateChange}
+                        activeMenu={activeMenu}
+                        onActiveMenuChange={setActiveMenu}
                         closeModalRef={closeActiveModalRef}
                         onScrubStart={handleSeekBarScrubStart}
                         onScrubEnd={handleSeekBarScrubEnd}
@@ -6703,6 +6747,55 @@ export default function PlayerScreen() {
               )
             ) : null;
           })()}
+
+          {/* Shared modals rendered outside main controls for layering (Mobile branch) */}
+          {!isTvPlatform && (
+            <>
+              {(activeMenu === 'audio' || activeMenu === 'subtitles') && (
+                <TrackSelectionModal
+                  visible={true}
+                  title={activeMenu === 'audio' ? 'Audio Tracks' : 'Subtitles'}
+                  subtitle={activeMenu === 'audio' 
+                    ? (audioTrackOptions.find(t => t.id === selectedAudioTrackId)?.label ? `Current track: ${audioTrackOptions.find(t => t.id === selectedAudioTrackId)?.label}` : 'Select an audio track')
+                    : (subtitleTrackOptions.find(t => t.id === selectedSubtitleTrackId)?.label ? `Current subtitles: ${subtitleTrackOptions.find(t => t.id === selectedSubtitleTrackId)?.label}` : 'Select a subtitle track')
+                  }
+                  options={activeMenu === 'audio' ? audioTrackOptions : subtitleTrackOptions}
+                  selectedId={activeMenu === 'audio' ? selectedAudioTrackId : selectedSubtitleTrackId}
+                  onSelect={(id) => {
+                    if (activeMenu === 'audio') {
+                      setSelectedAudioTrackId(id);
+                      saveContentLanguagePreference({ audioTrackId: id });
+                    } else {
+                      setSelectedSubtitleTrackId(id);
+                      if (id !== 'external') {
+                        externalSubtitleUrlRef.current = null;
+                        setExternalSubtitleUrl(null);
+                      }
+                      saveContentLanguagePreference({ subtitleTrackId: id });
+                    }
+                    setActiveMenu(null);
+                    handleModalStateChange(false);
+                  }}
+                  onClose={() => {
+                    setActiveMenu(null);
+                    handleModalStateChange(false);
+                  }}
+                  focusKeyPrefix={activeMenu}
+                  onSearchSubtitles={activeMenu === 'subtitles' && !isLiveTV ? handleOpenSubtitleSearch : undefined}
+                />
+              )}
+              {activeMenu === 'info' && fullStreamInfo && (
+                <StreamInfoModal 
+                  visible={true} 
+                  info={fullStreamInfo} 
+                  onClose={() => {
+                    setActiveMenu(null);
+                    handleModalStateChange(false);
+                  }} 
+                />
+              )}
+            </>
+          )}
 
           {/* Mobile stream info modal (TV platforms use the modal in Controls component) */}
           {!isTvPlatform && fullStreamInfo && (

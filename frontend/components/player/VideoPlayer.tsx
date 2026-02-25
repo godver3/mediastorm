@@ -143,8 +143,11 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     onBuffer?.(buffering);
   }, [onBuffer]);
 
+  const cachedTracksRef = useRef<TracksEvent | null>(null);
+
   // Convert NativePlayer track format to VideoPlayer TrackInfo format
   const handleTracksChanged = useCallback((data: TracksEvent) => {
+    cachedTracksRef.current = data;
     if (!onTracksAvailable) return;
 
     // Convert to TrackInfo format (id + name + optional language/codec)
@@ -166,6 +169,14 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     });
     onTracksAvailable(audioTracks, subtitleTracks);
   }, [onTracksAvailable]);
+
+  // Re-report tracks if onTracksAvailable changes (e.g. after backend metadata is loaded)
+  useEffect(() => {
+    if (onTracksAvailable && cachedTracksRef.current) {
+      console.log('[NativePlayerAdapter] re-reporting cached tracks as onTracksAvailable changed');
+      handleTracksChanged(cachedTracksRef.current);
+    }
+  }, [onTracksAvailable, handleTracksChanged]);
 
   // Report duration hint early if available
   useEffect(() => {

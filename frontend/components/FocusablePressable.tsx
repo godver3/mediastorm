@@ -15,6 +15,7 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { SpatialNavigationFocusableView } from '@/services/tv-navigation';
 
 // Unified TV scaling - tvOS is the baseline, Android TV auto-derives
 // tvOS icon scale is 1.375, mobile is 1.0
@@ -99,6 +100,110 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
     const scaledIconSize = tvScale(iconSize * 1.375, iconSize);
 
     // Native Pressable with focus styling - unified for tvOS and Android TV
+    if (Platform.isTV) {
+      return (
+        <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
+          <SpatialNavigationFocusableView
+            focusKey={_focusKey}
+            onSelect={onSelect}
+            onFocus={onFocus}
+            disabled={disabled || loading}
+            testID={props.testID}>
+            {({ isFocused }) => {
+              const showBoth = icon && text;
+
+              return (
+                <View
+                  style={[
+                    styles.watchButton,
+                    style,
+                    isFocused && !disabled && styles.watchButtonFocused,
+                    isFocused && !disabled && focusedStyle,
+                    disabled && !loading && styles.watchButtonDisabled,
+                  ]}>
+                  <View style={{ position: 'relative' }}>
+                    <View
+                      style={[
+                        showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
+                        invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
+                      ]}>
+                      {icon && !loading ? (
+                        <Ionicons
+                          name={icon}
+                          size={scaledIconSize}
+                          color={isFocused && !disabled ? theme.colors.text.inverse : theme.colors.text.primary}
+                        />
+                      ) : !loading && !icon && text ? null : icon ? (
+                        <View style={{ width: scaledIconSize, height: scaledIconSize }} />
+                      ) : null}
+                      {text && (
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            isFocused && !disabled ? styles.watchButtonTextFocused : styles.watchButtonText,
+                            isFocused && !disabled ? focusedTextStyle : textStyle,
+                            loading && { opacity: 0 },
+                          ]}>
+                          {text}
+                        </Text>
+                      )}
+                    </View>
+                    {loading && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}>
+                        <ActivityIndicator
+                          size="small"
+                          color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+                        />
+                      </View>
+                    )}
+                  </View>
+                </View>
+              );
+            }}
+          </SpatialNavigationFocusableView>
+          {showReadyPip && !loading && (
+            <View
+              style={{
+                position: 'absolute',
+                top: -3,
+                right: -3,
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: theme.colors.status.success,
+                zIndex: 10,
+              }}
+              pointerEvents="none"
+            />
+          )}
+          {badge && !loading && (
+            <View
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                padding: 2,
+                borderRadius: 8,
+                backgroundColor: theme.colors.status.warning,
+                zIndex: 10,
+              }}
+              pointerEvents="none">
+              <Ionicons name="time" size={10} color="#000000" />
+            </View>
+          )}
+        </View>
+      );
+    }
+
     return (
       <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
         <Pressable
