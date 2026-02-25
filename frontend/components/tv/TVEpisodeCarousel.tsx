@@ -5,7 +5,7 @@
  */
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { SeriesEpisode, SeriesSeason } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -104,6 +104,8 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     }
   }, [activeEpisode]);
 
+
+
   // Cleanup debounce timeout on unmount
   useEffect(() => {
     return () => {
@@ -157,10 +159,27 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
     [onFocusRowChange],
   );
 
+  // Compute the season index that should get DefaultFocus
+  const selectedSeasonIndex = useMemo(() => {
+    if (!selectedSeason) return 0;
+    const idx = seasons.findIndex((s) => s.number === selectedSeason.number);
+    return idx >= 0 ? idx : 0;
+  }, [selectedSeason, seasons]);
+
+  // Compute the episode index that should get DefaultFocus
+  const activeEpisodeIndex = useMemo(() => {
+    if (!activeEpisode || episodes.length === 0) return 0;
+    const idx = episodes.findIndex(
+      (ep) => ep.seasonNumber === activeEpisode.seasonNumber && ep.episodeNumber === activeEpisode.episodeNumber,
+    );
+    return idx >= 0 ? idx : 0;
+  }, [activeEpisode, episodes]);
+
   // Render season chip for SpatialNavigationVirtualizedList
   const renderSeasonItem = useCallback(
     ({ item: season, index }: { item: SeriesSeason; index: number }) => {
       const isSelected = selectedSeason?.number === season.number;
+      const isDefaultFocusTarget = index === selectedSeasonIndex;
       const seasonLabel = getSeasonLabel(season.number, season.name);
 
       const focusableView = (
@@ -189,20 +208,25 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
         </SpatialNavigationFocusableView>
       );
 
-      return index === 0 ? <DefaultFocus>{focusableView}</DefaultFocus> : focusableView;
+      // DefaultFocus on the selected season so focus lands here when entering the row
+      if (isDefaultFocusTarget) {
+        return <DefaultFocus>{focusableView}</DefaultFocus>;
+      }
+      return focusableView;
     },
-    [selectedSeason, onSeasonSelect, handleSeasonFocus, styles],
+    [selectedSeason, selectedSeasonIndex, onSeasonSelect, handleSeasonFocus, styles],
   );
 
   // Render episode thumbnail for SpatialNavigationVirtualizedList
   const renderEpisodeItem = useCallback(
-    ({ item: episode }: { item: SeriesEpisode }) => {
+    ({ item: episode, index }: { item: SeriesEpisode; index: number }) => {
       const isSelected =
         activeEpisode?.seasonNumber === episode.seasonNumber && activeEpisode?.episodeNumber === episode.episodeNumber;
+      const isDefaultFocusTarget = index === activeEpisodeIndex;
       const isWatched = isEpisodeWatchedRef.current?.(episode) ?? false;
       const progress = getEpisodeProgressRef.current?.(episode) ?? 0;
 
-      return (
+      const focusableView = (
         <SpatialNavigationFocusableView
           onSelect={() => handleEpisodePress(episode)}
           onFocus={() => handleEpisodeFocus(episode)}>
@@ -220,10 +244,16 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
           )}
         </SpatialNavigationFocusableView>
       );
+
+      // DefaultFocus on the active episode so focus lands here when entering the row
+      if (isDefaultFocusTarget) {
+        return <DefaultFocus>{focusableView}</DefaultFocus>;
+      }
+      return focusableView;
     },
     // Note: activeEpisode in deps is intentional - it recreates the callback to trigger list re-render
     // when selection changes, updating the "Selected" badge on episode thumbnails
-    [handleEpisodePress, handleEpisodeFocus, theme, activeEpisode],
+    [handleEpisodePress, handleEpisodeFocus, theme, activeEpisode, activeEpisodeIndex],
   );
 
   // Episode details panel content
@@ -258,6 +288,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
             additionalItemsRendered={4}
             orientation="horizontal"
             scrollDuration={300}
+            initialScrollIndex={selectedSeasonIndex}
           />
         </View>
       </SpatialNavigationNode>
@@ -272,6 +303,7 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
             additionalItemsRendered={4}
             orientation="horizontal"
             scrollDuration={300}
+            initialScrollIndex={activeEpisodeIndex}
           />
         </View>
       </SpatialNavigationNode>

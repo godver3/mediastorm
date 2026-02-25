@@ -1,0 +1,69 @@
+diff --git a/node_modules/react-tv-space-navigation/dist/index.js b/node_modules/react-tv-space-navigation/dist/index.js
+index 878c408..0323252 100644
+--- a/node_modules/react-tv-space-navigation/dist/index.js
++++ b/node_modules/react-tv-space-navigation/dist/index.js
+@@ -147,7 +147,9 @@ exports.SpatialNavigationVirtualizedListWithScroll = (0, TypedMemo_1.typedMemo)(
+     ascendingArrowContainerStyle,
+     scrollInterval = 100
+   } = props;
+-  const [currentlyFocusedItemIndex, setCurrentlyFocusedItemIndex] = (0, react_1.useState)(0);
++  const [currentlyFocusedItemIndex, setCurrentlyFocusedItemIndex] = (0, react_1.useState)(() => {
++    return props.initialScrollIndex || 0;
++  });
+   const spatialNavigator = (0, SpatialNavigatorContext_1.useSpatialNavigator)();
+   const {
+     deviceType,
+@@ -160,9 +162,28 @@ exports.SpatialNavigationVirtualizedListWithScroll = (0, TypedMemo_1.typedMemo)(
+     scrollInterval,
+     data
+   });
++  const initialScrollIndexRef = (0, react_1.useRef)(props.initialScrollIndex || 0);
++  const hasReceivedFirstFocus = (0, react_1.useRef)(false);
+   const setCurrentlyFocusedItemIndexCallback = (0, react_1.useCallback)(index => {
+-    deviceTypeRef.current === 'remoteKeys' ? setCurrentlyFocusedItemIndex(index) : null;
+-  }, [deviceTypeRef]);
++    if (deviceTypeRef.current !== 'remoteKeys') return null;
++    if (!hasReceivedFirstFocus.current && initialScrollIndexRef.current > 0 && index !== initialScrollIndexRef.current) {
++      hasReceivedFirstFocus.current = true;
++      var targetIndex = initialScrollIndexRef.current;
++      // Set scroll index synchronously (no animation since it matches initial value)
++      setCurrentlyFocusedItemIndex(targetIndex);
++      // Defer LRUD focus redirect so current focus event finishes cleanly first
++      // This ensures onBlur fires properly on the LRUD-picked item
++      setTimeout(function() {
++        if (idRef.current) {
++          var newId = idRef.current.getNthVirtualNodeID(targetIndex);
++          spatialNavigator.grabFocusDeferred(newId);
++        }
++      }, 0);
++      return;
++    }
++    hasReceivedFirstFocus.current = true;
++    setCurrentlyFocusedItemIndex(index);
++  }, [deviceTypeRef, data, idRef, spatialNavigator]);
+   const scrollTo = (0, react_1.useCallback)(index => {
+     if (idRef.current) {
+       const newId = idRef.current.getNthVirtualNodeID(index);
+@@ -176,7 +197,7 @@ exports.SpatialNavigationVirtualizedListWithScroll = (0, TypedMemo_1.typedMemo)(
+     },
+     scrollTo,
+     currentlyFocusedItemIndex
+-  }), [currentlyFocusedItemIndex, scrollTo]);
++  }), [currentlyFocusedItemIndex, scrollTo, data]);
+   const renderWrappedItem = (0, react_1.useCallback)(({
+     item,
+     index
+@@ -3043,7 +3064,12 @@ const useVirtualizedListAnimation = ({
+   scrollDuration,
+   scrollOffsetsArray
+ }) => {
+-  const translation = (0, react_1.useRef)(new react_native_1.Animated.Value(0)).current;
++  const initialOffset = scrollOffsetsArray[currentlyFocusedItemIndex] || 0;
++  const translationRef = (0, react_1.useRef)(null);
++  if (translationRef.current === null) {
++    translationRef.current = new react_native_1.Animated.Value(initialOffset);
++  }
++  const translation = translationRef.current;
+   const newTranslationValue = scrollOffsetsArray[currentlyFocusedItemIndex];
+   (0, react_1.useEffect)(() => {
+     react_native_1.Animated.timing(translation, {
