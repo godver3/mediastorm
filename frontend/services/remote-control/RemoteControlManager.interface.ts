@@ -6,10 +6,18 @@ export type KeydownListener = (event: SupportedKeys) => void;
 // Interceptor invoked for high-priority Back handling. Return true to consume the event.
 export type BackInterceptor = () => boolean | void;
 
+// Interceptor invoked for any key handling. Return true to consume the event.
+export type KeyInterceptor = (key: SupportedKeys) => boolean | void;
+
 export interface RemoteControlManagerInterface {
   addKeydownListener(listener: KeydownListener): () => void;
   removeKeydownListener(listener: KeydownListener): void;
   emitKeyDown(key: SupportedKeys): void;
+
+  // Key interception helpers (LIFO priority). When any interceptor returns true, the event
+  // will NOT be propagated to normal listeners.
+  pushKeyInterceptor(interceptor: KeyInterceptor): () => void;
+  removeKeyInterceptor(interceptor: KeyInterceptor): void;
 
   // Back interception helpers (LIFO priority). When any interceptor returns true, the Back event
   // will NOT be propagated to normal listeners.

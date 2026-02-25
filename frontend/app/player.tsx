@@ -4439,27 +4439,49 @@ export default function PlayerScreen() {
       });
 
       // Build track options from player-reported tracks, filtering out "Disable" options
-      // When the player doesn't provide a name (e.g. AVPlayer with fMP4), enrich from backend metadata
+      // Enrich with backend metadata where available for richer labels (channels, codec names)
       const playerAudioOptions: TrackOption[] = audioTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
         .map((track, idx) => {
-          let label: string | undefined = track.name;
+          const meta = audioStreamMetadata?.[idx];
+          let label: string | undefined;
           let description: string | undefined;
-          if (!label && audioStreamMetadata?.[idx]) {
-            const meta = audioStreamMetadata[idx];
+
+          if (meta) {
+            // Use rich backend metadata
             const title = toTitleCase(meta.title);
             const language = formatLanguage(meta.language);
             const labelParts: string[] = [];
             if (title) labelParts.push(title);
             if (language) labelParts.push(language);
-            label = labelParts.length ? labelParts.join(' \u00b7 ') : undefined;
+            
+            // If backend has neither title nor language, but player reported a name, use that
+            label = labelParts.length ? labelParts.join(' \u00b7 ') : track.name;
+            
             const channel = meta.channelLayout?.trim() || (meta.channels ? `${meta.channels}ch` : undefined);
-            const codec = meta.codecName;
+            const codec = meta.codecLongName || meta.codecName || track.codec;
             const descParts: string[] = [];
             if (channel) descParts.push(channel);
             if (codec) descParts.push(codec.toUpperCase());
             description = descParts.length ? descParts.join(' \u00b7 ') : undefined;
+          } else {
+            // Fallback to player-reported tracks with basic enrichment from new TrackInfo fields
+            label = track.name;
+            const language = formatLanguage(track.language);
+            if (label && language && (label.toLowerCase() === language.toLowerCase() || label.toLowerCase().includes(language.toLowerCase()))) {
+              // already shows language or includes it
+            } else if (!label && language) {
+              label = language;
+            } else if (label && language) {
+              // Combine both if they differ (e.g. "English \u00b7 Stereo")
+              label = `${language} \u00b7 ${label}`;
+            }
+
+            const descParts: string[] = [];
+            if (track.codec) descParts.push(track.codec.toUpperCase());
+            description = descParts.length ? descParts.join(' \u00b7 ') : undefined;
           }
+
           return {
             id: String(track.id),
             label: label || `Audio ${track.id}`,
@@ -4469,10 +4491,20 @@ export default function PlayerScreen() {
 
       const playerSubtitleOptions: TrackOption[] = subtitleTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
-        .map((track) => ({
-          id: String(track.id),
-          label: track.name || `Subtitle ${track.id}`,
-        }));
+        .map((track) => {
+          let label = track.name;
+          const language = formatLanguage(track.language);
+          if (label && language && label.toLowerCase() === language.toLowerCase()) {
+            // already shows language
+          } else if (!label && language) {
+            label = language;
+          }
+
+          return {
+            id: String(track.id),
+            label: label || `Subtitle ${track.id}`,
+          };
+        });
 
       console.log('[player] handleTracksAvailable: built player options', {
         playerAudioOptionsCount: playerAudioOptions.length,

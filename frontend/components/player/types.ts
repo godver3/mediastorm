@@ -16,6 +16,8 @@ export interface VideoProgressMeta {
 export type TrackInfo = {
   id: number;
   name: string;
+  language?: string;
+  codec?: string;
 };
 
 export interface NowPlayingMetadata {

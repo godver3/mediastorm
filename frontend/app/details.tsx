@@ -1888,7 +1888,8 @@ export default function DetailsScreen() {
   const isSpatialNavActive = isDetailsPageActive && !seasonSelectorVisible && !trailerModalVisible
     && !playback.resumeModalVisible && !watchActions.bulkWatchModalVisible
     && !manualSelect.manualVisible && !episodeSelectorVisible && !moreOptionsVisible
-    && !playback.showAudioTrackModal && !playback.showSubtitleTrackModal;
+    && !playback.showAudioTrackModal && !playback.showSubtitleTrackModal
+    && !trailersHook.isTrailerImmersiveMode;
 
 
 
@@ -2927,7 +2928,10 @@ export default function DetailsScreen() {
                           {/* Fixed height spacer */}
                           <View style={{ height: tvSpacerHeight }} />
                           {/* Content area with gradient background */}
-                          <Animated.View style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}>
+                          <Animated.View
+                            style={autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined}
+                            pointerEvents={trailersHook.isTrailerImmersiveMode ? 'none' : 'auto'}
+                          >
                             {/* Gradient is a background layer so it doesn't clip children (e.g. tall logos) */}
                             <View style={[styles.tvContentGradient, { overflow: 'visible' }]}>
                               <LinearGradient
@@ -2996,7 +3000,7 @@ export default function DetailsScreen() {
             left: 0,
             right: 0,
             alignItems: 'center',
-          }, tvScrollIndicatorStyle]}
+          }, tvScrollIndicatorStyle, autoPlayTrailersTV ? trailersHook.immersiveContentStyle as any : undefined]}
           pointerEvents="none"
         >
           <Ionicons name="chevron-down" size={32 * tvScale} color="white" />

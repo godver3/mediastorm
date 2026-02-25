@@ -22,7 +22,7 @@ const PAN_THROTTLE_DELAY = 30; // ms throttle for pan event processing
 // narrow enough not to swallow rapid discrete taps.
 const DIRECTIONAL_DEDUP_WINDOW = 80;
 
-import { BackInterceptor, RemoteControlManagerInterface } from './RemoteControlManager.interface';
+import { BackInterceptor, KeyInterceptor, RemoteControlManagerInterface } from './RemoteControlManager.interface';
 import { SupportedKeys } from './SupportedKeys';
 
 const TV_EVENT_KEY_MAPPING: Record<string, SupportedKeys> = {
@@ -137,6 +137,7 @@ class RemoteControlManager implements RemoteControlManagerInterface {
   private lastEmittedKey?: SupportedKeys;
   private lastEmittedAt = 0;
   private backInterceptors: BackInterceptor[] = [];
+  private keyInterceptors: KeyInterceptor[] = [];
   // Track longSelect state: only emit LongEnter on action 0, reset on action 1
   private longSelectPressed = false;
 
@@ -447,6 +448,15 @@ class RemoteControlManager implements RemoteControlManagerInterface {
     }
   };
 
+  pushKeyInterceptor = (interceptor: KeyInterceptor): (() => void) => {
+    this.keyInterceptors.push(interceptor);
+    return () => this.removeKeyInterceptor(interceptor);
+  };
+
+  removeKeyInterceptor = (interceptor: KeyInterceptor): void => {
+    this.keyInterceptors = this.keyInterceptors.filter((fn) => fn !== interceptor);
+  };
+
   pushBackInterceptor = (interceptor: BackInterceptor): (() => void) => {
     this.backInterceptors.push(interceptor);
     return () => this.removeBackInterceptor(interceptor);
@@ -457,11 +467,23 @@ class RemoteControlManager implements RemoteControlManagerInterface {
   };
 
   private interceptIfNeeded = (key: SupportedKeys): boolean => {
+    // Call the most recently added general key interceptor first (LIFO)
+    for (let i = this.keyInterceptors.length - 1; i >= 0; i -= 1) {
+      try {
+        const handled = this.keyInterceptors[i]?.(key);
+        if (handled) {
+          return true;
+        }
+      } catch (error) {
+        console.warn('[remote-control] Key interceptor threw', error);
+      }
+    }
+
     if (key !== SupportedKeys.Back) {
       return false;
     }
 
-    // Call the most recently added interceptor first
+    // Call the most recently added back interceptor first (LIFO)
     for (let i = this.backInterceptors.length - 1; i >= 0; i -= 1) {
       try {
         const handled = this.backInterceptors[i]?.();

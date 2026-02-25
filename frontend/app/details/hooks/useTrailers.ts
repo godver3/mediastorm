@@ -155,22 +155,34 @@ export function useTrailers(params: UseTrailersParams): TrailersResult {
     }
   }, [isBackdropTrailerPlaying]);
 
-  // Remote control listener for trailer playback
+  // Remote control listener for trailer playback (non-immersive)
   useEffect(() => {
     if (!Platform.isTV || !autoPlayTrailersTV || !trailerStreamUrl || !isDetailsPageActive) return;
     const removeListener = RemoteControlManager.addKeydownListener((key) => {
       if (key === SupportedKeys.PlayPause) {
         setIsBackdropTrailerPlaying((prev) => !prev);
-        if (isTrailerImmersiveMode) setIsTrailerImmersiveMode(false);
         return;
-      }
-      if (isTrailerImmersiveMode) {
-        // Any key press exits immersive mode
-        setIsTrailerImmersiveMode(false);
       }
     });
     return () => { removeListener(); };
-  }, [autoPlayTrailersTV, trailerStreamUrl, isTrailerImmersiveMode, isDetailsPageActive]);
+  }, [autoPlayTrailersTV, trailerStreamUrl, isDetailsPageActive]);
+
+  // Key interceptor for immersive mode: consumes ALL keys to exit immersive mode
+  useEffect(() => {
+    if (isTrailerImmersiveMode) {
+      const removeInterceptor = RemoteControlManager.pushKeyInterceptor((key) => {
+        if (key === SupportedKeys.PlayPause) {
+          setIsBackdropTrailerPlaying((prev) => !prev);
+          setIsTrailerImmersiveMode(false);
+          return true; // handled
+        }
+        // Any other key also exits immersive mode and is consumed to prevent it from reaching the details page
+        setIsTrailerImmersiveMode(false);
+        return true; // handled
+      });
+      return () => removeInterceptor();
+    }
+  }, [isTrailerImmersiveMode]);
 
   // Stop trailer when navigating away or content prequeue starts
   useEffect(() => {

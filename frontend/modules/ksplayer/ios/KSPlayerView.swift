@@ -827,7 +827,7 @@ public class KSPlayerView: UIView {
                 "type": "audio",
                 "title": displayTitle,
                 "language": lang,
-                "codec": String(track.codecType),
+                "codec": fourCCToString(track.codecType),
                 "selected": track.isEnabled
             ]
         }
@@ -906,7 +906,7 @@ public class KSPlayerView: UIView {
                 "type": "subtitle",
                 "title": displayTitle,
                 "language": lang,
-                "codec": String(track.codecType),
+                "codec": fourCCToString(track.codecType),
                 "selected": track.isEnabled
             ]
         }

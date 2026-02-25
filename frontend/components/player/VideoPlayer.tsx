@@ -5,7 +5,7 @@ import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { isMobileWeb } from './isMobileWeb';
 import type { VideoImplementation, VideoPlayerHandle, VideoPlayerProps, VideoProgressMeta } from './types';
-import { NativePlayer, type NativePlayerRef, type LoadEvent, type ProgressEvent, type ErrorEvent } from './NativePlayer';
+import { NativePlayer, type NativePlayerRef, type LoadEvent, type ProgressEvent, type ErrorEvent, type TracksEvent } from './NativePlayer';
 
 type PlayerComponent = React.ForwardRefExoticComponent<VideoPlayerProps & React.RefAttributes<VideoPlayerHandle>>;
 
@@ -144,17 +144,20 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
   }, [onBuffer]);
 
   // Convert NativePlayer track format to VideoPlayer TrackInfo format
-  const handleTracksChanged = useCallback((data: { audioTracks: Array<{ id: number; title: string; language: string }>; subtitleTracks: Array<{ id: number; title: string; language: string }> }) => {
+  const handleTracksChanged = useCallback((data: TracksEvent) => {
     if (!onTracksAvailable) return;
 
-    // Convert to TrackInfo format (id + name)
-    const audioTracks = data.audioTracks.map((t) => ({
+    // Convert to TrackInfo format (id + name + optional language/codec)
+    const audioTracks: TrackInfo[] = data.audioTracks.map((t) => ({
       id: t.id,
       name: t.title || t.language || '',
+      language: t.language,
+      codec: t.codec,
     }));
-    const subtitleTracks = data.subtitleTracks.map((t) => ({
+    const subtitleTracks: TrackInfo[] = data.subtitleTracks.map((t) => ({
       id: t.id,
       name: t.title || t.language || `Subtitle ${t.id}`,
+      language: t.language,
     }));
 
     console.log('[NativePlayerAdapter] forwarding tracks to onTracksAvailable', {
