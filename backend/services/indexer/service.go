@@ -425,6 +425,20 @@ func compareLanguage(i, j models.NZBResult, preferredLang string) int {
 	return 0
 }
 
+// compareYearMatch deranks results where year couldn't be parsed (kept by leniency)
+// below results that have a confirmed year match. Only active when expected year is set.
+func compareYearMatch(i, j models.NZBResult) int {
+	iMatch := i.Attributes["yearMatch"] == "true"
+	jMatch := j.Attributes["yearMatch"] == "true"
+	if iMatch && !jMatch {
+		return -1
+	}
+	if !iMatch && jMatch {
+		return 1
+	}
+	return 0
+}
+
 func compareSize(i, j models.NZBResult) int {
 	if i.SizeBytes > j.SizeBytes {
 		return -1
@@ -636,6 +650,13 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		preferredLang := settings.Metadata.Language
 
 		sort.SliceStable(aggregated, func(i, j int) bool {
+			// Year match is a correctness concern, not a preference — always applied first
+			if opts.Year > 0 {
+				if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
+					return ym < 0
+				}
+			}
+
 			for _, criterion := range rankingCriteria {
 				if !criterion.Enabled {
 					continue
@@ -797,6 +818,13 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 			return
 		}
 		sort.SliceStable(results, func(i, j int) bool {
+			// Year match is a correctness concern, not a preference — always applied first
+			if opts.Year > 0 {
+				if ym := compareYearMatch(results[i], results[j]); ym != 0 {
+					return ym < 0
+				}
+			}
+
 			for _, criterion := range rankingCriteria {
 				if !criterion.Enabled {
 					continue

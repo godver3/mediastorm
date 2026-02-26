@@ -28,8 +28,7 @@ type FilterOptions struct {
 }
 
 // FilterResults filters search results based on parsed title information
-// For movies: filters by title similarity (90%+) and year (±1 year)
-// For TV shows: filters by title similarity (90%+) only
+// For all media types: filters by title similarity (90%+) and year (±1 year) when expected year is set
 func FilterResults(results []models.NZBResult, opts FilterOptions) []models.NZBResult {
 	filterOpts := filter.Options{
 		ExpectedTitle:         opts.ExpectedTitle,

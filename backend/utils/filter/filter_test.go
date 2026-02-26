@@ -722,6 +722,65 @@ func TestTitleContainmentScore(t *testing.T) {
 	}
 }
 
+func TestResults_SeriesYearMismatch(t *testing.T) {
+	// Test that series results with wrong year are rejected when ExpectedYear is set
+	// This prevents e.g. Scrubs (2001) season packs from matching a search for Scrubs (2026)
+	t.Run("rejects old series results when year is set", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Scrubs.S01E01.2026.1080p.WEB-DL.x264"},              // Correct year - should match
+			{Title: "Scrubs.2001.S01.COMPLETE.1080p.BluRay.x265-GROUP"},   // Wrong year (2001) - should be rejected
+			{Title: "Scrubs.2001.S01-S09.COMPLETE.1080p.BluRay.x265"},     // Wrong year (2001) - should be rejected
+			{Title: "Scrubs.S01E01.1080p.WEB-DL.x264"},                   // No year - should be kept (leniency)
+		}
+
+		opts := Options{
+			ExpectedTitle: "Scrubs",
+			ExpectedYear:  2026,
+			IsMovie:       false,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 2 {
+			t.Errorf("Expected 2 results (correct year + no year), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify 2001 results were rejected
+		for _, r := range filtered {
+			if r.Title == "Scrubs.2001.S01.COMPLETE.1080p.BluRay.x265-GROUP" ||
+				r.Title == "Scrubs.2001.S01-S09.COMPLETE.1080p.BluRay.x265" {
+				t.Errorf("Old year result should have been rejected: %s", r.Title)
+			}
+		}
+	})
+
+	t.Run("year within tolerance passes for series", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Show.Name.2025.S01E01.1080p.WEB-DL"},  // Within ±1 year - should match
+			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"},  // Exact year - should match
+			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"},  // Too far off - should be rejected
+		}
+
+		opts := Options{
+			ExpectedTitle: "Show Name",
+			ExpectedYear:  2026,
+			IsMovie:       false,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 2 {
+			t.Errorf("Expected 2 results (within ±1 year), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+}
+
 func TestResults_TitleContainment(t *testing.T) {
 	// Test the bug case: "F1 The Movie" releases should match when TMDB returns "F1"
 	// This tests the fix for non-English title matching where the original title
