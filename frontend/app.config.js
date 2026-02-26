@@ -30,7 +30,12 @@ module.exports = ({ config }) => {
     './plugins/with-large-heap', // Increase Android heap limit for video playback
     './plugins/with-exoplayer-keep-resources', // Preserve ExoPlayer resources during shrinking
     // Background downloader not used on TV devices (and mmkv breaks armeabi-v7a builds)
-    ...(!isTV ? ['@kesha-antonov/react-native-background-downloader'] : []),
+    ...(!isTV
+      ? [
+          '@kesha-antonov/react-native-background-downloader',
+          './plugins/with-mmkv-android',
+        ]
+      : []),
     [
       'expo-build-properties',
       {
