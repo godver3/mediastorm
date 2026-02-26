@@ -41,8 +41,9 @@ module.exports = ({ config }) => {
           // Build optimizations for smaller APK and better performance on low-end devices
           enableProguardInReleaseBuilds: true,
           enableShrinkResourcesInReleaseBuilds: true,
-          // Only build 64-bit ABIs (mmkv doesn't support armeabi-v7a)
-          reactNativeArchitectures: ['arm64-v8a', 'x86_64'],
+          // Only build 64-bit ABIs for non-TV (mmkv doesn't support armeabi-v7a)
+          // TV devices often require armeabi-v7a
+          reactNativeArchitectures: isTV ? ['armeabi-v7a', 'arm64-v8a'] : ['arm64-v8a', 'x86_64'],
         },
         ios: {
           deploymentTarget: '15.1',

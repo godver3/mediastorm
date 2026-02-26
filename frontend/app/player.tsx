@@ -2703,7 +2703,9 @@ export default function PlayerScreen() {
           console.log('[player] PlayPause key received, paused:', pausedRef.current, 'lastToggle:', lastPlayPauseToggleRef.current);
           // TODO: tvOS sends duplicate events - debounce to ignore rapid duplicates
           const now = Date.now();
-          const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 300 : 0;
+          // Increase debounce to 700ms on tvOS to ignore the 'keyup' event
+          // which often follows a normal button press and release.
+          const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 700 : 0;
           const timeSinceLastToggle = now - lastPlayPauseToggleRef.current;
           console.log('[player] PlayPause debounce check:', { now, debounceMs, timeSinceLastToggle, willToggle: timeSinceLastToggle > debounceMs });
           if (timeSinceLastToggle > debounceMs) {

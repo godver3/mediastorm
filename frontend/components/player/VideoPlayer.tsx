@@ -79,6 +79,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     subtitleSize = 1.0,
     controlsVisible,
     onPictureInPictureStatusChanged,
+    onPlaybackStateChanged,
     externalSubtitleUrl,
     isHDR,
     isDV,
@@ -357,6 +358,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       onBuffering={handleBuffering}
       onTracksChanged={handleTracksChangedWithPending}
       onPipStatusChanged={onPictureInPictureStatusChanged}
+      onPlaybackStateChanged={onPlaybackStateChanged}
     />
   );
 });

@@ -88,6 +88,8 @@ export interface NativePlayerProps {
   onTracksChanged?: (data: TracksEvent) => void;
   onBuffering?: (buffering: boolean) => void;
   onPipStatusChanged?: (isActive: boolean, paused?: boolean) => void;
+  /** Called when native playback state changes (for syncing paused state on TV platforms) */
+  onPlaybackStateChanged?: (isPlaying: boolean) => void;
 }
 
 export interface NativePlayerRef {
@@ -142,6 +144,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     onTracksChanged,
     onBuffering,
     onPipStatusChanged,
+    onPlaybackStateChanged,
   } = props;
 
   const playerRef = useRef<any>(null);
@@ -249,6 +252,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       onBuffering={handleBuffering}
       onDebugLog={handleDebugLog}
       onPipStatusChanged={onPipStatusChanged}
+      onPlaybackStateChanged={onPlaybackStateChanged}
     />
   );
 });
