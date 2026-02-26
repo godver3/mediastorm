@@ -236,6 +236,11 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			continue
 		}
 
+		// Ensure attributes map is initialized early (needed for year match tagging)
+		if result.Attributes == nil {
+			result.Attributes = make(map[string]string)
+		}
+
 		// Log parsed info for first few results
 		if i < 5 {
 			log.Printf("[filter] Parsed result[%d]: Title=%q -> ParsedTitle=%q, Year=%d, Seasons=%v, Episodes=%v, Complete=%v",
@@ -294,8 +299,8 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			}
 		}
 
-		// For movies, also check year
-		if opts.IsMovie && opts.ExpectedYear > 0 {
+		// Check year for all media types (movies and series)
+		if opts.ExpectedYear > 0 {
 			if parsed.Year > 0 {
 				yearDiff := abs(opts.ExpectedYear - parsed.Year)
 				if yearDiff > MaxYearDifference {
@@ -303,10 +308,12 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 						result.Title, yearDiff, MaxYearDifference, opts.ExpectedYear, parsed.Year)
 					continue
 				}
+				result.Attributes["yearMatch"] = "true"
 			} else {
-				// If we can't parse a year from a movie title, be lenient and keep it
-				// This handles edge cases where year isn't in the release name
-				log.Printf("[filter] Warning: could not parse year from movie title %q, keeping anyway", result.Title)
+				// If we can't parse a year from the title, be lenient and keep it
+				// but flag it so ranking can derank it below year-matched results
+				log.Printf("[filter] Warning: could not parse year from title %q, keeping but deranked", result.Title)
+				result.Attributes["yearMatch"] = "false"
 			}
 		}
 
