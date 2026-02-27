@@ -500,7 +500,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// Check if filtering should be bypassed for AIOStreams-only mode
 	bypassFiltering := settings.Filtering.BypassFilteringForAIOStreamsOnly && isOnlyAIOStreamsEnabled(settings.TorrentScrapers)
 	if bypassFiltering {
-		log.Printf("[debrid] Bypassing strmr filtering - AIOStreams is the only enabled scraper and bypass setting is enabled")
+		log.Printf("[debrid] Bypassing mediastorm filtering - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	}
 
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)

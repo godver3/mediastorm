@@ -1,12 +1,12 @@
 {{template "base" .}}
 
-{{define "title"}}Dashboard - {{if .IsAdmin}}strmr Admin{{else}}strmr account{{end}}{{end}}
+{{define "title"}}Dashboard - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
 
 {{define "content"}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
         <h1>Dashboard</h1>
-        <p>Real-time monitoring and overview of your strmr server</p>
+        <p>Real-time monitoring and overview of your mediastorm server</p>
     </div>
     <button class="btn btn-secondary" onclick="refreshStatus()">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">

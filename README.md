@@ -1,10 +1,10 @@
 <p align="center">
-<img width="400" height="240" alt="image" src="https://github.com/user-attachments/assets/2ef5cb4b-2db7-4b1c-aa54-9bad3a63b12a" />
+<img width="400" height="240" alt="mediastorm" src="https://raw.githubusercontent.com/godver3/mediastorm/master/frontend/assets/tv_icons/icon-1920x720.png" />
 </p>
 
-# strmr
+# mediastorm
 
-A streaming media server with native mobile and TV apps. strmr supports:
+A streaming media server with native mobile and TV apps. mediastorm supports:
 
 - Usenet
 - Real Debrid/Torbox/AllDebrid
@@ -21,7 +21,7 @@ Discord: https://discord.gg/kT74mwf4bu
 
 ## Setup
 
-strmr requires both a backend server and a frontend app. The frontend app on its own does nothing - it needs a running backend to connect to.
+mediastorm requires both a backend server and a frontend app. The frontend app on its own does nothing - it needs a running backend to connect to.
 
 ### Backend Deployment
 
@@ -31,9 +31,9 @@ Deploy the backend using Docker Compose (or use the example in the repo):
 
 ```yaml
 services:
-  strmr:
-    image: godver3/strmr:latest
-    container_name: strmr
+  mediastorm:
+    image: godver3/mediastorm:latest
+    container_name: mediastorm
     ports:
       - "7777:7777"
     volumes:
@@ -53,7 +53,7 @@ docker-compose up -d
 
 The backend will be available at `http://localhost:7777`. The default login is `admin`/`admin` for both the frontend app and the admin web UI.
 
-> **⚠️ Security Notice:** strmr is not designed to be directly exposed to the internet. For safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
+> **⚠️ Security Notice:** mediastorm is not designed to be directly exposed to the internet. For safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
 
 ### Frontend Apps
 
@@ -70,9 +70,9 @@ Available on TestFlight:
 
 #### Android / Android TV
 
-Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
+Download the latest APK: [Releases](https://github.com/godver3/mediastorm/releases)
 
-**Updates:** Incremental updates are delivered automatically via OTA. Larger updates require manually downloading the new APK from [GitHub Releases](https://github.com/godver3/strmr/releases) or using Downloader (code listed with each release).
+**Updates:** Incremental updates are delivered automatically via OTA. Larger updates require manually downloading the new APK from [GitHub Releases](https://github.com/godver3/mediastorm/releases) or using Downloader (code listed with each release).
 
 ## Configuration
 
@@ -80,7 +80,7 @@ Access the admin panel at `http://localhost:7777/admin` to configure all setting
 
 ### Required API Keys
 
-strmr requires API keys from TMDB and TVDB for metadata (posters, descriptions, cast info, etc.):
+mediastorm requires API keys from TMDB and TVDB for metadata (posters, descriptions, cast info, etc.):
 
 | Service | Required | Purpose | Get Your Key |
 |---------|----------|---------|--------------|
@@ -93,13 +93,13 @@ Enter these keys in the admin panel under **Settings → Metadata**.
 
 ### AI Recommendations (Gemini)
 
-strmr can use Google's Gemini AI to generate personalized "Recommended For You" lists based on your watch history and watchlist. This is entirely optional — without a key, strmr still provides TMDB-based "Because you watched..." recommendations.
+mediastorm can use Google's Gemini AI to generate personalized "Recommended For You" lists based on your watch history and watchlist. This is entirely optional — without a key, mediastorm still provides TMDB-based "Because you watched..." recommendations.
 
 **Setup:**
 
 1. Go to [Google AI Studio](https://aistudio.google.com/apikey) and sign in with a Google account
 2. Click **Create API Key** and copy it
-3. In the strmr admin panel, go to **Settings → Metadata** and paste the key into the **Gemini API Key** field
+3. In the mediastorm admin panel, go to **Settings → Metadata** and paste the key into the **Gemini API Key** field
 4. Save — recommendations will appear in the **Lists** tab under "Recommended For You"
 
 **Cost:** Gemini 2.0 Flash is used, which has a generous free tier (1,500 requests/day). A typical user generates ~1 request per day (results are cached for 24 hours per user), so this should remain free for personal use.

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - strmr Admin</title>
+    <title>Login - mediastorm Admin</title>
     <style>
         :root {
             --bg-primary: #0f0f0f;
@@ -44,30 +44,32 @@
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
-            padding: 2rem;
+            overflow: hidden;
+        }
+
+        .login-banner {
+            width: 100%;
+        }
+
+        .login-banner img {
+            width: 100%;
+            height: auto;
+            display: block;
         }
 
         .login-header {
             text-align: center;
-            margin-bottom: 2rem;
-        }
-
-        .login-header svg {
-            width: 48px;
-            height: 48px;
-            color: var(--accent);
-            margin-bottom: 1rem;
-        }
-
-        .login-header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+            padding-top: 1.25rem;
         }
 
         .login-header p {
             color: var(--text-secondary);
             font-size: 0.875rem;
+        }
+
+        .login-body {
+            padding: 0 2rem 2rem;
         }
 
         .form-group {
@@ -168,13 +170,11 @@
 </head>
 <body>
     <div class="login-card">
+        <div class="login-banner">
+            <img src="/api/static/app-logo-wide.png" alt="mediastorm">
+        </div>
+        <div class="login-body">
         <div class="login-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="12 2 2 7 12 12 22 7 12 2"/>
-                <polyline points="2 17 12 22 22 17"/>
-                <polyline points="2 12 12 17 22 12"/>
-            </svg>
-            <h1>strmr</h1>
             <p>Sign in to your account</p>
         </div>
 
@@ -225,6 +225,7 @@
             </button>
         </form>
 
+        </div>
     </div>
 </body>
 </html>

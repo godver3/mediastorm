@@ -114,8 +114,8 @@ func TestSetIconURLSendsUserAgent(t *testing.T) {
 	if receivedUserAgent == "" {
 		t.Fatal("expected User-Agent header to be set, got empty string")
 	}
-	if receivedUserAgent != "strmr/1.0" {
-		t.Fatalf("expected User-Agent 'strmr/1.0', got %q", receivedUserAgent)
+	if receivedUserAgent != "mediastorm/1.0" {
+		t.Fatalf("expected User-Agent 'mediastorm/1.0', got %q", receivedUserAgent)
 	}
 }
 

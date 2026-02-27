@@ -168,7 +168,7 @@ func (n *NyaaScraper) searchRSS(ctx context.Context, query string) ([]ScrapeResu
 	}
 
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
@@ -346,7 +346,7 @@ func (n *NyaaScraper) TestConnection(ctx context.Context) error {
 	}
 
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := n.httpClient.Do(req)
 	if err != nil {

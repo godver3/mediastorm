@@ -1,6 +1,6 @@
 {{template "base" .}}
 
-{{define "title"}}Tools - strmr Admin{{end}}
+{{define "title"}}Tools - mediastorm Admin{{end}}
 
 {{define "content"}}
 <div class="page-header">
@@ -336,8 +336,8 @@
                         <div class="form-group">
                             <label class="form-label">Sync Direction</label>
                             <select id="newTaskSyncDirection" class="form-select" onchange="onSyncDirectionChange()">
-                                <option value="source_to_target" selected>Plex → strmr (Import from Plex)</option>
-                                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                                <option value="source_to_target" selected>Plex → mediastorm (Import from Plex)</option>
+                                <option value="target_to_source">mediastorm → Plex (Export to Plex)</option>
                                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
                             </select>
                             <small class="text-muted">Direction of data flow during sync</small>
@@ -523,8 +523,8 @@
                         <div class="form-group">
                             <label class="form-label">Sync Direction</label>
                             <select id="editTaskSyncDirection" class="form-select" onchange="onEditSyncDirectionChange()">
-                                <option value="source_to_target">Plex → strmr (Import from Plex)</option>
-                                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                                <option value="source_to_target">Plex → mediastorm (Import from Plex)</option>
+                                <option value="target_to_source">mediastorm → Plex (Export to Plex)</option>
                                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
                             </select>
                             <small class="text-muted">Direction of data flow during sync</small>
@@ -3854,14 +3854,14 @@
         // Update sync direction labels based on task type
         if (taskType === 'plex_watchlist_sync') {
             syncDirection.innerHTML = `
-                <option value="source_to_target" selected>Plex → strmr (Import from Plex)</option>
-                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                <option value="source_to_target" selected>Plex → mediastorm (Import from Plex)</option>
+                <option value="target_to_source">mediastorm → Plex (Export to Plex)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         } else if (taskType === 'trakt_list_sync') {
             syncDirection.innerHTML = `
-                <option value="source_to_target" selected>Trakt → strmr (Import from Trakt)</option>
-                <option value="target_to_source">strmr → Trakt (Export to Trakt)</option>
+                <option value="source_to_target" selected>Trakt → mediastorm (Import from Trakt)</option>
+                <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         }
@@ -4210,14 +4210,14 @@
         const syncDirection = document.getElementById('editTaskSyncDirection');
         if (task.type === 'plex_watchlist_sync') {
             syncDirection.innerHTML = `
-                <option value="source_to_target">Plex → strmr (Import from Plex)</option>
-                <option value="target_to_source">strmr → Plex (Export to Plex)</option>
+                <option value="source_to_target">Plex → mediastorm (Import from Plex)</option>
+                <option value="target_to_source">mediastorm → Plex (Export to Plex)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         } else if (task.type === 'trakt_list_sync') {
             syncDirection.innerHTML = `
-                <option value="source_to_target">Trakt → strmr (Import from Trakt)</option>
-                <option value="target_to_source">strmr → Trakt (Export to Trakt)</option>
+                <option value="source_to_target">Trakt → mediastorm (Import from Trakt)</option>
+                <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         }

@@ -121,7 +121,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 
 			headReq, err := http.NewRequestWithContext(headCtx, http.MethodHead, encodedStreamURL, nil)
 			if err == nil {
-				headReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+				headReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 				if resp, err := http.DefaultClient.Do(headReq); err == nil {
 					contentLength := resp.ContentLength
 					contentType := resp.Header.Get("Content-Type")
@@ -804,7 +804,7 @@ func (s *HealthService) downloadTorrentFile(ctx context.Context, torrentURL stri
 	}
 
 	// Set common headers that some trackers expect
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := client.Do(req)
 	if err != nil {

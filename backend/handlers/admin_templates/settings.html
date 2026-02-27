@@ -1,6 +1,6 @@
 {{template "base" .}}
 
-{{define "title"}}Settings - {{if .IsAdmin}}strmr Admin{{else}}strmr account{{end}}{{end}}
+{{define "title"}}Settings - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
 
 {{define "content"}}
 {{if .NoProfiles}}
@@ -22,7 +22,7 @@
 <div class="page-header page-header-flex" style="display: flex; align-items: center; justify-content: space-between;">
     <div>
         <h1>Settings</h1>
-        <p>{{if .IsAdmin}}Configure your strmr server{{else}}Configure profile settings{{end}}</p>
+        <p>{{if .IsAdmin}}Configure your mediastorm server{{else}}Configure profile settings{{end}}</p>
     </div>
     <div class="page-header-controls" style="display: flex; gap: 0.5rem; align-items: center;">
         <input type="text" id="settingsSearch" class="form-input" placeholder="Search settings..." oninput="handleSettingsSearch(this.value)" style="min-width: 200px;">

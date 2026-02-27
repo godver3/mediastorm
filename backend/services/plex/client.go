@@ -80,7 +80,7 @@ func NewClient(clientID string) *Client {
 // setPlexHeaders adds required Plex headers to a request
 func (c *Client) setPlexHeaders(req *http.Request) {
 	req.Header.Set("X-Plex-Client-Identifier", c.clientID)
-	req.Header.Set("X-Plex-Product", "strmr")
+	req.Header.Set("X-Plex-Product", "mediastorm")
 	req.Header.Set("X-Plex-Version", "1.0.0")
 	req.Header.Set("X-Plex-Platform", "Web")
 	req.Header.Set("Accept", "application/json")
@@ -148,7 +148,7 @@ func (c *Client) GetAuthURL(pinCode string) string {
 	params := url.Values{}
 	params.Set("clientID", c.clientID)
 	params.Set("code", pinCode)
-	params.Set("context[device][product]", "strmr")
+	params.Set("context[device][product]", "mediastorm")
 
 	return fmt.Sprintf("%s#?%s", plexAuthURL, params.Encode())
 }
@@ -455,7 +455,7 @@ func (c *Client) RemoveFromWatchlist(authToken string, ratingKey string) error {
 	return nil
 }
 
-// NormalizeMediaType converts Plex media type to strmr media type
+// NormalizeMediaType converts Plex media type to mediastorm media type
 func NormalizeMediaType(plexType string) string {
 	switch strings.ToLower(plexType) {
 	case "movie":
@@ -486,7 +486,7 @@ func (c *Client) ClientID() string {
 
 // GenerateClientID generates a new unique client identifier
 func GenerateClientID() string {
-	return "strmr-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	return "mediastorm-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 // PlexHomeUser represents a user in a Plex Home

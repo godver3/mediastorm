@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#0f0f0f">
-    <title>{{block "title" .}}strmr Admin{{end}}</title>
+    <title>{{block "title" .}}mediastorm Admin{{end}}</title>
     <link rel="icon" type="image/png" sizes="32x32" href="/api/static/favicon-32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/api/static/favicon-16.png">
     <style>
@@ -1509,9 +1509,9 @@
     <nav class="navbar">
         <div class="navbar-content">
             <a href="{{.BasePath}}" class="navbar-brand">
-                <img src="/api/static/icon-rounded.png" alt="strmr" style="width: 32px; height: 32px; border-radius: 6px;">
+                <img src="/api/static/icon-rounded.png" alt="mediastorm" style="width: 32px; height: 32px; border-radius: 6px;">
                 <div style="display: flex; flex-direction: column; line-height: 1.2;">
-                    <span>{{if .IsAdmin}}strmr admin{{else}}strmr account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
+                    <span>{{if .IsAdmin}}mediastorm admin{{else}}mediastorm account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
                     <span class="navbar-username" style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 400;">{{.Username}}</span>
                 </div>
             </a>

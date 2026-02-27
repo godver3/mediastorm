@@ -87,7 +87,7 @@ func (s *Service) CreateBackup(backupType BackupType) (*BackupInfo, error) {
 
 	// Generate backup filename with timestamp
 	timestamp := time.Now().UTC().Format("20060102-150405")
-	filename := fmt.Sprintf("strmr_backup_%s.zip", timestamp)
+	filename := fmt.Sprintf("mediastorm_backup_%s.zip", timestamp)
 	backupPath := filepath.Join(s.backupDir, filename)
 
 	// Create temporary file first
@@ -277,7 +277,7 @@ func (s *Service) ListBackups() ([]BackupInfo, error) {
 		}
 
 		name := entry.Name()
-		if !strings.HasPrefix(name, "strmr_backup_") || !strings.HasSuffix(name, ".zip") {
+		if !strings.HasPrefix(name, "mediastorm_backup_") || !strings.HasSuffix(name, ".zip") {
 			continue
 		}
 
@@ -353,7 +353,7 @@ func (s *Service) DeleteBackup(filename string) error {
 		return errors.New("invalid backup filename")
 	}
 
-	if !strings.HasPrefix(filename, "strmr_backup_") || !strings.HasSuffix(filename, ".zip") {
+	if !strings.HasPrefix(filename, "mediastorm_backup_") || !strings.HasSuffix(filename, ".zip") {
 		return errors.New("invalid backup filename format")
 	}
 
@@ -382,7 +382,7 @@ func (s *Service) RestoreBackup(filename string) error {
 		return errors.New("invalid backup filename")
 	}
 
-	if !strings.HasPrefix(filename, "strmr_backup_") || !strings.HasSuffix(filename, ".zip") {
+	if !strings.HasPrefix(filename, "mediastorm_backup_") || !strings.HasSuffix(filename, ".zip") {
 		return errors.New("invalid backup filename format")
 	}
 
@@ -492,7 +492,7 @@ func (s *Service) GetBackupReader(filename string) (io.ReadCloser, int64, error)
 		return nil, 0, errors.New("invalid backup filename")
 	}
 
-	if !strings.HasPrefix(filename, "strmr_backup_") || !strings.HasSuffix(filename, ".zip") {
+	if !strings.HasPrefix(filename, "mediastorm_backup_") || !strings.HasSuffix(filename, ".zip") {
 		return nil, 0, errors.New("invalid backup filename format")
 	}
 

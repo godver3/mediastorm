@@ -318,7 +318,7 @@ func (s *Service) SetIconURL(id, iconURL string) (models.User, error) {
 	if err != nil {
 		return models.User{}, fmt.Errorf("%w: %v", ErrIconDownloadFailed, err)
 	}
-	req.Header.Set("User-Agent", "strmr/1.0")
+	req.Header.Set("User-Agent", "mediastorm/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		return models.User{}, fmt.Errorf("%w: %v", ErrIconDownloadFailed, err)
