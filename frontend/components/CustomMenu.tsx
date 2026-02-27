@@ -20,7 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Routes that should remain accessible when backend is unreachable
-const ALWAYS_ACCESSIBLE_ROUTES = ['/', '/settings'];
+const ALWAYS_ACCESSIBLE_ROUTES = ['/', '/downloads', '/settings'];
 
 interface CustomMenuProps {
   isVisible: boolean;
