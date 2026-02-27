@@ -917,11 +917,13 @@ const createStyles = (theme: NovaTheme, isTV: boolean) => {
       fontSize: s(18),
       lineHeight: s(22),
       fontWeight: '600',
+      color: theme.colors.text.primary,
     },
     tvButtonTextFocused: {
       fontSize: s(18),
       lineHeight: s(22),
       fontWeight: '600',
+      color: theme.colors.text.primary,
     },
     buttonPressed: {
       opacity: 0.8,
