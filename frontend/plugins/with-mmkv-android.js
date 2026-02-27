@@ -22,7 +22,15 @@ const withMmkvAndroid = (config, options = {}) => {
     }
 
     const insertPosition = contents.indexOf(match[0]) + match[0].length;
-    const mmkvDependency = `\n    // Required for @kesha-antonov/react-native-background-downloader release builds.\n    implementation("com.tencent:mmkv-shared:${mmkvVersion}")`;
+    // MMKV doesn't ship armeabi-v7a native libs, so only include it when building
+    // for architectures that support it (arm64-v8a, x86_64). This allows TV builds
+    // (armeabi-v7a only) to succeed without MMKV.
+    const mmkvDependency = `
+    def mmkvTargetArchs = (findProperty('reactNativeArchitectures') ?: 'arm64-v8a').split(',')*.trim()
+    if (mmkvTargetArchs.contains('arm64-v8a') || mmkvTargetArchs.contains('x86_64')) {
+        // Required for @kesha-antonov/react-native-background-downloader release builds.
+        implementation("com.tencent:mmkv-shared:${mmkvVersion}")
+    }`;
     config.modResults.contents =
       contents.slice(0, insertPosition) + mmkvDependency + contents.slice(insertPosition);
 
