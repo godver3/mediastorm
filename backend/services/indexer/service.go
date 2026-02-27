@@ -616,7 +616,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		!includeUsenet
 
 	if bypassRanking {
-		log.Printf("[indexer] Bypassing strmr ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
+		log.Printf("[indexer] Bypassing mediastorm ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	} else {
 		// Get effective ranking criteria (cascade: global -> profile -> client)
 		rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
@@ -650,11 +650,12 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		preferredLang := settings.Metadata.Language
 
 		sort.SliceStable(aggregated, func(i, j int) bool {
-			// Year match is a correctness concern, not a preference — always applied first
-			if opts.Year > 0 {
-				if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
-					return ym < 0
-				}
+			// Year match is a correctness concern, not a preference — always applied first.
+			// Always check yearMatch attributes (set by filter when ExpectedYear > 0),
+			// regardless of opts.Year — the debrid search may parse year from the query
+			// string even when opts.Year is 0 (e.g. series with year in title name).
+			if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
+				return ym < 0
 			}
 
 			for _, criterion := range rankingCriteria {
@@ -818,11 +819,12 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 			return
 		}
 		sort.SliceStable(results, func(i, j int) bool {
-			// Year match is a correctness concern, not a preference — always applied first
-			if opts.Year > 0 {
-				if ym := compareYearMatch(results[i], results[j]); ym != 0 {
-					return ym < 0
-				}
+			// Year match is a correctness concern, not a preference — always applied first.
+			// Always check yearMatch attributes (set by filter when ExpectedYear > 0),
+			// regardless of opts.Year — the debrid search may parse year from the query
+			// string even when opts.Year is 0 (e.g. series with year in title name).
+			if ym := compareYearMatch(results[i], results[j]); ym != 0 {
+				return ym < 0
 			}
 
 			for _, criterion := range rankingCriteria {
