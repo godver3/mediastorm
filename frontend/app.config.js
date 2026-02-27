@@ -111,7 +111,7 @@ module.exports = ({ config }) => {
         typedRoutes: true,
       },
       version: appVersion,
-      name: isTV ? 'mediastorm.xl' : 'mediastorm.s',
+      name: 'mediastorm',
       slug: 'strmr',
       scheme: 'com.strmr.app',
       userInterfaceStyle: 'automatic',
