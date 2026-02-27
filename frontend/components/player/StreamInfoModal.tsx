@@ -406,41 +406,45 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
         <Text style={styles.modalTitle}>Stream Information</Text>
       </View>
 
-      <SpatialNavigationNode orientation="vertical">
-        {/* Scrollable sections list with manual scroll on focus */}
+      <View style={{ flex: 1, width: '100%' }}>
         <SpatialNavigationNode orientation="vertical">
-          <ScrollView
-            ref={tvScrollViewRef}
-            style={styles.tvListContainer}
-            contentContainerStyle={styles.tvListContent}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}>
-            {visibleSections.map((section, index) => (
-              <SpatialNavigationFocusableView
-                key={section.key}
-                onFocus={() => handleSectionFocus(index)}>
-                {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
-                    <Text style={styles.sectionTitle}>{section.title}</Text>
-                    {section.content}
-                  </View>
-                )}
-              </SpatialNavigationFocusableView>
-            ))}
-          </ScrollView>
-        </SpatialNavigationNode>
+          {/* Scrollable sections list with manual scroll on focus */}
+          <View style={{ flex: 1, width: '100%' }}>
+            <SpatialNavigationNode orientation="vertical">
+              <ScrollView
+                ref={tvScrollViewRef}
+                style={styles.tvListContainer}
+                contentContainerStyle={styles.tvListContent}
+                scrollEnabled={false}
+                showsVerticalScrollIndicator={false}>
+                {visibleSections.map((section, index) => (
+                  <SpatialNavigationFocusableView
+                    key={section.key}
+                    onFocus={() => handleSectionFocus(index)}>
+                    {({ isFocused }: { isFocused: boolean }) => (
+                      <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
+                        <Text style={styles.sectionTitle}>{section.title}</Text>
+                        {section.content}
+                      </View>
+                    )}
+                  </SpatialNavigationFocusableView>
+                ))}
+              </ScrollView>
+            </SpatialNavigationNode>
+          </View>
 
-        {/* Close button */}
-        <View style={styles.tvModalFooter}>
-          <SpatialNavigationFocusableView onSelect={handleClose}>
-            {({ isFocused }: { isFocused: boolean }) => (
-              <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-              </View>
-            )}
-          </SpatialNavigationFocusableView>
-        </View>
-      </SpatialNavigationNode>
+          {/* Close button */}
+          <View style={styles.tvModalFooter}>
+            <SpatialNavigationFocusableView onSelect={handleClose}>
+              {({ isFocused }: { isFocused: boolean }) => (
+                <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                  <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                </View>
+              )}
+            </SpatialNavigationFocusableView>
+          </View>
+        </SpatialNavigationNode>
+      </View>
     </View>
   );
 
@@ -490,7 +494,7 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
               onPress={handleClose}
               focusable={false}
             />
-            <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']}>
+            <TVFocusGuard trapFocus={['up', 'down', 'left', 'right']} style={{ alignSelf: 'stretch', alignItems: 'center' }}>
               {tvModalContent}
             </TVFocusGuard>
           </View>
