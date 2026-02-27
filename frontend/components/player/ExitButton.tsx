@@ -22,11 +22,14 @@ const ExitButton: React.FC<GoBackButtonProps> = ({ onSelect, onFocus, disabled }
   return (
     <FocusablePressable
       text={'Exit'}
+      icon="arrow-back"
       focusKey="exit-button"
       onSelect={onSelect}
       onFocus={onFocus}
       disabled={disabled}
       style={styles.exitBtn}
+      textStyle={styles.exitText}
+      focusedTextStyle={styles.exitText}
     />
   );
 };
@@ -37,6 +40,12 @@ const useExitButtonStyles = (theme: NovaTheme) => {
       position: 'absolute',
       top: theme.spacing.lg,
       left: theme.spacing.lg,
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+    },
+    exitText: {
+      fontSize: 16,
+      lineHeight: 21,
     },
     androidTvButton: {
       paddingVertical: tvScale(14, 8),
