@@ -56,7 +56,7 @@ func main() {
 	portOverride := flag.Int("port", 0, "override server port from config")
 	flag.Parse()
 
-	fmt.Println("🚀 strmr Backend Starting...")
+	fmt.Println("🚀 mediastorm Backend Starting...")
 	if *demoMode {
 		fmt.Println("🧪 Demo mode enabled: returning curated public domain trending rows.")
 	}

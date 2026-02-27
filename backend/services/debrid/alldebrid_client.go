@@ -33,7 +33,7 @@ func NewAllDebridClient(apiKey string) *AllDebridClient {
 		apiKey:     strings.TrimSpace(apiKey),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    "https://api.alldebrid.com/v4",
-		agent:      "strmr",
+		agent:      "mediastorm",
 	}
 }
 

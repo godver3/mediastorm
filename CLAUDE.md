@@ -14,23 +14,23 @@ Reference `docs/TODO.md` for bugs, planned features, and improvements. Check thi
 **Note:** `docs/TODO.md` is gitignored - do not attempt to commit changes to it.
 
 ## Docker Hub
-- Repository name: `godver3/strmr` (NOT `strmr-backend`)
-- Always use `strmr` as the image name when building and pushing
+- Repository name: `godver3/mediastorm`
+- Always use `mediastorm` as the image name when building and pushing
 
 ## Build Commands
 
 ### Backend Docker Build
 Build from repo root (not from backend directory):
 ```bash
-cd /root/strmr
-docker build -t godver3/strmr:latest -f backend/Dockerfile .
-docker push godver3/strmr:latest
+cd /root/mediastorm
+docker build -t godver3/mediastorm:latest -f backend/Dockerfile .
+docker push godver3/mediastorm:latest
 ```
 
 Note: The Dockerfile expects to be run from the repo root with `-f backend/Dockerfile` since it references paths like `backend/go.mod` and `backend/parse_title.py`.
 
 ### Local Go Builds
-When building the Go backend locally (e.g., `go build` in `/root/strmr/backend`), a binary named `strmr` is created. This binary is not needed and should be deleted - it's a development artifact. The production backend runs in Docker.
+When building the Go backend locally (e.g., `go build` in `/root/mediastorm/backend`), a binary named `mediastorm` is created. This binary is not needed and should be deleted - it's a development artifact. The production backend runs in Docker.
 
 ## Backend Testing
 
@@ -66,8 +66,8 @@ Located at `.github/workflows/docker-build.yml`. Automatically builds and pushes
 - `linux/arm64`
 
 **Tags pushed:**
-- `godver3/strmr:latest`
-- `godver3/strmr:<commit-sha>`
+- `godver3/mediastorm:latest`
+- `godver3/mediastorm:<commit-sha>`
 
 ## KSPlayer Fork
 

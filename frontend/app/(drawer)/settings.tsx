@@ -1291,7 +1291,7 @@ function SettingsScreen() {
     setUpdateStatus('checking');
     setGithubRelease(null);
     try {
-      const response = await fetch('https://api.github.com/repos/godver3/strmr/releases/latest');
+      const response = await fetch('https://api.github.com/repos/godver3/mediastorm/releases/latest');
       if (!response.ok) {
         throw new Error('Failed to fetch releases');
       }

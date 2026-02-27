@@ -111,7 +111,7 @@ module.exports = ({ config }) => {
         typedRoutes: true,
       },
       version: appVersion,
-      name: 'strmr',
+      name: isTV ? 'mediastorm.xl' : 'mediastorm.s',
       slug: 'strmr',
       scheme: 'com.strmr.app',
       userInterfaceStyle: 'automatic',
@@ -167,9 +167,9 @@ module.exports = ({ config }) => {
           ITSAppUsesNonExemptEncryption: false,
           UIBackgroundModes: ['audio'],
           NSLocalNetworkUsageDescription:
-            'strmr needs to connect to your media server on your local network.',
+            'mediastorm needs to connect to your media server on your local network.',
           NSLocationWhenInUseUsageDescription:
-            'strmr uses your location to detect your WiFi network and automatically switch between home and remote server URLs.',
+            'mediastorm uses your location to detect your WiFi network and automatically switch between home and remote server URLs.',
           ...(isTV
             ? {
                 UIUserInterfaceStyle: 'Automatic',
@@ -193,7 +193,7 @@ module.exports = ({ config }) => {
           UIUserInterfaceStyle: 'Automatic',
           UIBackgroundModes: ['audio'],
           NSLocalNetworkUsageDescription:
-            'strmr needs to connect to your media server on your local network.',
+            'mediastorm needs to connect to your media server on your local network.',
         },
       },
       newArchEnabled: true,

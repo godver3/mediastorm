@@ -32,7 +32,7 @@ async function testAllUrls() {
     await testUrl(url);
   }
 
-  console.log('\n💡 If none work, make sure the strmr backend is running:');
+  console.log('\n💡 If none work, make sure the mediastorm backend is running:');
   console.log('   cd /root/NovaStream/backend && go run main.go');
 }
 

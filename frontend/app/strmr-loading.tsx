@@ -113,7 +113,7 @@ export default function StrmrLoadingScreen() {
     <FixedSafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background.base }]}>
       <Stack.Screen
         options={{
-          title: 'strmr loading',
+          title: 'mediastorm loading',
           headerShown: false,
         }}
       />

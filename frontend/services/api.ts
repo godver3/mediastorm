@@ -1,4 +1,4 @@
-// API service for strmr backend integration
+// API service for mediastorm backend integration
 
 import { Platform } from 'react-native';
 import { getApiConfig } from '../config/api';

@@ -475,7 +475,7 @@ func IDsToMap(ids IDs) map[string]string {
 	return result
 }
 
-// NormalizeMediaType converts Trakt media type to strmr media type
+// NormalizeMediaType converts Trakt media type to mediastorm media type
 func NormalizeMediaType(traktType string) string {
 	switch traktType {
 	case "movie":

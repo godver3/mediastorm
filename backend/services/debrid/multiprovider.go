@@ -352,7 +352,7 @@ func (s *MultiProviderService) downloadTorrentFile(ctx context.Context, torrentU
 		return nil, "", fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := client.Do(req)
 	if err != nil {

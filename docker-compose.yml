@@ -1,7 +1,7 @@
 services:
-  strmr:
-    image: godver3/strmr:latest
-    container_name: strmr
+  mediastorm:
+    image: godver3/mediastorm:latest
+    container_name: mediastorm
     ports:
       - "7777:7777"
     volumes:

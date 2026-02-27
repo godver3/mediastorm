@@ -179,7 +179,7 @@ export default function SearchScreen() {
   const [filter, setFilter] = useState<'all' | 'movie' | 'series'>('all');
 
   // Per-user AsyncStorage key for recent searches
-  const recentSearchesKey = activeUser?.id ? `strmr.recentSearches.${activeUser.id}` : null;
+  const recentSearchesKey = activeUser?.id ? `mediastorm.recentSearches.${activeUser.id}` : null;
 
   // Load recent searches from storage; reload when profile changes
   useEffect(() => {

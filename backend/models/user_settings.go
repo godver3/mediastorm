@@ -242,7 +242,7 @@ type FilterSettings struct {
 	FilterOutTerms                   []string    `json:"filterOutTerms,omitempty"`         // Terms to filter out from results (case-insensitive match in title)
 	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`         // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms                []string    `json:"nonPreferredTerms,omitempty"`      // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
-	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip strmr filtering/ranking when AIOStreams is the only enabled scraper
+	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences (per-user overrides).

@@ -335,7 +335,7 @@ var SettingsSchema = map[string]interface{}{
 			"filterOutTerms":                   map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
 			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive substring match, ranked higher; wrap in /slashes/ for regex)"},
 			"nonPreferredTerms":               map[string]interface{}{"type": "tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results (case-insensitive substring match, ranked lower but not removed; wrap in /slashes/ for regex)"},
-			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip strmr filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
+			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
 		},
 	},
 	"animeFiltering": map[string]interface{}{
@@ -2596,7 +2596,7 @@ func (h *AdminUIHandler) testNyaaScraper(w http.ResponseWriter) {
 		return
 	}
 	testReq.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
-	testReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	testReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := client.Do(testReq)
 	if err != nil {
@@ -4460,7 +4460,7 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 
 	case "alldebrid":
 		// Test AllDebrid by getting user info
-		apiReq, err := http.NewRequest(http.MethodGet, "https://api.alldebrid.com/v4/user?agent=strmr", nil)
+		apiReq, err := http.NewRequest(http.MethodGet, "https://api.alldebrid.com/v4/user?agent=mediastorm", nil)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5082,7 +5082,7 @@ func (h *AdminUIHandler) PlexGetWatchlist(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// PlexImportWatchlist imports selected items to strmr watchlist
+// PlexImportWatchlist imports selected items to mediastorm watchlist
 func (h *AdminUIHandler) PlexImportWatchlist(w http.ResponseWriter, r *http.Request) {
 	if h.watchlistService == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -5735,7 +5735,7 @@ func (h *AdminUIHandler) TraktGetHistory(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// TraktImportWatchlist imports selected Trakt watchlist items to strmr watchlist
+// TraktImportWatchlist imports selected Trakt watchlist items to mediastorm watchlist
 func (h *AdminUIHandler) TraktImportWatchlist(w http.ResponseWriter, r *http.Request) {
 	if h.watchlistService == nil {
 		w.Header().Set("Content-Type", "application/json")

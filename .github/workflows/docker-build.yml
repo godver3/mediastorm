@@ -36,7 +36,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            godver3/strmr:latest
-            godver3/strmr:${{ github.sha }}
+            godver3/mediastorm:latest
+            godver3/mediastorm:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

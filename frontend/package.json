@@ -1,5 +1,5 @@
 {
-  "name": "strmr",
+  "name": "mediastorm",
   "main": "expo-router/entry",
   "version": "1.5.0",
   "scripts": {

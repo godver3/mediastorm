@@ -647,7 +647,7 @@ func (s *PlaybackService) downloadTorrentFile(ctx context.Context, torrentURL st
 	}
 
 	// Set common headers that some trackers expect
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; strmr/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 
 	resp, err := client.Do(req)
 	if err != nil {

@@ -372,7 +372,7 @@ func Register(
 	pprofRouter.HandleFunc("/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
 
 	// Dev tools (localhost + docker hostname only, no auth required)
-	devHandler := handlers.NewDevHandler("/root/strmr/docs")
+	devHandler := handlers.NewDevHandler("/root/mediastorm/docs")
 	devRouter := api.PathPrefix("/dev").Subrouter()
 	devRouter.Use(devOnlyMiddleware)
 	devRouter.HandleFunc("/todo", devHandler.TodoEditor).Methods(http.MethodGet, http.MethodPost)

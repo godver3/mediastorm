@@ -21,7 +21,7 @@ import { useToast } from '@/components/ToastContext';
 // Local logo asset with fallback chain
 const localLogoAsset = require('@/assets/app-logo-wide.png');
 const GITHUB_LOGO_URL =
-  'https://raw.githubusercontent.com/godver3/strmr/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
+  'https://raw.githubusercontent.com/godver3/mediastorm/refs/heads/master/frontend/assets/tv_icons/icon-1280x768.png';
 
 export default function LoginScreen() {
   const theme = useTheme();
@@ -226,10 +226,6 @@ export default function LoginScreen() {
             <View style={styles.card}>
               <View style={styles.tvImageHeaderContainer}>
                 <Image source={getLogoSource()} style={styles.tvLogoImage} contentFit="cover" onError={handleLogoError} />
-                <LinearGradient
-                  colors={['transparent', theme.colors.background.surface]}
-                  style={styles.tvImageGradientOverlay}
-                />
               </View>
               <View style={styles.header}>
                 <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
@@ -423,10 +419,6 @@ export default function LoginScreen() {
       <View style={styles.card}>
         <View style={styles.imageHeaderContainer}>
           <Image source={getLogoSource()} style={styles.mobileLogoImage} contentFit="cover" onError={handleLogoError} />
-          <LinearGradient
-            colors={['transparent', theme.colors.background.surface]}
-            style={styles.imageGradientOverlay}
-          />
         </View>
         <View style={styles.header}>
           <Text style={styles.subtitle}>Configure Server</Text>
@@ -476,10 +468,6 @@ export default function LoginScreen() {
       <View style={styles.card}>
         <View style={styles.imageHeaderContainer}>
           <Image source={getLogoSource()} style={styles.mobileLogoImage} contentFit="cover" onError={handleLogoError} />
-          <LinearGradient
-            colors={['transparent', theme.colors.background.surface]}
-            style={styles.imageGradientOverlay}
-          />
         </View>
         <View style={styles.header}>
           <Text style={styles.subtitle}>Sign in to your account</Text>

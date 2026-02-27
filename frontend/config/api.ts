@@ -1,4 +1,4 @@
-// API Configuration for strmr React Native App
+// API Configuration for mediastorm React Native App
 
 import Constants from 'expo-constants';
 import { NativeModules, Platform } from 'react-native';
