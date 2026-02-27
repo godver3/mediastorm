@@ -161,45 +161,56 @@ class ExoPlayerView(
         context.applicationContext.registerComponentCallbacks(this)
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        // Recalculate SurfaceView size when container resizes
-        if (videoWidth > 0 && videoHeight > 0) {
-            updateSurfaceSize()
+    /**
+     * Directly measure and layout the SurfaceView to maintain the video's aspect ratio,
+     * centered with letterboxing (black bars).
+     *
+     * We bypass LayoutParams + requestLayout() because React Native's Yoga layout engine
+     * intercepts requestLayout() from programmatically-added children and may never trigger
+     * a standard Android layout pass. Direct measure()+layout() is the reliable approach.
+     */
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val containerW = right - left
+        val containerH = bottom - top
+
+        if (videoWidth > 0 && videoHeight > 0 && containerW > 0 && containerH > 0) {
+            val displayWidth = videoWidth * videoPixelRatio
+            val videoAspect = displayWidth / videoHeight
+            val containerAspect = containerW.toFloat() / containerH
+
+            val (targetW, targetH) = if (videoAspect > containerAspect) {
+                containerW to (containerW / videoAspect).toInt()
+            } else {
+                (containerH * videoAspect).toInt() to containerH
+            }
+
+            val childLeft = (containerW - targetW) / 2
+            val childTop = (containerH - targetH) / 2
+            surfaceView.measure(
+                MeasureSpec.makeMeasureSpec(targetW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(targetH, MeasureSpec.EXACTLY)
+            )
+            surfaceView.layout(childLeft, childTop, childLeft + targetW, childTop + targetH)
+            Log.d(TAG, "onLayout: surface=${targetW}x${targetH} at ($childLeft,$childTop) (video=${videoWidth}x${videoHeight}, container=${containerW}x${containerH})")
+        } else {
+            surfaceView.measure(
+                MeasureSpec.makeMeasureSpec(containerW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(containerH, MeasureSpec.EXACTLY)
+            )
+            surfaceView.layout(0, 0, containerW, containerH)
         }
     }
 
     /**
-     * Resize the SurfaceView to maintain the video's aspect ratio within this container,
-     * centered with letterboxing (black bars).
+     * Force a layout pass to resize the SurfaceView after video dimensions change.
+     * Cannot rely on requestLayout() in RN's view hierarchy, so directly call onLayout().
      */
-    private fun updateSurfaceSize() {
-        if (videoWidth <= 0 || videoHeight <= 0) return
+    private fun applySurfaceSize() {
         val containerW = width
         val containerH = height
-        if (containerW <= 0 || containerH <= 0) return
-
-        // Account for non-square pixels (e.g. anamorphic content)
-        val displayWidth = (videoWidth * videoPixelRatio)
-        val videoAspect = displayWidth / videoHeight
-
-        val containerAspect = containerW.toFloat() / containerH
-
-        val (targetW, targetH) = if (videoAspect > containerAspect) {
-            // Video is wider than container — fit to width, letterbox top/bottom
-            containerW to (containerW / videoAspect).toInt()
-        } else {
-            // Video is taller than container — fit to height, pillarbox left/right
-            (containerH * videoAspect).toInt() to containerH
+        if (containerW > 0 && containerH > 0) {
+            onLayout(true, left, top, right, bottom)
         }
-
-        val lp = surfaceView.layoutParams as LayoutParams
-        lp.width = targetW
-        lp.height = targetH
-        lp.gravity = Gravity.CENTER
-        surfaceView.layoutParams = lp
-
-        Log.d(TAG, "Surface resized: ${targetW}x${targetH} (video=${videoWidth}x${videoHeight}, container=${containerW}x${containerH})")
     }
 
     /**
@@ -352,7 +363,7 @@ class ExoPlayerView(
             videoHeight = videoSize.height
             videoPixelRatio = videoSize.pixelWidthHeightRatio
             Log.d(TAG, "Video size: ${videoWidth}x${videoHeight}, pixelRatio=$videoPixelRatio")
-            updateSurfaceSize()
+            applySurfaceSize()
         }
 
         override fun onCues(cueGroup: CueGroup) {
