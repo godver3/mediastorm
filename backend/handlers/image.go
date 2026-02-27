@@ -61,8 +61,11 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 
 	// Validate URL is from allowed image sources (exact hostname match)
 	allowedImageHosts := map[string]struct{}{
-		"image.tmdb.org":   {},
-		"img.youtube.com":  {},
+		"image.tmdb.org":          {},
+		"img.youtube.com":         {},
+		"artworks.thetvdb.com":    {},
+		"thetvdb.com":             {},
+		"www.thetvdb.com":         {},
 	}
 	parsedSource, err := url.Parse(sourceURL)
 	if err != nil || parsedSource.Host == "" {

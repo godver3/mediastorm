@@ -49,6 +49,7 @@ import {
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useMemoryMonitor } from '@/hooks/useMemoryMonitor';
+import { useTextureMemoryMonitor } from '@/hooks/useTextureMemoryTracker';
 import Animated, {
   useAnimatedRef,
   useAnimatedStyle,
@@ -316,6 +317,7 @@ const KILL_HERO_BACKGROUND_ART = false; // Full-screen backdrop
 const KILL_HERO_OVERLAY = false; // Logo, ratings, genres, year, description panel
 const DEBUG_MAX_CARDS_PER_SHELF = 0;
 const KILL_ALL_SHELVES = false;
+const DEBUG_TEXTURE_MEMORY = false; // GPU texture memory tracking — logs per-shelf breakdown every 15s
 // === END KILL SWITCHES ===
 
 /** Convert a metadata progress task phase into a human-readable label. */
@@ -436,6 +438,9 @@ const MAX_ENRICHED_CACHE = 50;
 function IndexScreen() {
   // Memory monitoring - logs every 60s on Android TV
   useMemoryMonitor('IndexPage', 60000, DEBUG_PERF && isAndroidTV);
+
+  // GPU texture memory tracking - logs per-shelf breakdown every 15s
+  useTextureMemoryMonitor('IndexPage', 15000, DEBUG_TEXTURE_MEMORY);
 
   // Startup timing — log mount time and kill switch status
   const mountTimeRef = useRef(Date.now());
@@ -3067,6 +3072,7 @@ type ShelfCardContentProps = {
   cardLayout?: 'portrait' | 'landscape';
   isShelfActive?: boolean; // Android TV: skip images on inactive shelves to reduce GPU load
   cardWidth?: number; // Numeric card width for image proxy sizing (style uses '100%')
+  trackingLabel?: string; // GPU texture memory tracking label (shelf key)
 };
 
 // Memoized TV hero component — isolates re-renders from the main page tree.
@@ -3091,7 +3097,7 @@ const TVHero = React.memo(function TVHero({ card, styles }: TVHeroProps) {
     return (
       <View style={styles.topContent}>
         <View style={styles.topHeroContainer}>
-          <Image source={imageUrl} style={styles.topHeroImage} contentFit="cover" transition={0} />
+          <Image source={imageUrl} style={styles.topHeroImage} contentFit="cover" transition={0} trackingLabel={DEBUG_TEXTURE_MEMORY ? 'hero' : undefined} />
         </View>
         <View style={styles.topTextContainer}>
           <Text style={styles.topTitle} numberOfLines={2}>
@@ -3113,11 +3119,11 @@ const TVHero = React.memo(function TVHero({ card, styles }: TVHeroProps) {
       <View style={styles.topHeroContainer}>
         {isPortrait ? (
           <>
-            <Image source={imageUrl} style={[StyleSheet.absoluteFillObject]} contentFit="cover" blurRadius={50} />
-            <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" />
+            <Image source={imageUrl} style={[StyleSheet.absoluteFillObject]} contentFit="cover" blurRadius={50} trackingLabel={DEBUG_TEXTURE_MEMORY ? 'hero:blur' : undefined} />
+            <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" trackingLabel={DEBUG_TEXTURE_MEMORY ? 'hero' : undefined} />
           </>
         ) : (
-          <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" />
+          <Image source={imageUrl} style={styles.topHeroImage} contentFit="contain" trackingLabel={DEBUG_TEXTURE_MEMORY ? 'hero' : undefined} />
         )}
       </View>
       <View style={styles.topTextContainer}>
@@ -3136,7 +3142,7 @@ const TVHero = React.memo(function TVHero({ card, styles }: TVHeroProps) {
 });
 
 const ShelfCardContent = React.memo(
-  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait', isShelfActive = true, cardWidth: numericCardWidth }: ShelfCardContentProps) {
+  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait', isShelfActive = true, cardWidth: numericCardWidth, trackingLabel }: ShelfCardContentProps) {
     const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
     const isLandscape = cardLayout === 'landscape';
 
@@ -3193,6 +3199,7 @@ const ShelfCardContent = React.memo(
                   contentFit="cover"
                   transition={0}
                   proxyWidth={numericCardWidth ? Math.round(numericCardWidth / 2) : undefined}
+                  trackingLabel={trackingLabel ? `${trackingLabel}:collage` : undefined}
                 />
               ))}
             </View>
@@ -3232,6 +3239,7 @@ const ShelfCardContent = React.memo(
                 cachePolicy="disk"
                 recyclingKey={cardKey}
                 proxyWidth={numericCardWidth}
+                trackingLabel={trackingLabel}
               />
             )}
             {/* Desaturation overlay for unreleased episodes */}
@@ -3283,6 +3291,7 @@ const ShelfCardContent = React.memo(
                 cachePolicy="disk"
                 recyclingKey={cardKey}
                 proxyWidth={numericCardWidth}
+                trackingLabel={trackingLabel}
               />
             )}
             {/* Top-left badge container (watch state + unwatched count + release status) */}
@@ -3368,7 +3377,8 @@ const ShelfCardContent = React.memo(
       prev.watchStateIconStyle === next.watchStateIconStyle &&
       prev.cardLayout === next.cardLayout &&
       prev.isShelfActive === next.isShelfActive &&
-      prev.cardWidth === next.cardWidth
+      prev.cardWidth === next.cardWidth &&
+      prev.trackingLabel === next.trackingLabel
     );
   },
 );
@@ -3505,6 +3515,7 @@ function VirtualizedShelf({
               cardLayout={cardLayout}
               isShelfActive={isShelfActive}
               cardWidth={cardWidth}
+              trackingLabel={DEBUG_TEXTURE_MEMORY ? shelfKey : undefined}
             />
           )}
         </SpatialNavigationFocusableView>

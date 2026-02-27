@@ -4,11 +4,13 @@ import {
   ImageProps as RNImageProps,
   ImageStyle,
   NativeModules,
+  PixelRatio,
   Platform,
   StyleProp,
   View,
 } from 'react-native';
 import { apiService } from '../services/api';
+import { textureTracker } from '../hooks/useTextureMemoryTracker';
 
 // Use disk-only caching on TV and Android to reduce memory pressure
 // Android emulators and lower-end devices struggle with memory-disk caching
@@ -40,8 +42,8 @@ function getProxyUrl(url: string, targetWidth?: number): string {
     return url;
   }
 
-  // Only proxy TMDB images
-  if (!url.includes('image.tmdb.org')) {
+  // Only proxy TMDB and TVDB images
+  if (!url.includes('image.tmdb.org') && !url.includes('thetvdb.com')) {
     return url;
   }
 
@@ -58,7 +60,8 @@ function getProxyUrl(url: string, targetWidth?: number): string {
   // Add target width - use explicit width if available, otherwise default to reasonable size
   // This ensures images are always resized to reduce memory usage
   // Large images (backdrops, w780 posters for backgrounds) should not be resized down
-  const isLargeImage = url.includes('/original/') || url.includes('/w1280/') || url.includes('/w780/');
+  // TVDB backdrop URLs contain /backgrounds/ in the path
+  const isLargeImage = url.includes('/original/') || url.includes('/w1280/') || url.includes('/w780/') || url.includes('/backgrounds/');
 
   // Skip proxy entirely for large images used as backgrounds - they need full resolution
   // Exception: Android TV has tight GPU memory budgets, always proxy and resize there
@@ -71,10 +74,10 @@ function getProxyUrl(url: string, targetWidth?: number): string {
 
   let proxyWidth: number;
   if (targetWidth && targetWidth > 0) {
-    // Request 2x size for retina displays, but cap at type-specific max
-    // Android TV at 1080p doesn't benefit from 2x — skip the multiplier to halve texture memory
-    const multiplier = Platform.isTV && isAndroid ? 1 : 2;
-    proxyWidth = Math.min(targetWidth * multiplier, maxWidth);
+    // Scale layout dp to physical pixels using actual device pixel ratio
+    // Android TV is typically 1.0-1.5x, phones/tablets 2-3x, tvOS 2x
+    const deviceScale = PixelRatio.get();
+    proxyWidth = Math.min(Math.round(targetWidth * deviceScale), maxWidth);
   } else {
     // Default: use max width for the image type
     // Android TV at 1080p doesn't need full-res backdrops — cap at 640px to save GPU memory
@@ -156,6 +159,7 @@ interface ImageWrapperProps {
   onError?: () => void;
   onLoad?: () => void;
   proxyWidth?: number; // Explicit width hint for proxy resizing (use when style width is percentage-based)
+  trackingLabel?: string; // Label for GPU texture memory tracking (e.g. "continue-watching", "hero")
 }
 
 // Debug: Track image load errors (sampled to avoid log spam)
@@ -176,6 +180,7 @@ export function Image({
   proxyWidth: explicitProxyWidth,
   onError,
   onLoad,
+  trackingLabel,
 }: ImageWrapperProps) {
   // DEBUG: Return placeholder when images are disabled for performance testing
   if (DEBUG_DISABLE_IMAGES) {
@@ -199,6 +204,33 @@ export function Image({
     // Use the proxy URL
     return finalUrl;
   }, [source, finalUrl]);
+
+  // GPU texture memory tracking — register on mount, unregister on unmount
+  const trackingIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (trackingLabel && textureTracker.isEnabled()) {
+      trackingIdRef.current = textureTracker.register(trackingLabel, sourceUrl);
+      return () => {
+        if (trackingIdRef.current) {
+          textureTracker.unregister(trackingIdRef.current);
+          trackingIdRef.current = null;
+        }
+      };
+    }
+  }, [trackingLabel, sourceUrl]);
+
+  // Wrap onLoad to report decoded dimensions to tracker
+  const handleLoad = React.useCallback((event?: any) => {
+    if (trackingIdRef.current && textureTracker.isEnabled()) {
+      // expo-image: event.source.width/height; RN Image: event.nativeEvent.source.width/height
+      const w = event?.source?.width ?? event?.nativeEvent?.source?.width ?? 0;
+      const h = event?.source?.height ?? event?.nativeEvent?.source?.height ?? 0;
+      if (w > 0 && h > 0) {
+        textureTracker.onLoad(trackingIdRef.current, w, h);
+      }
+    }
+    onLoad?.();
+  }, [onLoad]);
 
   // Wrap onError to add debug logging
   const handleError = React.useCallback(() => {
@@ -237,7 +269,7 @@ export function Image({
         recyclingKey={recyclingKey}
         priority={priority}
         onError={handleError}
-        onLoad={onLoad}
+        onLoad={handleLoad}
       />
     );
   }
@@ -253,7 +285,7 @@ export function Image({
       resizeMode={resizeMode}
       blurRadius={blurRadius}
       onError={handleError}
-      onLoad={onLoad}
+      onLoad={handleLoad}
     />
   );
 }
