@@ -6,12 +6,38 @@ import { Image as ProxiedImage } from '@/components/Image';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { launchNativePlayer } from '../details/playback';
 import { ResumePlaybackModal } from '../details/resume-modal';
 import { buildItemIdForProgress, checkResumeProgress } from '../details/checkResumeProgress';
+
+// ---------------------------------------------------------------------------
+// Sort types
+// ---------------------------------------------------------------------------
+
+type SortOption = 'date-desc' | 'date-asc' | 'name-asc' | 'name-desc';
+
+const SORT_OPTIONS: { key: SortOption; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'date-desc', label: 'Newest First', icon: 'arrow-down' },
+  { key: 'date-asc', label: 'Oldest First', icon: 'arrow-up' },
+  { key: 'name-asc', label: 'Name A\u2013Z', icon: 'arrow-down' },
+  { key: 'name-desc', label: 'Name Z\u2013A', icon: 'arrow-up' },
+];
+
+const SORT_STORAGE_KEY = 'strmr.downloads.sort';
+
+// ---------------------------------------------------------------------------
+// List row types
+// ---------------------------------------------------------------------------
+
+type ListRow =
+  | { type: 'show-header'; key: string; showKey: string; title: string; posterUrl: string; episodeCount: number }
+  | { type: 'season-header'; key: string; showKey: string; seasonKey: string; seasonNumber: number; episodeCount: number }
+  | { type: 'episode'; key: string; item: DownloadItem }
+  | { type: 'movie'; key: string; item: DownloadItem };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +75,85 @@ const formatEpisodeLabel = (item: DownloadItem): string => {
   return `S${s}E${e}`;
 };
 
+const getShowKey = (item: DownloadItem): string =>
+  item.seriesTitle || item.seriesIdentifier || item.title;
+
+const getSortName = (item: DownloadItem): string =>
+  (item.seriesTitle || item.title).toLowerCase();
+
+// ---------------------------------------------------------------------------
+// ShowHeader
+// ---------------------------------------------------------------------------
+
+function ShowHeader({
+  title,
+  posterUrl,
+  episodeCount,
+  expanded,
+  onPress,
+  theme,
+  styles,
+}: {
+  title: string;
+  posterUrl: string;
+  episodeCount: number;
+  expanded: boolean;
+  onPress: () => void;
+  theme: NovaTheme;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <Pressable style={styles.showHeader} onPress={onPress}>
+      <ProxiedImage source={{ uri: posterUrl }} style={styles.showHeaderPoster} />
+      <View style={styles.showHeaderInfo}>
+        <Text style={styles.showHeaderTitle} numberOfLines={1}>{title}</Text>
+        <Text style={styles.showHeaderCount}>
+          {episodeCount} episode{episodeCount !== 1 ? 's' : ''}
+        </Text>
+      </View>
+      <Ionicons
+        name={expanded ? 'chevron-up' : 'chevron-down'}
+        size={20}
+        color={theme.colors.text.muted}
+      />
+    </Pressable>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SeasonHeader
+// ---------------------------------------------------------------------------
+
+function SeasonHeader({
+  seasonNumber,
+  episodeCount,
+  expanded,
+  onPress,
+  theme,
+  styles,
+}: {
+  seasonNumber: number;
+  episodeCount: number;
+  expanded: boolean;
+  onPress: () => void;
+  theme: NovaTheme;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <Pressable style={styles.seasonHeader} onPress={onPress}>
+      <Text style={styles.seasonHeaderTitle}>Season {seasonNumber}</Text>
+      <Text style={styles.seasonHeaderCount}>
+        {episodeCount} episode{episodeCount !== 1 ? 's' : ''}
+      </Text>
+      <Ionicons
+        name={expanded ? 'chevron-up' : 'chevron-down'}
+        size={16}
+        color={theme.colors.text.muted}
+      />
+    </Pressable>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // DownloadRow
 // ---------------------------------------------------------------------------
@@ -65,6 +170,7 @@ function DownloadRow({
   isSelected,
   onToggleSelect,
   onEnterSelectMode,
+  indented,
 }: {
   item: DownloadItem;
   theme: NovaTheme;
@@ -77,6 +183,7 @@ function DownloadRow({
   isSelected: boolean;
   onToggleSelect: (id: string) => void;
   onEnterSelectMode: (id: string) => void;
+  indented?: boolean;
 }) {
   const isActive = item.status === 'downloading' || item.status === 'paused' || item.status === 'pending';
   const isCompleted = item.status === 'completed';
@@ -137,7 +244,11 @@ function DownloadRow({
     : formatBytes(item.fileSize);
 
   return (
-    <Pressable style={[styles.row, selectMode && isSelected && styles.rowSelected]} onPress={handlePress} onLongPress={handleLongPress}>
+    <Pressable
+      style={[styles.row, indented && styles.rowIndented, selectMode && isSelected && styles.rowSelected]}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+    >
       <View>
         <ProxiedImage
           source={{ uri: item.posterUrl }}
@@ -220,22 +331,148 @@ export default function DownloadsScreen() {
   const [pendingResumePosition, setPendingResumePosition] = useState(0);
   const [resumePercent, setResumePercent] = useState(0);
 
-  const activeItems = useMemo(
-    () => items.filter((i) => i.status === 'downloading' || i.status === 'paused' || i.status === 'pending'),
-    [items],
-  );
-  const completedItems = useMemo(
-    () => items.filter((i) => i.status === 'completed'),
-    [items],
-  );
-  const errorItems = useMemo(
-    () => items.filter((i) => i.status === 'error'),
-    [items],
-  );
-  const allItems = useMemo(
-    () => [...activeItems, ...errorItems, ...completedItems],
-    [activeItems, errorItems, completedItems],
-  );
+  // Sort state
+  const [sortOption, setSortOption] = useState<SortOption>('date-desc');
+
+  useEffect(() => {
+    AsyncStorage.getItem(SORT_STORAGE_KEY).then((v) => {
+      if (v && SORT_OPTIONS.some((o) => o.key === v)) {
+        setSortOption(v as SortOption);
+      }
+    });
+  }, []);
+
+  const currentSortConfig = SORT_OPTIONS.find((o) => o.key === sortOption) ?? SORT_OPTIONS[0];
+
+  const cycleSortOption = useCallback(() => {
+    setSortOption((prev) => {
+      const idx = SORT_OPTIONS.findIndex((o) => o.key === prev);
+      const next = SORT_OPTIONS[(idx + 1) % SORT_OPTIONS.length].key;
+      AsyncStorage.setItem(SORT_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
+
+  // Sorted items (replaces old active/error/completed split)
+  const sortedItems = useMemo(() => {
+    const sorted = [...items];
+    switch (sortOption) {
+      case 'date-desc':
+        sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        break;
+      case 'date-asc':
+        sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        break;
+      case 'name-asc':
+        sorted.sort((a, b) => getSortName(a).localeCompare(getSortName(b)));
+        break;
+      case 'name-desc':
+        sorted.sort((a, b) => getSortName(b).localeCompare(getSortName(a)));
+        break;
+    }
+    return sorted;
+  }, [items, sortOption]);
+
+  // Expand/collapse state for TV show grouping
+  const [expandedShows, setExpandedShows] = useState<Record<string, boolean>>({});
+  const [expandedSeasons, setExpandedSeasons] = useState<Record<string, boolean>>({});
+
+  const hasEpisodes = useMemo(() => sortedItems.some((i) => i.mediaType === 'episode'), [sortedItems]);
+  const anyShowExpanded = useMemo(() => Object.values(expandedShows).some((v) => v), [expandedShows]);
+
+  const toggleShowExpand = useCallback((showKey: string) => {
+    setExpandedShows((prev) => ({ ...prev, [showKey]: !prev[showKey] }));
+  }, []);
+
+  const toggleSeasonExpand = useCallback((seasonKey: string) => {
+    setExpandedSeasons((prev) => ({
+      ...prev,
+      [seasonKey]: prev[seasonKey] === false,
+    }));
+  }, []);
+
+  const toggleExpandAll = useCallback(() => {
+    if (anyShowExpanded) {
+      setExpandedShows({});
+    } else {
+      const shows: Record<string, boolean> = {};
+      for (const item of sortedItems) {
+        if (item.mediaType === 'episode') {
+          shows[getShowKey(item)] = true;
+        }
+      }
+      setExpandedShows(shows);
+    }
+  }, [anyShowExpanded, sortedItems]);
+
+  // Build grouped list data
+  const listData = useMemo(() => {
+    const rows: ListRow[] = [];
+    const emittedShows = new Set<string>();
+
+    for (const item of sortedItems) {
+      if (item.mediaType !== 'episode') {
+        rows.push({ type: 'movie', key: item.id, item });
+        continue;
+      }
+
+      const showKey = getShowKey(item);
+      if (emittedShows.has(showKey)) continue;
+      emittedShows.add(showKey);
+
+      // Collect all episodes for this show
+      const showEpisodes = sortedItems.filter(
+        (i) => i.mediaType === 'episode' && getShowKey(i) === showKey,
+      );
+
+      // Group by season
+      const seasonMap = new Map<number, DownloadItem[]>();
+      for (const ep of showEpisodes) {
+        const season = ep.seasonNumber ?? 0;
+        if (!seasonMap.has(season)) seasonMap.set(season, []);
+        seasonMap.get(season)!.push(ep);
+      }
+      const seasons = [...seasonMap.keys()].sort((a, b) => a - b);
+      const multiSeason = seasons.length > 1;
+
+      rows.push({
+        type: 'show-header',
+        key: `show:${showKey}`,
+        showKey,
+        title: item.seriesTitle || item.title,
+        posterUrl: item.posterUrl,
+        episodeCount: showEpisodes.length,
+      });
+
+      if (!expandedShows[showKey]) continue;
+
+      for (const season of seasons) {
+        const episodes = seasonMap.get(season)!;
+        episodes.sort((a, b) => (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0));
+
+        const seasonKey = `${showKey}:S${season}`;
+
+        if (multiSeason) {
+          rows.push({
+            type: 'season-header',
+            key: `season:${seasonKey}`,
+            showKey,
+            seasonKey,
+            seasonNumber: season,
+            episodeCount: episodes.length,
+          });
+
+          if (expandedSeasons[seasonKey] === false) continue;
+        }
+
+        for (const ep of episodes) {
+          rows.push({ type: 'episode', key: ep.id, item: ep });
+        }
+      }
+    }
+
+    return rows;
+  }, [sortedItems, expandedShows, expandedSeasons]);
 
   // Multi-select state
   const [selectMode, setSelectMode] = useState(false);
@@ -267,13 +504,13 @@ export default function DownloadsScreen() {
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    if (selected.size === allItems.length) {
+    if (selected.size === sortedItems.length) {
       setSelected(new Set());
       setSelectMode(false);
     } else {
-      setSelected(new Set(allItems.map((i) => i.id)));
+      setSelected(new Set(sortedItems.map((i) => i.id)));
     }
-  }, [allItems, selected.size]);
+  }, [sortedItems, selected.size]);
 
   const handleBulkDelete = useCallback(() => {
     const count = selected.size;
@@ -373,26 +610,71 @@ export default function DownloadsScreen() {
     [items, deleteDownload],
   );
 
-  const renderItem = useCallback(
-    ({ item }: { item: DownloadItem }) => (
-      <DownloadRow
-        item={item}
-        theme={theme}
-        styles={styles}
-        onPlay={handlePlay}
-        onPause={pauseDownload}
-        onResume={resumeDownload}
-        onDelete={handleDelete}
-        selectMode={selectMode}
-        isSelected={selected.has(item.id)}
-        onToggleSelect={toggleSelect}
-        onEnterSelectMode={enterSelectMode}
-      />
-    ),
-    [theme, styles, handlePlay, pauseDownload, resumeDownload, handleDelete, selectMode, selected, toggleSelect, enterSelectMode],
+  const renderRow = useCallback(
+    ({ item: row }: { item: ListRow }) => {
+      switch (row.type) {
+        case 'show-header':
+          return (
+            <ShowHeader
+              title={row.title}
+              posterUrl={row.posterUrl}
+              episodeCount={row.episodeCount}
+              expanded={!!expandedShows[row.showKey]}
+              onPress={() => toggleShowExpand(row.showKey)}
+              theme={theme}
+              styles={styles}
+            />
+          );
+        case 'season-header':
+          return (
+            <SeasonHeader
+              seasonNumber={row.seasonNumber}
+              episodeCount={row.episodeCount}
+              expanded={expandedSeasons[row.seasonKey] !== false}
+              onPress={() => toggleSeasonExpand(row.seasonKey)}
+              theme={theme}
+              styles={styles}
+            />
+          );
+        case 'episode':
+          return (
+            <DownloadRow
+              item={row.item}
+              theme={theme}
+              styles={styles}
+              onPlay={handlePlay}
+              onPause={pauseDownload}
+              onResume={resumeDownload}
+              onDelete={handleDelete}
+              selectMode={selectMode}
+              isSelected={selected.has(row.item.id)}
+              onToggleSelect={toggleSelect}
+              onEnterSelectMode={enterSelectMode}
+              indented
+            />
+          );
+        case 'movie':
+          return (
+            <DownloadRow
+              item={row.item}
+              theme={theme}
+              styles={styles}
+              onPlay={handlePlay}
+              onPause={pauseDownload}
+              onResume={resumeDownload}
+              onDelete={handleDelete}
+              selectMode={selectMode}
+              isSelected={selected.has(row.item.id)}
+              onToggleSelect={toggleSelect}
+              onEnterSelectMode={enterSelectMode}
+            />
+          );
+      }
+    },
+    [theme, styles, handlePlay, pauseDownload, resumeDownload, handleDelete, selectMode, selected, toggleSelect, enterSelectMode, expandedShows, expandedSeasons, toggleShowExpand, toggleSeasonExpand],
   );
 
-  const keyExtractor = useCallback((item: DownloadItem) => item.id, []);
+  const keyExtractor = useCallback((row: ListRow) => row.key, []);
 
   return (
     <FixedSafeAreaView style={styles.container}>
@@ -404,13 +686,22 @@ export default function DownloadsScreen() {
           <Text style={styles.headerTitle}>{selected.size} selected</Text>
           <Pressable onPress={toggleSelectAll} hitSlop={8}>
             <Text style={styles.selectHeaderAction}>
-              {selected.size === allItems.length ? 'Deselect All' : 'Select All'}
+              {selected.size === sortedItems.length ? 'Deselect All' : 'Select All'}
             </Text>
           </Pressable>
         </View>
       ) : (
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Downloads</Text>
+          {hasEpisodes && (
+            <Pressable onPress={toggleExpandAll} hitSlop={8}>
+              <Ionicons
+                name={anyShowExpanded ? 'contract-outline' : 'expand-outline'}
+                size={22}
+                color={theme.colors.text.secondary}
+              />
+            </Pressable>
+          )}
         </View>
       )}
       <View style={styles.settingsRow}>
@@ -442,7 +733,15 @@ export default function DownloadsScreen() {
           </Pressable>
         </View>
       </View>
-      {allItems.length === 0 ? (
+      <View style={styles.settingsRow}>
+        <Text style={styles.settingsLabel}>Sort By</Text>
+        <Pressable style={styles.sortPill} onPress={cycleSortOption}>
+          <Ionicons name={currentSortConfig.icon} size={14} color={theme.colors.text.primary} />
+          <Text style={styles.sortPillText}>{currentSortConfig.label}</Text>
+          <Ionicons name="swap-vertical" size={14} color={theme.colors.text.muted} />
+        </Pressable>
+      </View>
+      {sortedItems.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="cloud-download-outline" size={64} color={theme.colors.text.disabled} />
           <Text style={styles.emptyTitle}>No Downloads</Text>
@@ -452,8 +751,8 @@ export default function DownloadsScreen() {
         </View>
       ) : (
         <FlatList
-          data={allItems}
-          renderItem={renderItem}
+          data={listData}
+          renderItem={renderRow}
           keyExtractor={keyExtractor}
           contentContainerStyle={[styles.list, selectMode && selected.size > 0 && styles.listWithBar]}
           showsVerticalScrollIndicator={false}
@@ -489,6 +788,9 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.background.base,
     },
     header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
       paddingHorizontal: theme.spacing.lg,
       paddingTop: theme.spacing.md,
       paddingBottom: theme.spacing.sm,
@@ -530,6 +832,20 @@ const createStyles = (theme: NovaTheme) =>
       minWidth: 16,
       textAlign: 'center',
     },
+    sortPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.background.elevated,
+    },
+    sortPillText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.primary,
+      fontWeight: '600',
+    },
     selectHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -549,6 +865,56 @@ const createStyles = (theme: NovaTheme) =>
     listWithBar: {
       paddingBottom: 80,
     },
+    // Show header
+    showHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.surface,
+    },
+    showHeaderPoster: {
+      width: 36,
+      height: 54,
+      borderRadius: theme.radius.sm,
+    },
+    showHeaderInfo: {
+      flex: 1,
+      marginLeft: theme.spacing.md,
+      marginRight: theme.spacing.sm,
+    },
+    showHeaderTitle: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.primary,
+    },
+    showHeaderCount: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      marginTop: 2,
+    },
+    // Season header
+    seasonHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.sm,
+      marginLeft: theme.spacing.xl,
+      marginBottom: theme.spacing.xs,
+    },
+    seasonHeaderTitle: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+    },
+    seasonHeaderCount: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.muted,
+      marginLeft: theme.spacing.sm,
+      flex: 1,
+    },
+    // Download row
     row: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -557,6 +923,9 @@ const createStyles = (theme: NovaTheme) =>
       marginBottom: theme.spacing.xs,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
+    },
+    rowIndented: {
+      marginLeft: theme.spacing.xl,
     },
     rowSelected: {
       backgroundColor: theme.colors.background.elevated,
