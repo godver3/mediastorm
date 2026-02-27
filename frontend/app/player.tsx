@@ -6403,7 +6403,7 @@ export default function PlayerScreen() {
           {/* iOS AVPlayer doesn't expose muxed subtitles in fMP4, so we render them as an overlay */}
           {/* VTT is extracted with -start_at_zero, player time is relative to playbackOffset */}
           {/* Use -playbackOffset to convert currentTime to VTT-relative time */}
-          {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && !isPipActive && (
+          {isHlsStream && sidecarSubtitleUrl && hasStartedPlaying && (
             <SubtitleOverlay
               vttUrl={sidecarSubtitleUrl}
               currentTime={currentTime}
@@ -6417,6 +6417,7 @@ export default function PlayerScreen() {
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
               onDebugInfo={subtitleDebugEnabled ? handleSubtitleDebugInfo : undefined}
               letterboxBottom={letterboxBottom}
+              isPipActive={isPipActive}
             />
           )}
 
@@ -6429,8 +6430,7 @@ export default function PlayerScreen() {
             !useNativePlayer &&
             extractedSubtitleUrl &&
             selectedSubtitleTrackId !== 'external' &&
-            hasStartedPlaying &&
-            !isPipActive && (
+            hasStartedPlaying && (
               <SubtitleOverlay
                 vttUrl={extractedSubtitleUrl}
                 currentTime={currentTime}
@@ -6444,13 +6444,14 @@ export default function PlayerScreen() {
                 onCuesRangeChange={handleSubtitleCuesRangeChange}
                 isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
                 letterboxBottom={letterboxBottom}
+                isPipActive={isPipActive}
               />
             )}
 
           {/* External subtitle overlay from OpenSubtitles/Subliminal search */}
           {/* timeOffset is negated: positive user offset = later subtitles = decrease adjustedTime */}
           {/* Skip for NativePlayer - external subtitle loading not yet supported for KSPlayer/MPV */}
-          {!useNativePlayer && externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && !isPipActive && (
+          {!useNativePlayer && externalSubtitleUrl && selectedSubtitleTrackId === 'external' && hasStartedPlaying && (
             <SubtitleOverlay
               vttUrl={externalSubtitleUrl}
               currentTime={currentTime}
@@ -6463,6 +6464,7 @@ export default function PlayerScreen() {
               controlsVisible={controlsVisible}
               isHDRContent={!!hdrInfo?.isDolbyVision || !!hdrInfo?.isHDR10}
               letterboxBottom={letterboxBottom}
+              isPipActive={isPipActive}
             />
           )}
 

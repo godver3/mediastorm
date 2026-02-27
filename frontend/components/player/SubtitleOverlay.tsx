@@ -77,6 +77,8 @@ interface SubtitleOverlayProps {
   onDebugInfo?: (info: SubtitleDebugInfo) => void;
   /** Height of the bottom letterbox bar in pixels (passed from player for accurate positioning) */
   letterboxBottom?: number;
+  /** Whether PIP mode is active - scales up subtitles for the smaller window */
+  isPipActive?: boolean;
 }
 
 /**
@@ -371,6 +373,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   isHDRContent = false,
   onDebugInfo,
   letterboxBottom,
+  isPipActive = false,
 }) => {
   // Use container dimensions instead of screen dimensions for accurate positioning
   // Screen dimensions include safe areas which may not be part of our container
@@ -432,6 +435,9 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   // - Fall back to calculation based on video dimensions
   // - Account for control bar height when controls are visible
   const subtitleBottomOffset = useMemo(() => {
+    // PIP mode: minimal padding, no controls to account for
+    if (isPipActive) return 4;
+
     const basePadding = isAndroidTV ? 12 : Platform.isTV ? 20 : 10;
 
     // Calculate control bar height based on actual component dimensions
@@ -542,7 +548,7 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
     // Position subtitles just above the letterbox bars (or screen bottom if no letterbox)
     return letterboxHeight + basePadding + controlsOffset;
-  }, [videoWidth, videoHeight, containerSize, controlsVisible, letterboxBottom]);
+  }, [videoWidth, videoHeight, containerSize, controlsVisible, letterboxBottom, isPipActive]);
 
   // Fetch and parse VTT file
   const fetchVTT = useCallback(async () => {
@@ -752,15 +758,18 @@ const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     const baseFontSize = isAndroidTV ? 26 : Platform.isTV ? 62 : 24;
     const baseLineHeight = isAndroidTV ? 36 : Platform.isTV ? 86 : 34;
 
+    // PIP mode: scale up subtitles so they're readable in the smaller window
+    const pipScale = isPipActive ? 2.5 : 1;
+
     // Apply scale factor
-    const scaledFontSize = Math.round(baseFontSize * sizeScale);
-    const scaledLineHeight = Math.round(baseLineHeight * sizeScale);
+    const scaledFontSize = Math.round(baseFontSize * sizeScale * pipScale);
+    const scaledLineHeight = Math.round(baseLineHeight * sizeScale * pipScale);
 
     return {
       fontSize: scaledFontSize,
       lineHeight: scaledLineHeight,
     };
-  }, [sizeScale]);
+  }, [sizeScale, isPipActive]);
 
   // HDR content uses grey text for better visibility against bright HDR highlights
   const hdrTextColor = useMemo(() => {
