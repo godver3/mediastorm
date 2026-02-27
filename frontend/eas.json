@@ -26,7 +26,7 @@
       "android": {
         "buildType": "apk",
         "withoutCredentials": true,
-        "gradleCommand": ":app:assembleDebug -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64"
+        "gradleCommand": ":app:assembleDebug -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64"
       },
       "ios": {
         "buildConfiguration": "Debug",
