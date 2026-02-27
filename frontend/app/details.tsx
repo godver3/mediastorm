@@ -55,7 +55,6 @@ import Animated, {
   useSharedValue,
   withTiming,
   withRepeat,
-  withDelay,
   withSequence,
   Easing,
   cancelAnimation,
@@ -1902,29 +1901,37 @@ export default function DetailsScreen() {
     opacity: gpuRefreshOpacity.value,
   }));
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!isAndroidTV) return;
+  // Trigger GPU refresh when returning from player. We use isDetailsPageActive
+  // (not useFocusEffect) because the blank-screen gate below unmounts the entire
+  // content tree while inactive. The stale GPU cache forms during re-mount, so
+  // the animation must run AFTER isDetailsPageActive flips to true and the views
+  // are back in the tree. withRepeat oscillates for ~2s to cover the full
+  // re-mount + layout + compositor cycle regardless of device speed.
+  const prevDetailsActiveRef = useRef(isDetailsPageActive);
+  useEffect(() => {
+    if (!isAndroidTV) return;
+    const wasInactive = !prevDetailsActiveRef.current;
+    prevDetailsActiveRef.current = isDetailsPageActive;
 
-      if (!hasHadInitialFocusRef.current) {
-        hasHadInitialFocusRef.current = true;
-        return; // Skip initial focus — no stale textures on first mount
-      }
-
-      // Run two rounds of opacity animation to cover both fast and slow
-      // compositor timing (real hardware vs emulator). Each round triggers
-      // setAlpha → invalidate on the UI thread every frame, creating
-      // continuous dirty-rect propagation that clears stale caches.
+    if (isDetailsPageActive && wasInactive && hasHadInitialFocusRef.current) {
       gpuRefreshOpacity.value = 0.99;
-      gpuRefreshOpacity.value = withSequence(
-        withTiming(1, { duration: 300 }),
-        withDelay(200, withSequence(
-          withTiming(0.99, { duration: 0 }),
-          withTiming(1, { duration: 300 }),
-        )),
+      gpuRefreshOpacity.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 150 }),
+          withTiming(0.99, { duration: 150 }),
+        ),
+        7, // 7 cycles × 300ms = ~2.1s of continuous invalidation
+        false,
+        (_finished) => {
+          gpuRefreshOpacity.value = 1; // ensure we land on exactly 1
+        },
       );
-    }, [gpuRefreshOpacity]),
-  );
+    }
+    // Track that we've had at least one activation (skip initial mount)
+    if (isDetailsPageActive) {
+      hasHadInitialFocusRef.current = true;
+    }
+  }, [isDetailsPageActive, gpuRefreshOpacity]);
 
   if (isAndroidTV && !isDetailsPageActive) {
     return (
