@@ -4495,18 +4495,48 @@ export default function PlayerScreen() {
 
       const playerSubtitleOptions: TrackOption[] = subtitleTracks
         .filter((track) => track.id !== -1 && track.name?.toLowerCase() !== 'disable')
-        .map((track) => {
-          let label = track.name;
-          const language = formatLanguage(track.language);
-          if (label && language && label.toLowerCase() === language.toLowerCase()) {
-            // already shows language
-          } else if (!label && language) {
-            label = language;
+        .map((track, idx) => {
+          const meta = subtitleStreamMetadata?.[idx];
+          let label: string | undefined;
+          let description: string | undefined;
+
+          if (meta) {
+            // Use rich backend metadata (same approach as audio tracks)
+            const title = toTitleCase(meta.title);
+            const language = formatLanguage(meta.language);
+            const labelParts: string[] = [];
+            if (title) labelParts.push(title);
+            if (language && !labelParts.includes(language)) labelParts.push(language);
+            label = labelParts.length ? labelParts.join(' · ') : track.name;
+
+            const descParts: string[] = [];
+            const isForced = meta.isForced ?? (meta.disposition?.forced ?? 0) > 0;
+            const isDefault = meta.isDefault ?? (meta.disposition?.default ?? 0) > 0;
+            if (isForced) descParts.push('Forced');
+            if (isDefault) descParts.push('Default');
+            if (meta.isBitmap) descParts.push('Image');
+            const codec = meta.codecLongName ?? meta.codecName;
+            if (codec) descParts.push(codec.toUpperCase());
+            description = descParts.length ? descParts.join(' · ') : undefined;
+          } else {
+            // Fallback to player-reported track info
+            label = track.name;
+            const language = formatLanguage(track.language);
+            if (label && language && label.toLowerCase() === language.toLowerCase()) {
+              // already shows language
+            } else if (!label && language) {
+              label = language;
+            }
+
+            const descParts: string[] = [];
+            if (track.codec) descParts.push(track.codec.toUpperCase());
+            description = descParts.length ? descParts.join(' · ') : undefined;
           }
 
           return {
             id: String(track.id),
             label: label || `Subtitle ${track.id}`,
+            description,
           };
         });
 
@@ -4638,7 +4668,7 @@ export default function PlayerScreen() {
         }
       }
     },
-    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack, audioStreamMetadata, settings, userSettings, contentPreference, triggerAutoSubtitleSearchIfNeeded],
+    [audioTrackOptions.length, selectedSubtitleTrackId, subtitleTrackOptions.length, backendSubtitleTracks, useNativePlayer, preselectedAudioTrack, preselectedSubtitleTrack, audioStreamMetadata, subtitleStreamMetadata, settings, userSettings, contentPreference, triggerAutoSubtitleSearchIfNeeded],
   );
 
   const selectedAudioTrackIndex = useMemo(() => {
