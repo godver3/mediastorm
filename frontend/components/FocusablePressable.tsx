@@ -101,75 +101,84 @@ const FocusablePressable = forwardRef<View, CustomPressableProps>(
 
     // Native Pressable with focus styling - unified for tvOS and Android TV
     if (Platform.isTV) {
+      const isDisabled = disabled || loading;
+
+      // Static content used by both focusable and disabled paths
+      const renderContent = (isFocused: boolean) => {
+        const showBoth = icon && text;
+
+        return (
+          <View
+            style={[
+              styles.watchButton,
+              style,
+              isFocused && !disabled && styles.watchButtonFocused,
+              isFocused && !disabled && focusedStyle,
+              disabled && !loading && styles.watchButtonDisabled,
+            ]}>
+            <View style={{ position: 'relative' }}>
+              <View
+                style={[
+                  showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
+                  invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
+                ]}>
+                {icon && !loading ? (
+                  <Ionicons
+                    name={icon}
+                    size={scaledIconSize}
+                    color={isFocused && !disabled ? theme.colors.text.inverse : theme.colors.text.primary}
+                  />
+                ) : !loading && !icon && text ? null : icon ? (
+                  <View style={{ width: scaledIconSize, height: scaledIconSize }} />
+                ) : null}
+                {text && (
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      isFocused && !disabled ? styles.watchButtonTextFocused : styles.watchButtonText,
+                      isFocused && !disabled ? focusedTextStyle : textStyle,
+                      loading && { opacity: 0 },
+                    ]}>
+                    {text}
+                  </Text>
+                )}
+              </View>
+              {loading && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                  <ActivityIndicator
+                    size="small"
+                    color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
+                  />
+                </View>
+              )}
+            </View>
+          </View>
+        );
+      };
+
       return (
         <View style={[{ position: 'relative', alignSelf: 'flex-start', overflow: 'visible' }, wrapperStyle]}>
-          <SpatialNavigationFocusableView
-            focusKey={_focusKey}
-            onSelect={onSelect}
-            onFocus={onFocus}
-            disabled={disabled || loading}
-            testID={props.testID}>
-            {({ isFocused }) => {
-              const showBoth = icon && text;
-
-              return (
-                <View
-                  style={[
-                    styles.watchButton,
-                    style,
-                    isFocused && !disabled && styles.watchButtonFocused,
-                    isFocused && !disabled && focusedStyle,
-                    disabled && !loading && styles.watchButtonDisabled,
-                  ]}>
-                  <View style={{ position: 'relative' }}>
-                    <View
-                      style={[
-                        showBoth ? { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm } : undefined,
-                        invisibleIcon && !icon && { minHeight: scaledIconSize, justifyContent: 'center' },
-                      ]}>
-                      {icon && !loading ? (
-                        <Ionicons
-                          name={icon}
-                          size={scaledIconSize}
-                          color={isFocused && !disabled ? theme.colors.text.inverse : theme.colors.text.primary}
-                        />
-                      ) : !loading && !icon && text ? null : icon ? (
-                        <View style={{ width: scaledIconSize, height: scaledIconSize }} />
-                      ) : null}
-                      {text && (
-                        <Text
-                          numberOfLines={1}
-                          style={[
-                            isFocused && !disabled ? styles.watchButtonTextFocused : styles.watchButtonText,
-                            isFocused && !disabled ? focusedTextStyle : textStyle,
-                            loading && { opacity: 0 },
-                          ]}>
-                          {text}
-                        </Text>
-                      )}
-                    </View>
-                    {loading && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                        }}>
-                        <ActivityIndicator
-                          size="small"
-                          color={isFocused ? theme.colors.text.inverse : theme.colors.text.primary}
-                        />
-                      </View>
-                    )}
-                  </View>
-                </View>
-              );
-            }}
-          </SpatialNavigationFocusableView>
+          {isDisabled ? (
+            // Disabled: render plain View to remove from spatial nav tree
+            renderContent(false)
+          ) : (
+            <SpatialNavigationFocusableView
+              focusKey={_focusKey}
+              onSelect={onSelect}
+              onFocus={onFocus}
+              testID={props.testID}>
+              {({ isFocused }) => renderContent(isFocused)}
+            </SpatialNavigationFocusableView>
+          )}
           {showReadyPip && !loading && (
             <View
               style={{
