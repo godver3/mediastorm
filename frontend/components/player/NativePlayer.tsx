@@ -90,6 +90,8 @@ export interface NativePlayerProps {
   onPipStatusChanged?: (isActive: boolean, paused?: boolean) => void;
   /** Called when native playback state changes (for syncing paused state on TV platforms) */
   onPlaybackStateChanged?: (isPlaying: boolean) => void;
+  /** Called when native player emits subtitle cue text (used by ExoPlayer which has no built-in subtitle view) */
+  onSubtitleText?: (data: { text: string }) => void;
 }
 
 export interface NativePlayerRef {
@@ -145,6 +147,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     onBuffering,
     onPipStatusChanged,
     onPlaybackStateChanged,
+    onSubtitleText,
   } = props;
 
   const playerRef = useRef<any>(null);
@@ -209,6 +212,10 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
     onBuffering?.(buffering);
   }, [onBuffering]);
 
+  const handleSubtitleText = useCallback((data: { text: string }) => {
+    onSubtitleText?.(data);
+  }, [onSubtitleText]);
+
   // Select player based on platform
   // iOS and tvOS use KSPlayer, Android uses MPV
   const PlayerComponent = Platform.OS === 'android' ? MpvPlayer : KSPlayer;
@@ -251,6 +258,7 @@ export const NativePlayer = forwardRef<NativePlayerRef, NativePlayerProps>((prop
       onTracksChanged={handleTracksChanged}
       onBuffering={handleBuffering}
       onDebugLog={handleDebugLog}
+      onSubtitleText={handleSubtitleText}
       onPipStatusChanged={onPipStatusChanged}
       onPlaybackStateChanged={onPlaybackStateChanged}
     />
