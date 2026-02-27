@@ -30,7 +30,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useChannelEPG } from '@/hooks/useChannelEPG';
-import { isTablet } from '@/theme/tokens/tvScale';
+import { isAndroidTV, isTablet } from '@/theme/tokens/tvScale';
 import { isEpisodeUnreleased } from '@/app/details/utils';
 
 // TVMenuControl is available on tvOS but not typed in RN types
@@ -6335,7 +6335,7 @@ export default function PlayerScreen() {
                 subtitle: seriesTitle || undefined,
                 imageUri: headerImage || undefined,
               }}
-              subtitleSize={userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0}
+              subtitleSize={(userSettings?.playback?.subtitleSize ?? settings?.playback?.subtitleSize ?? 1.0) * (isAndroidTV ? 0.5 : 1.0)}
               mediaType={mediaType}
               onPictureInPictureStatusChanged={handlePictureInPictureStatusChanged}
               onPlaybackStateChanged={handleNativePlaybackStateChanged}

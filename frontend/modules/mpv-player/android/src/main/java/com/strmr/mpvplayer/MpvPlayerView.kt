@@ -86,6 +86,10 @@ class MpvPlayerView(
     private var baseSubtitleMarginY = 0
     private var controlsVisible = false
 
+    // Buffered subtitle style — applied after initializeMpv() since replayBufferedProps()
+    // runs before init (initialized=false), causing setSubtitleStyle to silently fail
+    private var pendingSubtitleStyle: ReadableMap? = null
+
     // External subtitle state
     private var currentExternalSubUrl: String? = null
     private var pendingExternalSubUrl: String? = null
@@ -223,6 +227,12 @@ class MpvPlayerView(
             initialized = true
             val voMode = if (isHDR) "mediacodec_embed,gpu-next,gpu (HDR)" else "gpu"
             Log.d(TAG, "MPV initialized (vo=$voMode, RAM=${totalMb}MB, lowRam=$isLowRamDevice, cache: $demuxerMax / $demuxerBack)")
+
+            // Apply subtitle style that was buffered before init
+            pendingSubtitleStyle?.let { style ->
+                pendingSubtitleStyle = null
+                setSubtitleStyle(style)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize MPV", e)
             mainHandler.post { emitError("Failed to initialize MPV: ${e.message}") }
@@ -558,6 +568,11 @@ class MpvPlayerView(
 
     override fun setSubtitleStyle(style: ReadableMap?) {
         if (style == null) return
+
+        // Buffer for replay after initializeMpv() if not yet initialized
+        if (!initialized) {
+            pendingSubtitleStyle = Arguments.makeNativeMap(style.toHashMap())
+        }
 
         if (style.hasKey("fontSize")) {
             val multiplier = style.getDouble("fontSize")
