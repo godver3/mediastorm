@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image as RNImage, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Image } from '@/components/Image';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
@@ -225,7 +225,7 @@ export default function LoginScreen() {
             keyboardShouldPersistTaps="handled">
             <View style={styles.card}>
               <View style={styles.tvImageHeaderContainer}>
-                <Image source={getLogoSource()} style={styles.tvLogoImage} contentFit="cover" onError={handleLogoError} />
+                <RNImage source={localLogoAsset} style={styles.tvLogoImage} resizeMode="cover" />
               </View>
               <View style={styles.header}>
                 <Text style={styles.subtitle}>{showServerConfig ? 'Configure Server' : 'Sign in to your account'}</Text>
