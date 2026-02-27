@@ -43,7 +43,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Modal, Platform, Pressable, StyleSheet, Text, View, unstable_batchedUpdates } from 'react-native';
+import { Animated as RNAnimated, Image as RNImage, ImageResizeMode, ImageStyle, InteractionManager, Modal, Platform, Pressable, StyleSheet, Text, View, unstable_batchedUpdates } from 'react-native';
 import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView, DefaultFocus } from '@/services/tv-navigation';
@@ -55,7 +55,6 @@ import Animated, {
   useSharedValue,
   withTiming,
   withRepeat,
-  withSequence,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -1829,10 +1828,6 @@ export default function DetailsScreen() {
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
-  // Track initial focus to distinguish return-from-player vs first mount
-  const hasHadInitialFocusRef = useRef(false);
-  // Reanimated shared value for forcing GPU refresh on Android TV
-  const gpuRefreshOpacity = useSharedValue(1);
 
   // On TV/mobile the visibility gate delays rendering, so trigger fade when it opens.
   // On web/desktop there's no gate — trigger fade once the poster image has preloaded.
@@ -1860,10 +1855,36 @@ export default function DetailsScreen() {
     };
   }, [readyToFadeIn, backgroundOpacity, contentOpacity]);
 
+  // On Android TV, force a window-level redraw after returning from the player.
+  // Uses React Native's Animated (NOT reanimated) with useNativeDriver because
+  // it goes through NativeAnimatedModule → NativeAnimatedNodesManager, which is
+  // the same native code path that the drawer's slide animation uses to fix
+  // Android TV GPU compositing fix: after returning from the player, the window
+  // compositor shows only ~20px of the details page. An invisible view with
+  // renderToHardwareTextureAndroid + translateX animation (same mechanism as the
+  // drawer menu) forces Android's window compositor to fully redraw.
+  const hasHadInitialFocusRef = useRef(false);
+  const compositorFixAnim = useRef(new RNAnimated.Value(0)).current;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isAndroidTV) return;
+
+      if (!hasHadInitialFocusRef.current) {
+        hasHadInitialFocusRef.current = true;
+        return;
+      }
+
+      compositorFixAnim.setValue(-1);
+      RNAnimated.timing(compositorFixAnim, {
+        toValue: 0,
+        duration: 100,
+        useNativeDriver: true,
+      }).start();
+    }, [compositorFixAnim]),
+  );
+
   // Reset focus and section positions when returning from playback on TV.
-  // This is necessary because on Android TV, the entire content tree is unmounted
-  // while playback is active to save memory. When returning, we need to ensure
-  // that the auto-focused action button triggers the correct scroll.
   // We wait for readyToFadeIn to ensure the layout is ready for measurement.
   useEffect(() => {
     if (isDetailsPageActive && Platform.isTV && readyToFadeIn) {
@@ -1880,67 +1901,6 @@ export default function DetailsScreen() {
       return () => clearTimeout(timer);
     }
   }, [isDetailsPageActive, handleTVFocusAreaChange, readyToFadeIn]);
-
-  // On Android TV, force the full-screen container to invalidate after returning
-  // from the player. Without this, react-freeze (freezeOnBlur) leaves stale
-  // hardware layer caches that render as a ~20px clipped strip.
-  //
-  // The prequeue pulse animation (reanimated withRepeat on an Animated.View)
-  // incidentally fixes this when it's running — each frame of the animation
-  // calls View.setAlpha() → View.invalidate(), and the dirty rect propagates
-  // up through the parent chain to the full-screen container, triggering a
-  // complete redraw. Content that returns with an active prequeue pulse (e.g.
-  // still-loading DV8) renders correctly; content without it stays broken.
-  //
-  // We replicate this by running a brief reanimated animation on the main
-  // container itself. Reanimated updates view props on the UI thread every
-  // frame, independent of React's JS thread scheduling and freezeOnBlur state,
-  // creating the continuous multi-frame invalidation needed to clear stale
-  // hardware layer caches.
-  const gpuRefreshStyle = useAnimatedStyle(() => ({
-    opacity: gpuRefreshOpacity.value,
-  }));
-
-  // Trigger GPU refresh when returning from player. We use isDetailsPageActive
-  // (not useFocusEffect) because the blank-screen gate below unmounts the entire
-  // content tree while inactive. The stale GPU cache forms during re-mount, so
-  // the animation must run AFTER isDetailsPageActive flips to true and the views
-  // are back in the tree. withRepeat oscillates for ~2s to cover the full
-  // re-mount + layout + compositor cycle regardless of device speed.
-  const prevDetailsActiveRef = useRef(isDetailsPageActive);
-  useEffect(() => {
-    if (!isAndroidTV) return;
-    const wasInactive = !prevDetailsActiveRef.current;
-    prevDetailsActiveRef.current = isDetailsPageActive;
-
-    if (isDetailsPageActive && wasInactive && hasHadInitialFocusRef.current) {
-      gpuRefreshOpacity.value = 0.99;
-      gpuRefreshOpacity.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 150 }),
-          withTiming(0.99, { duration: 150 }),
-        ),
-        7, // 7 cycles × 300ms = ~2.1s of continuous invalidation
-        false,
-        (_finished) => {
-          gpuRefreshOpacity.value = 1; // ensure we land on exactly 1
-        },
-      );
-    }
-    // Track that we've had at least one activation (skip initial mount)
-    if (isDetailsPageActive) {
-      hasHadInitialFocusRef.current = true;
-    }
-  }, [isDetailsPageActive, gpuRefreshOpacity]);
-
-  if (isAndroidTV && !isDetailsPageActive) {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <View style={{ flex: 1, backgroundColor: '#0b0b0f' }} />
-      </>
-    );
-  }
 
   // Spatial navigation: disable when any modal with its own SpatialNavigationRoot is open
   const isSpatialNavActive = isDetailsPageActive && !seasonSelectorVisible && !trailerModalVisible
@@ -2860,8 +2820,13 @@ export default function DetailsScreen() {
 
   const detailsContent = (
     <>
-      <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
-        <Animated.View style={[styles.container, gpuRefreshStyle]} collapsable={false}>
+      <SafeAreaWrapper
+        style={styles.safeArea}
+        {...safeAreaProps}
+      >
+        <View
+          style={styles.container}
+        >
           {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) — deferred until after first paint.
               Skip entirely when bundle hydration already populated seasons (its callbacks would no-op anyway). */}
           {isTV && isSeries && deferredSeriesReady && episodeManager.seasons.length === 0 && (
@@ -3024,7 +2989,7 @@ export default function DetailsScreen() {
               )}
             </>
           )}
-        </Animated.View>
+        </View>
       </SafeAreaWrapper>
       <MobileTabBar />
     </>
@@ -3049,6 +3014,19 @@ export default function DetailsScreen() {
         </SpatialNavigationRoot>
       ) : (
         detailsContent
+      )}
+      {isAndroidTV && (
+        <RNAnimated.View
+          renderToHardwareTextureAndroid={true}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            width: 1,
+            height: 1,
+            opacity: 0,
+            transform: [{ translateX: compositorFixAnim }],
+          }}
+        />
       )}
       {Platform.isTV && (
         <Animated.View

@@ -45,10 +45,10 @@ class MpvPlayerView(
     }
 
     private val surfaceView = SurfaceView(context).apply {
-        // Place the surface above the default surface layer but below the window.
-        // Without this, RN's view hierarchy can obscure mpv's subtitle rendering
-        // when the SurfaceView is embedded in a React Native layout (vs standalone Activity).
-        setZOrderMediaOverlay(true)
+        // NOTE: setZOrderMediaOverlay(true) was removed — it creates a separate overlay
+        // surface that can leave stale compositing artifacts when the player unmounts,
+        // causing the underlying details page to render as a ~20px clipped strip.
+        // Without the flag, the SurfaceView renders in the normal view hierarchy order.
     }
     private val mainHandler = Handler(Looper.getMainLooper())
 

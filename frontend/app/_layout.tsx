@@ -138,8 +138,10 @@ function AuthGate() {
                                     gestureDirection: 'horizontal',
                                     // Tablets keep animations despite TV layout; only actual TV disables them
                                     animation: hasTouchSupport ? 'default' : 'none',
-                                    // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick
-                                    freezeOnBlur: true,
+                                    // Freeze inactive screens to free memory - critical for low-RAM devices like Fire Stick.
+                                    // Disabled on Android TV: freezing detaches native views, causing a ~20px
+                                    // clipped layout when returning from the player screen.
+                                    freezeOnBlur: !(Platform.OS === 'android' && Platform.isTV),
                                   }}>
                                   {/* Drawer as the main screen - uses file-based routing */}
                                   <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
