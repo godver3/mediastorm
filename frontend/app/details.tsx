@@ -55,6 +55,8 @@ import Animated, {
   useSharedValue,
   withTiming,
   withRepeat,
+  withDelay,
+  withSequence,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -1909,11 +1911,18 @@ export default function DetailsScreen() {
         return; // Skip initial focus — no stale textures on first mount
       }
 
-      // Animate opacity 0.99 → 1.0 over 300ms on the full-screen container.
-      // Each frame triggers setAlpha → invalidate on the UI thread, creating
-      // ~18 frames of continuous dirty-rect propagation that clears stale caches.
+      // Run two rounds of opacity animation to cover both fast and slow
+      // compositor timing (real hardware vs emulator). Each round triggers
+      // setAlpha → invalidate on the UI thread every frame, creating
+      // continuous dirty-rect propagation that clears stale caches.
       gpuRefreshOpacity.value = 0.99;
-      gpuRefreshOpacity.value = withTiming(1, { duration: 300 });
+      gpuRefreshOpacity.value = withSequence(
+        withTiming(1, { duration: 300 }),
+        withDelay(200, withSequence(
+          withTiming(0.99, { duration: 0 }),
+          withTiming(1, { duration: 300 }),
+        )),
+      );
     }, [gpuRefreshOpacity]),
   );
 
