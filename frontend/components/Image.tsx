@@ -61,7 +61,9 @@ function getProxyUrl(url: string, targetWidth?: number): string {
   const isLargeImage = url.includes('/original/') || url.includes('/w1280/') || url.includes('/w780/');
 
   // Skip proxy entirely for large images used as backgrounds - they need full resolution
-  if (isLargeImage && (!targetWidth || targetWidth === 0)) {
+  // Exception: Android TV has tight GPU memory budgets, always proxy and resize there
+  const isAndroidTV = Platform.isTV && isAndroid;
+  if (isLargeImage && (!targetWidth || targetWidth === 0) && !isAndroidTV) {
     return url;
   }
 
@@ -70,10 +72,13 @@ function getProxyUrl(url: string, targetWidth?: number): string {
   let proxyWidth: number;
   if (targetWidth && targetWidth > 0) {
     // Request 2x size for retina displays, but cap at type-specific max
-    proxyWidth = Math.min(targetWidth * 2, maxWidth);
+    // Android TV at 1080p doesn't benefit from 2x — skip the multiplier to halve texture memory
+    const multiplier = Platform.isTV && isAndroid ? 1 : 2;
+    proxyWidth = Math.min(targetWidth * multiplier, maxWidth);
   } else {
     // Default: use max width for the image type
-    proxyWidth = maxWidth;
+    // Android TV at 1080p doesn't need full-res backdrops — cap at 640px to save GPU memory
+    proxyWidth = isAndroidTV ? Math.min(maxWidth, 640) : maxWidth;
   }
   params.set('w', proxyWidth.toString());
 
@@ -150,6 +155,7 @@ interface ImageWrapperProps {
   priority?: 'low' | 'normal' | 'high';
   onError?: () => void;
   onLoad?: () => void;
+  proxyWidth?: number; // Explicit width hint for proxy resizing (use when style width is percentage-based)
 }
 
 // Debug: Track image load errors (sampled to avoid log spam)
@@ -167,6 +173,7 @@ export function Image({
   cachePolicy = DEFAULT_CACHE_POLICY,
   recyclingKey,
   priority,
+  proxyWidth: explicitProxyWidth,
   onError,
   onLoad,
 }: ImageWrapperProps) {
@@ -179,7 +186,8 @@ export function Image({
     typeof source === 'string' ? source : source != null && typeof source === 'object' && 'uri' in source ? source.uri : '';
 
   // Convert to proxy URL if image proxy is enabled (for TMDB images on TV)
-  const targetWidth = extractWidthFromStyle(style);
+  // Prefer explicit proxyWidth (when style uses percentage widths like '100%')
+  const targetWidth = explicitProxyWidth ?? extractWidthFromStyle(style);
   const finalUrl = React.useMemo(() => getProxyUrl(sourceUrl, targetWidth), [sourceUrl, targetWidth]);
 
   // Create the final source object for rendering

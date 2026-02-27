@@ -458,7 +458,7 @@ function IndexScreen() {
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
   // Log every render with timestamp on TV to find the 9s gap
-  if (Platform.isTV && renderCountRef.current <= 30) {
+  if (__DEV__ && Platform.isTV && renderCountRef.current <= 30) {
     console.log(`[RENDER] #${renderCountRef.current} at ${new Date().toISOString()}`);
   }
 
@@ -1195,7 +1195,7 @@ function IndexScreen() {
       : enrichedItems;
     const allCards = mapTrendingToCards(filteredItems, movieReleases);
     const knownTotal = startupData?.watchlistTotal ?? allCards.length;
-    if (isAndroidTV) {
+    if (__DEV__ && isAndroidTV) {
       console.log(`[IndexPage:Perf] watchlistCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
     }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -1214,7 +1214,7 @@ function IndexScreen() {
     }
     const allCards = mapContinueWatchingToCards(continueWatchingItems, seriesOverviews, watchlistOverviewMapRef.current, movieReleases);
     const knownTotal = startupData?.continueWatchingTotal ?? allCards.length;
-    if (isAndroidTV) {
+    if (__DEV__ && isAndroidTV) {
       console.log(`[IndexPage:Perf] continueWatchingCards: ${allCards.length} cards built in ${(performance.now() - memoStart).toFixed(1)}ms`);
     }
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME && knownTotal <= MAX_SHELF_ITEMS_ON_HOME) {
@@ -1790,6 +1790,9 @@ function IndexScreen() {
 
   // Use ref instead of state for focus tracking to avoid re-renders on every focus change
   const focusedShelfKeyRef = useRef<string | null>(null);
+  // Android TV: track focused shelf as state to toggle image loading on adjacent shelves
+  // (two shelves visible simultaneously exceeds kirkwood GPU memory budget)
+  const [activeShelfKey, setActiveShelfKey] = useState<string | null>(null);
   // heroImageDimensions removed — now computed inline in TVHero component
 
   // Spatial navigation: left-at-edge opens menu (same pattern as settings/watchlist)
@@ -2346,6 +2349,9 @@ function IndexScreen() {
       focusedShelfKeyRef.current = shelfKey;
       if (previousShelfKey !== shelfKey) {
         scrollToShelf(shelfKey);
+        if (isAndroidTV) {
+          setActiveShelfKey(shelfKey);
+        }
       }
 
       // Debounced hero update - only update after focus settles
@@ -2549,6 +2555,9 @@ function IndexScreen() {
     if (autoFocusShelf) {
       setFocusedDesktopCard(autoFocusShelf.cards[0]);
       focusedShelfKeyRef.current = autoFocusShelf.key;
+      if (isAndroidTV) {
+        setActiveShelfKey(autoFocusShelf.key);
+      }
     }
   }, [desktopShelves, focusedDesktopCard]);
 
@@ -2854,7 +2863,7 @@ function IndexScreen() {
         </View>
       )}
       {Platform.isTV && (
-        <View style={desktopStyles?.styles.topSpacer} pointerEvents="none" renderToHardwareTextureAndroid={isAndroidTV}>
+        <View style={desktopStyles?.styles.topSpacer} pointerEvents="none">
           {!KILL_HERO_OVERLAY && focusedDesktopCard && (
             <Animated.View style={[desktopStyles?.styles.tvHeroOverview, heroContentAnimStyle]}>
               <View style={desktopStyles?.styles.tvHeroOverviewBg}>
@@ -2984,6 +2993,7 @@ function IndexScreen() {
                   badgeVisibility={badgeVisibility}
                   watchStateIconStyle={watchStateIconStyle}
                   cardLayout={shelf.cardLayout}
+                  isShelfActive={!isAndroidTV || activeShelfKey === shelf.key}
                 />
               );
             })}
@@ -3055,6 +3065,8 @@ type ShelfCardContentProps = {
   watchStateIconStyle: 'colored' | 'white';
   styles: ReturnType<typeof createDesktopStyles>['styles'];
   cardLayout?: 'portrait' | 'landscape';
+  isShelfActive?: boolean; // Android TV: skip images on inactive shelves to reduce GPU load
+  cardWidth?: number; // Numeric card width for image proxy sizing (style uses '100%')
 };
 
 // Memoized TV hero component — isolates re-renders from the main page tree.
@@ -3124,7 +3136,7 @@ const TVHero = React.memo(function TVHero({ card, styles }: TVHeroProps) {
 });
 
 const ShelfCardContent = React.memo(
-  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait' }: ShelfCardContentProps) {
+  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait', isShelfActive = true, cardWidth: numericCardWidth }: ShelfCardContentProps) {
     const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
     const isLandscape = cardLayout === 'landscape';
 
@@ -3155,6 +3167,10 @@ const ShelfCardContent = React.memo(
     // Calculate progress bar visibility (only show if >5% progress)
     const showProgressBar = isLandscape && card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && card.percentWatched < 100;
 
+    // On Android TV, skip images for non-focused shelves if GPU memory is still exceeded
+    // With proper proxy sizing (proxyWidth), images should now be small enough for both shelves
+    const skipImages = false;
+
     // For landscape cards, prefer backdrop image over poster
     const landscapeImage = card.backdropUrl || card.headerImage || card.cardImage;
 
@@ -3165,18 +3181,18 @@ const ShelfCardContent = React.memo(
           isFocused && styles.cardFocused,
           !isLastItem && styles.cardSpacing,
         ]}
-        // @ts-ignore - Android TV performance optimization
-        renderToHardwareTextureAndroid={isAndroidTV}>
+>
         {isExploreCard ? (
           <>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%', height: '100%' }}>
-              {card.collagePosters!.slice(0, 4).map((poster, i) => (
+              {!skipImages && card.collagePosters!.slice(0, 4).map((poster, i) => (
                 <Image
                   key={`collage-${i}`}
                   source={poster}
                   style={{ width: '50%', height: '50%' }}
                   contentFit="cover"
                   transition={0}
+                  proxyWidth={numericCardWidth ? Math.round(numericCardWidth / 2) : undefined}
                 />
               ))}
             </View>
@@ -3204,15 +3220,20 @@ const ShelfCardContent = React.memo(
         ) : isLandscape ? (
           <>
             {/* Landscape card layout with progress bar */}
-            <Image
-              key={`img-${cardKey}`}
-              source={landscapeImage}
-              style={styles.cardImage}
-              contentFit="cover"
-              transition={0}
-              cachePolicy="disk"
-              recyclingKey={cardKey}
-            />
+            {skipImages ? (
+              <View style={styles.cardImage} />
+            ) : (
+              <Image
+                key={`img-${cardKey}`}
+                source={landscapeImage}
+                style={styles.cardImage}
+                contentFit="cover"
+                transition={0}
+                cachePolicy="disk"
+                recyclingKey={cardKey}
+                proxyWidth={numericCardWidth}
+              />
+            )}
             {/* Desaturation overlay for unreleased episodes */}
             {card.isUnreleased && !isFocused && (
               <View style={styles.unreleasedOverlay} pointerEvents="none" />
@@ -3250,15 +3271,20 @@ const ShelfCardContent = React.memo(
           </>
         ) : (
           <>
-            <Image
-              key={`img-${cardKey}`}
-              source={card.cardImage}
-              style={styles.cardImage}
-              contentFit="cover"
-              transition={0}
-              cachePolicy="disk"
-              recyclingKey={cardKey}
-            />
+            {skipImages ? (
+              <View style={styles.cardImage} />
+            ) : (
+              <Image
+                key={`img-${cardKey}`}
+                source={card.cardImage}
+                style={styles.cardImage}
+                contentFit="cover"
+                transition={0}
+                cachePolicy="disk"
+                recyclingKey={cardKey}
+                proxyWidth={numericCardWidth}
+              />
+            )}
             {/* Top-left badge container (watch state + unwatched count + release status) */}
             {hasTopLeftBadge && (
               <View style={isAndroidTV ? styles.topLeftBadgeContainerAndroidTV : styles.topLeftBadgeContainer}>
@@ -3327,7 +3353,8 @@ const ShelfCardContent = React.memo(
       prev.card.cardImage === next.card.cardImage &&
       prev.card.backdropUrl === next.card.backdropUrl &&
       prev.card.percentWatched === next.card.percentWatched &&
-      prev.card.releaseIcon === next.card.releaseIcon &&
+      prev.card.releaseIcon?.name === next.card.releaseIcon?.name &&
+      prev.card.releaseIcon?.color === next.card.releaseIcon?.color &&
       prev.card.year === next.card.year &&
       prev.card.watchState === next.card.watchState &&
       prev.card.unwatchedCount === next.card.unwatchedCount &&
@@ -3339,7 +3366,9 @@ const ShelfCardContent = React.memo(
       prev.showWatchState === next.showWatchState &&
       prev.showUnwatchedCount === next.showUnwatchedCount &&
       prev.watchStateIconStyle === next.watchStateIconStyle &&
-      prev.cardLayout === next.cardLayout
+      prev.cardLayout === next.cardLayout &&
+      prev.isShelfActive === next.isShelfActive &&
+      prev.cardWidth === next.cardWidth
     );
   },
 );
@@ -3362,6 +3391,7 @@ type VirtualizedShelfProps = {
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait)
+  isShelfActive?: boolean; // Android TV: whether this shelf has focus (controls image loading)
 };
 
 // Type for shelf card handlers passed through context
@@ -3388,6 +3418,7 @@ function VirtualizedShelf({
   badgeVisibility,
   watchStateIconStyle = 'colored',
   cardLayout = 'portrait',
+  isShelfActive = true,
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
@@ -3472,6 +3503,8 @@ function VirtualizedShelf({
               watchStateIconStyle={watchStateIconStyle}
               styles={styles}
               cardLayout={cardLayout}
+              isShelfActive={isShelfActive}
+              cardWidth={cardWidth}
             />
           )}
         </SpatialNavigationFocusableView>
@@ -3484,7 +3517,7 @@ function VirtualizedShelf({
 
       return focusableView;
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout, isShelfActive, cardWidth],
   );
 
   // Calculate row height for the virtualized list container
@@ -3502,7 +3535,7 @@ function VirtualizedShelf({
   const shouldShowEmptyState = Boolean(showEmptyState && isEmpty);
 
   return (
-    <View ref={containerRef} style={styles.shelf} renderToHardwareTextureAndroid={isAndroidTV}>
+    <View ref={containerRef} style={styles.shelf}>
       <View style={styles.shelfTitleWrapper}>
         <Text style={styles.shelfTitle}>{title}</Text>
       </View>
@@ -3546,7 +3579,8 @@ const MemoizedShelf = React.memo(VirtualizedShelf, (prev, next) => (
   prev.cardSpacing === next.cardSpacing &&
   prev.badgeVisibility === next.badgeVisibility &&
   prev.watchStateIconStyle === next.watchStateIconStyle &&
-  prev.cardLayout === next.cardLayout
+  prev.cardLayout === next.cardLayout &&
+  prev.isShelfActive === next.isShelfActive
 ));
 
 function createDesktopStyles(theme: NovaTheme, screenHeight: number) {

@@ -77,7 +77,9 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
         setState((prev) => ({ ...prev, loading: true }));
       }
       try {
-        console.log('[ContinueWatching] refresh() called', { silent: options?.silent, source: new Error().stack?.split('\n')[2]?.trim() });
+        if (__DEV__) {
+          console.log('[ContinueWatching] refresh() called', { silent: options?.silent, source: new Error().stack?.split('\n')[2]?.trim() });
+        }
         const [response, progressList] = await Promise.all([
           apiService.getContinueWatching(activeUserId),
           apiService.listPlaybackProgress(activeUserId).catch(() => []),
@@ -171,10 +173,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
         log('Failed to load continue watching:', err);
         setState({ items: [], loading: false, error: message });
       } finally {
-        // Only clear loading state if not silent refresh (already handled in success/error)
-        if (!options?.silent) {
-          setState((prev) => ({ ...prev, loading: false }));
-        }
+        // No-op: loading state already set in success/error paths above
       }
     },
     [activeUserId],
@@ -193,7 +192,7 @@ export const ContinueWatchingProvider: React.FC<{ children: React.ReactNode }> =
     // The backend pre-merges playbackProgress into continueWatching items
     // (percentWatched + resumePercent are already computed), so we just set items directly.
     if (startupData?.continueWatching && hydratedGeneration.current < generation) {
-      console.log('[ContinueWatching] Hydrating from startup bundle (generation:', generation, ')');
+      if (__DEV__) console.log('[ContinueWatching] Hydrating from startup bundle (generation:', generation, ')');
       setState({ items: normaliseItems(startupData.continueWatching), loading: false, error: null });
       hydratedGeneration.current = generation;
       return;

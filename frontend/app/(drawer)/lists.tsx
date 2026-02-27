@@ -123,7 +123,7 @@ function ListShelf({
           data={cards}
           renderItem={renderItem}
           itemSize={itemSize}
-          additionalItemsRendered={4}
+          additionalItemsRendered={2}
           orientation="horizontal"
           scrollDuration={300}
         />
@@ -881,7 +881,7 @@ export default function ListsScreen() {
               scrollEnabled={false}
               contentInsetAdjustmentBehavior="never"
               automaticallyAdjustContentInsets={false}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               style={{ overflow: 'visible' }}
               contentContainerStyle={{ overflow: 'visible' }}
             >

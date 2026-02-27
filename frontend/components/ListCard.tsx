@@ -1,7 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo } from 'react';
-import { Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+
+import { Image } from '@/components/Image';
 
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -71,7 +73,9 @@ export function ListCard(props: ListCardProps) {
                   <Image
                     source={{ uri: props.posterUrls[i] }}
                     style={StyleSheet.absoluteFill}
-                    resizeMode="cover"
+                    contentFit="cover"
+                    transition={0}
+                    cachePolicy="disk"
                   />
                 ) : (
                   <View style={[StyleSheet.absoluteFill, styles.collagePlaceholder]} />
@@ -151,7 +155,9 @@ export function ListCard(props: ListCardProps) {
             <Image
               source={{ uri: props.backdropUrl }}
               style={StyleSheet.absoluteFill}
-              resizeMode="cover"
+              contentFit="cover"
+              transition={0}
+              cachePolicy="disk"
             />
           ) : (
             <View style={[StyleSheet.absoluteFill, styles.collagePlaceholder]} />

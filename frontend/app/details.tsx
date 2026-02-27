@@ -1828,6 +1828,10 @@ export default function DetailsScreen() {
 
   // Track if we've already triggered the fade-in
   const hasTriggeredFadeIn = useRef(false);
+  // Track initial focus to distinguish return-from-player vs first mount
+  const hasHadInitialFocusRef = useRef(false);
+  // Reanimated shared value for forcing GPU refresh on Android TV
+  const gpuRefreshOpacity = useSharedValue(1);
 
   // On TV/mobile the visibility gate delays rendering, so trigger fade when it opens.
   // On web/desktop there's no gate — trigger fade once the poster image has preloaded.
@@ -1875,6 +1879,43 @@ export default function DetailsScreen() {
       return () => clearTimeout(timer);
     }
   }, [isDetailsPageActive, handleTVFocusAreaChange, readyToFadeIn]);
+
+  // On Android TV, force the full-screen container to invalidate after returning
+  // from the player. Without this, react-freeze (freezeOnBlur) leaves stale
+  // hardware layer caches that render as a ~20px clipped strip.
+  //
+  // The prequeue pulse animation (reanimated withRepeat on an Animated.View)
+  // incidentally fixes this when it's running — each frame of the animation
+  // calls View.setAlpha() → View.invalidate(), and the dirty rect propagates
+  // up through the parent chain to the full-screen container, triggering a
+  // complete redraw. Content that returns with an active prequeue pulse (e.g.
+  // still-loading DV8) renders correctly; content without it stays broken.
+  //
+  // We replicate this by running a brief reanimated animation on the main
+  // container itself. Reanimated updates view props on the UI thread every
+  // frame, independent of React's JS thread scheduling and freezeOnBlur state,
+  // creating the continuous multi-frame invalidation needed to clear stale
+  // hardware layer caches.
+  const gpuRefreshStyle = useAnimatedStyle(() => ({
+    opacity: gpuRefreshOpacity.value,
+  }));
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isAndroidTV) return;
+
+      if (!hasHadInitialFocusRef.current) {
+        hasHadInitialFocusRef.current = true;
+        return; // Skip initial focus — no stale textures on first mount
+      }
+
+      // Animate opacity 0.99 → 1.0 over 300ms on the full-screen container.
+      // Each frame triggers setAlpha → invalidate on the UI thread, creating
+      // ~18 frames of continuous dirty-rect propagation that clears stale caches.
+      gpuRefreshOpacity.value = 0.99;
+      gpuRefreshOpacity.value = withTiming(1, { duration: 300 });
+    }, [gpuRefreshOpacity]),
+  );
 
   if (isAndroidTV && !isDetailsPageActive) {
     return (
@@ -2804,7 +2845,7 @@ export default function DetailsScreen() {
   const detailsContent = (
     <>
       <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, gpuRefreshStyle]} collapsable={false}>
           {/* Pre-mount hidden SeriesEpisodes OUTSIDE the visibility gate (TV) — deferred until after first paint.
               Skip entirely when bundle hydration already populated seasons (its callbacks would no-op anyway). */}
           {isTV && isSeries && deferredSeriesReady && episodeManager.seasons.length === 0 && (
@@ -2967,7 +3008,7 @@ export default function DetailsScreen() {
               )}
             </>
           )}
-        </View>
+        </Animated.View>
       </SafeAreaWrapper>
       <MobileTabBar />
     </>
