@@ -49,7 +49,7 @@ module.exports = ({ config }) => {
           enableShrinkResourcesInReleaseBuilds: true,
           // Only build 64-bit ABIs for non-TV (mmkv doesn't support armeabi-v7a)
           // TV devices often require armeabi-v7a
-          reactNativeArchitectures: isTV ? ['armeabi-v7a', 'arm64-v8a'] : ['arm64-v8a', 'x86_64'],
+          reactNativeArchitectures: isTV ? ['armeabi-v7a', 'arm64-v8a', 'x86_64'] : ['arm64-v8a', 'x86_64'],
         },
         ios: {
           deploymentTarget: '15.1',
