@@ -445,7 +445,7 @@
     /* Media card grid */
     .stream-cards-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(180px, 220px));
         gap: 1rem;
     }
 
@@ -471,16 +471,13 @@
 
     .stream-card-media {
         position: relative;
-        aspect-ratio: 16 / 9;
+        aspect-ratio: 2 / 3;
         background: var(--bg-primary);
         overflow: hidden;
     }
 
-    /* Mobile: poster aspect ratio (2:3) */
+    /* Mobile: smaller text/badges */
     @media (max-width: 640px) {
-        .stream-card-media {
-            aspect-ratio: 2 / 3;
-        }
         .stream-card-content {
             padding: 0.625rem;
         }
