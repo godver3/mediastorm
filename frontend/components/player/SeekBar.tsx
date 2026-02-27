@@ -2,6 +2,7 @@ import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
+import { tvScale } from '@/theme/tokens/tvScale';
 
 interface SeekBarProps {
   currentTime: number;
@@ -260,7 +261,7 @@ const useSeekBarStyles = (theme: NovaTheme, thumbSize: number, isTvPlatform: boo
       marginBottom: theme.spacing.sm,
     },
     seekIndicatorText: {
-      fontSize: isTvPlatform ? 36 : 24,
+      fontSize: isTvPlatform ? tvScale(36, 24) : 24,
       fontWeight: '700',
       color: theme.colors.text.primary,
       letterSpacing: 1,
