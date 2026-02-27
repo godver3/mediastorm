@@ -960,13 +960,13 @@
 
     async function refreshStatus() {
         try {
-            const status = await apiCall(basePath + '/api/status');
-            const backendEl = document.getElementById('backendStatus');
-            if (status.backend_reachable) {
-                backendEl.innerHTML = '<span class="status-badge online"><span class="status-dot"></span> Online</span>';
-            } else {
-                backendEl.innerHTML = '<span class="status-badge offline"><span class="status-dot"></span> Offline</span>';
+            // Re-test endpoints
+            if (isAdmin) {
+                testEndpoints();
+                refreshDebridStatus();
             }
+            // Reconnect SSE to get fresh stream data
+            connectSSE();
             showToast('Status refreshed');
         } catch (e) {
             showToast('Failed to refresh status', 'error');
