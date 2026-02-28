@@ -34,11 +34,16 @@ export function NavVisibilityProvider({ children }: { children: React.ReactNode 
   const [map, setMap] = useState<VisibilityMap>(DEFAULT_VISIBILITY);
   const [isReady, setIsReady] = useState(false);
   const lastLoadedUserId = useRef<string | null>(null);
+  // Ref always holds the latest map so setTabVisible never reads a stale closure
+  const mapRef = useRef<VisibilityMap>(DEFAULT_VISIBILITY);
 
   // Load visibility when active user changes
   useEffect(() => {
     if (!activeUserId) {
       setMap(DEFAULT_VISIBILITY);
+      mapRef.current = DEFAULT_VISIBILITY;
+      // Reset so a subsequent switch back to the same user reloads from storage
+      lastLoadedUserId.current = null;
       setIsReady(true);
       return;
     }
@@ -54,12 +59,18 @@ export function NavVisibilityProvider({ children }: { children: React.ReactNode 
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<VisibilityMap>;
           // Merge with defaults so new tabs added in future are visible by default
-          setMap({ ...DEFAULT_VISIBILITY, ...parsed });
+          const merged = { ...DEFAULT_VISIBILITY, ...parsed };
+          setMap(merged);
+          mapRef.current = merged;
         } else {
           setMap(DEFAULT_VISIBILITY);
+          mapRef.current = DEFAULT_VISIBILITY;
         }
       } catch {
-        if (!cancelled) setMap(DEFAULT_VISIBILITY);
+        if (!cancelled) {
+          setMap(DEFAULT_VISIBILITY);
+          mapRef.current = DEFAULT_VISIBILITY;
+        }
       }
       if (!cancelled) setIsReady(true);
     })();
@@ -73,16 +84,21 @@ export function NavVisibilityProvider({ children }: { children: React.ReactNode 
 
   const setTabVisible = useCallback(
     (key: NavTabKey, visible: boolean): boolean => {
+      // Read from ref to avoid stale closure — AsyncStorage load may have
+      // updated the map after this callback was created.
+      const current = mapRef.current;
+
       // Safety: prevent disabling the last visible tab
       if (!visible) {
-        const enabledCount = ALL_TAB_KEYS.filter((k) => (k === key ? false : map[k])).length;
+        const enabledCount = ALL_TAB_KEYS.filter((k) => (k === key ? false : current[k])).length;
         if (enabledCount < 1) {
           return false; // Caller should show a toast
         }
       }
 
-      const next = { ...map, [key]: visible };
+      const next = { ...current, [key]: visible };
       setMap(next);
+      mapRef.current = next;
 
       // Persist asynchronously
       if (activeUserId) {
@@ -90,7 +106,7 @@ export function NavVisibilityProvider({ children }: { children: React.ReactNode 
       }
       return true;
     },
-    [map, activeUserId],
+    [activeUserId],
   );
 
   const value = useMemo<NavVisibilityContextValue>(
