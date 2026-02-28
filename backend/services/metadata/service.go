@@ -1804,6 +1804,27 @@ func (s *Service) resolveSeriesTVDBIDActual(req models.SeriesDetailsQuery) (int6
 		}
 	}
 
+	// If we have an IMDB ID, try to match it exactly via remote_ids
+	if imdbID := strings.TrimSpace(req.IMDBID); imdbID != "" {
+		for _, result := range results {
+			if strings.TrimSpace(result.TVDBID) == "" {
+				continue
+			}
+			for _, remote := range result.RemoteIDs {
+				sourceLower := strings.ToLower(remote.SourceName)
+				if strings.Contains(sourceLower, "imdb") {
+					if strings.TrimSpace(remote.ID) == imdbID {
+						id, err := strconv.ParseInt(strings.TrimSpace(result.TVDBID), 10, 64)
+						if err == nil {
+							log.Printf("[metadata] resolved tvdb id %d via imdb match imdbId=%s for series %q", id, imdbID, name)
+							return id, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Filter results to prefer English or original language versions
 	// Avoid foreign dubs (Italian, Spanish, French, etc.)
 	var englishResults, originalResults, otherResults []tvdbSearchResult

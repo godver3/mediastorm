@@ -400,6 +400,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		isDaily = seriesMeta.IsDaily
 		isAnime = seriesMeta.IsAnime
 		targetAirDate = seriesMeta.TargetAirDate
+		if year == 0 && seriesMeta.Year > 0 {
+			year = seriesMeta.Year
+			log.Printf("[prequeue] Populated year %d from series metadata", year)
+		}
 		if episodeResolver != nil {
 			log.Printf("[prequeue] Episode resolver created: %d total episodes, %d seasons", episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
 		}
@@ -1357,6 +1361,7 @@ type SeriesMetadataResult struct {
 	IsDaily         bool   // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate   string // Air date from TVDB in YYYY-MM-DD format
 	IsAnime         bool   // True for anime content - requires waiting for Nyaa scraper
+	Year            int    // Series premiere year from metadata (used when frontend doesn't provide it)
 }
 
 // createEpisodeResolverAndLookupAbsoluteEp fetches series metadata, creates an episode resolver,
@@ -1388,6 +1393,11 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	if details == nil {
 		log.Printf("[prequeue] No series details available")
 		return result
+	}
+
+	// Populate year from metadata
+	if details.Title.Year > 0 {
+		result.Year = details.Title.Year
 	}
 
 	// Check if this is a daily show from the metadata
