@@ -155,7 +155,7 @@ module.exports = ({ config }) => {
       },
       ios: {
         bundleIdentifier: isTV ? 'com.strmr.app.tv' : 'com.strmr.app',
-        buildNumber: '3',
+        buildNumber: '4',
         appleTeamId: 'C98FZL89C9',
         deploymentTarget: '15.1',
         supportsTablet: true,
