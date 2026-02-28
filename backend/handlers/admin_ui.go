@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -383,10 +384,11 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"live": map[string]interface{}{
-		"label": "Live TV",
-		"icon":  "tv",
-		"group": "sources",
-		"order": 2,
+		"label":    "Live TV",
+		"icon":     "tv",
+		"group":    "sources",
+		"order":    2,
+		"testable": true,
 		"fields": map[string]interface{}{
 			"mode":                         map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source the IPTV playlist", "order": 0},
 			"playlistUrl":                  map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 1},
@@ -546,10 +548,11 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"metadata": map[string]interface{}{
-		"label": "Metadata",
-		"icon":  "film",
-		"group": "services",
-		"order": 0,
+		"label":    "Metadata",
+		"icon":     "film",
+		"group":    "services",
+		"order":    0,
+		"testable": true,
 		"fields": map[string]interface{}{
 			"tvdbApiKey":   map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
 			"tmdbApiKey":   map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
@@ -636,10 +639,11 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"mdblist": map[string]interface{}{
-		"label": "MDBList Ratings",
-		"icon":  "star",
-		"group": "services",
-		"order": 1,
+		"label":    "MDBList Ratings",
+		"icon":     "star",
+		"group":    "services",
+		"order":    1,
+		"testable": true,
 		"fields": map[string]interface{}{
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable MDBList integration for aggregated ratings (Rotten Tomatoes, IMDB, etc.)", "order": 0},
 			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "MDBList API key from mdblist.com (free tier available)", "order": 1},
@@ -787,6 +791,7 @@ type AdminUIHandler struct {
 	calendarTemplate      *template.Template
 	performanceTemplate   *template.Template
 	logsTemplate          *template.Template
+	connectionsTemplate   *template.Template
 	settingsPath          string
 	logFile               string
 	hlsManager            *HLSManager
@@ -997,6 +1002,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		calendarTemplate:     createPageTemplate("calendar.html"),
 		performanceTemplate:  createPageTemplate("performance.html"),
 		logsTemplate:         createPageTemplate("logs.html"),
+		connectionsTemplate:  createPageTemplate("connections.html"),
 		settingsPath:         settingsPath,
 		logFile:              logFile,
 		hlsManager:          hlsManager,
@@ -4186,6 +4192,268 @@ func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// TestMetadataRequest represents a request to test metadata API keys
+type TestMetadataRequest struct {
+	TVDBApiKey   string `json:"tvdbApiKey"`
+	TMDBApiKey   string `json:"tmdbApiKey"`
+	GeminiApiKey string `json:"geminiApiKey"`
+}
+
+// TestMetadata tests metadata provider API keys by making lightweight validation requests
+func (h *AdminUIHandler) TestMetadata(w http.ResponseWriter, r *http.Request) {
+	var req TestMetadataRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if req.TVDBApiKey == "" && req.TMDBApiKey == "" && req.GeminiApiKey == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "No API keys configured",
+		})
+		return
+	}
+
+	type providerResult struct {
+		Provider string `json:"provider"`
+		Success  bool   `json:"success"`
+		Message  string `json:"message,omitempty"`
+		Error    string `json:"error,omitempty"`
+	}
+
+	var results []providerResult
+	allSuccess := true
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Test TVDB API key
+	if req.TVDBApiKey != "" {
+		body, _ := json.Marshal(map[string]string{"apikey": req.TVDBApiKey})
+		tvdbReq, _ := http.NewRequest(http.MethodPost, "https://api4.thetvdb.com/v4/login", bytes.NewReader(body))
+		tvdbReq.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(tvdbReq)
+		if err != nil {
+			results = append(results, providerResult{Provider: "TVDB", Success: false, Error: err.Error()})
+			allSuccess = false
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode < 300 {
+				results = append(results, providerResult{Provider: "TVDB", Success: true, Message: "Valid"})
+			} else {
+				results = append(results, providerResult{Provider: "TVDB", Success: false, Error: fmt.Sprintf("Authentication failed (%s)", resp.Status)})
+				allSuccess = false
+			}
+		}
+	} else {
+		results = append(results, providerResult{Provider: "TVDB", Success: true, Message: "Not configured"})
+	}
+
+	// Test TMDB API key
+	if req.TMDBApiKey != "" {
+		tmdbReq, _ := http.NewRequest(http.MethodGet, "https://api.themoviedb.org/3/configuration?api_key="+req.TMDBApiKey, nil)
+		resp, err := client.Do(tmdbReq)
+		if err != nil {
+			results = append(results, providerResult{Provider: "TMDB", Success: false, Error: err.Error()})
+			allSuccess = false
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				results = append(results, providerResult{Provider: "TMDB", Success: true, Message: "Valid"})
+			} else {
+				results = append(results, providerResult{Provider: "TMDB", Success: false, Error: fmt.Sprintf("Authentication failed (%s)", resp.Status)})
+				allSuccess = false
+			}
+		}
+	} else {
+		results = append(results, providerResult{Provider: "TMDB", Success: true, Message: "Not configured"})
+	}
+
+	// Test Gemini API key
+	if req.GeminiApiKey != "" {
+		geminiReq, _ := http.NewRequest(http.MethodGet, "https://generativelanguage.googleapis.com/v1beta/models?key="+req.GeminiApiKey, nil)
+		resp, err := client.Do(geminiReq)
+		if err != nil {
+			results = append(results, providerResult{Provider: "Gemini", Success: false, Error: err.Error()})
+			allSuccess = false
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				results = append(results, providerResult{Provider: "Gemini", Success: true, Message: "Valid"})
+			} else {
+				results = append(results, providerResult{Provider: "Gemini", Success: false, Error: fmt.Sprintf("Authentication failed (%s)", resp.Status)})
+				allSuccess = false
+			}
+		}
+	} else {
+		results = append(results, providerResult{Provider: "Gemini", Success: true, Message: "Not configured"})
+	}
+
+	// Build summary message
+	var parts []string
+	for _, r := range results {
+		if r.Success {
+			if r.Message == "Not configured" {
+				parts = append(parts, r.Provider+": Not configured")
+			} else {
+				parts = append(parts, r.Provider+": OK")
+			}
+		} else {
+			parts = append(parts, r.Provider+": "+r.Error)
+		}
+	}
+	summary := strings.Join(parts, ", ")
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": allSuccess,
+		"message": summary,
+		"error":   summary,
+		"results": results,
+	})
+}
+
+// TestMDBListRequest represents a request to test an MDBList API key
+type TestMDBListRequest struct {
+	APIKey string `json:"apiKey"`
+}
+
+// TestMDBList tests an MDBList API key by querying a known IMDB ID
+func (h *AdminUIHandler) TestMDBList(w http.ResponseWriter, r *http.Request) {
+	var req TestMDBListRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if req.APIKey == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "API key is required",
+		})
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	apiReq, _ := http.NewRequest(http.MethodGet, "https://api.mdblist.com/imdb/movie/tt0120338?apikey="+req.APIKey, nil)
+	resp, err := client.Do(apiReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Connection failed: %v", err),
+		})
+		return
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "API key is valid",
+		})
+	} else {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Authentication failed (%s)", resp.Status),
+		})
+	}
+}
+
+// TestLiveTVRequest represents a request to test a Live TV connection
+type TestLiveTVRequest struct {
+	Mode            string `json:"mode"`
+	PlaylistURL     string `json:"playlistUrl"`
+	XtreamHost      string `json:"xtreamHost"`
+	XtreamUsername  string `json:"xtreamUsername"`
+	XtreamPassword  string `json:"xtreamPassword"`
+}
+
+// TestLiveTV tests a Live TV source connection (M3U or Xtream)
+func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
+	var req TestLiveTVRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	switch req.Mode {
+	case "m3u":
+		if req.PlaylistURL == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Playlist URL is required",
+			})
+			return
+		}
+		resp, err := client.Get(req.PlaylistURL)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		buf := make([]byte, 1024)
+		n, _ := io.ReadAtLeast(resp.Body, buf, 7) // #EXTM3U is 7 bytes
+		if n >= 7 && strings.HasPrefix(string(buf[:n]), "#EXTM3U") {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Valid M3U playlist",
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Response is not a valid M3U playlist (missing #EXTM3U header)",
+			})
+		}
+
+	case "xtream":
+		if req.XtreamHost == "" || req.XtreamUsername == "" || req.XtreamPassword == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Host, username, and password are required for Xtream",
+			})
+			return
+		}
+		host := strings.TrimRight(req.XtreamHost, "/")
+		url := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories", host, req.XtreamUsername, req.XtreamPassword)
+		resp, err := client.Get(url)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		var categories []interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&categories); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Invalid response from Xtream server (not valid JSON)",
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Connected (%d categories)", len(categories)),
+		})
+
+	default:
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "No Live TV mode configured",
+		})
+	}
+}
+
 // testOpenSubtitlesXMLRPC tests credentials using direct XML-RPC call
 func testOpenSubtitlesXMLRPC(username, password string) (bool, string) {
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -4711,6 +4979,39 @@ func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.backupTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Backup template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// ConnectionsPage serves the connections dashboard page
+func (h *AdminUIHandler) ConnectionsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	if !isAdmin {
+		http.Redirect(w, r, basePath, http.StatusFound)
+		return
+	}
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, _ := mgr.Load()
+
+	data := AdminPageData{
+		CurrentPath: basePath + "/connections",
+		BasePath:    basePath,
+		IsAdmin:     isAdmin,
+		AccountID:   accountID,
+		Username:    username,
+		Version:     GetBackendVersion(),
+		Settings:    settings,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.connectionsTemplate == nil {
+		http.Error(w, "Connections template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.connectionsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Connections template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"strings"
 	"time"
 
 	"novastream/config"
@@ -812,5 +813,253 @@ func TestAdminUIHandler_RequireMasterAuth(t *testing.T) {
 	}
 	if called {
 		t.Error("handler should not be called without master auth")
+	}
+}
+
+func TestAdminUIHandler_TestMetadata_NoKeys(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	body, _ := json.Marshal(map[string]string{})
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/metadata", body, sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestMetadata(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != false {
+		t.Error("expected success=false when no keys configured")
+	}
+	if result["error"] != "No API keys configured" {
+		t.Errorf("expected 'No API keys configured' error, got %v", result["error"])
+	}
+}
+
+func TestAdminUIHandler_TestMetadata_InvalidJSON(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, err := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	if err != nil {
+		t.Fatalf("failed to create sessions service: %v", err)
+	}
+	handler.SetSessionsService(sessionsService)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/metadata", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.TestMetadata(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}
+
+func TestAdminUIHandler_TestMetadata_InvalidKeys(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	// Use obviously invalid keys - the external APIs should reject them
+	body, _ := json.Marshal(map[string]string{
+		"tvdbApiKey": "invalid-key-12345",
+		"tmdbApiKey": "invalid-key-67890",
+	})
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/metadata", body, sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestMetadata(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	// With invalid keys, overall success should be false
+	if result["success"] != false {
+		t.Error("expected success=false with invalid keys")
+	}
+	// Should have results array
+	results, ok := result["results"].([]interface{})
+	if !ok {
+		t.Fatal("expected results array in response")
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 provider results, got %d", len(results))
+	}
+}
+
+func TestAdminUIHandler_TestMDBList_NoKey(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	body, _ := json.Marshal(map[string]string{"apiKey": ""})
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/mdblist", body, sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestMDBList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != false {
+		t.Error("expected success=false with empty API key")
+	}
+	if result["error"] != "API key is required" {
+		t.Errorf("expected 'API key is required' error, got %q", result["error"])
+	}
+}
+
+func TestAdminUIHandler_TestMDBList_InvalidJSON(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/mdblist", []byte("not json"), sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestMDBList(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestAdminUIHandler_TestLiveTV_NoConfig(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	body, _ := json.Marshal(map[string]string{"mode": ""})
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/live", body, sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestLiveTV(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != false {
+		t.Error("expected success=false with no mode configured")
+	}
+	if result["error"] != "No Live TV mode configured" {
+		t.Errorf("expected 'No Live TV mode configured' error, got %q", result["error"])
+	}
+}
+
+func TestAdminUIHandler_TestLiveTV_InvalidJSON(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	req := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/test/live", []byte("{bad"), sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+	handler.TestLiveTV(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestAdminUIHandler_ConnectionsPage(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetSessionsService(sessionsService)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	handler.SetAccountsService(accountsService)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	// Test admin gets 200 (RequireMasterAuth uses cookie-based session)
+	wrappedHandler := handler.RequireMasterAuth(handler.ConnectionsPage)
+	masterSession, err := sessionsService.Create(masterAccount.ID, true, "test-agent", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("failed to create master session: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/admin/connections", nil)
+	req.AddCookie(&http.Cookie{Name: "strmr_admin_session", Value: masterSession.Token})
+	rec := httptest.NewRecorder()
+	wrappedHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("admin: expected 200, got %d", rec.Code)
+	}
+
+	// Test non-admin gets 403 from RequireMasterAuth
+	nonAdminAccount, err := accountsService.Create("regular", "pass123")
+	if err != nil {
+		t.Fatalf("failed to create non-admin account: %v", err)
+	}
+	nonAdminSession, err := sessionsService.Create(nonAdminAccount.ID, false, "test-agent", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("failed to create non-admin session: %v", err)
+	}
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/connections", nil)
+	req2.AddCookie(&http.Cookie{Name: "strmr_admin_session", Value: nonAdminSession.Token})
+	rec2 := httptest.NewRecorder()
+	wrappedHandler(rec2, req2)
+
+	if rec2.Code != http.StatusForbidden {
+		t.Errorf("non-admin: expected 403, got %d", rec2.Code)
 	}
 }

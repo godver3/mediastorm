@@ -1562,6 +1562,13 @@
                     Tools
                 </a>
                 {{if .IsAdmin}}
+                <a href="{{.BasePath}}/connections" class="nav-link {{if hasSuffix .CurrentPath "/connections"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                    Connections
+                </a>
                 <a href="{{.BasePath}}/backup" class="nav-link {{if hasSuffix .CurrentPath "/backup"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>

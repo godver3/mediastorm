@@ -1,0 +1,244 @@
+{{template "base" .}}
+
+{{define "title"}}Connections - mediastorm Admin{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Service Connections</h1>
+    <p>Health check for all configured services</p>
+    <button class="btn btn-primary" id="retest-all-btn" onclick="runAllTests()">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Retest All
+    </button>
+</div>
+
+<div id="connections-grid" class="connections-grid"></div>
+
+<style>
+.page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.page-header h1 { margin: 0; }
+.page-header p { margin: 0; color: var(--text-secondary, #888); flex: 1; }
+.connections-grid { display: flex; flex-direction: column; gap: 24px; }
+.conn-group h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary, #888); margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid var(--border-color, #333); }
+.conn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.conn-card { background: var(--card-bg, #1a1a2e); border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.2s; }
+.conn-card.pass { border-color: var(--success-color, #4caf50); }
+.conn-card.fail { border-color: var(--error-color, #f44336); }
+.conn-card.unconfigured { border-color: var(--border-color, #333); opacity: 0.6; }
+.conn-card-header { display: flex; justify-content: space-between; align-items: center; }
+.conn-card-name { font-weight: 600; font-size: 14px; }
+.conn-card-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--badge-bg, #333); color: var(--text-secondary, #aaa); }
+.conn-card-status { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 20px; }
+.conn-card-status .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot.pending { background: var(--text-secondary, #888); }
+.dot.testing { background: var(--warning-color, #ff9800); animation: pulse 1s infinite; }
+.dot.pass { background: var(--success-color, #4caf50); }
+.dot.fail { background: var(--error-color, #f44336); }
+.dot.unconfigured { background: var(--text-secondary, #555); }
+.conn-card-message { font-size: 12px; color: var(--text-secondary, #888); word-break: break-word; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+</style>
+
+<script>
+let settings = {{json .Settings}};
+let testCards = [];
+
+function createCard(group, name, badge) {
+    return { group, name, badge, status: 'pending', message: '' };
+}
+
+function buildCards() {
+    testCards = [];
+
+    // Metadata services
+    testCards.push(createCard('Metadata Services', 'TVDB', 'metadata'));
+    testCards.push(createCard('Metadata Services', 'TMDB', 'metadata'));
+    testCards.push(createCard('Metadata Services', 'Gemini', 'metadata'));
+
+    // Content services
+    testCards.push(createCard('Content Services', 'OpenSubtitles', 'subtitles'));
+    testCards.push(createCard('Content Services', 'MDBList', 'mdblist'));
+
+    // Live TV
+    if (settings.live && settings.live.mode) {
+        testCards.push(createCard('Live TV', settings.live.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist', settings.live.mode));
+    }
+
+    // Indexers
+    if (settings.indexers) {
+        settings.indexers.forEach((item, i) => {
+            if (item.enabled) testCards.push(createCard('Indexers', item.name || ('Indexer ' + (i+1)), 'indexer'));
+        });
+    }
+
+    // Torrent Scrapers
+    if (settings.torrentScrapers) {
+        settings.torrentScrapers.forEach((item, i) => {
+            if (item.enabled) testCards.push(createCard('Torrent Scrapers', item.name || ('Scraper ' + (i+1)), 'scraper'));
+        });
+    }
+
+    // Usenet Providers
+    if (settings.usenet) {
+        settings.usenet.forEach((item, i) => {
+            if (item.enabled) testCards.push(createCard('Usenet Providers', item.name || ('Provider ' + (i+1)), 'usenet'));
+        });
+    }
+
+    // Debrid Providers
+    if (settings.debridProviders) {
+        settings.debridProviders.forEach((item, i) => {
+            if (item.enabled) testCards.push(createCard('Debrid Providers', item.name || ('Provider ' + (i+1)), 'debrid'));
+        });
+    }
+}
+
+function renderCards() {
+    const grid = document.getElementById('connections-grid');
+    const groups = {};
+    testCards.forEach((card, i) => {
+        if (!groups[card.group]) groups[card.group] = [];
+        groups[card.group].push({ ...card, index: i });
+    });
+
+    grid.innerHTML = '';
+    for (const [groupName, cards] of Object.entries(groups)) {
+        const section = document.createElement('div');
+        section.className = 'conn-group';
+        section.innerHTML = '<h2>' + groupName + '</h2><div class="conn-cards">' +
+            cards.map(c => `
+                <div class="conn-card ${c.status}" id="conn-card-${c.index}">
+                    <div class="conn-card-header">
+                        <span class="conn-card-name">${c.name}</span>
+                        <span class="conn-card-badge">${c.badge}</span>
+                    </div>
+                    <div class="conn-card-status">
+                        <span class="dot ${c.status}"></span>
+                        <span>${c.status === 'pending' ? 'Waiting...' : c.status === 'testing' ? 'Testing...' : c.status === 'pass' ? 'Connected' : c.status === 'unconfigured' ? 'Not configured' : 'Failed'}</span>
+                    </div>
+                    ${c.message ? '<div class="conn-card-message">' + c.message + '</div>' : ''}
+                </div>
+            `).join('') +
+            '</div>';
+        grid.appendChild(section);
+    }
+}
+
+function updateCard(index, status, message) {
+    testCards[index].status = status;
+    testCards[index].message = message || '';
+    const el = document.getElementById('conn-card-' + index);
+    if (!el) return;
+    el.className = 'conn-card ' + status;
+    const statusEl = el.querySelector('.conn-card-status');
+    const label = status === 'testing' ? 'Testing...' : status === 'pass' ? 'Connected' : status === 'unconfigured' ? 'Not configured' : 'Failed';
+    statusEl.innerHTML = `<span class="dot ${status}"></span><span>${label}</span>`;
+    const msgEl = el.querySelector('.conn-card-message');
+    if (message) {
+        if (msgEl) { msgEl.textContent = message; }
+        else { const m = document.createElement('div'); m.className = 'conn-card-message'; m.textContent = message; el.appendChild(m); }
+    } else if (msgEl) { msgEl.remove(); }
+}
+
+async function testPost(endpoint, payload) {
+    const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return resp.json();
+}
+
+async function runAllTests() {
+    const btn = document.getElementById('retest-all-btn');
+    btn.disabled = true;
+
+    // Reset all to testing
+    testCards.forEach((_, i) => updateCard(i, 'testing', ''));
+
+    const promises = [];
+
+    for (let i = 0; i < testCards.length; i++) {
+        const card = testCards[i];
+        let p;
+
+        if (card.group === 'Metadata Services') {
+            // Metadata uses a single endpoint returning array results
+            if (!promises._metadataPromise) {
+                promises._metadataPromise = testPost('/admin/api/test/metadata', {
+                    tvdbApiKey: settings.metadata?.tvdbApiKey || '',
+                    tmdbApiKey: settings.metadata?.tmdbApiKey || '',
+                    geminiApiKey: settings.metadata?.geminiApiKey || ''
+                });
+            }
+            p = promises._metadataPromise.then(result => {
+                const providerMap = { 'TVDB': 0, 'TMDB': 1, 'Gemini': 2 };
+                const idx = providerMap[card.name];
+                if (result.results && result.results[idx]) {
+                    const r = result.results[idx];
+                    if (r.message === 'Not configured') return { unconfigured: true, message: r.message };
+                    return r;
+                }
+                return result;
+            });
+        } else if (card.badge === 'subtitles') {
+            p = testPost('/admin/api/test/subtitles', {
+                username: settings.subtitles?.openSubtitlesUsername || '',
+                password: settings.subtitles?.openSubtitlesPassword || ''
+            });
+        } else if (card.badge === 'mdblist') {
+            p = testPost('/admin/api/test/mdblist', {
+                apiKey: settings.mdblist?.apiKey || ''
+            });
+        } else if (card.group === 'Live TV') {
+            p = testPost('/admin/api/test/live', {
+                mode: settings.live?.mode || '',
+                playlistUrl: settings.live?.playlistUrl || '',
+                xtreamHost: settings.live?.xtreamHost || '',
+                xtreamUsername: settings.live?.xtreamUsername || '',
+                xtreamPassword: settings.live?.xtreamPassword || ''
+            });
+        } else if (card.badge === 'indexer') {
+            const items = settings.indexers || [];
+            const idx = items.filter(x => x.enabled).indexOf(items.find((x, j) => x.enabled && x.name === card.name));
+            const item = items.filter(x => x.enabled).find(x => x.name === card.name) || items.filter(x => x.enabled)[0];
+            if (item) p = testPost('/admin/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name });
+        } else if (card.badge === 'scraper') {
+            const items = settings.torrentScrapers || [];
+            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
+            if (item) p = testPost('/admin/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey });
+        } else if (card.badge === 'usenet') {
+            const items = settings.usenet || [];
+            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
+            if (item) p = testPost('/admin/api/test/usenet-provider', { name: item.name, host: item.host, port: item.port, ssl: item.ssl, username: item.username, password: item.password });
+        } else if (card.badge === 'debrid') {
+            const items = settings.debridProviders || [];
+            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
+            if (item) p = testPost('/admin/api/test/debrid-provider', { name: item.name, provider: item.provider, apiKey: item.apiKey });
+        }
+
+        if (p) {
+            const cardIndex = i;
+            promises.push(p.then(result => {
+                if (result.unconfigured) {
+                    updateCard(cardIndex, 'unconfigured', result.message || 'Not configured');
+                } else if (result.success) {
+                    updateCard(cardIndex, 'pass', result.message || '');
+                } else {
+                    updateCard(cardIndex, 'fail', result.error || 'Test failed');
+                }
+            }).catch(err => {
+                updateCard(cardIndex, 'fail', err.message);
+            }));
+        } else {
+            updateCard(i, 'unconfigured', 'Not configured');
+        }
+    }
+
+    await Promise.allSettled(promises);
+    btn.disabled = false;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    buildCards();
+    renderCards();
+    runAllTests();
+});
+</script>
+{{end}}

@@ -533,6 +533,9 @@ func main() {
 	r.HandleFunc("/admin/api/test/usenet-provider", adminUIHandler.RequireAuth(adminUIHandler.TestUsenetProvider)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/debrid-provider", adminUIHandler.RequireAuth(adminUIHandler.TestDebridProvider)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/subtitles", adminUIHandler.RequireAuth(adminUIHandler.TestSubtitles)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/metadata", adminUIHandler.RequireAuth(adminUIHandler.TestMetadata)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/mdblist", adminUIHandler.RequireAuth(adminUIHandler.TestMDBList)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/live", adminUIHandler.RequireAuth(adminUIHandler.TestLiveTV)).Methods(http.MethodPost)
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)
@@ -681,6 +684,9 @@ func main() {
 		r.HandleFunc("/admin/api/backups/{filename}", adminUIHandler.RequireMasterAuth(backupHandler.DeleteBackup)).Methods(http.MethodDelete)
 		fmt.Println("💾 Backup management available at /admin/backup")
 	}
+
+	// Connections dashboard (admin-only)
+	r.HandleFunc("/admin/connections", adminUIHandler.RequireMasterAuth(adminUIHandler.ConnectionsPage)).Methods(http.MethodGet)
 
 	// Performance monitoring (admin-only)
 	r.HandleFunc("/admin/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.PerformancePage)).Methods(http.MethodGet)

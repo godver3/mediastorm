@@ -2974,6 +2974,28 @@
                     password: sectionData.openSubtitlesPassword || ''
                 };
                 break;
+            case 'metadata':
+                endpoint = '/admin/api/test/metadata';
+                payload = {
+                    tvdbApiKey: sectionData.tvdbApiKey || '',
+                    tmdbApiKey: sectionData.tmdbApiKey || '',
+                    geminiApiKey: sectionData.geminiApiKey || ''
+                };
+                break;
+            case 'mdblist':
+                endpoint = '/admin/api/test/mdblist';
+                payload = { apiKey: sectionData.apiKey || '' };
+                break;
+            case 'live':
+                endpoint = '/admin/api/test/live';
+                payload = {
+                    mode: sectionData.mode || '',
+                    playlistUrl: sectionData.playlistUrl || '',
+                    xtreamHost: sectionData.xtreamHost || '',
+                    xtreamUsername: sectionData.xtreamUsername || '',
+                    xtreamPassword: sectionData.xtreamPassword || ''
+                };
+                break;
             default:
                 btn.disabled = false;
                 btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection';
