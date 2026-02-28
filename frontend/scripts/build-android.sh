@@ -4,6 +4,13 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Verify gh CLI can authenticate (catches locked macOS keyring)
+if ! gh auth status &>/dev/null; then
+  echo "Error: GitHub CLI authentication failed (is your macOS keyring locked?)"
+  echo "Run: gh auth login -h github.com"
+  exit 1
+fi
+
 usage() {
   echo "Usage: $0 <mobile|tv|both>"
   echo ""
@@ -54,7 +61,11 @@ EOF
   fi
 
   echo "  Uploading $asset_name..."
-  gh release upload "$tag" "$apk_path#$asset_name"
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  cp "$apk_path" "$tmp_dir/$asset_name"
+  gh release upload "$tag" "$tmp_dir/$asset_name"
+  rm -rf "$tmp_dir"
 }
 
 build_mobile() {
