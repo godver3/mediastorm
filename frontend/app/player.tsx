@@ -468,6 +468,12 @@ export default function PlayerScreen() {
   const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(SUBTITLE_OFF_OPTION.id);
 
+  // Track whether the user has manually changed audio/subtitle tracks in this session.
+  // Prevents handleTracksAvailable from overwriting user selections when its dependencies
+  // change (contentPreference, audioStreamMetadata, settings, etc.) and cause re-invocation.
+  const userManuallySelectedAudioRef = useRef(false);
+  const userManuallySelectedSubtitleRef = useRef(false);
+
   // ===== DEBUG: Track state change logging =====
   useEffect(() => {
     console.log('[player] STATE CHANGE: audioTrackOptions changed', {
@@ -2588,10 +2594,7 @@ export default function PlayerScreen() {
       switch (key) {
         case SupportedKeys.Left:
           if (!controlsVisibleRef.current) {
-            // TODO: tvOS sends duplicate events per button press (likely MPRemoteCommandCenter interference).
-            // Halve the skip amount as a workaround until root cause is properly fixed.
-            const baseBackward = settings?.playback?.seekBackwardSeconds ?? 10;
-            const backwardAmount = Platform.OS === 'ios' && Platform.isTV ? baseBackward / 2 : baseBackward;
+            const backwardAmount = settings?.playback?.seekBackwardSeconds ?? 10;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -2628,10 +2631,7 @@ export default function PlayerScreen() {
           break;
         case SupportedKeys.Right:
           if (!controlsVisibleRef.current) {
-            // TODO: tvOS sends duplicate events per button press (likely MPRemoteCommandCenter interference).
-            // Halve the skip amount as a workaround until root cause is properly fixed.
-            const baseForward = settings?.playback?.seekForwardSeconds ?? 30;
-            const forwardAmount = Platform.OS === 'ios' && Platform.isTV ? baseForward / 2 : baseForward;
+            const forwardAmount = settings?.playback?.seekForwardSeconds ?? 30;
 
             // Update seek indicator and seek using accumulated amount from start time
             // This ensures rapid presses accumulate correctly instead of using stale currentTime
@@ -2667,18 +2667,14 @@ export default function PlayerScreen() {
           }
           break;
         case SupportedKeys.FastForward: {
-          // TODO: tvOS sends duplicate events - halve as workaround
           const ffAmount = settings?.playback?.seekForwardSeconds ?? 30;
-          const ffAdjusted = Platform.OS === 'ios' && Platform.isTV ? ffAmount / 2 : ffAmount;
-          void seekRef.current?.(currentTimeRef.current + ffAdjusted);
+          void seekRef.current?.(currentTimeRef.current + ffAmount);
           showControlsRef.current?.();
           break;
         }
         case SupportedKeys.Rewind: {
-          // TODO: tvOS sends duplicate events - halve as workaround
           const rwAmount = settings?.playback?.seekBackwardSeconds ?? 10;
-          const rwAdjusted = Platform.OS === 'ios' && Platform.isTV ? rwAmount / 2 : rwAmount;
-          void seekRef.current?.(currentTimeRef.current - rwAdjusted);
+          void seekRef.current?.(currentTimeRef.current - rwAmount);
           showControlsRef.current?.();
           break;
         }
@@ -2701,11 +2697,10 @@ export default function PlayerScreen() {
           break;
         case SupportedKeys.PlayPause: {
           console.log('[player] PlayPause key received, paused:', pausedRef.current, 'lastToggle:', lastPlayPauseToggleRef.current);
-          // TODO: tvOS sends duplicate events - debounce to ignore rapid duplicates
+          // tvOS fires both keydown and keyup for a single press; debounce to absorb the keyup.
+          // 250ms is enough to catch normal press-release while staying responsive.
           const now = Date.now();
-          // Increase debounce to 700ms on tvOS to ignore the 'keyup' event
-          // which often follows a normal button press and release.
-          const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 700 : 0;
+          const debounceMs = Platform.OS === 'ios' && Platform.isTV ? 250 : 0;
           const timeSinceLastToggle = now - lastPlayPauseToggleRef.current;
           console.log('[player] PlayPause debounce check:', { now, debounceMs, timeSinceLastToggle, willToggle: timeSinceLastToggle > debounceMs });
           if (timeSinceLastToggle > debounceMs) {
@@ -4552,9 +4547,12 @@ export default function PlayerScreen() {
       if (useNativePlayer && playerAudioOptions.length > 0) {
         console.log('[player] handleTracksAvailable: SETTING audio options from native player tracks');
         setAudioTrackOptions(playerAudioOptions);
-        // Use preselected track if available (from details page selection), otherwise default to first
-        // For native player, preselectedAudioTrack is already a relative index (converted in details.tsx)
-        if (preselectedAudioTrack !== undefined) {
+        // Only set the audio selection if the user hasn't manually changed it.
+        // This callback can be re-triggered when dependencies change (contentPreference,
+        // audioStreamMetadata, settings, etc.), which would otherwise reset the user's choice.
+        if (userManuallySelectedAudioRef.current) {
+          console.log('[player] handleTracksAvailable: SKIPPING audio selection — user manually selected');
+        } else if (preselectedAudioTrack !== undefined) {
           const matchingTrack = playerAudioOptions.find((t) => Number(t.id) === preselectedAudioTrack);
           const audioId = matchingTrack?.id ?? playerAudioOptions[0]?.id ?? null;
           console.log('[player] handleTracksAvailable: SETTING selectedAudioTrackId from preselected', {
@@ -4607,9 +4605,10 @@ export default function PlayerScreen() {
         });
         const mergedSubtitles = [SUBTITLE_OFF_OPTION, ...playerSubtitleOptions];
         setSubtitleTrackOptions(mergedSubtitles);
-        // Use preselected track if available (from details page selection), otherwise auto-select
-        // For native player, preselectedSubtitleTrack is already a relative index (converted in details.tsx)
-        if (preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack >= 0) {
+        // Skip subtitle selection if user has manually changed it (same guard as audio)
+        if (userManuallySelectedSubtitleRef.current) {
+          console.log('[player] handleTracksAvailable: SKIPPING subtitle selection — user manually selected');
+        } else if (preselectedSubtitleTrack !== undefined && preselectedSubtitleTrack >= 0) {
           const matchingTrack = playerSubtitleOptions.find((t) => Number(t.id) === preselectedSubtitleTrack);
           const subtitleId = matchingTrack?.id ?? SUBTITLE_OFF_OPTION.id;
           setSelectedSubtitleTrackId(subtitleId);
@@ -5497,6 +5496,8 @@ export default function PlayerScreen() {
     setSubtitleTrackOptions([SUBTITLE_OFF_OPTION]);
     setSelectedAudioTrackId(null);
     setSelectedSubtitleTrackId(SUBTITLE_OFF_OPTION.id);
+    userManuallySelectedAudioRef.current = false;
+    userManuallySelectedSubtitleRef.current = false;
     setHasStartedPlaying(false);
     if (usesSystemManagedControls) {
       setPaused(false);
@@ -6560,6 +6561,7 @@ export default function PlayerScreen() {
                             selectedAudioTrackId={selectedAudioTrackId}
                             onSelectAudioTrack={(id) => {
                               console.log('[player] user selected audio track', { id, audioTrackOptions });
+                              userManuallySelectedAudioRef.current = true;
                               setSelectedAudioTrackId(id);
                               // Save per-content language preference
                               saveContentLanguagePreference({ audioTrackId: id });
@@ -6568,6 +6570,7 @@ export default function PlayerScreen() {
                             selectedSubtitleTrackId={selectedSubtitleTrackId}
                             onSelectSubtitleTrack={(id) => {
                               console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
+                              userManuallySelectedSubtitleRef.current = true;
                               setSelectedSubtitleTrackId(id);
                               // Clear external subtitle when switching to embedded track
                               if (id !== 'external') {
@@ -6639,9 +6642,11 @@ export default function PlayerScreen() {
                       selectedId={activeMenu === 'audio' ? selectedAudioTrackId : selectedSubtitleTrackId}
                       onSelect={(id) => {
                         if (activeMenu === 'audio') {
+                          userManuallySelectedAudioRef.current = true;
                           setSelectedAudioTrackId(id);
                           saveContentLanguagePreference({ audioTrackId: id });
                         } else {
+                          userManuallySelectedSubtitleRef.current = true;
                           setSelectedSubtitleTrackId(id);
                           if (id !== 'external') {
                             externalSubtitleUrlRef.current = null;
@@ -6728,6 +6733,7 @@ export default function PlayerScreen() {
                         selectedAudioTrackId={selectedAudioTrackId}
                         onSelectAudioTrack={(id) => {
                           console.log('[player] user selected audio track', { id, audioTrackOptions });
+                          userManuallySelectedAudioRef.current = true;
                           setSelectedAudioTrackId(id);
                           // Save per-content language preference
                           saveContentLanguagePreference({ audioTrackId: id });
@@ -6736,6 +6742,7 @@ export default function PlayerScreen() {
                         selectedSubtitleTrackId={selectedSubtitleTrackId}
                         onSelectSubtitleTrack={(id) => {
                           console.log('[player] user selected subtitle track', { id, subtitleTrackOptions });
+                          userManuallySelectedSubtitleRef.current = true;
                           setSelectedSubtitleTrackId(id);
                           // Clear external subtitle when switching to embedded track
                           if (id !== 'external') {
@@ -6797,9 +6804,11 @@ export default function PlayerScreen() {
                   selectedId={activeMenu === 'audio' ? selectedAudioTrackId : selectedSubtitleTrackId}
                   onSelect={(id) => {
                     if (activeMenu === 'audio') {
+                      userManuallySelectedAudioRef.current = true;
                       setSelectedAudioTrackId(id);
                       saveContentLanguagePreference({ audioTrackId: id });
                     } else {
+                      userManuallySelectedSubtitleRef.current = true;
                       setSelectedSubtitleTrackId(id);
                       if (id !== 'external') {
                         externalSubtitleUrlRef.current = null;

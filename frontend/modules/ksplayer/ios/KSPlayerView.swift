@@ -403,6 +403,13 @@ public class KSPlayerView: UIView {
         // Subtitle settings - autoSelectEmbedSubtitle must be true for KSPlayer to initialize subtitle decoder
         options.autoSelectEmbedSubtitle = true
 
+        // On tvOS, disable KSPlayer's MPRemoteCommandCenter registration.
+        // JS handles play/pause exclusively via TVEventHandler; having KSPlayer also
+        // register togglePlayPauseCommand causes a dual-toggle race that breaks play/pause.
+        #if os(tvOS)
+        options.registerRemoteControll = false
+        #endif
+
         debugLog("Options configured: hardwareDecode=\(options.hardwareDecode), asyncDecomp=\(options.asynchronousDecompression), destinationDynamicRange=\(options.destinationDynamicRange?.description ?? "auto"), autoSelectEmbedSubtitle=\(options.autoSelectEmbedSubtitle)")
 
         // Set up callback to detect Dolby Vision during playback
