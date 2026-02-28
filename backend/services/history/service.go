@@ -925,6 +925,23 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		return continueWatching[i].UpdatedAt.After(continueWatching[j].UpdatedAt)
 	})
 
+	// Log final sorted continue watching list with positions and timestamps
+	log.Printf("[history] === Continue Watching final order (%d items) ===", len(continueWatching))
+	for i, item := range continueWatching {
+		source := "completed-eps"
+		if item.PercentWatched > 0 && item.PercentWatched < 90 {
+			source = "in-progress"
+		}
+		nextInfo := "no-next"
+		if item.NextEpisode != nil {
+			nextInfo = fmt.Sprintf("next=S%02dE%02d", item.NextEpisode.SeasonNumber, item.NextEpisode.EpisodeNumber)
+		}
+		log.Printf("[history]   #%d %q (%s) updatedAt=%s %s [%s]",
+			i+1, item.SeriesTitle, item.SeriesID,
+			item.UpdatedAt.Format(time.RFC3339),
+			nextInfo, source)
+	}
+
 	return continueWatching, nil
 }
 
@@ -2130,8 +2147,15 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 						progressCleared = true
 					}
 				}
+				log.Printf("[history] import: SKIP (local newer) %s %q watchedAt=%s (trakt=%s)",
+					update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339))
 				continue
 			}
+			log.Printf("[history] import: UPDATE (trakt newer) %s %q localWatchedAt=%s -> traktWatchedAt=%s seriesID=%s",
+				update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+		} else if !exists {
+			log.Printf("[history] import: NEW %s %q watchedAt=%s seriesID=%s",
+				update.MediaType, update.Name, update.WatchedAt.Format(time.RFC3339), update.SeriesID)
 		}
 
 		item := existing
