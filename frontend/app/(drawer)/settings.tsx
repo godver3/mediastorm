@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -27,6 +28,7 @@ import {
   type StreamingServicePriority,
   type MultiProviderMode,
 } from '@/components/BackendSettingsContext';
+import { useNavVisibility, type NavTabKey } from '@/components/NavVisibilityContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useAuth } from '@/components/AuthContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
@@ -776,6 +778,7 @@ function SettingsScreen() {
   }>({ visible: false, label: '', value: '', fieldKey: '' });
   const [logUrlModalVisible, setLogUrlModalVisible] = useState(false);
   const { pendingPinUserId } = useUserProfiles();
+  const { visibilityMap, setTabVisible } = useNavVisibility();
   const isActive = isFocused && !isMenuOpen && !textInputModal.visible && !pendingPinUserId && !logUrlModalVisible;
   const [activeTab, setActiveTab] = useState<SettingsTab>('connection');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
@@ -1484,8 +1487,19 @@ function SettingsScreen() {
           },
         ],
       },
+      {
+        type: 'header',
+        id: 'nav-header',
+        title: 'Navigation',
+        description: 'Show or hide tabs from the navigation menu.',
+      },
+      { type: 'toggle', id: 'nav-home', label: 'Home', value: visibilityMap.home, fieldKey: 'nav.home' },
+      { type: 'toggle', id: 'nav-search', label: 'Search', value: visibilityMap.search, fieldKey: 'nav.search' },
+      { type: 'toggle', id: 'nav-lists', label: 'Lists', value: visibilityMap.lists, fieldKey: 'nav.lists' },
+      { type: 'toggle', id: 'nav-live', label: 'Live', value: visibilityMap.live, fieldKey: 'nav.live' },
+      { type: 'toggle', id: 'nav-profiles', label: 'Profiles', value: visibilityMap.profiles, fieldKey: 'nav.profiles' },
     ],
-    [backendUrl, isSubmittingLogs, account, isRefreshing],
+    [backendUrl, isSubmittingLogs, account, isRefreshing, visibilityMap],
   );
 
   // Get current tab grid data - only connection tab is active
@@ -1524,10 +1538,16 @@ function SettingsScreen() {
     [handleBackendConnectionApply, handleSaveSettings, handleSubmitLogs, showToast, logout, handleReloadSettings],
   );
 
-  // TV Grid field update handler - currently unused as connection tab has no field updates
-  const handleGridFieldUpdate = useCallback((_fieldKey: string, _value: string | boolean | number) => {
-    // No field updates needed for connection tab
-  }, []);
+  // TV Grid field update handler
+  const handleGridFieldUpdate = useCallback((fieldKey: string, value: string | boolean | number) => {
+    if (fieldKey.startsWith('nav.')) {
+      const tabKey = fieldKey.slice(4) as NavTabKey;
+      const ok = setTabVisible(tabKey, value as boolean);
+      if (!ok) {
+        showToast('At least one tab must remain visible', { tone: 'danger' });
+      }
+    }
+  }, [setTabVisible, showToast]);
 
   // TV Grid render item
   const renderGridItem = useCallback(
@@ -1623,7 +1643,7 @@ function SettingsScreen() {
 
         case 'toggle':
           return (
-            <View style={[styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
+            <View style={[styles.tvGridItemFullWidth, item.fieldKey.startsWith('nav.') ? styles.tvGridItemSpacingCompact : styles.tvGridItemSpacing]}>
               <SpatialNavigationFocusableView
                 onSelect={() => handleGridFieldUpdate(item.fieldKey, !item.value)}>
                 {({ isFocused }: { isFocused: boolean }) => (
@@ -2094,6 +2114,39 @@ function SettingsScreen() {
                       style={styles.debugButton}
                     />
                   </View>
+                </View>
+              )}
+
+              {/* Navigation visibility section - shown on Connection tab */}
+              {activeTab === 'connection' && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Navigation</Text>
+                  <Text style={styles.sectionDescription}>
+                    Show or hide tabs from the navigation bar.
+                  </Text>
+                  {([
+                    ['home', 'Home'],
+                    ['search', 'Search'],
+                    ['lists', 'Lists'],
+                    ['live', 'Live'],
+                    ['profiles', 'Profiles'],
+                    ...(!Platform.isTV && Platform.OS !== 'web' ? [['downloads', 'Downloads']] : []),
+                  ] as [NavTabKey, string][]).map(([key, label]) => (
+                    <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 }}>
+                      <Text style={{ ...theme.typography.body.md, color: theme.colors.text.primary }}>{label}</Text>
+                      <Switch
+                        value={visibilityMap[key]}
+                        onValueChange={(val) => {
+                          const ok = setTabVisible(key, val);
+                          if (!ok) {
+                            showToast('At least one tab must remain visible', { tone: 'danger' });
+                          }
+                        }}
+                        trackColor={{ false: theme.colors.border.emphasis, true: theme.colors.accent.primary }}
+                        thumbColor="#fff"
+                      />
+                    </View>
+                  ))}
                 </View>
               )}
 
@@ -3116,6 +3169,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     // Spacing between grid items
     tvGridItemSpacing: {
       marginBottom: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
+    },
+    tvGridItemSpacingCompact: {
+      marginBottom: isNonTvosTV ? 2 : 4,
     },
     tvGridCustomToggle: {
       width: isNonTvosTV ? 50 * atvScale * 0.8 : 50,

@@ -38,6 +38,7 @@ import { useUserProfiles } from '../components/UserProfilesContext';
 import { StartupDataProvider } from '../components/StartupDataContext';
 import { ToastProvider } from '../components/ToastContext';
 import { UserProfilesProvider } from '../components/UserProfilesContext';
+import { NavVisibilityProvider } from '../components/NavVisibilityContext';
 import { WatchlistProvider } from '../components/WatchlistContext';
 import { DownloadsProvider } from '../components/DownloadsContext';
 import { WatchStatusProvider } from '../components/WatchStatusContext';
@@ -113,6 +114,7 @@ function AuthGate() {
   // Show main app when authenticated
   return (
     <UserProfilesProvider>
+      <NavVisibilityProvider>
       <LazyModals />
       <StartupDataProvider>
         <LiveProvider>
@@ -180,6 +182,7 @@ function AuthGate() {
           </MultiscreenProvider>
         </LiveProvider>
       </StartupDataProvider>
+      </NavVisibilityProvider>
     </UserProfilesProvider>
   );
 }

@@ -16,6 +16,17 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { InteractionManager, Platform, StyleSheet, Text, View, Animated, Pressable, Image } from 'react-native';
 import { exitApp } from 'app-exit';
+import { useNavVisibility, type NavTabKey } from './NavVisibilityContext';
+
+const ROUTE_TO_NAV_KEY: Record<string, NavTabKey> = {
+  '/': 'home',
+  '/search': 'search',
+  '/lists': 'lists',
+  '/live': 'live',
+  '/profiles': 'profiles',
+  '/downloads': 'downloads',
+  // '/settings', '__exit', etc. — always visible
+};
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -37,6 +48,7 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
   const styles = useMenuStyles(theme);
   const insets = useSafeAreaInsets();
   const { activeUser, getIconUrl } = useUserProfiles();
+  const { isTabVisible } = useNavVisibility();
   const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
   const slideAnim = useRef(new Animated.Value(isVisible ? 0 : -MENU_WIDTH)).current;
   const [isAnimatedHidden, setIsAnimatedHidden] = useState(!isVisible);
@@ -66,9 +78,13 @@ export const CustomMenu = React.memo(function CustomMenu({ isVisible, onClose }:
     { name: '/settings', label: 'Settings' },
   ];
 
-  const menuItems = Platform.isTV
+  const menuItems = (Platform.isTV
     ? [...baseMenuItems, { name: '__exit', label: 'Exit' }]
-    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }];
+    : [...baseMenuItems, { name: '/modal-test', label: 'Modal Tests' }]
+  ).filter((item) => {
+    const navKey = ROUTE_TO_NAV_KEY[item.name];
+    return !navKey || isTabVisible(navKey);
+  });
 
   React.useEffect(() => {
     if (isVisible) {

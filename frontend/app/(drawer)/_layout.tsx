@@ -10,6 +10,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { MobileTabBar } from '../../components/MobileTabBar';
 import { useMenuContext } from '../../components/MenuContext';
 import { TVBackground } from '../../components/TVBackground';
+import { useNavVisibility } from '../../components/NavVisibilityContext';
 import { useUserProfiles } from '../../components/UserProfilesContext';
 import { useShouldUseTabs } from '../../hooks/useShouldUseTabs';
 import { useMemoryMonitor } from '../../hooks/useMemoryMonitor';
@@ -19,6 +20,7 @@ export default function DrawerLayout() {
   const theme = useTheme();
   const { isOpen: isMenuOpen, closeMenu } = useMenuContext();
   const { profileSelectorVisibleRef } = useUserProfiles();
+  const { isTabVisible } = useNavVisibility();
 
   const shouldUseTabs = useShouldUseTabs();
 
@@ -78,13 +80,13 @@ export default function DrawerLayout() {
           headerShown: false,
           sceneStyle: { backgroundColor: theme.colors.background.base },
         }}>
-        <Tabs.Screen name="index" options={{ title: 'Home' }} />
-        <Tabs.Screen name="search" options={{ title: 'Search' }} />
-        <Tabs.Screen name="lists" options={{ title: 'Lists' }} />
+        <Tabs.Screen name="index" options={isTabVisible('home') ? { title: 'Home' } : { href: null }} />
+        <Tabs.Screen name="search" options={isTabVisible('search') ? { title: 'Search' } : { href: null }} />
+        <Tabs.Screen name="lists" options={isTabVisible('lists') ? { title: 'Lists' } : { href: null }} />
         <Tabs.Screen name="watchlist" options={{ href: null }} />
-        <Tabs.Screen name="live" options={{ title: 'Live' }} />
-        <Tabs.Screen name="profiles" options={{ title: 'Profiles' }} />
-        <Tabs.Screen name="downloads" options={Platform.isTV || Platform.OS === 'web' ? { href: null } : { title: 'Downloads' }} />
+        <Tabs.Screen name="live" options={isTabVisible('live') ? { title: 'Live' } : { href: null }} />
+        <Tabs.Screen name="profiles" options={isTabVisible('profiles') ? { title: 'Profiles' } : { href: null }} />
+        <Tabs.Screen name="downloads" options={Platform.isTV || Platform.OS === 'web' || !isTabVisible('downloads') ? { href: null } : { title: 'Downloads' }} />
         <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
         <Tabs.Screen
           name="tv"

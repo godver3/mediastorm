@@ -11,7 +11,18 @@ import { useTheme } from '@/theme';
 import { isTablet } from '@/theme/tokens/tvScale';
 
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
+import { useNavVisibility, type NavTabKey } from './NavVisibilityContext';
 import { useUserProfiles } from './UserProfilesContext';
+
+const TAB_KEY_TO_NAV_KEY: Partial<Record<TabKey, NavTabKey>> = {
+  index: 'home',
+  search: 'search',
+  lists: 'lists',
+  live: 'live',
+  profiles: 'profiles',
+  downloads: 'downloads',
+  // 'settings' is intentionally omitted — always visible
+};
 
 type TabKey = 'index' | 'search' | 'lists' | 'live' | 'profiles' | 'downloads' | 'settings';
 
@@ -82,6 +93,7 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { activeUser, getIconUrl } = useUserProfiles();
+  const { isTabVisible } = useNavVisibility();
 
   // Debug logging for profile icon
   useEffect(() => {
@@ -106,7 +118,10 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
 
   return (
     <View style={styles.container} accessibilityRole="tablist">
-      {TAB_ITEMS.map((item) => {
+      {TAB_ITEMS.filter((item) => {
+        const navKey = TAB_KEY_TO_NAV_KEY[item.key];
+        return !navKey || isTabVisible(navKey);
+      }).map((item) => {
         const isActive = currentTab === item.key;
 
         const onPress = () => {
