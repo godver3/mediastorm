@@ -74,12 +74,16 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var isAnime bool
 	var targetAirDate string
 	if mediaType == "series" && h.MetadataSvc != nil {
-		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year)
+		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year, imdbID)
 		if seriesMeta != nil {
 			episodeResolver = seriesMeta.EpisodeResolver
 			isDaily = seriesMeta.IsDaily
 			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
+			if year == 0 && seriesMeta.Year > 0 {
+				year = seriesMeta.Year
+				log.Printf("[indexer] Populated year %d from series metadata", year)
+			}
 			if episodeResolver != nil {
 				log.Printf("[indexer] Episode resolver created: %d total episodes, %d seasons",
 					episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
@@ -216,11 +220,12 @@ type seriesSearchMetadata struct {
 	IsDaily         bool
 	IsAnime         bool
 	TargetAirDate   string // YYYY-MM-DD format for daily shows
+	Year            int    // Series premiere year from metadata
 }
 
 // getSeriesSearchMetadata fetches series metadata for search, including episode resolver
 // and daily show detection
-func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query string, year int) *seriesSearchMetadata {
+func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query string, year int, imdbID string) *seriesSearchMetadata {
 	if h.MetadataSvc == nil {
 		return nil
 	}
@@ -237,8 +242,9 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 
 	// Build query using available identifiers
 	metaQuery := models.SeriesDetailsQuery{
-		Name: titleName,
-		Year: year,
+		Name:   titleName,
+		Year:   year,
+		IMDBID: imdbID,
 	}
 
 	// Fetch series details from metadata service
@@ -255,6 +261,7 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 
 	result := &seriesSearchMetadata{
 		IsDaily: details.Title.IsDaily,
+		Year:    details.Title.Year,
 	}
 
 	// Check if this is anime content from the genres
@@ -308,7 +315,7 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 
 // createEpisodeResolver is a convenience wrapper for backward compatibility
 func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string, year int) *filter.SeriesEpisodeResolver {
-	meta := h.getSeriesSearchMetadata(ctx, query, year)
+	meta := h.getSeriesSearchMetadata(ctx, query, year, "")
 	if meta == nil {
 		return nil
 	}

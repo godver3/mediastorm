@@ -119,6 +119,7 @@ type SeriesDetailsQuery struct {
 	Year    int
 	TVDBID  int64
 	TMDBID  int64
+	IMDBID  string
 }
 
 type TrailerQuery struct {
