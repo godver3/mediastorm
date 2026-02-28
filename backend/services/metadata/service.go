@@ -1663,6 +1663,12 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	return results, nil
 }
 
+// FetchAliases returns all known alternate names for a title from TVDB.
+// Results are cached to avoid redundant API calls.
+func (s *Service) FetchAliases(mediaType string, tvdbID int64) []string {
+	return s.fetchTVDBAliases(mediaType, tvdbID)
+}
+
 func (s *Service) fetchTVDBAliases(mediaType string, tvdbID int64) []string {
 	if s.client == nil || s.cache == nil || tvdbID <= 0 {
 		return nil

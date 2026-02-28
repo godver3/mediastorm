@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"novastream/config"
+	"novastream/models"
 )
 
 func TestSearchTorznab_IndexerCategories(t *testing.T) {
@@ -265,5 +266,148 @@ func TestDedupe(t *testing.T) {
 	}
 	if got[1] != "Drama" {
 		t.Fatalf("expected second item to be Drama, got %s", got[1])
+	}
+}
+
+// mockMetadataSearchOnly implements only the Search method (no FetchAliases).
+type mockMetadataSearchOnly struct {
+	results []models.SearchResult
+}
+
+func (m *mockMetadataSearchOnly) Search(_ context.Context, _ string, _ string) ([]models.SearchResult, error) {
+	return m.results, nil
+}
+
+// mockMetadataWithAliases implements both Search and FetchAliases.
+type mockMetadataWithAliases struct {
+	results []models.SearchResult
+	aliases map[int64][]string // tvdbID -> aliases
+}
+
+func (m *mockMetadataWithAliases) Search(_ context.Context, _ string, _ string) ([]models.SearchResult, error) {
+	return m.results, nil
+}
+
+func (m *mockMetadataWithAliases) FetchAliases(mediaType string, tvdbID int64) []string {
+	return m.aliases[tvdbID]
+}
+
+func TestResolveAlternateTitles_WithoutAliases(t *testing.T) {
+	// When metadata service doesn't implement FetchAliases, we should still
+	// get alternates from the search API translations.
+	// OriginalName is set when it differs from Name (metadata.Search only sets
+	// it when the TVDB primary name differs from the translated name).
+	mock := &mockMetadataSearchOnly{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:            "Formula 1: Drive to Survive",
+					OriginalName:    "", // Same as Name, so not set
+					TVDBID:          12345,
+					MediaType:       "series",
+					Year:            2019,
+					AlternateTitles: []string{"Formula 1: Život u šestoj brzini"},
+				},
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Formula 1: Drive to Survive S08E04",
+		MediaType: "series",
+		Year:      2019,
+	})
+
+	// Should have the Croatian alternate from search translations
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias from search translations, got %d: %v", len(aliases), aliases)
+	}
+	if aliases[0] != "Formula 1: Život u šestoj brzini" {
+		t.Errorf("expected Croatian alternate, got %q", aliases[0])
+	}
+}
+
+func TestResolveAlternateTitles_WithAliases(t *testing.T) {
+	// When metadata service implements FetchAliases, we should get aliases
+	// from both search translations AND the TVDB aliases endpoint.
+	// This is the key fix: TVDB search translations are often incomplete,
+	// missing languages like French. The aliases endpoint has them all.
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:            "Formula 1: Drive to Survive",
+					OriginalName:    "", // Same as Name
+					TVDBID:          12345,
+					MediaType:       "series",
+					Year:            2019,
+					AlternateTitles: []string{"Formula 1: Život u šestoj brzini"},
+				},
+			},
+		},
+		aliases: map[int64][]string{
+			12345: {
+				"Formula 1 : Pilotes de leur destin",     // French
+				"Fórmula 1: La emoción de un Grand Prix", // Spanish
+				"Formula 1: Život u šestoj brzini",       // Croatian (dupe of search translation)
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Formula 1: Drive to Survive S08E04",
+		MediaType: "series",
+		Year:      2019,
+	})
+
+	// Should have Croatian from search + French and Spanish from TVDB aliases
+	// (Croatian dupe should be deduplicated)
+	if len(aliases) != 3 {
+		t.Fatalf("expected 3 unique aliases, got %d: %v", len(aliases), aliases)
+	}
+
+	// Verify the French title is included (the key fix)
+	found := false
+	for _, a := range aliases {
+		if a == "Formula 1 : Pilotes de leur destin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected French alias to be included, got: %v", aliases)
+	}
+}
+
+func TestResolveAlternateTitles_NoTVDBID(t *testing.T) {
+	// When the matched title has no TVDB ID, FetchAliases should not be called
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:         "Some Show",
+					OriginalName: "Un Spectacle",
+					TVDBID:       0, // No TVDB ID
+					MediaType:    "series",
+				},
+			},
+		},
+		aliases: map[int64][]string{},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Some Show S01E01",
+		MediaType: "series",
+	})
+
+	// Should only have the original name alias from search
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias, got %d: %v", len(aliases), aliases)
+	}
+	if aliases[0] != "Un Spectacle" {
+		t.Errorf("expected original name alias, got %q", aliases[0])
 	}
 }

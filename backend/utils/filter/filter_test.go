@@ -816,3 +816,82 @@ func TestResults_TitleContainment(t *testing.T) {
 		}
 	})
 }
+
+func TestResults_ForeignLanguageTitles(t *testing.T) {
+	// Test the bug case: French-language results should match when French title
+	// is provided as an alternate title. Without the alternate, the Levenshtein
+	// distance between "Formula 1: Drive to Survive" and "Formula 1 : Pilotes
+	// de leur destin" is too large.
+	t.Run("French title rejected without alternate", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Formula.1.:.Pilotes.de.leur.destin.2019.S08E04.English,.TrueFrench.WEB.1080p"},
+		}
+
+		opts := Options{
+			ExpectedTitle: "Formula 1: Drive to Survive",
+			ExpectedYear:  2019,
+			IsMovie:       false,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 0 {
+			t.Errorf("Expected French title to be rejected without alternate, got %d results", len(filtered))
+		}
+	})
+
+	t.Run("French title accepted with alternate", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Formula.1.:.Pilotes.de.leur.destin.2019.S08E04.English,.TrueFrench.WEB.1080p"},
+			{Title: "Formula.1.Drive.to.Survive.S08E04.MULTI.1080p.WEB.H265-BOUBA.mkv"},
+		}
+
+		opts := Options{
+			ExpectedTitle:   "Formula 1: Drive to Survive",
+			ExpectedYear:    2019,
+			IsMovie:         false,
+			AlternateTitles: []string{"Formula 1 : Pilotes de leur destin"},
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 2 {
+			t.Errorf("Expected both results to match with French alternate title, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+
+	t.Run("multiple language alternates", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Formula.1.:.Pilotes.de.leur.destin.2019.S08E04.1080p"},       // French
+			{Title: "Formula.1.Zivot.u.sestoj.brzini.S08E04.1080p"},               // Croatian-ish
+			{Title: "Formula.1.Drive.to.Survive.S08E04.1080p"},                    // English
+			{Title: "Completely.Different.Show.S01E01.1080p"},                      // Unrelated
+		}
+
+		opts := Options{
+			ExpectedTitle: "Formula 1: Drive to Survive",
+			ExpectedYear:  2019,
+			IsMovie:       false,
+			AlternateTitles: []string{
+				"Formula 1 : Pilotes de leur destin",
+				"Formula 1: Život u šestoj brzini",
+			},
+		}
+
+		filtered := Results(results, opts)
+		// English and French should match; Croatian-ish depends on exact similarity
+		// but "Completely Different Show" should definitely be rejected
+		for _, r := range filtered {
+			if r.Title == "Completely.Different.Show.S01E01.1080p" {
+				t.Error("Unrelated show should have been filtered")
+			}
+		}
+		if len(filtered) < 2 {
+			t.Errorf("Expected at least 2 results (English + French), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+}

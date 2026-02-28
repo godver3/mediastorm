@@ -91,6 +91,12 @@ type (
 	metadataSearchService interface {
 		Search(context.Context, string, string) ([]models.SearchResult, error)
 	}
+
+	// metadataAliasService is optionally implemented by the metadata service
+	// to provide full TVDB aliases (international titles) for a given title.
+	metadataAliasService interface {
+		FetchAliases(mediaType string, tvdbID int64) []string
+	}
 )
 
 type Service struct {
@@ -1013,6 +1019,15 @@ func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions
 	add(chosen.OriginalName)
 	for _, alt := range chosen.AlternateTitles {
 		add(alt)
+	}
+
+	// Fetch full TVDB aliases (international titles) if the metadata service
+	// supports it. The search API translations are often incomplete — the
+	// aliases endpoint has all known alternate titles across languages.
+	if aliasSvc, ok := s.metadata.(metadataAliasService); ok && chosen.TVDBID > 0 {
+		for _, a := range aliasSvc.FetchAliases(chosen.MediaType, chosen.TVDBID) {
+			add(a)
+		}
 	}
 
 	if len(aliases) == 0 {
