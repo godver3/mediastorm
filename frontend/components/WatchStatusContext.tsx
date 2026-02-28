@@ -37,6 +37,7 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const { activeUser } = useUserProfiles();
   const { startupData, ready: startupReady, generation } = useStartupData();
   const hydratedGeneration = useRef(-1);
+  const lastUserId = useRef<string | null>(null);
 
   const normaliseKeyPart = (value: string | undefined | null): string => {
     return value?.trim().toLowerCase() ?? '';
@@ -72,8 +73,18 @@ export const WatchStatusProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     if (!activeUser?.id) {
       hydratedGeneration.current = -1;
+      lastUserId.current = null;
+      setState(INITIAL_WS_STATE);
       return;
     }
+
+    // Profile switched — clear stale watch data and force re-hydration
+    if (lastUserId.current !== null && lastUserId.current !== activeUser.id) {
+      setState(INITIAL_WS_STATE);
+      hydratedGeneration.current = -1;
+    }
+    lastUserId.current = activeUser.id;
+
     // Hydrate from startup bundle if it contains actual watch history items
     // (the startup bundle may return an empty [] to keep the payload small)
     if (startupData?.watchHistory?.length && hydratedGeneration.current < generation) {
