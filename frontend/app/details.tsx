@@ -1769,13 +1769,15 @@ export default function DetailsScreen() {
   const hasBeenDisplayedRef = useRef(false);
   const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
   const isPosterReady = isPosterPreloaded;
-  // On Android TV, bypass the gate when nav params provide enough content to render immediately
-  // (title text fallback + backdrop from params). This eliminates ~3s blank screen on Fire Stick.
+  // Bypass the gate when nav params provide enough content to render immediately
+  // (title text fallback + backdrop/poster from params). On mobile this prevents a blank
+  // screen when metadata lookup fails or Image.prefetch hangs (common on Android).
   const hasNavParamContent = !!title && !!(headerImageParam || posterUrlParam || backdropUrlParam);
   // On TV, also wait for ratings/certification to avoid layout shift in the action row area.
-  // The Android TV nav-param fast-path still requires metadata to finish loading.
+  // The nav-param fast-path on TV still requires metadata to finish loading.
   const isRatingsReady = !isMetadataLoading || detailsRatings.length > 0 || detailsCertification != null;
   const shouldHideUntilMetadataReady = (isTV || isMobile) && !hasBeenDisplayedRef.current &&
+    !(isMobile && hasNavParamContent) &&
     !(isAndroidTV && hasNavParamContent && isRatingsReady) &&
     (isMetadataLoading || !isPosterReady);
   if (!shouldHideUntilMetadataReady && (isTV || isMobile)) {
