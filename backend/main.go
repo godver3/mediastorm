@@ -325,6 +325,11 @@ func main() {
 	traktScrobbler.SetUserService(userService) // For per-profile Trakt account lookup
 	historyService.SetTraktScrobbler(traktScrobbler)
 
+	// Wire up real-time Trakt scrobble tracker for live playback events
+	scrobbleTracker := trakt.NewScrobbleStateTracker(traktClient, traktScrobbler, 15*time.Minute)
+	historyService.SetTraktRealTimeScrobbler(scrobbleTracker)
+	go scrobbleTracker.StartCleanup(context.Background())
+
 	// Wire up history service to metadata handler for hideWatched filtering
 	metadataHandler.SetHistoryService(historyService)
 	// Wire up history service to watchlist handler for watch state enrichment

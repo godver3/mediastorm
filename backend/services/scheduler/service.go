@@ -2009,6 +2009,16 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 		return toTraktResult, fmt.Errorf("local to trakt: %w", err)
 	}
 
+	// Sync partial playback positions (non-fatal errors)
+	if !dryRun {
+		if err := s.syncPlaybackToTrakt(traktAccount, profileID); err != nil {
+			log.Printf("[scheduler] Warning: sync playback to Trakt failed: %v", err)
+		}
+		if err := s.syncPlaybackFromTrakt(traktAccount, profileID); err != nil {
+			log.Printf("[scheduler] Warning: sync playback from Trakt failed: %v", err)
+		}
+	}
+
 	// Combine results
 	combined := SyncResult{
 		Count:  toLocalResult.Count + toTraktResult.Count,
@@ -2016,6 +2026,238 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 		ToAdd:  append(toLocalResult.ToAdd, toTraktResult.ToAdd...),
 	}
 	return combined, nil
+}
+
+// syncPlaybackToTrakt exports partial playback progress (1-80%) to Trakt via scrobble/pause.
+// Trakt requires scrobble/stop for progress above ~80%, so we cap at 80% here.
+// Items at 90%+ are already handled by the existing watch history sync.
+func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profileID string) error {
+	if s.historyService == nil {
+		return nil
+	}
+
+	items, err := s.historyService.ListPlaybackProgress(profileID)
+	if err != nil {
+		return fmt.Errorf("list playback progress: %w", err)
+	}
+
+	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
+	accessToken := traktAccount.AccessToken
+
+	exported := 0
+	for _, item := range items {
+		// Only sync items with meaningful partial progress
+		// Trakt requires scrobble/stop above ~80%, so cap at 80% for pause-based sync
+		if item.PercentWatched <= 1 || item.PercentWatched >= 80 {
+			continue
+		}
+
+		// Need valid external IDs to match on Trakt
+		if len(item.ExternalIDs) == 0 {
+			continue
+		}
+
+		req := trakt.ScrobbleRequest{
+			Progress: item.PercentWatched,
+		}
+
+		if item.MediaType == "movie" {
+			req.Movie = &trakt.ScrobbleMovie{
+				Title: item.MovieName,
+				Year:  item.Year,
+				IDs:   externalIDsToSyncIDs(item.ExternalIDs),
+			}
+		} else if item.MediaType == "episode" {
+			req.Episode = &trakt.ScrobbleEpisode{
+				Season: item.SeasonNumber,
+				Number: item.EpisodeNumber,
+				Title:  item.EpisodeName,
+			}
+			req.Show = &trakt.ScrobbleShow{
+				Title: item.SeriesName,
+				IDs:   seriesIDToSyncIDs(item.SeriesID, item.ExternalIDs),
+			}
+		} else {
+			continue
+		}
+
+		// ScrobblePause saves the position on Trakt without triggering "now watching"
+		if _, err := s.traktClient.ScrobblePause(accessToken, req); err != nil {
+			if errors.Is(err, trakt.ErrNotFound) {
+				continue
+			}
+			log.Printf("[scheduler] Failed to sync playback for %s %s: %v", item.MediaType, item.ItemID, err)
+			continue
+		}
+		exported++
+	}
+
+	if exported > 0 {
+		log.Printf("[scheduler] Exported %d partial playback positions to Trakt", exported)
+	}
+	return nil
+}
+
+// syncPlaybackFromTrakt imports partial playback progress from Trakt to local storage.
+func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profileID string) error {
+	if s.historyService == nil {
+		return nil
+	}
+
+	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
+	accessToken := traktAccount.AccessToken
+
+	imported := 0
+
+	for _, mediaType := range []string{"movies", "episodes"} {
+		traktItems, err := s.traktClient.GetPlaybackProgress(accessToken, mediaType)
+		if err != nil {
+			log.Printf("[scheduler] Failed to get Trakt playback progress for %s: %v", mediaType, err)
+			continue
+		}
+
+		for _, traktItem := range traktItems {
+			update := s.traktPlaybackItemToUpdate(traktItem)
+			if update == nil {
+				continue
+			}
+
+			// Check if local progress exists and is newer
+			localProgress, err := s.historyService.GetPlaybackProgress(profileID, update.MediaType, update.ItemID)
+			if err == nil && localProgress != nil {
+				// If local progress is newer (or same), skip
+				if !localProgress.UpdatedAt.Before(traktItem.PausedAt) {
+					continue
+				}
+			}
+
+			// Import from Trakt — need local duration to compute a meaningful position
+			if localProgress == nil || localProgress.Duration <= 0 {
+				// No local duration reference — skip (will import on next sync if duration becomes available)
+				continue
+			}
+
+			update.Duration = localProgress.Duration
+			update.Position = (traktItem.Progress / 100) * localProgress.Duration
+			update.IsPaused = true
+
+			if _, err := s.historyService.UpdatePlaybackProgress(profileID, *update); err != nil {
+				log.Printf("[scheduler] Failed to import Trakt playback for %s: %v", update.ItemID, err)
+				continue
+			}
+			imported++
+		}
+	}
+
+	if imported > 0 {
+		log.Printf("[scheduler] Imported %d playback positions from Trakt", imported)
+	}
+	return nil
+}
+
+// traktPlaybackItemToUpdate converts a Trakt PlaybackItem to a PlaybackProgressUpdate.
+func (s *Service) traktPlaybackItemToUpdate(item trakt.PlaybackItem) *models.PlaybackProgressUpdate {
+	update := &models.PlaybackProgressUpdate{
+		Timestamp: item.PausedAt,
+		IsPaused:  true,
+	}
+
+	if item.Type == "movie" && item.Movie != nil {
+		ids := trakt.IDsToMap(item.Movie.IDs)
+		var itemID string
+		if tmdbID, ok := ids["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := ids["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		} else if tvdbID, ok := ids["tvdb"]; ok && tvdbID != "" {
+			itemID = tvdbID
+		}
+		if itemID == "" {
+			return nil
+		}
+
+		update.MediaType = "movie"
+		update.ItemID = itemID
+		update.MovieName = item.Movie.Title
+		update.Year = item.Movie.Year
+		update.ExternalIDs = ids
+	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
+		showIDs := trakt.IDsToMap(item.Show.IDs)
+		var seriesID, itemID string
+		if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
+			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
+			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
+		} else if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
+			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
+			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
+		} else if imdbID, ok := showIDs["imdb"]; ok && imdbID != "" {
+			seriesID = fmt.Sprintf("imdb:%s", imdbID)
+			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Episode.Season, item.Episode.Number)
+		}
+		if itemID == "" {
+			return nil
+		}
+
+		update.MediaType = "episode"
+		update.ItemID = itemID
+		update.EpisodeName = item.Episode.Title
+		update.ExternalIDs = showIDs
+		update.SeriesID = seriesID
+		update.SeriesName = item.Show.Title
+		update.SeasonNumber = item.Episode.Season
+		update.EpisodeNumber = item.Episode.Number
+	} else {
+		return nil
+	}
+
+	return update
+}
+
+// externalIDsToSyncIDs converts map[string]string external IDs to trakt.SyncIDs.
+func externalIDsToSyncIDs(extIDs map[string]string) trakt.SyncIDs {
+	ids := trakt.SyncIDs{}
+	if v, ok := extIDs["tmdb"]; ok {
+		ids.TMDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["imdb"]; ok {
+		ids.IMDB = v
+	}
+	if v, ok := extIDs["tvdb"]; ok {
+		ids.TVDB, _ = strconv.Atoi(v)
+	}
+	return ids
+}
+
+// seriesIDToSyncIDs extracts show IDs from seriesID and external IDs for Trakt.
+func seriesIDToSyncIDs(seriesID string, extIDs map[string]string) trakt.SyncIDs {
+	ids := trakt.SyncIDs{}
+	if v, ok := extIDs["tvdb"]; ok {
+		ids.TVDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["tmdb"]; ok {
+		ids.TMDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["imdb"]; ok {
+		ids.IMDB = v
+	}
+
+	if ids.TVDB == 0 && ids.TMDB == 0 && ids.IMDB == "" && seriesID != "" {
+		parts := strings.Split(seriesID, ":")
+		if len(parts) >= 3 {
+			provider := strings.ToLower(parts[0])
+			numericID := parts[len(parts)-1]
+			switch provider {
+			case "tvdb":
+				ids.TVDB, _ = strconv.Atoi(numericID)
+			case "tmdb":
+				ids.TMDB, _ = strconv.Atoi(numericID)
+			case "imdb":
+				ids.IMDB = fmt.Sprintf("tt%s", numericID)
+			}
+		}
+	}
+
+	return ids
 }
 
 // traktHistoryItemToUpdate converts a Trakt HistoryItem to a WatchHistoryUpdate.

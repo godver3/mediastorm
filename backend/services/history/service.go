@@ -46,6 +46,12 @@ type TraktScrobbler interface {
 	IsEnabledForUser(userID string) bool
 }
 
+// TraktRealTimeScrobbler handles real-time scrobble events (start/pause/stop) to Trakt.
+type TraktRealTimeScrobbler interface {
+	HandleProgressUpdate(userID string, update models.PlaybackProgressUpdate, percentWatched float64)
+	StopSession(userID string, update models.PlaybackProgressUpdate, percentWatched float64)
+}
+
 // cachedSeriesMetadata holds cached series details with expiration.
 type cachedSeriesMetadata struct {
 	details   *models.SeriesDetails
@@ -85,6 +91,7 @@ type Service struct {
 	playbackProgress      map[string]map[string]models.PlaybackProgress // userID -> mediaKey -> progress
 	metadataService       MetadataService
 	traktScrobbler        TraktScrobbler
+	traktRTScrobbler      TraktRealTimeScrobbler
 	metadataCache         map[string]*cachedSeriesMetadata // seriesID -> metadata (full details)
 	seriesInfoCache       map[string]*cachedSeriesInfo     // seriesID -> lightweight info
 	movieMetadataCache    map[string]*cachedMovieMetadata  // movieID -> metadata
@@ -145,6 +152,13 @@ func (s *Service) SetTraktScrobbler(scrobbler TraktScrobbler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.traktScrobbler = scrobbler
+}
+
+// SetTraktRealTimeScrobbler sets the real-time scrobble tracker for live playback events.
+func (s *Service) SetTraktRealTimeScrobbler(scrobbler TraktRealTimeScrobbler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.traktRTScrobbler = scrobbler
 }
 
 // scrobbleWatchedItem syncs a watched item to Trakt if scrobbling is enabled for the user.
@@ -2442,8 +2456,16 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	// Invalidate continue watching cache for this user since progress changed
 	delete(s.continueWatchingCache, userID)
 
+	// Grab real-time scrobbler reference while holding the lock
+	rtScrobbler := s.traktRTScrobbler
+
 	// Auto-mark as watched if >= 90% complete
 	if percentWatched >= 90 {
+		// Send scrobble/stop before marking as watched
+		if rtScrobbler != nil {
+			go rtScrobbler.StopSession(userID, update, percentWatched)
+		}
+
 		s.mu.Unlock() // Unlock before calling other methods
 		err := s.markAsWatchedFromProgress(userID, update)
 		s.mu.Lock() // Re-lock after
@@ -2451,6 +2473,9 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 			// Log but don't fail the progress update
 			fmt.Printf("Warning: failed to auto-mark as watched: %v\n", err)
 		}
+	} else if rtScrobbler != nil {
+		// Below 90%: report real-time progress (start/pause/refresh)
+		go rtScrobbler.HandleProgressUpdate(userID, update, percentWatched)
 	}
 
 	return progress, nil

@@ -3,6 +3,7 @@ package trakt
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,10 +11,17 @@ import (
 	"time"
 )
 
-const (
-	traktAPIBaseURL = "https://api.trakt.tv"
-	traktAPIVersion = "2"
-)
+// ErrNotFound is returned when Trakt cannot find the requested item (404).
+var ErrNotFound = errors.New("trakt: item not found")
+
+var traktAPIBaseURL = "https://api.trakt.tv"
+
+const traktAPIVersion = "2"
+
+// setBaseURL overrides the Trakt API base URL (used by tests).
+func setBaseURL(url string) {
+	traktAPIBaseURL = url
+}
 
 // Client handles Trakt API interactions for OAuth and data fetching
 type Client struct {
@@ -918,6 +926,160 @@ func (c *Client) AddToWatchlist(accessToken string, movies []SyncMovie, shows []
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("trakt add to watchlist failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	return nil
+}
+
+// ScrobbleRequest represents the request body for /scrobble/{action}
+type ScrobbleRequest struct {
+	Movie   *ScrobbleMovie   `json:"movie,omitempty"`
+	Show    *ScrobbleShow    `json:"show,omitempty"`
+	Episode *ScrobbleEpisode `json:"episode,omitempty"`
+	Progress float64         `json:"progress"`
+}
+
+// ScrobbleMovie identifies a movie in a scrobble request
+type ScrobbleMovie struct {
+	Title string  `json:"title,omitempty"`
+	Year  int     `json:"year,omitempty"`
+	IDs   SyncIDs `json:"ids"`
+}
+
+// ScrobbleShow identifies a show in a scrobble request
+type ScrobbleShow struct {
+	Title string  `json:"title,omitempty"`
+	Year  int     `json:"year,omitempty"`
+	IDs   SyncIDs `json:"ids"`
+}
+
+// ScrobbleEpisode identifies an episode in a scrobble request
+type ScrobbleEpisode struct {
+	Season int    `json:"season"`
+	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	IDs    SyncIDs `json:"ids,omitempty"`
+}
+
+// ScrobbleResponse represents the response from /scrobble/{action}
+type ScrobbleResponse struct {
+	ID      int64   `json:"id"`
+	Action  string  `json:"action"`
+	Progress float64 `json:"progress"`
+}
+
+// PlaybackItem represents an item from /sync/playback/{type}
+type PlaybackItem struct {
+	ID       int64     `json:"id"`
+	Progress float64   `json:"progress"`
+	PausedAt time.Time `json:"paused_at"`
+	Type     string    `json:"type"`
+	Movie    *Movie    `json:"movie,omitempty"`
+	Episode  *Episode  `json:"episode,omitempty"`
+	Show     *Show     `json:"show,omitempty"`
+}
+
+// scrobble sends a scrobble action (start/pause/stop) to Trakt
+func (c *Client) scrobble(accessToken, action string, req ScrobbleRequest) (*ScrobbleResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, traktAPIBaseURL+"/scrobble/"+action, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(httpReq, accessToken)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 201 = scrobble successful, 409 = already scrobbled (treat as success)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt scrobble/%s failed: %s - %s", action, resp.Status, string(respBody))
+	}
+
+	var scrobbleResp ScrobbleResponse
+	if err := json.NewDecoder(resp.Body).Decode(&scrobbleResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &scrobbleResp, nil
+}
+
+// ScrobbleStart reports that the user has started watching
+func (c *Client) ScrobbleStart(accessToken string, req ScrobbleRequest) (*ScrobbleResponse, error) {
+	return c.scrobble(accessToken, "start", req)
+}
+
+// ScrobblePause reports that the user has paused watching
+func (c *Client) ScrobblePause(accessToken string, req ScrobbleRequest) (*ScrobbleResponse, error) {
+	return c.scrobble(accessToken, "pause", req)
+}
+
+// ScrobbleStop reports that the user has stopped watching
+func (c *Client) ScrobbleStop(accessToken string, req ScrobbleRequest) (*ScrobbleResponse, error) {
+	return c.scrobble(accessToken, "stop", req)
+}
+
+// GetPlaybackProgress retrieves playback progress items from Trakt
+// mediaType should be "movies" or "episodes"
+func (c *Client) GetPlaybackProgress(accessToken, mediaType string) ([]PlaybackItem, error) {
+	req, err := http.NewRequest(http.MethodGet, traktAPIBaseURL+"/sync/playback/"+mediaType, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt playback progress failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	var items []PlaybackItem
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return items, nil
+}
+
+// RemovePlaybackItem removes a specific playback progress item from Trakt
+func (c *Client) RemovePlaybackItem(accessToken string, id int64) error {
+	url := fmt.Sprintf("%s/sync/playback/%d", traktAPIBaseURL, id)
+
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("trakt remove playback failed: %s - %s", resp.Status, string(respBody))
 	}
 
 	return nil
