@@ -2387,6 +2387,12 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 
 	// Create or update progress
 	// Note: HiddenFromContinueWatching defaults to false, which clears any previous hidden state
+	updatedAt := time.Now().UTC()
+	if !update.Timestamp.IsZero() {
+		// Preserve the original timestamp (e.g. from Trakt sync) to avoid
+		// artificially bumping items in the continue-watching sort order.
+		updatedAt = update.Timestamp.UTC()
+	}
 	progress := models.PlaybackProgress{
 		ID:             key,
 		MediaType:      strings.ToLower(update.MediaType),
@@ -2394,7 +2400,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		Position:       update.Position,
 		Duration:       update.Duration,
 		PercentWatched: percentWatched,
-		UpdatedAt:      time.Now().UTC(),
+		UpdatedAt:      updatedAt,
 		IsPaused:       update.IsPaused,
 		ExternalIDs:    update.ExternalIDs,
 		SeasonNumber:   update.SeasonNumber,
