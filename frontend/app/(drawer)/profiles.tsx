@@ -11,7 +11,7 @@ import RemoteControlManager from '@/services/remote-control/RemoteControlManager
 import type { UserProfile } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { isTV, responsiveSize } from '@/theme/tokens/tvScale';
+import { isTV, responsiveSize, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import {
@@ -639,7 +639,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
 
   // Ensure we have valid screen dimensions (fallback to 1920x1080 for TV)
   const effectiveWidth = screenWidth > 0 ? screenWidth : isTV ? 1920 : 375;
-  const _effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+
+  // Viewport-height ratio: 1.0 on tvOS (1080p), ~0.5 on Android TV
+  const vh = effectiveHeight / TV_REFERENCE_HEIGHT;
+  const modalAvatarSize = isTVPlatform ? Math.round(100 * vh) : 64;
+  const swatchSize = isTVPlatform ? Math.round(48 * vh) : 36;
+  const modalButtonMinWidth = isTVPlatform ? Math.round(200 * vh) : 120;
 
   // TV grid configuration
   const columnsCount = isTV ? 3 : 4; // Fewer columns since content area is narrower
@@ -800,7 +806,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       alignItems: 'center',
     },
     pinIndicatorText: {
-      fontSize: 10,
+      ...theme.typography.caption.sm,
       fontWeight: '700',
       color: 'white',
       letterSpacing: 0.5,
@@ -817,7 +823,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       alignItems: 'center',
     },
     kidsIndicatorText: {
-      fontSize: 14,
+      ...theme.typography.body.sm,
       fontWeight: '700',
       color: 'white',
       letterSpacing: 0.5,
@@ -976,8 +982,8 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       marginBottom: theme.spacing.md,
     },
     pinErrorText: {
+      ...theme.typography.body.sm,
       color: '#EF4444',
-      fontSize: Platform.isTV ? 16 : 14,
       textAlign: 'center',
     },
     // Mobile modal styles
@@ -1045,7 +1051,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       backgroundColor: theme.colors.overlay.button,
       alignItems: 'center',
       alignSelf: 'center',
-      minWidth: isTV ? 200 : 120,
+      minWidth: modalButtonMinWidth,
     },
     modalButtonFocused: {
       borderColor: theme.colors.accent.primary,
@@ -1074,15 +1080,15 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       marginBottom: isTV ? theme.spacing.lg : theme.spacing.md,
     },
     profileModalAvatar: {
-      width: isTV ? 100 : 64,
-      height: isTV ? 100 : 64,
-      borderRadius: isTV ? 50 : 32,
+      width: modalAvatarSize,
+      height: modalAvatarSize,
+      borderRadius: Math.round(modalAvatarSize / 2),
       backgroundColor: theme.colors.background.surface,
       justifyContent: 'center',
       alignItems: 'center',
     },
     profileModalAvatarText: {
-      fontSize: isTV ? 48 : 28,
+      fontSize: isTVPlatform ? Math.round(48 * vh) : 28,
       fontWeight: '600',
       color: theme.colors.text.primary,
     },
@@ -1108,10 +1114,10 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexWrap: 'wrap',
     },
     colorSwatch: {
-      width: isTV ? 48 : 36,
-      height: isTV ? 48 : 36,
-      borderRadius: isTV ? 24 : 18,
-      borderWidth: isTV ? 3 : 2,
+      width: swatchSize,
+      height: swatchSize,
+      borderRadius: Math.round(swatchSize / 2),
+      borderWidth: isTVPlatform ? Math.max(2, Math.round(3 * vh)) : 2,
       borderColor: 'transparent',
     },
     colorSwatchFocused: {

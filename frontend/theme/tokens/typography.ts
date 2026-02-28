@@ -1,6 +1,7 @@
-import { Platform, TextStyle } from 'react-native';
+import { TextStyle } from 'react-native';
 
-import { Breakpoint, breakpointScaleMultiplier, getTVScaleFactor, TABLET_SCALE_FACTOR } from './breakpoints';
+import { Breakpoint, breakpointScaleMultiplier, TABLET_SCALE_FACTOR } from './breakpoints';
+import { TV_REFERENCE_HEIGHT } from './tvScale';
 
 export type TypographyScale = {
   fontSize: number;
@@ -68,11 +69,21 @@ export function getTypographyForBreakpoint(
   breakpoint: Breakpoint,
   isTV: boolean = false,
   isTablet: boolean = false,
+  screenHeight?: number,
 ): TypographyTokens {
-  const baseFactor = breakpointScaleMultiplier[breakpoint];
-  const tvFactor = isTV ? getTVScaleFactor(Platform.OS) : 1;
-  const tabletFactor = isTablet ? TABLET_SCALE_FACTOR : 1;
-  const factor = baseFactor * tvFactor * tabletFactor;
+  let factor: number;
+
+  if (isTV) {
+    // Viewport-height-driven scaling for TV
+    // tvOS at 1080p: factor = 1.0 (base values ARE the tvOS design values)
+    // Android TV: factor ≈ 0.5 from its actual viewport height
+    const height = screenHeight && screenHeight > 0 ? screenHeight : TV_REFERENCE_HEIGHT;
+    factor = height / TV_REFERENCE_HEIGHT;
+  } else {
+    const baseFactor = breakpointScaleMultiplier[breakpoint];
+    const tabletFactor = isTablet ? TABLET_SCALE_FACTOR : 1;
+    factor = baseFactor * tabletFactor;
+  }
 
   // Apply additional 20% scale for shelf titles on tvOS
   const shelfTitleFactor = isTV ? factor * 1.2 : factor;

@@ -58,7 +58,7 @@ const defaultTheme: NovaTheme = {
 const ThemeContext = createContext<NovaTheme>(defaultTheme);
 
 export function NovaThemeProvider({ children }: { children: ReactNode }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   // Enforce dark theme regardless of system preference
   const colorScheme: SupportedColorScheme = 'dark';
   // TV platforms use fixed 'immersive' breakpoint to avoid text size flicker
@@ -68,7 +68,7 @@ export function NovaThemeProvider({ children }: { children: ReactNode }) {
   const isMobileDevice = (Platform.OS === 'ios' || Platform.OS === 'android') && !Platform.isTV;
   const breakpoint = Platform.isTV ? 'immersive' : isMobileDevice ? 'compact' : getBreakpoint(width);
   const isTV = Platform.isTV;
-  const typography = useMemo(() => getTypographyForBreakpoint(breakpoint, isTV, isTablet), [breakpoint, isTV]);
+  const typography = useMemo(() => getTypographyForBreakpoint(breakpoint, isTV, isTablet, height), [breakpoint, isTV, height]);
   const spacing = useMemo(() => getSpacingForTV(isTV, isTablet), [isTV]);
   const colors = useMemo(() => getColorTokens(colorScheme), [colorScheme]);
   const isDark = colorScheme === 'dark';
