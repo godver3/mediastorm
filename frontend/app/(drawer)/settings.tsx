@@ -1498,6 +1498,8 @@ function SettingsScreen() {
       { type: 'toggle', id: 'nav-lists', label: 'Lists', value: visibilityMap.lists, fieldKey: 'nav.lists' },
       { type: 'toggle', id: 'nav-live', label: 'Live', value: visibilityMap.live, fieldKey: 'nav.live' },
       { type: 'toggle', id: 'nav-profiles', label: 'Profiles', value: visibilityMap.profiles, fieldKey: 'nav.profiles' },
+      // Spacer at the bottom so nav toggles aren't flush against the screen edge
+      { type: 'header', id: 'nav-footer', title: '' },
     ],
     [backendUrl, isSubmittingLogs, account, isRefreshing, visibilityMap],
   );
@@ -1647,7 +1649,7 @@ function SettingsScreen() {
               <SpatialNavigationFocusableView
                 onSelect={() => handleGridFieldUpdate(item.fieldKey, !item.value)}>
                 {({ isFocused }: { isFocused: boolean }) => (
-                  <View style={[styles.tvGridToggleRow, isFocused && styles.tvGridToggleRowFocused]}>
+                  <View style={[styles.tvGridToggleRow, isFocused && styles.tvGridToggleRowFocused, item.fieldKey.startsWith('nav.') && { marginTop: 0 }]}>
                     <Text style={styles.tvGridToggleLabelText}>{item.label}</Text>
                     <View
                       style={[
@@ -3171,7 +3173,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       marginBottom: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
     },
     tvGridItemSpacingCompact: {
-      marginBottom: isNonTvosTV ? 2 : 4,
+      marginBottom: 1,
     },
     tvGridCustomToggle: {
       width: isNonTvosTV ? 50 * atvScale * 0.8 : 50,
