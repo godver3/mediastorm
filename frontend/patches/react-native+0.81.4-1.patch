@@ -1,3 +1,67 @@
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm
+index 272c785..a250dc3 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/View/RCTViewComponentView.mm
+@@ -185,17 +185,51 @@ - (RCTSurfaceHostingProxyRootView *)containingRootView
+ /// Handles self-focusing logic. Shouldn't be used directly, use `requestFocusSelf` method instead.
+ -(bool)focusSelf {
+   RCTSurfaceHostingProxyRootView *rootview = [self containingRootView];
+-  if (rootview == nil) return false;
+ 
+-  if (self.focusGuide != nil) {
+-    rootview.reactPreferredFocusEnvironments = self.focusGuide.preferredFocusEnvironments;
+-  } else {
+-    rootview.reactPreferredFocusedView = self;
++  if (rootview != nil) {
++    if (self.focusGuide != nil) {
++      rootview.reactPreferredFocusEnvironments = self.focusGuide.preferredFocusEnvironments;
++    } else {
++      rootview.reactPreferredFocusedView = self;
++    }
++
++    [rootview setNeedsFocusUpdate];
++    [rootview updateFocusIfNeeded];
++    return true;
+   }
+ 
+-  [rootview setNeedsFocusUpdate];
+-  [rootview updateFocusIfNeeded];
+-  return true;
++#if TARGET_OS_TV
++  // Modal fallback: RCTSurfaceHostingProxyRootView is not in the superview chain
++  // (e.g. inside a native Modal). Use a temporary UIFocusGuide on the presenting
++  // UIViewController's view to redirect focus to self.
++  UIResponder *responder = self.nextResponder;
++  while (responder && ![responder isKindOfClass:[UIViewController class]]) {
++    responder = responder.nextResponder;
++  }
++  if (responder) {
++    UIViewController *vc = (UIViewController *)responder;
++    UIFocusGuide *guide = [UIFocusGuide new];
++    [vc.view addLayoutGuide:guide];
++    guide.preferredFocusEnvironments = @[self];
++
++    [guide.topAnchor constraintEqualToAnchor:vc.view.topAnchor].active = YES;
++    [guide.bottomAnchor constraintEqualToAnchor:vc.view.bottomAnchor].active = YES;
++    [guide.leftAnchor constraintEqualToAnchor:vc.view.leftAnchor].active = YES;
++    [guide.rightAnchor constraintEqualToAnchor:vc.view.rightAnchor].active = YES;
++
++    [vc setNeedsFocusUpdate];
++    [vc updateFocusIfNeeded];
++
++    // Clean up the temporary guide after focus settles
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
++      [vc.view removeLayoutGuide:guide];
++    });
++
++    return true;
++  }
++#endif
++
++  return false;
+ }
+ 
+ /// Tries to move focus to `self`. Does that synchronously if possible, fallbacks to async if it fails.
 diff --git a/node_modules/react-native/scripts/codegen/generate-artifacts-executor/generateRCTThirdPartyComponents.js b/node_modules/react-native/scripts/codegen/generate-artifacts-executor/generateRCTThirdPartyComponents.js
 index fdd7e95..5e0271f 100644
 --- a/node_modules/react-native/scripts/codegen/generate-artifacts-executor/generateRCTThirdPartyComponents.js

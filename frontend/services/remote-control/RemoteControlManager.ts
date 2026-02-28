@@ -331,6 +331,11 @@ class RemoteControlManager implements RemoteControlManagerInterface {
       return;
     }
 
+    // DEBUG: Log ALL tvOS events to check if Modal blocks select but not directional
+    if (Platform.OS === 'ios' && Platform.isTV && event.eventType !== 'pan' && event.eventType !== 'focus') {
+      console.log('[RemoteControl][ALL-EVENTS]', event.eventType, 'action:', event.eventKeyAction);
+    }
+
     // Handle pan events for tvOS velocity-based navigation
     if (event.eventType === 'pan') {
       this.handlePanEvent(event);
@@ -370,19 +375,46 @@ class RemoteControlManager implements RemoteControlManagerInterface {
       return;
     }
 
-    // Debug logging for PlayPause events
+    // Debug logging for select/enter and PlayPause events
+    if (mappedKey === SupportedKeys.Enter || event.eventType === 'select' || event.eventType === 'selectDown' || event.eventType === 'enter') {
+      console.log('[RemoteControl][SELECT-DEBUG] raw tvOS event:', {
+        eventType: event.eventType,
+        eventKeyAction: event.eventKeyAction,
+        mappedKey,
+        isKeyDown,
+        tag: event.tag,
+      });
+    }
     if (event.eventType === 'playPause' || mappedKey === SupportedKeys.PlayPause) {
       console.log('[RemoteControl] PlayPause event received:', { eventType: event.eventType, eventKeyAction: event.eventKeyAction, mappedKey, isKeyDown });
     }
 
     if (mappedKey) {
       const willEmit = this.shouldEmit(mappedKey);
-      // Debug logging for PlayPause events
+      // Debug logging for select/enter events
+      if (mappedKey === SupportedKeys.Enter) {
+        console.log('[RemoteControl][SELECT-DEBUG] shouldEmit:', willEmit, {
+          lastEmittedKey: this.lastEmittedKey,
+          lastEmittedAt: this.lastEmittedAt,
+          now: Date.now(),
+          timeSinceLast: Date.now() - this.lastEmittedAt,
+          numKeyInterceptors: this.keyInterceptors.length,
+        });
+      }
       if (mappedKey === SupportedKeys.PlayPause) {
         console.log('[RemoteControl] PlayPause shouldEmit:', willEmit, { lastEmittedKey: this.lastEmittedKey, lastEmittedAt: this.lastEmittedAt });
       }
       if (willEmit) {
-        if (!this.interceptIfNeeded(mappedKey)) {
+        const intercepted = this.interceptIfNeeded(mappedKey);
+        if (mappedKey === SupportedKeys.Enter) {
+          console.log('[RemoteControl][SELECT-DEBUG] intercepted:', intercepted, '→ will emit:', !intercepted);
+        }
+        if (!intercepted) {
+          if (mappedKey === SupportedKeys.Enter) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const handlers = (this.eventEmitter as any).all?.get('keyDown');
+            console.log('[RemoteControl][SELECT-DEBUG] emitting Enter to mitt, listener count:', handlers?.length ?? 0);
+          }
           this.eventEmitter.emit('keyDown', mappedKey);
         }
       }

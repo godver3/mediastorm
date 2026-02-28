@@ -5,8 +5,6 @@ import RemoteControlManager from '@/services/remote-control/RemoteControlManager
 import {
   SpatialNavigationRoot,
   SpatialNavigationNode,
-  SpatialNavigationFocusableView,
-  DefaultFocus,
 } from '@/services/tv-navigation';
 import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
@@ -440,12 +438,15 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     const shouldHaveInitialFocus = option.id === defaultFocusOptionId;
 
     if (Platform.isTV) {
-      // TV: Use SpatialNavigationFocusableView for proper focus management
-      const content = (
-        <SpatialNavigationFocusableView
-          onSelect={() => handleOptionSelect(option.id)}
-          onFocus={() => handleItemFocus(index)}>
-          {({ isFocused }: { isFocused: boolean }) => (
+      // TV: Use native Pressable for proper select handling inside Modals
+      // (SpatialNavigationFocusableView can't receive select events inside tvOS Modal)
+      return (
+        <Pressable
+          key={option.id}
+          onPress={() => handleOptionSelect(option.id)}
+          onFocus={() => handleItemFocus(index)}
+          hasTVPreferredFocus={shouldHaveInitialFocus}>
+          {({ focused: isFocused }) => (
             <View
               onLayout={(event) => {
                 const { y, height } = event.nativeEvent.layout;
@@ -486,13 +487,8 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
               ) : null}
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
-
-      if (shouldHaveInitialFocus) {
-        return <DefaultFocus key={option.id}>{content}</DefaultFocus>;
-      }
-      return <View key={option.id}>{content}</View>;
     }
 
     // Non-TV: Use Pressable
@@ -592,30 +588,29 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
               <SpatialNavigationNode orientation="horizontal">
                 <View style={styles.modalFooter}>
                   {onSearchSubtitles && (
-                    <SpatialNavigationFocusableView
-                      onSelect={() => {
+                    <Pressable
+                      onPress={() => {
                         console.log('[TrackSelectionModal] Search Online pressed');
                         handleSearchSubtitles();
                       }}>
-                      {({ isFocused }: { isFocused: boolean }) => (
+                      {({ focused: isFocused }) => (
                         <View style={[styles.closeButton, styles.searchButton, isFocused && styles.closeButtonFocused]}>
                           <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>
                             Search Online
                           </Text>
                         </View>
                       )}
-                    </SpatialNavigationFocusableView>
+                    </Pressable>
                   )}
-                  <SpatialNavigationFocusableView onSelect={handleClose}>
-                    {({ isFocused }: { isFocused: boolean }) => {
-                      const button = (
-                        <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
-                          <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
-                        </View>
-                      );
-                      return !hasOptions && !onSearchSubtitles ? <DefaultFocus>{button}</DefaultFocus> : button;
-                    }}
-                  </SpatialNavigationFocusableView>
+                  <Pressable
+                    onPress={handleClose}
+                    hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}>
+                    {({ focused: isFocused }) => (
+                      <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
+                        <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
+                      </View>
+                    )}
+                  </Pressable>
                 </View>
               </SpatialNavigationNode>
             </SpatialNavigationNode>

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
-import { SpatialNavigationRoot, SpatialNavigationNode, SpatialNavigationFocusableView } from '@/services/tv-navigation';
+import { SpatialNavigationRoot, SpatialNavigationNode } from '@/services/tv-navigation';
 import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -418,16 +418,16 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
                 scrollEnabled={false}
                 showsVerticalScrollIndicator={false}>
                 {visibleSections.map((section, index) => (
-                  <SpatialNavigationFocusableView
+                  <Pressable
                     key={section.key}
                     onFocus={() => handleSectionFocus(index)}>
-                    {({ isFocused }: { isFocused: boolean }) => (
+                    {({ focused: isFocused }) => (
                       <View style={[styles.tvSection, isFocused && styles.sectionFocused]}>
                         <Text style={styles.sectionTitle}>{section.title}</Text>
                         {section.content}
                       </View>
                     )}
-                  </SpatialNavigationFocusableView>
+                  </Pressable>
                 ))}
               </ScrollView>
             </SpatialNavigationNode>
@@ -435,13 +435,13 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
 
           {/* Close button */}
           <View style={styles.tvModalFooter}>
-            <SpatialNavigationFocusableView onSelect={handleClose}>
-              {({ isFocused }: { isFocused: boolean }) => (
+            <Pressable onPress={handleClose}>
+              {({ focused: isFocused }) => (
                 <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
                   <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
                 </View>
               )}
-            </SpatialNavigationFocusableView>
+            </Pressable>
           </View>
         </SpatialNavigationNode>
       </View>

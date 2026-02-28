@@ -48,6 +48,9 @@ export default function ConfigureRemoteControl() {
 
         const remoteControlListener = (keyEvent: SupportedKeys) => {
           const direction = mapping[keyEvent] ?? null;
+          if (keyEvent === SupportedKeys.Enter || direction === Directions.ENTER) {
+            console.log('[ConfigureRemoteControl][SELECT-DEBUG] Enter key → direction:', direction, '→ passing to spatial nav callback');
+          }
           callback(direction);
         };
 

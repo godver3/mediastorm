@@ -3,7 +3,7 @@ import SeekBar from '@/components/player/SeekBar';
 import VolumeControl from '@/components/player/VolumeControl';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import { StreamInfoModal, type StreamInfoData } from '@/components/player/StreamInfoModal';
-import { DefaultFocus, SpatialNavigationNode, useSpatialNavigator } from '@/services/tv-navigation';
+import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -142,8 +142,12 @@ const Controls: React.FC<ControlsProps> = ({
   const allowTrackSelection = true; // Allow track selection on all platforms including tvOS
   const isLandscape = width >= height;
   const _isSeekable = Number.isFinite(duration) && duration > 0;
-  const spatialNavigator = useSpatialNavigator();
   const lastFocusedKeyRef = useRef<string | null>(null);
+  // Refs for focus restoration after modal close (via requestTVFocus)
+  const audioButtonRef = useRef<View>(null);
+  const subtitleButtonRef = useRef<View>(null);
+  const infoButtonRef = useRef<View>(null);
+  const lastFocusedViewRef = useRef<View | null>(null);
 
   // Flash animation for skip buttons (triggered by double-tap on mobile)
   const skipBackwardScale = useRef(new Animated.Value(1)).current;
@@ -237,6 +241,14 @@ const Controls: React.FC<ControlsProps> = ({
   // Guard to prevent modal from immediately reopening when focus returns to the button on tvOS
   const menuClosingGuardRef = useRef(false);
 
+  // Map focusKey → ref for focus restoration
+  const focusKeyToRef: Record<string, React.RefObject<View | null>> = useMemo(() => ({
+    'audio-track-button': audioButtonRef,
+    'subtitle-track-button': subtitleButtonRef,
+    'subtitle-track-button-secondary': subtitleButtonRef,
+    'info-button': infoButtonRef,
+  }), []);
+
   const openMenu = useCallback(
     (menu: Exclude<ActiveMenu, null>, focusKey?: string) => {
       // On TV platforms, check if we just closed a menu (prevents focus-return re-triggering)
@@ -248,12 +260,13 @@ const Controls: React.FC<ControlsProps> = ({
 
       if (focusKey) {
         lastFocusedKeyRef.current = focusKey;
+        lastFocusedViewRef.current = focusKeyToRef[focusKey]?.current ?? null;
       }
 
       onActiveMenuChange?.(menu);
       onModalStateChange?.(true);
     },
-    [onModalStateChange, activeMenu, onActiveMenuChange],
+    [onModalStateChange, activeMenu, onActiveMenuChange, focusKeyToRef],
   );
 
   const closeMenu = useCallback(() => {
@@ -268,19 +281,20 @@ const Controls: React.FC<ControlsProps> = ({
     onActiveMenuChange?.(null);
     onModalStateChange?.(false);
 
-    // Grab focus back to the button that opened the menu
-    if (Platform.isTV && lastFocusedKeyRef.current) {
-      const keyToFocus = lastFocusedKeyRef.current;
-      // Delay slightly to ensure the modal root is gone and tree is updated
-      setTimeout(() => {
-        if (keyToFocus) {
-          console.log('[Controls] grabbing focus back to', keyToFocus);
-          spatialNavigator.grabFocus(keyToFocus);
-        }
-      }, 50);
+    // Restore focus to the button that opened the menu via requestTVFocus()
+    // Use requestAnimationFrame to wait for React re-render (buttons re-enabled)
+    // then setTimeout to wait for native view updates to flush
+    if (Platform.isTV && lastFocusedViewRef.current) {
+      const targetView = lastFocusedViewRef.current;
+      lastFocusedViewRef.current = null;
       lastFocusedKeyRef.current = null;
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          (targetView as any).requestTVFocus?.();
+        }, 50);
+      });
     }
-  }, [onModalStateChange, spatialNavigator, activeMenu, onActiveMenuChange]);
+  }, [onModalStateChange, activeMenu, onActiveMenuChange]);
 
   // Expose closeMenu to parent via ref (used by TVControlsModal's onRequestClose)
   useEffect(() => {
@@ -674,6 +688,7 @@ const Controls: React.FC<ControlsProps> = ({
                           {isLiveTV ? (
                             <DefaultFocus>
                               <FocusablePressable
+                                ref={audioButtonRef}
                                 icon="musical-notes"
                                 focusKey="audio-track-button"
                                 onSelect={handleOpenAudioMenu}
@@ -684,6 +699,7 @@ const Controls: React.FC<ControlsProps> = ({
                             </DefaultFocus>
                           ) : (
                             <FocusablePressable
+                              ref={audioButtonRef}
                               icon="musical-notes"
                               focusKey="audio-track-button"
                               onSelect={handleOpenAudioMenu}
@@ -700,6 +716,7 @@ const Controls: React.FC<ControlsProps> = ({
                           {isLiveTV ? (
                             <DefaultFocus>
                               <FocusablePressable
+                                ref={subtitleButtonRef}
                                 icon="chatbubble-ellipses"
                                 focusKey="subtitle-track-button"
                                 onSelect={handleOpenSubtitlesMenu}
@@ -710,6 +727,7 @@ const Controls: React.FC<ControlsProps> = ({
                             </DefaultFocus>
                           ) : (
                             <FocusablePressable
+                              ref={subtitleButtonRef}
                               icon="chatbubble-ellipses"
                               focusKey="subtitle-track-button"
                               onSelect={handleOpenSubtitlesMenu}
@@ -724,6 +742,7 @@ const Controls: React.FC<ControlsProps> = ({
                       {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           <FocusablePressable
+                            ref={subtitleButtonRef}
                             icon="chatbubble-ellipses"
                             focusKey="subtitle-track-button-secondary"
                             onSelect={handleOpenSubtitlesMenu}
@@ -809,6 +828,7 @@ const Controls: React.FC<ControlsProps> = ({
                   {/* Info button for TV platforms (not for live TV) */}
                   {isTvPlatform && streamInfo && !isLiveTV && (
                     <FocusablePressable
+                      ref={infoButtonRef}
                       icon="information-circle"
                       focusKey="info-button"
                       onSelect={handleOpenInfoMenu}

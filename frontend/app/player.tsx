@@ -2590,7 +2590,12 @@ export default function PlayerScreen() {
       return;
     }
 
+    console.log('[player][SELECT-DEBUG] Registering handleKeyDown listener on RemoteControlManager');
+
     const handleKeyDown = (key: SupportedKeys) => {
+      if (key === SupportedKeys.Enter) {
+        console.log('[player][SELECT-DEBUG] handleKeyDown CALLED with Enter (top of function)');
+      }
       switch (key) {
         case SupportedKeys.Left:
           if (!controlsVisibleRef.current) {
@@ -2686,12 +2691,17 @@ export default function PlayerScreen() {
           }
           break;
         case SupportedKeys.Enter:
+          console.log('[player][SELECT-DEBUG] Enter received in handleKeyDown', {
+            controlsVisible: controlsVisibleRef.current,
+            isModalOpen: isModalOpenRef.current,
+          });
           // On TV platforms, Enter key should toggle play/pause when controls are hidden
           if (!controlsVisibleRef.current) {
-            console.log('[player] Enter key toggling play/pause (controls hidden)');
+            console.log('[player][SELECT-DEBUG] → toggling play/pause (controls hidden)');
             togglePausePlayRef.current?.();
           } else {
             // When controls are visible, Enter activates focused element (spatial navigation)
+            console.log('[player][SELECT-DEBUG] → controls visible, calling showControls (spatial nav should handle select)');
             showControlsRef.current?.();
           }
           break;
@@ -2715,9 +2725,10 @@ export default function PlayerScreen() {
       }
     };
 
-    const listener = RemoteControlManager.addKeydownListener(handleKeyDown);
+    const unsubscribe = RemoteControlManager.addKeydownListener(handleKeyDown);
     return () => {
-      RemoteControlManager.removeKeydownListener(listener);
+      console.log('[player][SELECT-DEBUG] Cleaning up handleKeyDown listener');
+      unsubscribe();
     };
   }, [usesSystemManagedControls, router, settings]);
 

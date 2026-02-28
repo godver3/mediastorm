@@ -15,8 +15,6 @@ import RemoteControlManager from '@/services/remote-control/RemoteControlManager
 import {
   SpatialNavigationRoot,
   SpatialNavigationNode,
-  SpatialNavigationFocusableView,
-  DefaultFocus,
 } from '@/services/tv-navigation';
 import { TVFocusGuard } from '@/components/tv-focus/TVFocusGuard';
 import type { NovaTheme } from '@/theme';
@@ -288,12 +286,13 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
     const shouldHaveDefaultFocus = Platform.isTV && lang.code === selectedLanguage;
 
     if (Platform.isTV) {
-      const chipItem = (
-        <SpatialNavigationFocusableView
+      return (
+        <Pressable
           key={lang.code}
-          onSelect={() => handleLanguageChange(lang.code)}
-          onFocus={() => handleLanguageFocus(index)}>
-          {({ isFocused }: { isFocused: boolean }) => (
+          onPress={() => handleLanguageChange(lang.code)}
+          onFocus={() => handleLanguageFocus(index)}
+          hasTVPreferredFocus={shouldHaveDefaultFocus}>
+          {({ focused: isFocused }) => (
             <View
               style={[
                 styles.languageChip,
@@ -311,9 +310,8 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
               </Text>
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
-      return shouldHaveDefaultFocus ? <DefaultFocus key={lang.code}>{chipItem}</DefaultFocus> : chipItem;
     }
 
     return (
@@ -345,11 +343,11 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   const renderResult = (result: SubtitleSearchResult, index: number) => {
     if (Platform.isTV) {
       return (
-        <SpatialNavigationFocusableView
+        <Pressable
           key={`subtitle-${index}`}
-          onSelect={() => handleSelectSubtitle(result)}
+          onPress={() => handleSelectSubtitle(result)}
           onFocus={() => handleResultFocus(index)}>
-          {({ isFocused }: { isFocused: boolean }) => (
+          {({ focused: isFocused }) => (
             <View
               onLayout={(event) => {
                 const { height } = event.nativeEvent.layout;
@@ -384,7 +382,7 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
               </View>
             </View>
           )}
-        </SpatialNavigationFocusableView>
+        </Pressable>
       );
     }
 
@@ -518,13 +516,13 @@ export const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
                   </SpatialNavigationNode>
 
                   <View style={styles.modalFooter}>
-                    <SpatialNavigationFocusableView onSelect={handleClose}>
-                      {({ isFocused }: { isFocused: boolean }) => (
+                    <Pressable onPress={handleClose}>
+                      {({ focused: isFocused }) => (
                         <View style={[styles.closeButton, isFocused && styles.closeButtonFocused]}>
                           <Text style={[styles.closeButtonText, isFocused && styles.closeButtonTextFocused]}>Close</Text>
                         </View>
                       )}
-                    </SpatialNavigationFocusableView>
+                    </Pressable>
                   </View>
                 </SpatialNavigationNode>
               ) : (
