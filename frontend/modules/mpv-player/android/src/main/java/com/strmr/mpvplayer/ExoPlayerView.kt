@@ -77,6 +77,16 @@ class ExoPlayerView(
     private var pendingSubtitleTrack: Int? = null
     private var tracksAvailable = false
 
+    // Audio renderer error recovery — ExoPlayer's MediaCodecAudioRenderer can fail when
+    // switching between audio codecs (e.g., EAC3 → AC3 commentary track). We recover by
+    // re-preparing at the current position, which forces codec re-initialization.
+    private var audioErrorRecoveryAttempted = false
+
+    // Last user-requested audio track — survives error recovery cycles.
+    // When prepare() is called during recovery, all TrackSelectionOverrides become stale
+    // (they reference old MediaTrackGroup objects). We re-apply via pendingAudioTrack.
+    private var lastRequestedAudioTrack: Int? = null
+
     // Progress timer
     private val progressRunnable = object : Runnable {
         override fun run() {
@@ -329,6 +339,8 @@ class ExoPlayerView(
                 }
                 Player.STATE_READY -> {
                     emitBuffering(false)
+                    // Reset recovery flag — playback resumed successfully after any prior error
+                    audioErrorRecoveryAttempted = false
                     val p = player ?: return
                     val duration = p.duration / 1000.0
                     val format = p.videoFormat
@@ -351,6 +363,39 @@ class ExoPlayerView(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "ExoPlayer error: ${error.message}", error)
+
+            // Attempt recovery for audio renderer errors (common when switching codecs).
+            // ExoPlayer's MediaCodecAudioRenderer can fail to seamlessly transition between
+            // different audio codecs (e.g., EAC3 main → AC3 commentary). Re-preparing at
+            // the current position forces codec re-initialization.
+            val isAudioRendererError = error.message?.contains("AudioRenderer") == true ||
+                error.message?.contains("audio") == true
+            if (isAudioRendererError && !audioErrorRecoveryAttempted) {
+                audioErrorRecoveryAttempted = true
+                val p = player ?: run {
+                    emitError("ExoPlayer error: ${error.message}")
+                    return
+                }
+                val pos = p.currentPosition
+                val wasPlaying = p.playWhenReady
+                Log.i(TAG, "Attempting audio error recovery at ${pos}ms, lastRequestedAudioTrack=$lastRequestedAudioTrack")
+                emitDebugLog("Audio codec error — attempting recovery at ${pos}ms")
+
+                // prepare() creates new MediaTrackGroup objects, making any existing
+                // TrackSelectionOverride stale. Re-queue the user's track selection so
+                // buildTrackList() re-applies it after the new track groups arrive.
+                lastRequestedAudioTrack?.let { track ->
+                    pendingAudioTrack = track
+                    tracksAvailable = false
+                    Log.d(TAG, "Re-queued audio track $track as pending for post-recovery")
+                }
+
+                p.prepare()
+                p.seekTo(pos)
+                p.playWhenReady = wasPlaying
+                return
+            }
+
             emitError("ExoPlayer error: ${error.message}")
         }
 
@@ -398,6 +443,7 @@ class ExoPlayerView(
 
         currentHeaders = headerMap
         tracksAvailable = false
+        lastRequestedAudioTrack = null
         audioIndexToTrackRef.clear()
         subtitleIndexToTrackRef.clear()
 
@@ -429,26 +475,55 @@ class ExoPlayerView(
     override fun setAudioTrack(rnIndex: Int) {
         if (rnIndex < 0) return
 
+        // Reset recovery flag so recovery is available for this new track switch
+        audioErrorRecoveryAttempted = false
+        // Remember the user's selection — survives error recovery cycles
+        lastRequestedAudioTrack = rnIndex
+
         if (!tracksAvailable) {
+            Log.d(TAG, "setAudioTrack($rnIndex): tracks not yet available, buffering as pending")
             pendingAudioTrack = rnIndex
             return
         }
 
         val ref = audioIndexToTrackRef[rnIndex] ?: run {
-            Log.w(TAG, "No ExoPlayer track ref for audio index $rnIndex")
+            Log.w(TAG, "setAudioTrack($rnIndex): no ExoPlayer track ref in map (available: ${audioIndexToTrackRef.keys})")
             return
         }
 
         val ts = trackSelector ?: return
         val p = player ?: return
+
+        val state = p.playbackState
+        Log.d(TAG, "setAudioTrack($rnIndex): playerState=${stateToString(state)}, group=${ref.groupIndex}, track=${ref.trackIndex}")
+
+        // If player is in error or idle state, track overrides won't take effect until prepare().
+        // Buffer as pending and re-prepare so the override applies after new track groups are created.
+        if (state == Player.STATE_IDLE) {
+            Log.i(TAG, "setAudioTrack($rnIndex): player is IDLE — queueing as pending and re-preparing")
+            pendingAudioTrack = rnIndex
+            tracksAvailable = false
+            val pos = p.currentPosition
+            val wasPlaying = p.playWhenReady
+            p.prepare()
+            p.seekTo(pos)
+            p.playWhenReady = wasPlaying
+            return
+        }
+
         val trackGroups = p.currentTracks.groups
         if (ref.groupIndex < trackGroups.size) {
             val group = trackGroups[ref.groupIndex]
+            // Clear all audio overrides first — audio tracks can span different MediaTrackGroups,
+            // and addOverride only replaces within the same group, leaving stale overrides on others
             ts.setParameters(
                 ts.buildUponParameters()
+                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
                     .addOverride(TrackSelectionOverride(group.mediaTrackGroup, ref.trackIndex))
             )
-            Log.d(TAG, "Set audio track: rnIndex=$rnIndex -> group=${ref.groupIndex}, track=${ref.trackIndex}")
+            Log.d(TAG, "setAudioTrack($rnIndex): override applied — group=${ref.groupIndex}, track=${ref.trackIndex}")
+        } else {
+            Log.w(TAG, "setAudioTrack($rnIndex): groupIndex ${ref.groupIndex} out of range (${trackGroups.size} groups)")
         }
     }
 
@@ -458,6 +533,7 @@ class ExoPlayerView(
             val ts = trackSelector ?: return
             ts.setParameters(
                 ts.buildUponParameters()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     .setRendererDisabled(getTextRendererIndex(), true)
             )
             return
@@ -478,9 +554,11 @@ class ExoPlayerView(
         val trackGroups = p.currentTracks.groups
         if (ref.groupIndex < trackGroups.size) {
             val group = trackGroups[ref.groupIndex]
+            // Clear all text overrides first (same rationale as audio)
             ts.setParameters(
                 ts.buildUponParameters()
                     .setRendererDisabled(getTextRendererIndex(), false)
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     .addOverride(TrackSelectionOverride(group.mediaTrackGroup, ref.trackIndex))
             )
             Log.d(TAG, "Set subtitle track: rnIndex=$rnIndex -> group=${ref.groupIndex}, track=${ref.trackIndex}")
@@ -563,6 +641,14 @@ class ExoPlayerView(
         trackSelector = null
     }
 
+    private fun stateToString(state: Int): String = when (state) {
+        Player.STATE_IDLE -> "IDLE"
+        Player.STATE_BUFFERING -> "BUFFERING"
+        Player.STATE_READY -> "READY"
+        Player.STATE_ENDED -> "ENDED"
+        else -> "UNKNOWN($state)"
+    }
+
     private fun getTextRendererIndex(): Int {
         val p = player ?: return 2 // sensible default
         for (i in 0 until p.rendererCount) {
@@ -635,13 +721,15 @@ class ExoPlayerView(
         }
         emitEvent("onTracksChanged", data)
 
-        // Apply pending tracks
+        // Apply pending tracks (set before tracks were available, or re-queued after error recovery)
         pendingAudioTrack?.let { idx ->
             pendingAudioTrack = null
+            Log.d(TAG, "buildTrackList: applying pending audio track $idx")
             setAudioTrack(idx)
         }
         pendingSubtitleTrack?.let { idx ->
             pendingSubtitleTrack = null
+            Log.d(TAG, "buildTrackList: applying pending subtitle track $idx")
             setSubtitleTrack(idx)
         }
     }

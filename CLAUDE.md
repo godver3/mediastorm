@@ -7,7 +7,8 @@ Reference `docs/TODO.md` for bugs, planned features, and improvements. Check thi
 - Looking for context on known issues
 
 **When updating the TODO list:**
-- Delete completed items (status: Fixed) to keep the list clean
+- When working on an item, mark it **In Progress Testing** with a brief note of the tentative solution
+- Only remove items once the user has confirmed the fix works (do NOT remove on your own)
 - Only keep open/reported bugs and pending features
 - **IMPORTANT:** This file is served publicly via Docker (port 8082). Never include confidential information, API keys, credentials, internal URLs, security vulnerabilities, or any sensitive data.
 
