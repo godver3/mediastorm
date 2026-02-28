@@ -104,21 +104,6 @@ mediastorm can use Google's Gemini AI to generate personalized "Recommended For 
 
 **Cost:** Gemini 2.0 Flash is used, which has a generous free tier (1,500 requests/day). A typical user generates ~1 request per day (results are cached for 24 hours per user), so this should remain free for personal use.
 
-## Roadmap
-
-See Discord for more planning details.
-
-- Non-M3U IPTV support
-- Mediafusion support
-
-## What to test?
-
-Please test: 
-
-- General searching/streaming/media matching
-- Test DV/HDR playback
-- Android TV performance
-
 ## Acknowledgments
 
 Thanks to [nzbdav](https://github.com/nzbdav-dev/nzbdav) and [altmount](https://github.com/javi11/altmount) for paving the way with usenet streaming.
@@ -128,6 +113,8 @@ Inspired by [plex_debrid](https://github.com/itsToggle/plex_debrid) and [Riven](
 Special thanks to [Parsett (PTT)](https://github.com/dreulavelle/PTT) for media title parsing.
 
 Powered by [FFmpeg](https://ffmpeg.org/) for media processing and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for trailer fetching.
+
+Native playback powered by [KSPlayer](https://github.com/kingslay/KSPlayer) on iOS/tvOS, [ExoPlayer](https://github.com/google/ExoPlayer) and [MPV](https://mpv.io/) on Android/Android TV.
 
 ## License
 
