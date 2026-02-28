@@ -87,13 +87,14 @@ type WatchHistoryUpdate struct {
 
 // PlaybackProgressUpdate represents a playback progress update from the player.
 type PlaybackProgressUpdate struct {
-	MediaType     string            `json:"mediaType"`    // "movie" | "episode"
-	ItemID        string            `json:"itemId"`       // The media ID
-	Position      float64           `json:"position"`     // Current playback position in seconds
-	Duration      float64           `json:"duration"`     // Total duration in seconds
-	Timestamp     time.Time         `json:"timestamp"`    // When this update was sent
-	IsPaused      bool              `json:"isPaused"`     // Whether playback is currently paused
-	ExternalIDs   map[string]string `json:"externalIds,omitempty"`
+	MediaType      string            `json:"mediaType"`       // "movie" | "episode"
+	ItemID         string            `json:"itemId"`          // The media ID
+	Position       float64           `json:"position"`        // Current playback position in seconds
+	Duration       float64           `json:"duration"`        // Total duration in seconds
+	PercentWatched float64           `json:"percentWatched"`  // Override: set directly when duration is unknown (e.g. Trakt import)
+	Timestamp      time.Time         `json:"timestamp"`       // When this update was sent
+	IsPaused       bool              `json:"isPaused"`        // Whether playback is currently paused
+	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`

@@ -2229,10 +2229,12 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 						break
 					}
 				}
-				// Use a nominal duration of 100 so that position = percent directly.
-				// The real duration will be set when the user actually plays the content.
-				update.Duration = 100
-				update.Position = traktItem.Progress
+				// We only have a percentage from Trakt, not a real duration.
+				// Store duration=0, position=0 with percentWatched set directly
+				// so the frontend knows to use percentage-based resume.
+				update.Duration = 0
+				update.Position = 0
+				update.PercentWatched = traktItem.Progress
 				log.Printf("[scheduler] Creating new local progress from Trakt: %s %q at %.1f%%",
 					update.MediaType, update.ItemID, traktItem.Progress)
 			}

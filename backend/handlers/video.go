@@ -2251,6 +2251,19 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Support percentage-based resume (from Trakt imports where real duration is unknown).
+	// If startPercent is provided and startOffset is not, probe the file duration and compute.
+	if startSeconds == 0 {
+		if pctParam := strings.TrimSpace(r.URL.Query().Get("startPercent")); pctParam != "" {
+			if pct, err := strconv.ParseFloat(pctParam, 64); err == nil && pct > 0 && pct < 100 {
+				if dur, err := h.hlsManager.probeDuration(r.Context(), cleanPath); err == nil && dur > 0 {
+					startSeconds = (pct / 100) * dur
+					log.Printf("[video] Resolved startPercent=%.1f%% to startOffset=%.1fs (duration=%.1fs)", pct, startSeconds, dur)
+				}
+			}
+		}
+	}
+
 	// Parse selected audio/subtitle track indices
 	audioTrackIndex := -1 // -1 means use default (all tracks or first track)
 	audioParam := strings.TrimSpace(r.URL.Query().Get("audioTrack"))

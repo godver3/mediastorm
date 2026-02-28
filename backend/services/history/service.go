@@ -2389,7 +2389,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		return models.PlaybackProgress{}, ErrUserIDRequired
 	}
 
-	if update.Duration <= 0 {
+	if update.Duration <= 0 && update.PercentWatched <= 0 {
 		return models.PlaybackProgress{}, fmt.Errorf("duration must be positive")
 	}
 
@@ -2406,9 +2406,16 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	key := makeWatchKey(update.MediaType, normalizedItemID)
 
 	// Calculate percent watched
-	percentWatched := (update.Position / update.Duration) * 100
-	if percentWatched > 100 {
-		percentWatched = 100
+	var percentWatched float64
+	if update.Duration > 0 {
+		percentWatched = (update.Position / update.Duration) * 100
+		if percentWatched > 100 {
+			percentWatched = 100
+		}
+	} else {
+		// No real duration (e.g. Trakt import) — use the provided percentage directly.
+		// Position and duration stay at 0; the frontend uses percentWatched for resume.
+		percentWatched = update.PercentWatched
 	}
 
 	// Create or update progress
