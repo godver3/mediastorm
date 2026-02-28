@@ -217,17 +217,20 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
   }, [selectedAudioTrackIndex]);
 
   useEffect(() => {
-    if (selectedSubtitleTrackIndex === undefined || selectedSubtitleTrackIndex === null) return;
+    if (selectedSubtitleTrackIndex === undefined) return;
+
+    // Map null (off) to -1 for the native player
+    const trackToApply = selectedSubtitleTrackIndex ?? -1;
 
     // Skip if same as last applied
-    if (selectedSubtitleTrackIndex === lastAppliedSubtitleRef.current) return;
+    if (trackToApply === lastAppliedSubtitleRef.current) return;
 
     if (tracksReadyRef.current && playerRef.current) {
-      console.log('[NativePlayerAdapter] applying subtitle track:', selectedSubtitleTrackIndex);
-      playerRef.current.setSubtitleTrack(selectedSubtitleTrackIndex);
-      lastAppliedSubtitleRef.current = selectedSubtitleTrackIndex;
+      console.log('[NativePlayerAdapter] applying subtitle track:', trackToApply);
+      playerRef.current.setSubtitleTrack(trackToApply);
+      lastAppliedSubtitleRef.current = trackToApply;
     } else {
-      console.log('[NativePlayerAdapter] subtitle track pending (tracks not ready):', selectedSubtitleTrackIndex);
+      console.log('[NativePlayerAdapter] subtitle track pending (tracks not ready):', trackToApply);
     }
   }, [selectedSubtitleTrackIndex]);
 
@@ -281,10 +284,11 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
         playerRef.current.setAudioTrack(audio);
         lastAppliedAudioRef.current = audio;
       }
-      if (subtitle !== undefined && subtitle !== null && subtitle >= 0 && playerRef.current) {
-        console.log('[NativePlayerAdapter] applying initial subtitle track:', subtitle);
-        playerRef.current.setSubtitleTrack(subtitle);
-        lastAppliedSubtitleRef.current = subtitle;
+      if (playerRef.current) {
+        const subtitleToApply = (subtitle !== undefined && subtitle !== null && subtitle >= 0) ? subtitle : -1;
+        console.log('[NativePlayerAdapter] applying initial subtitle track:', subtitleToApply);
+        playerRef.current.setSubtitleTrack(subtitleToApply);
+        lastAppliedSubtitleRef.current = subtitleToApply;
       }
     }, 100);
   }, []);
@@ -312,10 +316,11 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       playerRef.current.setAudioTrack(audio);
       lastAppliedAudioRef.current = audio;
     }
-    if (subtitle !== undefined && subtitle !== null && subtitle >= 0 && playerRef.current) {
-      console.log('[NativePlayerAdapter] onTracksChanged: force-applying subtitle track:', subtitle);
-      playerRef.current.setSubtitleTrack(subtitle);
-      lastAppliedSubtitleRef.current = subtitle;
+    if (playerRef.current) {
+      const subtitleToApply = (subtitle !== undefined && subtitle !== null && subtitle >= 0) ? subtitle : -1;
+      console.log('[NativePlayerAdapter] onTracksChanged: force-applying subtitle track:', subtitleToApply);
+      playerRef.current.setSubtitleTrack(subtitleToApply);
+      lastAppliedSubtitleRef.current = subtitleToApply;
     }
     tracksReadyRef.current = true;
   }, [originalHandleTracksChanged, applyInitialTracks]);

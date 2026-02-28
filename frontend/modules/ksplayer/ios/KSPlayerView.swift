@@ -400,8 +400,9 @@ public class KSPlayerView: UIView {
         // Cap reconnection backoff delay (FFmpeg default is 120s, way too long)
         options.formatContextOptions["reconnect_delay_max"] = 5
 
-        // Subtitle settings - autoSelectEmbedSubtitle must be true for KSPlayer to initialize subtitle decoder
-        options.autoSelectEmbedSubtitle = true
+        // Subtitle auto-selection is handled by JS — disable KSPlayer's auto-select
+        // to prevent it from overriding the user's "off" preference
+        options.autoSelectEmbedSubtitle = false
 
         // On tvOS, disable KSPlayer's MPRemoteCommandCenter registration.
         // JS handles play/pause exclusively via TVEventHandler; having KSPlayer also
