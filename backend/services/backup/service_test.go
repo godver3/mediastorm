@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -579,7 +580,7 @@ func TestBackupFilenameFormat(t *testing.T) {
 	if len(info.Filename) < 30 {
 		t.Errorf("filename too short: %s", info.Filename)
 	}
-	if info.Filename[:13] != "mediastorm_backup_" {
+	if !strings.HasPrefix(info.Filename, "mediastorm_backup_") {
 		t.Errorf("expected filename to start with mediastorm_backup_, got %s", info.Filename)
 	}
 	if info.Filename[len(info.Filename)-4:] != ".zip" {
