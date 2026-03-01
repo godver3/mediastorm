@@ -603,8 +603,8 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 		progressLabel = "Trending Movies"
 	}
 
-	// v4: MDBList-only (removed TMDB trending path)
-	key := cacheKey("mdblist", "trending", label, "v4")
+	// v5: MDBList-only, language-aware cache key
+	key := cacheKey("mdblist", "trending", label, "v5", s.client.language)
 	// Use a detached context for enrichment so work completes even if the
 	// HTTP client disconnects — results are cached for future requests.
 	enrichCtx := context.Background()
@@ -1012,7 +1012,18 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 			}
 		}
 
-		if searchResult.Overviews != nil && searchResult.Overviews["eng"] != "" {
+		// Use translated name from search result if available
+		lang3 := s.client.language
+		if len(searchResult.Translations) > 0 && lang3 != "" && lang3 != "eng" {
+			if v := strings.TrimSpace(searchResult.Translations[lang3]); v != "" {
+				title.Name = v
+			}
+		}
+
+		// Prefer user's language overview, fall back to English, then default
+		if searchResult.Overviews != nil && lang3 != "" && lang3 != "eng" && searchResult.Overviews[lang3] != "" {
+			title.Overview = searchResult.Overviews[lang3]
+		} else if searchResult.Overviews != nil && searchResult.Overviews["eng"] != "" {
 			title.Overview = searchResult.Overviews["eng"]
 		} else if searchResult.Overview != "" {
 			title.Overview = searchResult.Overview
@@ -1029,6 +1040,15 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 		if title.TVDBID > 0 {
 			if ext, err := s.client.movieExtended(title.TVDBID, []string{"artwork"}); err == nil {
 				applyTVDBArtworks(title, ext.Artworks)
+			}
+			// Fetch translations for the user's language (authoritative, overrides search result)
+			if translation, err := s.client.movieTranslations(title.TVDBID, s.client.language); err == nil && translation != nil {
+				if strings.TrimSpace(translation.Name) != "" {
+					title.Name = translation.Name
+				}
+				if strings.TrimSpace(translation.Overview) != "" {
+					title.Overview = translation.Overview
+				}
 			}
 		}
 	} else if !found {
@@ -1299,6 +1319,7 @@ type tvdbSearchResult struct {
 	Status          string            `json:"status"`
 	PrimaryLanguage string            `json:"primary_language"`
 	Overviews       map[string]string `json:"overviews"`
+	Translations    map[string]string `json:"translations"`
 	RemoteIDs       []struct {
 		ID         string `json:"id"`
 		Type       int    `json:"type"`
@@ -1413,6 +1434,17 @@ func (s *Service) enrichSeriesTVDB(title *models.Title, tvShow mdblistTVShow) {
 			title.Overview = result.Overview
 			found = true
 
+			// Use translated name/overview from search result if available
+			lang3 := s.client.language
+			if len(result.Translations) > 0 && lang3 != "" && lang3 != "eng" {
+				if v := strings.TrimSpace(result.Translations[lang3]); v != "" {
+					title.Name = v
+				}
+			}
+			if result.Overviews != nil && lang3 != "" && lang3 != "eng" && result.Overviews[lang3] != "" {
+				title.Overview = result.Overviews[lang3]
+			}
+
 			if title.IMDBID == "" {
 				for _, remote := range result.RemoteIDs {
 					id := strings.TrimSpace(remote.ID)
@@ -1433,9 +1465,20 @@ func (s *Service) enrichSeriesTVDB(title *models.Title, tvShow mdblistTVShow) {
 				title.Backdrop = &models.Image{URL: thumbURL, Type: "backdrop"}
 			}
 
-			if title.TVDBID > 0 && (title.Poster == nil || title.Backdrop == nil) {
-				if ext, err := s.cachedSeriesExtended(title.TVDBID, []string{"artworks"}); err == nil {
-					applyTVDBArtworks(title, ext.Artworks)
+			if title.TVDBID > 0 {
+				if title.Poster == nil || title.Backdrop == nil {
+					if ext, err := s.cachedSeriesExtended(title.TVDBID, []string{"artworks"}); err == nil {
+						applyTVDBArtworks(title, ext.Artworks)
+					}
+				}
+				// Fetch translations for the user's language
+				if trans, err := s.cachedSeriesTranslations(title.TVDBID, s.client.language); err == nil && trans != nil {
+					if trans.Name != "" {
+						title.Name = trans.Name
+					}
+					if trans.Overview != "" {
+						title.Overview = trans.Overview
+					}
 				}
 			}
 		}
@@ -1463,7 +1506,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 		return s.searchDemo(ctx, q, mediaType), nil
 	}
 
-	key := cacheKey("tvdb", "search", mediaType, q)
+	key := cacheKey("tvdb", "search", mediaType, q, s.client.language)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -3447,7 +3490,7 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 		page = (offset / 20) + 1
 	}
 
-	cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page))
+	cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page), s.client.language)
 	type discoverCache struct {
 		Items []models.Title `json:"items"`
 		Total int            `json:"total"`
@@ -3575,7 +3618,7 @@ func (s *Service) GetAISimilar(ctx context.Context, seedTitle string, mediaType 
 	}
 
 	// Check cache first
-	cacheID := cacheKey("gemini", "similar", mediaType, seedTitle)
+	cacheID := cacheKey("gemini", "similar", mediaType, seedTitle, s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] gemini similar cache hit seed=%q count=%d", seedTitle, len(cached))
@@ -3634,7 +3677,7 @@ func (s *Service) GetAICustomRecommendations(ctx context.Context, query string) 
 	}
 
 	// Check cache (hash the query for a stable key)
-	cacheID := cacheKey("gemini", "custom", fmt.Sprintf("%x", sha1.Sum([]byte(strings.ToLower(strings.TrimSpace(query))))))
+	cacheID := cacheKey("gemini", "custom", fmt.Sprintf("%x", sha1.Sum([]byte(strings.ToLower(strings.TrimSpace(query))))), s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] gemini custom cache hit query=%q count=%d", query, len(cached))
@@ -5252,6 +5295,25 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 					if result.Overview != "" {
 						title.Overview = result.Overview
 					}
+					// Use translated name/overview from search result if available
+					lang3 := s.client.language
+					if len(result.Translations) > 0 && lang3 != "" && lang3 != "eng" {
+						if v := strings.TrimSpace(result.Translations[lang3]); v != "" {
+							title.Name = v
+						}
+					}
+					if result.Overviews != nil && lang3 != "" && lang3 != "eng" && result.Overviews[lang3] != "" {
+						title.Overview = result.Overviews[lang3]
+					}
+					// Fetch translations for the user's language (authoritative)
+					if trans, err := s.cachedMovieTranslations(tvdbID, s.client.language); err == nil && trans != nil {
+						if trans.Name != "" {
+							title.Name = trans.Name
+						}
+						if trans.Overview != "" {
+							title.Overview = trans.Overview
+						}
+					}
 					found = true
 				}
 			}
@@ -5292,6 +5354,25 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 					if result.Overview != "" {
 						title.Overview = result.Overview
 					}
+					// Use translated name/overview from search result if available
+					lang3 := s.client.language
+					if len(result.Translations) > 0 && lang3 != "" && lang3 != "eng" {
+						if v := strings.TrimSpace(result.Translations[lang3]); v != "" {
+							title.Name = v
+						}
+					}
+					if result.Overviews != nil && lang3 != "" && lang3 != "eng" && result.Overviews[lang3] != "" {
+						title.Overview = result.Overviews[lang3]
+					}
+					// Fetch translations for the user's language (authoritative)
+					if trans, err := s.cachedSeriesTranslations(tvdbID, s.client.language); err == nil && trans != nil {
+						if trans.Name != "" {
+							title.Name = trans.Name
+						}
+						if trans.Overview != "" {
+							title.Overview = trans.Overview
+						}
+					}
 					found = true
 				}
 			}
@@ -5329,7 +5410,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 // TVDB lookups. Returns (items, filteredTotal, unfilteredTotal, error).
 func (s *Service) GetCustomList(ctx context.Context, listURL string, opts CustomListOptions) ([]models.TrendingItem, int, int, error) {
 	// Check full-list cache first (only populated when no filtering was applied)
-	cacheID := cacheKey("mdblist", "custom", "v4", listURL)
+	cacheID := cacheKey("mdblist", "custom", "v5", listURL, s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] custom list cache hit for %s (%d items)", listURL, len(cached))
