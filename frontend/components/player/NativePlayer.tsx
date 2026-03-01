@@ -20,6 +20,9 @@ export interface Track {
   language: string;
   codec: string;
   selected: boolean;
+  isBitmap?: boolean;
+  width?: number;
+  height?: number;
 }
 
 export interface LoadEvent {

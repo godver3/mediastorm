@@ -869,7 +869,10 @@ class MpvPlayerView(
                     audioIndex++
                 }
                 "sub" -> {
-                    Log.d(TAG, "buildTrackList: sub track i=$i mpvId=$mpvId title=$title lang=$lang codec=$codec selected=$selected -> subtitleIndex=$subtitleIndex")
+                    val isImage = MPVLib.getPropertyBoolean("track-list/$i/image") ?: false
+                    val demuxW = MPVLib.getPropertyInt("track-list/$i/demux-w") ?: 0
+                    val demuxH = MPVLib.getPropertyInt("track-list/$i/demux-h") ?: 0
+                    Log.d(TAG, "buildTrackList: sub track i=$i mpvId=$mpvId title=$title lang=$lang codec=$codec selected=$selected isBitmap=$isImage -> subtitleIndex=$subtitleIndex")
                     val track = Arguments.createMap().apply {
                         putInt("id", subtitleIndex)
                         putString("type", "subtitle")
@@ -877,6 +880,9 @@ class MpvPlayerView(
                         putString("language", lang)
                         putString("codec", codec)
                         putBoolean("selected", selected)
+                        putBoolean("isBitmap", isImage)
+                        if (demuxW > 0) putInt("width", demuxW)
+                        if (demuxH > 0) putInt("height", demuxH)
                     }
                     subtitleTracks.pushMap(track)
                     newSubtitleMap[subtitleIndex] = mpvId

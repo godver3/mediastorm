@@ -7,7 +7,14 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -21,8 +28,11 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.SubtitleView
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -54,6 +64,13 @@ class ExoPlayerView(
         // Memory tier thresholds — match MpvPlayerView
         private const val LOW_RAM_THRESHOLD_MB = 2048L   // <= 2 GB
         private const val MID_RAM_THRESHOLD_MB = 3072L   // <= 3 GB
+
+        // Base subtitle size in SP — matches RN overlay's Android TV size
+        private const val BASE_SUBTITLE_SIZE_SP = 26f
+
+        // PGS authoring reference height — PGS mastered at this resolution
+        // gets a 1.0 base scale when displayed on a matching video.
+        private const val PGS_REFERENCE_HEIGHT = 1080f
     }
 
     private val isLowRamDevice: Boolean
@@ -110,6 +127,22 @@ class ExoPlayerView(
     private var videoHeight = 0
     private var videoPixelRatio = 1f
 
+    // Subtitle styling state
+    private var currentFgColor = Color.WHITE
+    private var currentBgColor = 0x99000000.toInt()
+    private var baseSubtitleMarginY = 50
+    private var controlsVisible = false
+    private var userBitmapMultiplier = 1.0f
+
+    // PGS bitmap cue cache — avoids per-frame Bitmap allocation + Canvas draw.
+    // Invalidated when source bitmap, scale, or background color changes.
+    private var cachedSrcBitmap: Bitmap? = null
+    private var cachedPaddedBitmap: Bitmap? = null
+    private var cachedPaddedCue: Cue? = null
+    private var cachedBitmapScale = 0f
+    private var cachedBitmapBgColor = currentBgColor
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
     // External subtitle URL
     private var pendingExternalSubUrl: String? = null
 
@@ -120,9 +153,20 @@ class ExoPlayerView(
     private var pendingInitUri: String? = null
     private var pendingInitHeaders: Map<String, String>? = null
 
-    private val surfaceView = SurfaceView(context).apply {
-        // Match mpv's z-order so PiP can find and reparent this surface
-        setZOrderMediaOverlay(true)
+    private val surfaceView = SurfaceView(context)
+
+    private val subtitleView = SubtitleView(context).apply {
+        setStyle(
+            CaptionStyleCompat(
+                Color.WHITE,
+                0x99000000.toInt(), // 60% black background
+                Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                Color.BLACK,
+                Typeface.DEFAULT_BOLD
+            )
+        )
+        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
     }
 
     private val surfaceCallback = object : SurfaceHolder.Callback {
@@ -166,6 +210,9 @@ class ExoPlayerView(
         addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.CENTER
         })
+        addView(subtitleView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
+            gravity = Gravity.CENTER
+        })
 
         // Register for system memory pressure callbacks
         context.applicationContext.registerComponentCallbacks(this)
@@ -201,6 +248,11 @@ class ExoPlayerView(
                 MeasureSpec.makeMeasureSpec(targetH, MeasureSpec.EXACTLY)
             )
             surfaceView.layout(childLeft, childTop, childLeft + targetW, childTop + targetH)
+            subtitleView.measure(
+                MeasureSpec.makeMeasureSpec(targetW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(targetH, MeasureSpec.EXACTLY)
+            )
+            subtitleView.layout(childLeft, childTop, childLeft + targetW, childTop + targetH)
             Log.d(TAG, "onLayout: surface=${targetW}x${targetH} at ($childLeft,$childTop) (video=${videoWidth}x${videoHeight}, container=${containerW}x${containerH})")
         } else {
             surfaceView.measure(
@@ -208,6 +260,11 @@ class ExoPlayerView(
                 MeasureSpec.makeMeasureSpec(containerH, MeasureSpec.EXACTLY)
             )
             surfaceView.layout(0, 0, containerW, containerH)
+            subtitleView.measure(
+                MeasureSpec.makeMeasureSpec(containerW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(containerH, MeasureSpec.EXACTLY)
+            )
+            subtitleView.layout(0, 0, containerW, containerH)
         }
     }
 
@@ -232,15 +289,15 @@ class ExoPlayerView(
         val (minBufferMs, maxBufferMs, backBufferMs) = when {
             isLowRamDevice -> {
                 Log.d(TAG, "Low-RAM device (${totalMb}MB) — tight buffer limits")
-                Triple(5_000, 15_000, 0)
+                Triple(5_000, 10_000, 0)
             }
             totalMb <= MID_RAM_THRESHOLD_MB -> {
                 Log.d(TAG, "Mid-RAM device (${totalMb}MB) — moderate buffer limits")
-                Triple(10_000, 30_000, 10_000)
+                Triple(8_000, 20_000, 5_000)
             }
             else -> {
-                Log.d(TAG, "High-RAM device (${totalMb}MB) — standard buffer limits")
-                Triple(15_000, 50_000, 30_000)
+                Log.d(TAG, "High-RAM device (${totalMb}MB) — reduced buffer limits for DV")
+                Triple(10_000, 30_000, 10_000)
             }
         }
 
@@ -408,12 +465,20 @@ class ExoPlayerView(
             videoHeight = videoSize.height
             videoPixelRatio = videoSize.pixelWidthHeightRatio
             Log.d(TAG, "Video size: ${videoWidth}x${videoHeight}, pixelRatio=$videoPixelRatio")
+            updateBitmapScale()
             applySurfaceSize()
         }
 
         override fun onCues(cueGroup: CueGroup) {
-            val text = cueGroup.cues.joinToString("\n") { it.text?.toString() ?: "" }
-            emitSubtitleText(text)
+            val hasBitmapCues = cueGroup.cues.any { it.bitmap != null }
+            val cues = if (hasBitmapCues) {
+                cueGroup.cues.map { cue ->
+                    if (cue.bitmap != null) scaleBitmapCue(cue) else cue
+                }
+            } else {
+                cueGroup.cues
+            }
+            subtitleView.setCues(cues)
         }
     }
 
@@ -530,6 +595,7 @@ class ExoPlayerView(
     override fun setSubtitleTrack(rnIndex: Int) {
         if (rnIndex < 0) {
             // Disable subtitles
+            subtitleView.setCues(emptyList())
             val ts = trackSelector ?: return
             ts.setParameters(
                 ts.buildUponParameters()
@@ -566,23 +632,207 @@ class ExoPlayerView(
     }
 
     override fun setSubtitleSize(size: Float) {
-        // ExoPlayer subtitle styling is limited — handled by RN overlay
+        if (size > 0) {
+            subtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+        }
     }
 
     override fun setSubtitleColor(color: String?) {
-        // Handled by RN subtitle overlay
+        if (color.isNullOrEmpty()) return
+        try {
+            currentFgColor = Color.parseColor(color)
+            applyCaptionStyle()
+        } catch (_: IllegalArgumentException) {
+            Log.w(TAG, "Invalid subtitle color: $color")
+        }
+    }
+
+    private fun applyCaptionStyle() {
+        subtitleView.setStyle(
+            CaptionStyleCompat(
+                currentFgColor,
+                currentBgColor,
+                Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                Color.BLACK,
+                Typeface.DEFAULT_BOLD
+            )
+        )
     }
 
     override fun setSubtitlePosition(position: Float) {
-        // Handled by RN subtitle overlay
+        subtitleView.setBottomPaddingFraction(position.coerceIn(0f, 1f))
     }
 
     override fun setSubtitleStyle(style: ReadableMap?) {
-        // Handled by RN subtitle overlay
+        if (style == null) return
+
+        if (style.hasKey("fontSize")) {
+            val multiplier = style.getDouble("fontSize")
+            if (multiplier > 0) {
+                subtitleView.setFixedTextSize(
+                    TypedValue.COMPLEX_UNIT_SP,
+                    BASE_SUBTITLE_SIZE_SP * multiplier.toFloat()
+                )
+                userBitmapMultiplier = multiplier.toFloat()
+                updateBitmapScale()
+            }
+        }
+
+        if (style.hasKey("textColor")) {
+            val color = style.getString("textColor")
+            if (color != null) {
+                try {
+                    currentFgColor = Color.parseColor(color)
+                } catch (_: IllegalArgumentException) {
+                    Log.w(TAG, "Invalid subtitle textColor: $color")
+                }
+            }
+        }
+
+        if (style.hasKey("backgroundColor")) {
+            val color = style.getString("backgroundColor")
+            if (color != null) {
+                try {
+                    currentBgColor = parseCssColor(color)
+                } catch (_: IllegalArgumentException) {
+                    Log.w(TAG, "Invalid subtitle backgroundColor: $color")
+                }
+            }
+        }
+
+        applyCaptionStyle()
+
+        if (style.hasKey("bottomMargin")) {
+            baseSubtitleMarginY = style.getInt("bottomMargin")
+            updateSubtitlePosition()
+        }
     }
 
     override fun setControlsVisible(visible: Boolean) {
-        // No subtitle margin adjustment needed — RN overlay handles positioning
+        controlsVisible = visible
+        updateSubtitlePosition()
+    }
+
+    private fun updateSubtitlePosition() {
+        val marginDp = baseSubtitleMarginY + if (controlsVisible) 125 else 0
+        val marginPx = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            marginDp.toFloat(),
+            resources.displayMetrics
+        ).toInt()
+        subtitleView.setPadding(0, 0, 0, marginPx)
+    }
+
+    /**
+     * Parse a CSS hex color (#RRGGBB or #RRGGBBAA) to Android's ARGB int.
+     * Android's Color.parseColor reads 8-char hex as #AARRGGBB, but CSS/RN
+     * uses #RRGGBBAA — this converts between the two formats.
+     */
+    private fun parseCssColor(color: String): Int {
+        val hex = color.removePrefix("#")
+        return when (hex.length) {
+            6 -> Color.parseColor(color) // #RRGGBB — same in both formats
+            8 -> Color.parseColor("#${hex.substring(6, 8)}${hex.substring(0, 6)}") // #RRGGBBAA → #AARRGGBB
+            else -> Color.parseColor(color)
+        }
+    }
+
+    /**
+     * Recompute the PGS bitmap scale from video height and user multiplier.
+     *
+     * PGS is almost universally authored at 1080p (even on UHD Blu-ray). The cue
+     * fractions are relative to the video resolution, so 1080p PGS on 4K video
+     * appears at half the intended size without correction.
+     *
+     * Uses a blended denominator (2:1 reference:video) to soften the ratio.
+     * Scale is precomputed here (not per-cue) since it only depends on video
+     * height and user multiplier — NOT on individual bitmap dimensions.
+     *
+     * Results at userMultiplier=1.0:
+     * - 4K video: 2160 / ((1080*2+2160)/3) = 1.5
+     * - 1080p video: 1080 / ((1080*2+1080)/3) = 1.0
+     */
+    private var computedBitmapScale = 1f
+
+    private fun updateBitmapScale() {
+        val vidH = if (videoHeight > 0) videoHeight.toFloat() else PGS_REFERENCE_HEIGHT
+        val denominator = (PGS_REFERENCE_HEIGHT * 2f + vidH) / 3f
+        computedBitmapScale = (vidH / denominator) * userBitmapMultiplier
+    }
+
+    /**
+     * Scale a bitmap (PGS/VOBSUB) subtitle cue with resolution-aware scaling and
+     * composite a translucent background box behind it (matching KSPlayer).
+     *
+     * The padded bitmap is cached — only rebuilt when the source bitmap object,
+     * computed scale, or background color changes.
+     */
+    private fun scaleBitmapCue(cue: Cue): Cue {
+        val srcBitmap = cue.bitmap ?: return cue
+
+        // Cache hit — same source bitmap, scale, and bg color
+        if (srcBitmap === cachedSrcBitmap &&
+            computedBitmapScale == cachedBitmapScale &&
+            currentBgColor == cachedBitmapBgColor) {
+            val cached = cachedPaddedCue
+            if (cached != null) return cached
+        }
+
+        // Cache miss — rebuild the padded bitmap.
+        // Padding based on bitmap width so it scales consistently.
+        val w = srcBitmap.width.toFloat()
+        val hPad = maxOf((w * 0.025f).toInt(), 16)
+        val vPad = maxOf((w * 0.012f).toInt(), 10)
+        val cornerR = maxOf(w * 0.015f, 12f)
+
+        val paddedW = srcBitmap.width + hPad * 2
+        val paddedH = srcBitmap.height + vPad * 2
+
+        // Reuse the cached bitmap buffer if dimensions match, otherwise allocate
+        val padded = if (cachedPaddedBitmap?.width == paddedW && cachedPaddedBitmap?.height == paddedH) {
+            cachedPaddedBitmap!!.also { it.eraseColor(Color.TRANSPARENT) }
+        } else {
+            cachedPaddedBitmap?.recycle()
+            Bitmap.createBitmap(paddedW, paddedH, Bitmap.Config.ARGB_8888)
+        }
+
+        val canvas = Canvas(padded)
+        bgPaint.color = currentBgColor
+        canvas.drawRoundRect(RectF(0f, 0f, paddedW.toFloat(), paddedH.toFloat()), cornerR, cornerR, bgPaint)
+        canvas.drawBitmap(srcBitmap, hPad.toFloat(), vPad.toFloat(), null)
+
+        val builder = cue.buildUpon().setBitmap(padded)
+
+        // Apply precomputed resolution-aware scale to viewport dimensions
+        val scale = computedBitmapScale
+        if (cue.size != Cue.DIMEN_UNSET) {
+            val newSize = cue.size * scale
+            builder.setSize(newSize)
+            if (cue.position != Cue.DIMEN_UNSET) {
+                builder.setPosition(cue.position + (cue.size - newSize) / 2f)
+            }
+        }
+
+        if (cue.bitmapHeight != Cue.DIMEN_UNSET) {
+            builder.setBitmapHeight(cue.bitmapHeight * scale)
+        }
+
+        // Override vertical position — place near bottom of video (95% down),
+        // anchored at the bottom edge of the subtitle
+        builder.setLine(0.95f, Cue.LINE_TYPE_FRACTION)
+        builder.setLineAnchor(Cue.ANCHOR_TYPE_END)
+
+        val result = builder.build()
+
+        // Update cache
+        cachedSrcBitmap = srcBitmap
+        cachedPaddedBitmap = padded
+        cachedPaddedCue = result
+        cachedBitmapScale = computedBitmapScale
+        cachedBitmapBgColor = currentBgColor
+
+        return result
     }
 
     override fun setExternalSubtitleUrl(url: String?) {
@@ -691,13 +941,19 @@ class ExoPlayerView(
                         audioIndex++
                     }
                     C.TRACK_TYPE_TEXT -> {
+                        val mime = format.sampleMimeType ?: ""
+                        val isBitmap = mime.contains("pgs") || mime.contains("dvbsub") ||
+                            mime.contains("vobsub") || mime.contains("dvb_teletext")
                         val track = Arguments.createMap().apply {
                             putInt("id", subtitleIndex)
                             putString("type", "subtitle")
                             putString("title", format.label ?: "")
                             putString("language", format.language ?: "")
-                            putString("codec", format.codecs ?: format.sampleMimeType ?: "")
+                            putString("codec", format.codecs ?: mime)
                             putBoolean("selected", isSelected)
+                            putBoolean("isBitmap", isBitmap)
+                            if (format.width > 0) putInt("width", format.width)
+                            if (format.height > 0) putInt("height", format.height)
                         }
                         subtitleTracks.pushMap(track)
                         newSubtitleMap[subtitleIndex] = TrackRef(groupIndex, trackIndex, rendererIndex)
@@ -795,13 +1051,6 @@ class ExoPlayerView(
             putBoolean("buffering", buffering)
         }
         emitEvent("onBuffering", data)
-    }
-
-    private fun emitSubtitleText(text: String) {
-        val data = Arguments.createMap().apply {
-            putString("text", text)
-        }
-        emitEvent("onSubtitleText", data)
     }
 
     private fun emitDebugLog(message: String) {

@@ -4184,7 +4184,7 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     },
     landscapeYearText: {
       ...(isTV ? theme.typography.caption.sm : theme.typography.caption.sm),
-      fontSize: isTV ? Math.round(theme.typography.caption.sm.fontSize * 1.1 * tvScale) : theme.typography.caption.sm.fontSize,
+      fontSize: isAndroidTV ? Math.round(theme.typography.caption.sm.fontSize * 1.87 * tvScale) : isTV ? Math.round(theme.typography.caption.sm.fontSize * 1.1 * tvScale) : theme.typography.caption.sm.fontSize,
       color: theme.colors.text.secondary,
       fontWeight: '300',
       fontStyle: 'italic',

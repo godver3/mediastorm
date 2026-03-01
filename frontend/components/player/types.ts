@@ -18,6 +18,9 @@ export type TrackInfo = {
   name: string;
   language?: string;
   codec?: string;
+  isBitmap?: boolean;
+  width?: number;
+  height?: number;
 };
 
 export interface NowPlayingMetadata {

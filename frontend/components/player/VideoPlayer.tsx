@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
-import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Platform, View, Text, type ViewStyle, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { Platform, View, type ViewStyle, StyleSheet } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
 import { isMobileWeb } from './isMobileWeb';
@@ -162,6 +162,10 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
       id: t.id,
       name: t.title || t.language || `Subtitle ${t.id}`,
       language: t.language,
+      codec: t.codec,
+      isBitmap: t.isBitmap,
+      width: t.width,
+      height: t.height,
     }));
 
     console.log('[NativePlayerAdapter] forwarding tracks to onTracksAvailable', {
@@ -325,20 +329,6 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     tracksReadyRef.current = true;
   }, [originalHandleTracksChanged, applyInitialTracks]);
 
-  // ExoPlayer subtitle text overlay state
-  // ExoPlayer (DV content) has no built-in subtitle view — it emits cue text via onSubtitleText
-  // MPV renders subtitles natively via libass, so this overlay is only needed for ExoPlayer
-  const [nativeSubtitleText, setNativeSubtitleText] = useState<string>('');
-
-  const handleSubtitleText = useCallback((data: { text: string }) => {
-    setNativeSubtitleText(data.text || '');
-  }, []);
-
-  // Reset subtitle text when source changes
-  useEffect(() => {
-    setNativeSubtitleText('');
-  }, [movie]);
-
   // Build subtitle style to match our SubtitleOverlay appearance
   const subtitleStyle = useMemo(() => ({
     fontSize: subtitleSize,
@@ -346,15 +336,6 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     backgroundColor: '#00000099', // 60% black background (matching SubtitleOverlay)
     bottomMargin: 50, // Match SubtitleOverlay positioning
   }), [subtitleSize]);
-
-  // Log the track indices being passed to native player
-  console.log('[NativePlayerAdapter] ===== RENDER =====', {
-    audioTrack: selectedAudioTrackIndex ?? 'undefined',
-    subtitleTrack: selectedSubtitleTrackIndex ?? -1,
-    externalSubtitleUrl: externalSubtitleUrl ?? 'undefined',
-    isHDR: isHDR ?? 'undefined',
-    isDV: isDV ?? 'undefined',
-  });
 
   return (
     <View style={nativePlayerStyles.container}>
@@ -377,24 +358,14 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
         onError={handleError}
         onBuffering={handleBuffering}
         onTracksChanged={handleTracksChangedWithPending}
-        onSubtitleText={isDV ? handleSubtitleText : undefined}
         onPipStatusChanged={onPictureInPictureStatusChanged}
         onPlaybackStateChanged={onPlaybackStateChanged}
       />
-      {isDV && nativeSubtitleText.length > 0 && (
-        <View style={nativePlayerStyles.subtitleOverlay} pointerEvents="none">
-          <View style={nativePlayerStyles.subtitleBackground}>
-            <Text style={nativePlayerStyles.subtitleText}>{nativeSubtitleText}</Text>
-          </View>
-        </View>
-      )}
     </View>
   );
 });
 
 NativePlayerAdapter.displayName = 'NativePlayerAdapter';
-
-const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
 const nativePlayerStyles = StyleSheet.create({
   container: {
@@ -402,27 +373,6 @@ const nativePlayerStyles = StyleSheet.create({
   },
   player: {
     flex: 1,
-  },
-  subtitleOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: isAndroidTV ? 50 : 40,
-    alignItems: 'center',
-    paddingHorizontal: Platform.isTV ? 60 : 20,
-  },
-  subtitleBackground: {
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: Platform.isTV ? 16 : 8,
-    paddingVertical: Platform.isTV ? 6 : 3,
-    borderRadius: Platform.isTV ? 6 : 4,
-  },
-  subtitleText: {
-    color: '#FFFFFF',
-    fontSize: isAndroidTV ? 26 : Platform.isTV ? 62 : 24,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: isAndroidTV ? 36 : Platform.isTV ? 86 : 34,
   },
 });
 
