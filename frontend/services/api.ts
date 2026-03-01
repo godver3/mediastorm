@@ -1143,8 +1143,23 @@ class ApiService {
       throw error;
     }
 
+    // Apply a default timeout (15s) if no AbortSignal was provided by the caller.
+    // This prevents fetch from hanging for 30-120s on unreachable hosts (e.g. the
+    // Android emulator address 10.0.2.2 on real devices).
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (!requestInit.signal) {
+      const controller = new AbortController();
+      requestInit.signal = controller.signal;
+      timeoutId = setTimeout(() => controller.abort(), 15_000);
+    }
+
     const requestStartTime = DEBUG_API_TIMING ? performance.now() : 0;
-    const response = await fetch(url, requestInit);
+    let response: Response;
+    try {
+      response = await fetch(url, requestInit);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
     const fetchEndTime = DEBUG_API_TIMING ? performance.now() : 0;
 
     if (DEBUG_API_TIMING && requestStartTime) {

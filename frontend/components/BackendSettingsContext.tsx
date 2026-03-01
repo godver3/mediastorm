@@ -721,6 +721,12 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
       await persistBackendUrl(normalised);
       applyApiBaseUrl(normalised || undefined);
 
+      // Stop any running retry timer and discard in-flight requests so
+      // refreshSettings makes a fresh request to the NEW URL instead of
+      // deduplicating with a stale fetch to the old (possibly unreachable) URL.
+      stopRetryTimer();
+      inflightRefreshRef.current = null;
+
       // Try to refresh settings but don't fail if it requires auth
       // Settings will be fetched properly after login
       try {
@@ -730,7 +736,7 @@ export const BackendSettingsProvider: React.FC<{ children: React.ReactNode }> = 
         // Don't throw - we just want to verify the URL is saved
       }
     },
-    [applyApiBaseUrl, persistBackendUrl, refreshSettings],
+    [applyApiBaseUrl, persistBackendUrl, refreshSettings, stopRetryTimer],
   );
 
   const updateBackendSettings = useCallback(async (next: BackendSettings) => {

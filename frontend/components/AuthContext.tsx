@@ -131,13 +131,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } catch (err) {
             // Network error or timeout - keep stored auth, will be validated on next request
             console.warn('[Auth] Failed to validate stored session:', err);
-            // Still try to refresh settings since we have a stored token that might work
-            try {
-              console.log('[Auth] Attempting settings refresh despite validation failure');
-              await refreshSettingsRef.current();
-            } catch (settingsErr) {
+            // Fire-and-forget settings refresh — don't block isLoading on it.
+            // The fetch to an unreachable backend can hang for 30-120s (TCP timeout),
+            // which would keep the auth spinner visible and prevent the user from
+            // reaching settings to configure the correct backend URL.
+            console.log('[Auth] Scheduling background settings refresh despite validation failure');
+            refreshSettingsRef.current().catch((settingsErr: unknown) => {
               console.warn('[Auth] Settings refresh also failed:', settingsErr);
-            }
+            });
           } finally {
             clearTimeout(timeoutId);
           }
