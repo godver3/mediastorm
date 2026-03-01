@@ -101,9 +101,11 @@ const isTvEnvironment = (): boolean => {
 };
 
 const isKeyDownAction = (action: HWEvent['eventKeyAction'] | string): boolean => {
-  // On tvOS and Android TV emulator, RN often reports only keyup (1).
-  // Treat all events as actionable and rely on dedup.
-  if (Platform.isTV) {
+  // On tvOS, RN's TVEventHandler often reports only keyup (1).
+  // Treat all tvOS events as actionable and rely on dedup.
+  // On Android TV, our custom TvKeyEventModule reliably sends both
+  // keydown (0) and keyup (1), so we filter properly to avoid double-toggle.
+  if (Platform.OS === 'ios' && Platform.isTV) {
     return true;
   }
 
