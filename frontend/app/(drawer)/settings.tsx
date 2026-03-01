@@ -41,8 +41,9 @@ import { getClientId } from '@/services/clientId';
 import { logger } from '@/services/logger';
 import { QRCode } from '@/components/QRCode';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
+import { TVSpacer } from '@/components/TVSpacer';
 import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
-import { isTV, tvScale } from '@/theme/tokens/tvScale';
+import { isTV, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import {
@@ -1888,16 +1889,18 @@ function SettingsScreen() {
         ]}
       />
       <Stack.Screen options={{ headerShown: false }} />
-      <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
+      <FixedSafeAreaView style={styles.safeArea} edges={Platform.isTV ? [] : ['top']}>
         {/* TV Layout: Header at top, then grid below - wrapped in SpatialNavigationRoot */}
         {Platform.isTV && (
           <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={handleDirectionWithoutMovement}>
             <View style={styles.tvLayoutContainer}>
+              {/* Top spacing - scales with viewport height */}
+              <TVSpacer size={24} />
               {/* Header Section - at top of screen */}
               <View style={styles.tvHeader}>
                 <Text style={styles.tvScreenTitle}>Settings</Text>
               </View>
-
+              <TVSpacer size={16} />
               {/* Grid Content - with edge buffer */}
               <View style={styles.tvContentArea}>
                 {currentTabGridData.length > 0 && (
@@ -2307,11 +2310,13 @@ export default React.memo(SettingsScreen);
 
 const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080) => {
   const isTV = Platform.isTV;
-  // Non-tvOS TV platforms (Android TV, Fire TV, etc.) need smaller scaling
-  const isNonTvosTV = Platform.isTV && Platform.OS !== 'ios';
-  // Scale factor for non-tvOS TV - reduce sizes by 30% compared to tvOS
-  const atvScale = isNonTvosTV ? 0.7 : 1;
-  const tvPadding = isTV ? theme.spacing.xl * 1.5 * atvScale : theme.spacing['2xl'];
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+  const vh = effectiveHeight / TV_REFERENCE_HEIGHT;
+  // vh-scaled pixel value — design for tvOS 1080p, scales proportionally on any TV.
+  // Use for TV-only styles instead of theme.spacing.* (which has its own non-proportional scaling).
+  // Base spacing reference: xs=4 sm=8 md=12 lg=16 xl=24 2xl=32 3xl=40
+  const tvS = (px: number) => Math.round(px * vh);
+  const tvPadding = isTV ? tvS(36) : theme.spacing['2xl'];
   // 10% edge buffer for TV platforms
   const tvEdgeBufferHorizontal = isTV ? screenWidth * 0.1 : 0;
   const tvEdgeBufferVertical = isTV ? screenHeight * 0.1 : 0;
@@ -2327,7 +2332,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     contentContainer: {
       padding: tvPadding,
-      gap: theme.spacing.xl * atvScale,
+      gap: isTV ? tvS(24) : theme.spacing.xl,
     },
     // Mobile container
     mobileContainer: {
@@ -2339,30 +2344,29 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     tvHeader: {
       paddingHorizontal: tvEdgeBufferHorizontal,
-      paddingTop: isNonTvosTV ? theme.spacing['2xl'] : theme.spacing.xl,
-      paddingBottom: theme.spacing.lg,
     },
     tvScreenTitle: {
       ...theme.typography.title.xl,
       fontSize: theme.typography.title.xl.fontSize * 1.2,
       color: theme.colors.text.primary,
-      marginBottom: isNonTvosTV ? theme.spacing.lg : theme.spacing.md,
+      marginBottom: tvS(12),
     },
     tvTabBar: {
       flexDirection: 'row',
-      gap: theme.spacing.md * atvScale,
-      marginBottom: isNonTvosTV ? theme.spacing.lg : 0,
+      gap: tvS(12),
+      marginBottom: 0,
     },
     tvTabButton: {
-      paddingHorizontal: isNonTvosTV ? theme.spacing['2xl'] * atvScale * 1.2 : theme.spacing['2xl'],
-      paddingVertical: isNonTvosTV ? theme.spacing.sm * atvScale * 1.2 : undefined,
+      paddingHorizontal: tvS(32),
+      paddingVertical: tvS(8),
       backgroundColor: theme.colors.background.surface,
-      borderWidth: isNonTvosTV ? 1.5 : StyleSheet.hairlineWidth,
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.border.subtle,
-      ...(isNonTvosTV && { minHeight: 24, justifyContent: 'center' as const }),
+      minHeight: tvS(36),
+      justifyContent: 'center' as const,
     },
     tvTabButtonActive: {
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.accent.primary,
     },
     tvContentArea: {
@@ -2370,40 +2374,34 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       paddingHorizontal: tvEdgeBufferHorizontal,
       overflow: 'hidden',
     },
-    // Legacy styles kept for mobile
-    tvEdgeBuffer: {
-      flex: 1,
-      paddingHorizontal: tvEdgeBufferHorizontal,
-      paddingVertical: tvEdgeBufferVertical,
-    },
     screenTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
     },
     tabBar: {
       flexDirection: 'row',
-      gap: theme.spacing.sm * atvScale,
-      paddingVertical: theme.spacing.md * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
+      paddingVertical: isTV ? tvS(12) : theme.spacing.md,
       flexWrap: 'wrap',
     },
     tab: {
-      paddingHorizontal: theme.spacing.md * atvScale,
-      paddingVertical: theme.spacing.sm * atvScale,
-      borderRadius: theme.radius.md * atvScale,
+      paddingHorizontal: isTV ? tvS(12) : theme.spacing.md,
+      paddingVertical: isTV ? tvS(8) : theme.spacing.sm,
+      borderRadius: isTV ? tvS(8) : theme.radius.md,
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.surface,
     },
     tabActive: {
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderWidth: isTV ? Math.max(1, tvS(2)) : 2,
       borderColor: theme.colors.accent.primary,
       backgroundColor: theme.colors.overlay.button,
     },
     section: {
-      padding: theme.spacing.xl * atvScale,
+      padding: isTV ? tvS(24) : theme.spacing.xl,
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.background.surface,
-      gap: theme.spacing.md * atvScale,
+      gap: isTV ? tvS(12) : theme.spacing.md,
     },
     sectionHeader: {
       flexDirection: 'row',
@@ -2427,23 +2425,21 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       marginVertical: theme.spacing.sm,
     },
     fieldRow: {
-      gap: theme.spacing.xs * atvScale,
+      gap: isTV ? tvS(4) : theme.spacing.xs,
     },
     fieldLabel: {
       ...theme.typography.label.md,
       color: theme.colors.text.secondary,
-      ...(isNonTvosTV && { fontSize: theme.typography.label.md.fontSize * atvScale }),
     },
     input: {
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.base,
       color: theme.colors.text.primary,
-      borderRadius: theme.radius.md * atvScale,
-      paddingHorizontal: theme.spacing.md * atvScale,
-      paddingVertical: theme.spacing.sm * atvScale,
-      minHeight: 44 * atvScale,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
+      borderRadius: isTV ? tvS(8) : theme.radius.md,
+      paddingHorizontal: isTV ? tvS(12) : theme.spacing.md,
+      paddingVertical: isTV ? tvS(8) : theme.spacing.sm,
+      minHeight: isTV ? tvS(44) : 44,
     },
     inputFocused: {
       borderColor: theme.colors.accent.primary,
@@ -2452,14 +2448,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       shadowRadius: 6,
     },
     multiline: {
-      minHeight: 120 * atvScale,
+      minHeight: isTV ? tvS(120) : 120,
     },
     switch: {
       alignSelf: 'flex-start',
-      ...(isNonTvosTV && { transform: [{ scale: 0.8 }] }),
+      ...(isTV && vh < 1 && { transform: [{ scale: Math.max(0.7, vh) }] }),
     },
     switchFocused: {
-      transform: [{ scale: isNonTvosTV ? 0.9 : 1.05 }],
+      transform: [{ scale: isTV && vh < 1 ? Math.max(0.8, vh) : 1.05 }],
     },
     fieldError: {
       ...theme.typography.caption.sm,
@@ -2468,7 +2464,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     buttonRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.md * atvScale,
+      gap: isTV ? tvS(12) : theme.spacing.md,
       alignItems: 'center',
     },
     secondaryButton: {
@@ -2484,29 +2480,27 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.status.success,
     },
     versionInfoContainer: {
-      gap: theme.spacing.xs * atvScale,
+      gap: isTV ? tvS(4) : theme.spacing.xs,
     },
     versionInfoRow: {
       flexDirection: 'row',
       justifyContent: 'flex-start',
       alignItems: 'center',
-      gap: theme.spacing.md,
-      paddingVertical: theme.spacing.xs * atvScale,
-      paddingHorizontal: theme.spacing.lg * atvScale,
+      gap: isTV ? tvS(12) : theme.spacing.md,
+      paddingVertical: isTV ? tvS(4) : theme.spacing.xs,
+      paddingHorizontal: isTV ? tvS(16) : theme.spacing.lg,
     },
     versionInfoLabel: {
       ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
       minWidth: 100,
-      ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
     },
     versionInfoValue: {
       ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
       fontWeight: '600',
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     deviceIdValue: {
       ...theme.typography.body.sm,
@@ -2521,7 +2515,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontWeight: '600',
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
       flex: 1,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.sm.fontSize * atvScale }),
     },
     deviceIdRowMobile: {
       flexDirection: 'column',
@@ -2537,21 +2530,21 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     },
     versionButtonContainer: {
-      marginTop: theme.spacing.md * atvScale,
+      marginTop: isTV ? tvS(12) : theme.spacing.md,
       alignSelf: 'flex-start',
     },
     backendInfoNote: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-start',
-      gap: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
-      marginTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
-      paddingTop: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
+      marginTop: isTV ? tvS(12) : theme.spacing.md,
+      paddingTop: isTV ? tvS(12) : theme.spacing.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
     },
     backendInfoNoteText: {
-      ...(isNonTvosTV ? theme.typography.caption.sm : theme.typography.body.md),
+      ...theme.typography.body.md,
       color: theme.colors.text.muted,
     },
     backendInfoNoteMobile: {
@@ -2571,19 +2564,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     loadingRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.sm * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
     },
     loadingText: {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
     },
     indexerCard: {
-      padding: theme.spacing.lg * atvScale,
-      borderRadius: theme.radius.md * atvScale,
+      padding: isTV ? tvS(16) : theme.spacing.lg,
+      borderRadius: isTV ? tvS(8) : theme.radius.md,
       backgroundColor: theme.colors.background.base,
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
-      gap: theme.spacing.sm * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
     },
     indexerHeader: {
       flexDirection: 'row',
@@ -2601,7 +2594,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexDirection: 'row',
       flexWrap: 'wrap',
       alignItems: 'flex-start',
-      gap: theme.spacing.md * atvScale,
+      gap: isTV ? tvS(12) : theme.spacing.md,
     },
     playbackOption: {
       borderWidth: 1,
@@ -2611,21 +2604,21 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       borderColor: theme.colors.accent.primary,
     },
     hiddenChannelsList: {
-      gap: theme.spacing.sm * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
     },
     hiddenChannelCard: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: theme.spacing.md,
+      padding: isTV ? tvS(12) : theme.spacing.md,
       backgroundColor: theme.colors.background.base,
-      borderRadius: theme.radius.md,
+      borderRadius: isTV ? tvS(8) : theme.radius.md,
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
     },
     hiddenChannelInfo: {
       flex: 1,
-      gap: theme.spacing.xs,
+      gap: isTV ? tvS(4) : theme.spacing.xs,
     },
     hiddenChannelName: {
       ...theme.typography.body.md,
@@ -2695,24 +2688,22 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     dropdownContainer: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.sm * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
     },
     dropdownOption: {
-      paddingHorizontal: isNonTvosTV ? theme.spacing.md * atvScale * 1.3 : theme.spacing.md,
-      paddingVertical: isNonTvosTV ? theme.spacing.sm * atvScale * 1.3 : theme.spacing.sm,
-      borderRadius: theme.radius.md * atvScale,
+      paddingHorizontal: isTV ? tvS(12) : theme.spacing.md,
+      paddingVertical: isTV ? tvS(8) : theme.spacing.sm,
+      borderRadius: isTV ? tvS(8) : theme.radius.md,
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.base,
     },
     dropdownOptionText: {
-      ...(isNonTvosTV && { fontSize: theme.typography.label.md.fontSize * 1.3 }),
     },
     dropdownOptionTextFocused: {
-      ...(isNonTvosTV && { fontSize: theme.typography.label.md.fontSize * 1.3 }),
     },
     dropdownOptionSelected: {
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderWidth: isTV ? Math.max(1, tvS(2)) : 2,
       borderColor: theme.colors.accent.primary,
       backgroundColor: theme.colors.background.elevated,
     },
@@ -2722,9 +2713,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     // Spatial navigation button styles (matching TVActionButton)
     spatialButton: {
-      paddingHorizontal: theme.spacing.lg * tvScale(1.375, 1),
-      paddingVertical: theme.spacing.md * tvScale(1.375, 1),
-      borderRadius: theme.radius.md * tvScale(1.375, 1),
+      paddingHorizontal: isTV ? tvS(22) : theme.spacing.lg,
+      paddingVertical: isTV ? tvS(16) : theme.spacing.md,
+      borderRadius: isTV ? tvS(11) : theme.radius.md,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.overlay.button,
@@ -2741,8 +2732,6 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     spatialButtonText: {
       ...theme.typography.label.md,
       color: theme.colors.text.primary,
-      fontSize: theme.typography.label.md.fontSize * tvScale(1.375, 1),
-      lineHeight: theme.typography.label.md.lineHeight * tvScale(1.375, 1),
     },
     spatialButtonTextFocused: {
       color: theme.colors.text.inverse,
@@ -2751,11 +2740,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: theme.spacing.md * atvScale,
+      gap: isTV ? tvS(12) : theme.spacing.md,
     },
     shelfInfo: {
       flex: 1,
-      gap: theme.spacing.xs,
+      gap: isTV ? tvS(4) : theme.spacing.xs,
     },
     shelfName: {
       ...theme.typography.body.md,
@@ -2782,12 +2771,12 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     shelfArrowButtons: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.sm * atvScale,
+      gap: isTV ? tvS(8) : theme.spacing.sm,
     },
     shelfArrowButton: {
-      paddingHorizontal: theme.spacing.md * atvScale,
-      paddingVertical: theme.spacing.sm * atvScale,
-      minWidth: 44 * atvScale,
+      paddingHorizontal: isTV ? tvS(12) : theme.spacing.md,
+      paddingVertical: isTV ? tvS(8) : theme.spacing.sm,
+      minWidth: isTV ? tvS(44) : 44,
       backgroundColor: theme.colors.background.elevated,
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
@@ -2819,11 +2808,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       maxWidth: 900,
       maxHeight: '80%',
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: theme.radius.xl,
-      borderWidth: 2,
+      borderRadius: tvS(16),
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.border.subtle,
-      padding: theme.spacing['2xl'],
-      gap: theme.spacing.lg,
+      padding: tvS(32),
+      gap: tvS(16),
     },
     tvModalTitle: {
       ...theme.typography.title.xl,
@@ -2838,22 +2827,22 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       maxHeight: screenHeight * 0.4,
     },
     tvModalScrollContent: {
-      gap: theme.spacing.md,
+      gap: tvS(12),
     },
     tvModalItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.lg,
-      padding: theme.spacing.lg,
+      borderRadius: tvS(12),
+      padding: tvS(16),
       borderWidth: 1,
       borderColor: theme.colors.border.subtle,
-      gap: theme.spacing.lg,
+      gap: tvS(16),
     },
     tvModalItemInfo: {
       flex: 1,
-      gap: theme.spacing.xs,
+      gap: tvS(4),
     },
     tvModalItemTitle: {
       ...theme.typography.title.md,
@@ -2868,13 +2857,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.text.muted,
     },
     tvModalItemButton: {
-      minWidth: isNonTvosTV ? 140 * 0.6 : 140,
-      minHeight: isNonTvosTV ? 48 * 0.6 : 48,
+      minWidth: tvS(140),
+      minHeight: tvS(48),
       justifyContent: 'center',
-      paddingVertical: theme.spacing.sm * atvScale,
-      paddingHorizontal: theme.spacing.lg * atvScale,
-      borderWidth: isNonTvosTV ? 1.5 : 2,
-      borderRadius: theme.radius.md * atvScale,
+      paddingVertical: tvS(8),
+      paddingHorizontal: tvS(16),
+      borderWidth: Math.max(1, tvS(2)),
+      borderRadius: tvS(8),
       backgroundColor: theme.colors.background.base,
       borderColor: theme.colors.border.subtle,
     },
@@ -2893,17 +2882,17 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvModalFooter: {
       flexDirection: 'row',
       justifyContent: 'flex-end',
-      gap: theme.spacing.lg,
-      marginTop: theme.spacing.lg,
+      gap: tvS(16),
+      marginTop: tvS(16),
     },
     tvModalCloseButton: {
-      minWidth: 180,
-      minHeight: 56,
+      minWidth: tvS(180),
+      minHeight: tvS(56),
       justifyContent: 'center',
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing.xl,
-      borderWidth: 3,
-      borderRadius: theme.radius.md,
+      paddingVertical: tvS(12),
+      paddingHorizontal: tvS(24),
+      borderWidth: Math.max(1, tvS(3)),
+      borderRadius: tvS(8),
       backgroundColor: theme.colors.background.surface,
       borderColor: theme.colors.border.subtle,
     },
@@ -2933,14 +2922,14 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
 
     // TV Text Input Modal styles
     tvTextInputModalInput: {
-      borderWidth: 3,
+      borderWidth: Math.max(1, tvS(3)),
       borderColor: theme.colors.border.subtle,
       backgroundColor: theme.colors.background.base,
       color: theme.colors.text.primary,
-      borderRadius: theme.radius.lg,
-      paddingHorizontal: theme.spacing.xl,
-      paddingVertical: theme.spacing.lg,
-      minHeight: 64,
+      borderRadius: tvS(12),
+      paddingHorizontal: tvS(24),
+      paddingVertical: tvS(16),
+      minHeight: tvS(64),
       ...theme.typography.body.lg,
     },
     tvTextInputModalInputFocused: {
@@ -2952,7 +2941,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       shadowRadius: 12,
     },
     tvTextInputModalInputMultiline: {
-      minHeight: 160,
+      minHeight: tvS(160),
       textAlignVertical: 'top',
     },
 
@@ -2962,11 +2951,11 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       alignItems: 'center',
       justifyContent: 'space-between',
       backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.lg * atvScale,
-      padding: theme.spacing.lg * atvScale,
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderRadius: tvS(12),
+      padding: tvS(16),
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.border.subtle,
-      minHeight: 72 * atvScale,
+      minHeight: tvS(72),
     },
     tvGridFieldRowFocused: {
       borderColor: theme.colors.accent.primary,
@@ -2980,26 +2969,22 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       ...theme.typography.body.lg,
       color: theme.colors.text.primary,
       flex: 1,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     tvGridShelfLabel: {
       ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
-      marginLeft: theme.spacing.sm * atvScale,
+      marginLeft: tvS(8),
       minWidth: '30%',
-      ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 1.1 }),
     },
     shelfArrowButtonText: {
       fontWeight: '700',
-      ...(isNonTvosTV && { fontSize: 16 }),
     },
     tvGridFieldValue: {
       ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
       textAlign: 'right',
       maxWidth: '50%',
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     tvGridFieldValuePlaceholder: {
       color: theme.colors.text.muted,
@@ -3009,26 +2994,26 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridInlineInputRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.lg * atvScale,
-      marginTop: theme.spacing.xl * atvScale,
+      gap: tvS(16),
+      marginTop: tvS(24),
     },
     tvGridInlineInputRowFocused: {
       // No outer focus styling - focus is on the input itself
     },
     tvGridInlineInput: {
       flex: 1,
-      fontSize: isNonTvosTV ? 22 * 0.5 : 22,
+      fontSize: tvS(22),
       color: theme.colors.text.primary,
       backgroundColor: theme.colors.background.base,
-      borderRadius: theme.radius.md * atvScale,
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderRadius: tvS(8),
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.border.subtle,
-      minHeight: isNonTvosTV ? 56 * 0.6 : 56,
+      minHeight: tvS(56),
       textAlignVertical: 'center',
     },
     tvGridInlineInputFocused: {
       borderColor: theme.colors.accent.primary,
-      borderWidth: isNonTvosTV ? 2 : 3,
+      borderWidth: Math.max(2, tvS(3)),
       backgroundColor: theme.colors.background.surface,
       shadowColor: theme.colors.accent.primary,
       shadowOpacity: 0.3,
@@ -3039,14 +3024,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
-      minWidth: 220 * atvScale,
-      marginLeft: theme.spacing.lg * atvScale,
-      ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
+      minWidth: tvS(220),
+      marginLeft: tvS(16),
     },
     tvGridHeader: {
-      paddingTop: isNonTvosTV ? theme.spacing.xs : theme.spacing.md,
-      paddingBottom: isNonTvosTV ? theme.spacing.sm : theme.spacing.md,
-      paddingHorizontal: theme.spacing.sm * atvScale,
+      paddingTop: tvS(12),
+      paddingBottom: tvS(12),
+      paddingHorizontal: tvS(8),
     },
     tvGridHeaderTitle: {
       ...theme.typography.title.lg,
@@ -3056,102 +3040,97 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridHeaderDescription: {
       ...theme.typography.body.lg,
       color: theme.colors.text.secondary,
-      marginTop: theme.spacing.xs * atvScale,
-      marginBottom: theme.spacing.xs * atvScale,
-      // Keep description size larger on non-tvOS TV
+      marginTop: tvS(4),
+      marginBottom: tvS(4),
     },
     tvGridToggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: theme.spacing.xl * atvScale,
-      minHeight: 56 * atvScale,
-      borderRadius: theme.radius.md * atvScale,
-      paddingHorizontal: theme.spacing.md * atvScale,
+      marginTop: tvS(24),
+      minHeight: tvS(56),
+      borderRadius: tvS(8),
+      paddingHorizontal: tvS(12),
     },
     tvGridToggleRowFocused: {
       // Focus is now on the switch itself
     },
     tvGridToggleLabel: {
       flex: 1,
-      gap: theme.spacing.xs * atvScale,
+      gap: tvS(4),
     },
     tvGridToggleLabelText: {
       ...theme.typography.title.md,
       color: theme.colors.text.primary,
       fontWeight: '600',
-      minWidth: 220 * atvScale,
-      marginLeft: theme.spacing.lg * atvScale,
-      ...(isNonTvosTV && { fontSize: theme.typography.title.md.fontSize * 0.9 }),
+      minWidth: tvS(220),
+      marginLeft: tvS(16),
     },
     tvGridToggleSwitchFocused: {
-      transform: [{ scale: isNonTvosTV ? 0.9 : 1.3 }],
+      transform: [{ scale: vh < 1 ? Math.max(0.8, vh) : 1.3 }],
     },
     tvGridToggleDescription: {
       ...theme.typography.body.md,
       color: theme.colors.text.secondary,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.md.fontSize * atvScale }),
     },
     tvGridDropdownRow: {
       backgroundColor: theme.colors.background.surface,
-      borderRadius: theme.radius.lg * atvScale,
-      padding: theme.spacing.lg * atvScale,
-      borderWidth: isNonTvosTV ? 1.5 : 2,
+      borderRadius: tvS(12),
+      padding: tvS(16),
+      borderWidth: Math.max(1, tvS(2)),
       borderColor: theme.colors.border.subtle,
-      gap: theme.spacing.md * atvScale,
+      gap: tvS(12),
     },
     tvGridDropdownLabel: {
       ...theme.typography.body.lg,
       color: theme.colors.text.primary,
-      ...(isNonTvosTV && { fontSize: theme.typography.body.lg.fontSize * atvScale }),
     },
     tvGridDropdownOptions: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.sm * atvScale,
+      gap: tvS(8),
     },
     tvGridDropdownRowInline: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.lg * atvScale,
-      marginTop: theme.spacing.xl * atvScale,
+      gap: tvS(16),
+      marginTop: tvS(24),
     },
     tvGridDropdownOptionsInline: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.sm * atvScale,
+      gap: tvS(8),
       flex: 1,
       justifyContent: 'flex-end',
     },
     tvGridButtonRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: theme.spacing.md * atvScale,
-      paddingVertical: theme.spacing.sm * atvScale,
+      gap: tvS(12),
+      paddingVertical: tvS(8),
     },
     // TV Grid container - fills the entire available space from the top
     tvGridContainer: {
       flex: 1,
     },
     tvScrollContent: {
-      paddingBottom: theme.spacing['2xl'],
+      paddingBottom: tvS(32),
     },
     // TV Grid title styles (part of virtualized grid)
     tvGridTitleRow: {
-      paddingBottom: theme.spacing.md * atvScale,
+      paddingBottom: tvS(12),
     },
     tvGridTitle: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
-      ...(isNonTvosTV && { fontSize: theme.typography.title.xl.fontSize * atvScale }),
     },
     // TV Grid tab row styles (part of virtualized grid)
     tvGridTabRow: {
-      paddingBottom: theme.spacing.lg * atvScale,
+      paddingBottom: tvS(16),
     },
     tvGridTabBar: {
       flexDirection: 'row',
-      gap: theme.spacing.sm * atvScale,
+      gap: tvS(8),
       flexWrap: 'wrap',
     },
     // Row container style for settings grid (used with ScrollView)
@@ -3159,7 +3138,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     tvGridRowContainer: isTV
       ? {
           width: (screenWidth - tvEdgeBufferHorizontal * 2 - tvPadding * 2) * 0.6,
-          gap: isNonTvosTV ? theme.spacing.sm : theme.spacing.xs,
+          gap: tvS(4),
         }
       : {},
     // Full width style for grid items (needed because virtualized grid item wrappers don't have width)
@@ -3170,22 +3149,22 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       : { width: '100%' },
     // Spacing between grid items
     tvGridItemSpacing: {
-      marginBottom: isNonTvosTV ? theme.spacing.xs : theme.spacing.sm,
+      marginBottom: tvS(8),
     },
     tvGridItemSpacingCompact: {
       marginBottom: 1,
     },
     tvGridCustomToggle: {
-      width: isNonTvosTV ? 50 * atvScale * 0.8 : 50,
-      height: isNonTvosTV ? 30 * atvScale * 0.8 : 30,
-      borderRadius: isNonTvosTV ? 15 * atvScale * 0.8 : 15,
+      width: tvS(50),
+      height: tvS(30),
+      borderRadius: tvS(15),
       justifyContent: 'center',
-      padding: 2 * atvScale,
+      padding: tvS(2),
     },
     tvGridCustomToggleThumb: {
-      width: isNonTvosTV ? 26 * atvScale * 0.8 : 26,
-      height: isNonTvosTV ? 26 * atvScale * 0.8 : 26,
-      borderRadius: isNonTvosTV ? 13 * atvScale * 0.8 : 13,
+      width: tvS(26),
+      height: tvS(26),
+      borderRadius: tvS(13),
       backgroundColor: theme.colors.text.inverse,
     },
   });
