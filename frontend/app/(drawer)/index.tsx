@@ -2195,8 +2195,8 @@ function IndexScreen() {
       // Handle explore cards
       if (typeof card.id === 'string' && card.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = card.id.replace(EXPLORE_CARD_ID_PREFIX, '');
-        // All explore cards now navigate to watchlist with shelf parameter
-        router.push(shelfId === 'watchlist' ? '/watchlist' : `/watchlist?shelf=${shelfId}`);
+        // All explore cards now navigate to shelf (root stack) for swipe-back support
+        router.push(shelfId === 'watchlist' ? '/shelf' : `/shelf?shelf=${shelfId}`);
         return;
       }
 
@@ -2272,8 +2272,8 @@ function IndexScreen() {
       // Handle explore cards
       if (typeof item.id === 'string' && item.id.startsWith(EXPLORE_CARD_ID_PREFIX)) {
         const shelfId = item.id.replace(EXPLORE_CARD_ID_PREFIX, '');
-        // All explore cards now navigate to watchlist with shelf parameter
-        router.push(shelfId === 'watchlist' ? '/watchlist' : `/watchlist?shelf=${shelfId}`);
+        // All explore cards now navigate to shelf (root stack) for swipe-back support
+        router.push(shelfId === 'watchlist' ? '/shelf' : `/shelf?shelf=${shelfId}`);
         return;
       }
 
@@ -3510,7 +3510,8 @@ function VirtualizedShelf({
   const showUnwatchedCount = badgeVisibility?.includes('unwatchedCount') ?? false;
   const containerRef = React.useRef<RNView | null>(null);
   const isEmpty = cards.length === 0;
-  const shouldCollapse = Boolean(collapseIfEmpty && isEmpty);
+  // Don't collapse while still loading — preserve shelf position for spatial nav ordering
+  const shouldCollapse = Boolean(collapseIfEmpty && isEmpty && !showEmptyState);
   const lastItemIndexRef = React.useRef<number>(cards.length - 1);
   lastItemIndexRef.current = cards.length - 1;
 
@@ -3623,7 +3624,7 @@ function VirtualizedShelf({
       </View>
       {shouldShowEmptyState ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyCardText}>Nothing to show yet</Text>
+          <Text style={styles.emptyCardText}>{collapseIfEmpty ? 'Loading...' : 'Nothing to show yet'}</Text>
         </View>
       ) : (
         <View style={{ height: rowHeight }}>
@@ -4187,7 +4188,6 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       fontSize: isAndroidTV ? Math.round(theme.typography.caption.sm.fontSize * 1.87 * tvScale) : isTV ? Math.round(theme.typography.caption.sm.fontSize * 1.1 * tvScale) : theme.typography.caption.sm.fontSize,
       color: theme.colors.text.secondary,
       fontWeight: '300',
-      fontStyle: 'italic',
     },
     // Progress bar styles (at bottom of landscape card)
     unreleasedBadge: {

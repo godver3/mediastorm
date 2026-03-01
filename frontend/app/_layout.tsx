@@ -157,6 +157,15 @@ function AuthGate() {
                                     }}
                                   />
                                   <Stack.Screen
+                                    name="shelf"
+                                    options={{
+                                      headerShown: false,
+                                      gestureEnabled: hasTouchSupport,
+                                      gestureDirection: 'horizontal',
+                                      animation: hasTouchSupport ? 'slide_from_right' : 'none',
+                                    }}
+                                  />
+                                  <Stack.Screen
                                     name="player"
                                     options={{
                                       presentation: Platform.isTV ? 'card' : 'fullScreenModal',

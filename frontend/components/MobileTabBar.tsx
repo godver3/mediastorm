@@ -67,7 +67,7 @@ const getActiveTabFromPath = (pathname: string | null): TabKey | undefined => {
     return 'search';
   }
 
-  if (pathname.startsWith('/(drawer)/lists') || pathname.startsWith('/(drawer)/watchlist')) {
+  if (pathname.startsWith('/(drawer)/lists') || pathname.startsWith('/(drawer)/watchlist') || pathname.startsWith('/shelf')) {
     return 'lists';
   }
 
