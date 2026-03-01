@@ -42,7 +42,7 @@ module.exports = ({ config }) => {
       'expo-build-properties',
       {
         android: {
-          minSdkVersion: 26,
+          minSdkVersion: isTV ? 25 : 26,
           targetSdkVersion: 34,
           usesCleartextTraffic: true,
           // Build optimizations for smaller APK and better performance on low-end devices
