@@ -2,6 +2,12 @@ package models
 
 // Basic metadata structures for titles and images.
 
+// LanguageAlias is a language-tagged alternate title (e.g. from TVDB aliases).
+type LanguageAlias struct {
+	Name     string
+	Language string // ISO 639-2/B code, e.g. "eng", "jpn"
+}
+
 type Image struct {
 	URL    string `json:"url"`
 	Type   string `json:"type"` // poster, backdrop, logo

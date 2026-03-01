@@ -1669,6 +1669,52 @@ func (s *Service) FetchAliases(mediaType string, tvdbID int64) []string {
 	return s.fetchTVDBAliases(mediaType, tvdbID)
 }
 
+// FetchAliasesWithLanguage returns all known alternate names with their language codes.
+func (s *Service) FetchAliasesWithLanguage(mediaType string, tvdbID int64) []models.LanguageAlias {
+	return s.fetchTVDBAliasesWithLanguage(mediaType, tvdbID)
+}
+
+func (s *Service) fetchTVDBAliasesWithLanguage(mediaType string, tvdbID int64) []models.LanguageAlias {
+	if s.client == nil || s.cache == nil || tvdbID <= 0 {
+		return nil
+	}
+
+	kind := "series"
+	fetch := func(id int64) ([]tvdbAlias, error) {
+		return s.client.seriesAliases(id)
+	}
+	if strings.ToLower(strings.TrimSpace(mediaType)) == "movie" {
+		kind = "movie"
+		fetch = func(id int64) ([]tvdbAlias, error) {
+			return s.client.movieAliases(id)
+		}
+	}
+
+	key := cacheKey("tvdb", "aliases_lang", kind, strconv.FormatInt(tvdbID, 10))
+	var cached []models.LanguageAlias
+	if ok, _ := s.cache.get(key, &cached); ok {
+		return cached
+	}
+
+	aliases, err := fetch(tvdbID)
+	if err != nil {
+		log.Printf("[metadata] %s aliases_lang fetch failed tvdbId=%d err=%v", kind, tvdbID, err)
+		return nil
+	}
+
+	result := make([]models.LanguageAlias, 0, len(aliases))
+	for _, alias := range aliases {
+		trimmed := strings.TrimSpace(alias.Name)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, models.LanguageAlias{Name: trimmed, Language: strings.TrimSpace(alias.Language)})
+	}
+
+	_ = s.cache.set(key, result)
+	return result
+}
+
 func (s *Service) fetchTVDBAliases(mediaType string, tvdbID int64) []string {
 	if s.client == nil || s.cache == nil || tvdbID <= 0 {
 		return nil

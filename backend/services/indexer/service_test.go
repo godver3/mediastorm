@@ -278,18 +278,31 @@ func (m *mockMetadataSearchOnly) Search(_ context.Context, _ string, _ string) (
 	return m.results, nil
 }
 
-// mockMetadataWithAliases implements both Search and FetchAliases.
+// mockMetadataWithAliases implements both Search, FetchAliases, and FetchAliasesWithLanguage.
 type mockMetadataWithAliases struct {
-	results []models.SearchResult
-	aliases map[int64][]string // tvdbID -> aliases
+	results    []models.SearchResult
+	aliases    map[int64][]string               // tvdbID -> aliases (for FetchAliases)
+	langAliases map[int64][]models.LanguageAlias // tvdbID -> language-tagged aliases
 }
 
 func (m *mockMetadataWithAliases) Search(_ context.Context, _ string, _ string) ([]models.SearchResult, error) {
 	return m.results, nil
 }
 
-func (m *mockMetadataWithAliases) FetchAliases(mediaType string, tvdbID int64) []string {
+func (m *mockMetadataWithAliases) FetchAliases(_ string, tvdbID int64) []string {
 	return m.aliases[tvdbID]
+}
+
+func (m *mockMetadataWithAliases) FetchAliasesWithLanguage(_ string, tvdbID int64) []models.LanguageAlias {
+	if m.langAliases != nil {
+		return m.langAliases[tvdbID]
+	}
+	// Fallback: convert plain aliases to LanguageAlias with empty language
+	var result []models.LanguageAlias
+	for _, a := range m.aliases[tvdbID] {
+		result = append(result, models.LanguageAlias{Name: a})
+	}
+	return result
 }
 
 func TestResolveAlternateTitles_WithoutAliases(t *testing.T) {
@@ -317,7 +330,7 @@ func TestResolveAlternateTitles_WithoutAliases(t *testing.T) {
 		Query:     "Formula 1: Drive to Survive S08E04",
 		MediaType: "series",
 		Year:      2019,
-	})
+	}, "eng", 0)
 
 	// Should have the Croatian alternate from search translations
 	if len(aliases) != 1 {
@@ -360,7 +373,7 @@ func TestResolveAlternateTitles_WithAliases(t *testing.T) {
 		Query:     "Formula 1: Drive to Survive S08E04",
 		MediaType: "series",
 		Year:      2019,
-	})
+	}, "eng", 0)
 
 	// Should have Croatian from search + French and Spanish from TVDB aliases
 	// (Croatian dupe should be deduplicated)
@@ -401,7 +414,7 @@ func TestResolveAlternateTitles_NoTVDBID(t *testing.T) {
 	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
 		Query:     "Some Show S01E01",
 		MediaType: "series",
-	})
+	}, "eng", 0)
 
 	// Should only have the original name alias from search
 	if len(aliases) != 1 {
@@ -409,5 +422,160 @@ func TestResolveAlternateTitles_NoTVDBID(t *testing.T) {
 	}
 	if aliases[0] != "Un Spectacle" {
 		t.Errorf("expected original name alias, got %q", aliases[0])
+	}
+}
+
+func TestResolveAlternateTitles_LanguageOrdering(t *testing.T) {
+	// Aliases matching the user's metadata language should come before others.
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:      "Gargantia on the Verdurous Planet",
+					TVDBID:    99999,
+					MediaType: "series",
+					Year:      2013,
+				},
+			},
+		},
+		langAliases: map[int64][]models.LanguageAlias{
+			99999: {
+				{Name: "翠星のガルガンティア", Language: "jpn"},
+				{Name: "Gargantia", Language: "eng"},
+				{Name: "가르간티아", Language: "kor"},
+				{Name: "Gargantia sur la planète verte", Language: "fra"},
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Gargantia on the Verdurous Planet S01E01",
+		MediaType: "series",
+		Year:      2013,
+	}, "eng", 0)
+
+	// "Gargantia" (eng) should appear before jpn/kor/fra aliases
+	if len(aliases) != 4 {
+		t.Fatalf("expected 4 aliases, got %d: %v", len(aliases), aliases)
+	}
+	if aliases[0] != "Gargantia" {
+		t.Errorf("expected English alias first, got %q", aliases[0])
+	}
+}
+
+func TestResolveAlternateTitles_Cap(t *testing.T) {
+	// When maxAlternates > 0, aliases should be capped.
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:         "Gargantia on the Verdurous Planet",
+					OriginalName: "翠星のガルガンティア",
+					TVDBID:       99999,
+					MediaType:    "series",
+					Year:         2013,
+				},
+			},
+		},
+		langAliases: map[int64][]models.LanguageAlias{
+			99999: {
+				{Name: "Gargantia", Language: "eng"},
+				{Name: "가르간티아", Language: "kor"},
+				{Name: "Gargantia sur la planète verte", Language: "fra"},
+				{Name: "Гаргантия", Language: "rus"},
+				{Name: "גרגנטיה", Language: "heb"},
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Gargantia on the Verdurous Planet S01E01",
+		MediaType: "series",
+		Year:      2013,
+	}, "eng", 3)
+
+	// OriginalName (翠星のガルガンティア) + eng match (Gargantia) + next one = 3
+	if len(aliases) != 3 {
+		t.Fatalf("expected 3 aliases after cap, got %d: %v", len(aliases), aliases)
+	}
+}
+
+func TestResolveAlternateTitles_CapZeroUnlimited(t *testing.T) {
+	// Cap of 0 means unlimited — all aliases should be returned.
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:      "Test Show",
+					TVDBID:    11111,
+					MediaType: "series",
+				},
+			},
+		},
+		langAliases: map[int64][]models.LanguageAlias{
+			11111: {
+				{Name: "Alias A", Language: "eng"},
+				{Name: "Alias B", Language: "fra"},
+				{Name: "Alias C", Language: "deu"},
+				{Name: "Alias D", Language: "jpn"},
+				{Name: "Alias E", Language: "kor"},
+				{Name: "Alias F", Language: "rus"},
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Test Show S01E01",
+		MediaType: "series",
+	}, "eng", 0)
+
+	if len(aliases) != 6 {
+		t.Fatalf("expected 6 aliases (unlimited), got %d: %v", len(aliases), aliases)
+	}
+}
+
+func TestResolveAlternateTitles_LanguagePriorityWithCap(t *testing.T) {
+	// Language-matched aliases should survive capping over non-matched ones.
+	mock := &mockMetadataWithAliases{
+		results: []models.SearchResult{
+			{
+				Title: models.Title{
+					Name:      "Some Anime",
+					TVDBID:    22222,
+					MediaType: "series",
+					Year:      2020,
+				},
+			},
+		},
+		langAliases: map[int64][]models.LanguageAlias{
+			22222: {
+				{Name: "Chinese Title", Language: "zho"},
+				{Name: "Korean Title", Language: "kor"},
+				{Name: "English Title", Language: "eng"},
+				{Name: "French Title", Language: "fra"},
+				{Name: "Russian Title", Language: "rus"},
+			},
+		},
+	}
+
+	svc := &Service{metadata: mock}
+	aliases := svc.resolveAlternateTitles(context.Background(), SearchOptions{
+		Query:     "Some Anime S01E01",
+		MediaType: "series",
+		Year:      2020,
+	}, "eng", 2)
+
+	if len(aliases) != 2 {
+		t.Fatalf("expected 2 aliases after cap, got %d: %v", len(aliases), aliases)
+	}
+	// English should be first (language match), then Chinese (first non-match)
+	if aliases[0] != "English Title" {
+		t.Errorf("expected English alias first (language priority), got %q", aliases[0])
+	}
+	if aliases[1] != "Chinese Title" {
+		t.Errorf("expected Chinese alias second, got %q", aliases[1])
 	}
 }

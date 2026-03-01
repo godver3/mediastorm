@@ -272,6 +272,11 @@ var SettingsSchema = map[string]interface{}{
 				"label":       "Search Timeout (seconds)",
 				"description": "Maximum time to wait for indexer/scraper searches (default: 5). Increase if using Aiostreams, which may need more time to respond.",
 			},
+			"maxAlternateTitleSearches": map[string]interface{}{
+				"type":        "number",
+				"label":       "Max Alternate Title Searches",
+				"description": "Maximum alternate/international titles to search per item (0 = unlimited). Titles matching your metadata language are prioritized.",
+			},
 		},
 	},
 	"debridProviders": map[string]interface{}{

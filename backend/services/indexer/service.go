@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -96,6 +97,7 @@ type (
 	// to provide full TVDB aliases (international titles) for a given title.
 	metadataAliasService interface {
 		FetchAliases(mediaType string, tvdbID int64) []string
+		FetchAliasesWithLanguage(mediaType string, tvdbID int64) []models.LanguageAlias
 	}
 )
 
@@ -107,6 +109,12 @@ type Service struct {
 	metadata       metadataSearchService
 	userSettings   userSettingsProvider
 	clientSettings clientSettingsProvider
+
+	// Usenet search call counters for diagnostics (atomic, safe for concurrent use).
+	// Grep logs for [search-stats] to see totals during playback.
+	searchCount        atomic.Int64 // top-level Search calls (manual search)
+	searchSplitCount   atomic.Int64 // top-level SearchSplit calls (prequeue)
+	usenetAPICallCount atomic.Int64 // individual usenet/torznab indexer API calls
 }
 
 func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSvc debridSearchService) *Service {
@@ -474,6 +482,9 @@ type SearchOptions struct {
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
 	searchStart := time.Now()
+	callNum := s.searchCount.Add(1)
+	log.Printf("[search-stats] Search #%d started (query=%q, mediaType=%q, user=%q, client=%q)",
+		callNum, opts.Query, opts.MediaType, opts.UserID, opts.ClientID)
 	log.Printf("[indexer] TIMING: Search started for query=%q mediaType=%q", opts.Query, opts.MediaType)
 
 	if s.cfg == nil {
@@ -507,7 +518,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
 
-	alternateTitles := s.resolveAlternateTitles(ctx, opts)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, settings.Metadata.Language, settings.Streaming.MaxAlternateTitleSearches)
 	if len(alternateTitles) > 0 {
 		log.Printf("[indexer] resolved %d alternate title(s) for %q: %v", len(alternateTitles), opts.Query, alternateTitles)
 	}
@@ -722,6 +733,9 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	}
 
 	log.Printf("[indexer] TIMING: Search complete, returning %d results (TOTAL: %v)", len(aggregated), time.Since(searchStart))
+	log.Printf("[search-stats] Search #%d complete: %d results in %v (totals: search=%d, splitSearch=%d, usenetAPICalls=%d)",
+		callNum, len(aggregated), time.Since(searchStart),
+		s.searchCount.Load(), s.searchSplitCount.Load(), s.usenetAPICallCount.Load())
 	return aggregated, nil
 }
 
@@ -736,6 +750,10 @@ type SplitSearchResult struct {
 // This allows the caller to process debrid results immediately while usenet search continues.
 // The caller is responsible for draining both channels to avoid goroutine leaks.
 func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridChan <-chan SplitSearchResult, usenetChan <-chan SplitSearchResult) {
+	callNum := s.searchSplitCount.Add(1)
+	log.Printf("[search-stats] SearchSplit #%d started (query=%q, mediaType=%q, user=%q, client=%q)",
+		callNum, opts.Query, opts.MediaType, opts.UserID, opts.ClientID)
+
 	debridOut := make(chan SplitSearchResult, 1)
 	usenetOut := make(chan SplitSearchResult, 1)
 
@@ -766,7 +784,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		}
 	}
 
-	alternateTitles := s.resolveAlternateTitles(ctx, opts)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, settings.Metadata.Language, settings.Streaming.MaxAlternateTitleSearches)
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 
@@ -949,7 +967,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	return debridOut, usenetOut
 }
 
-func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions) []string {
+func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions, metadataLang string, maxAlternates int) []string {
 	if s.metadata == nil {
 		return nil
 	}
@@ -1024,10 +1042,29 @@ func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions
 	// Fetch full TVDB aliases (international titles) if the metadata service
 	// supports it. The search API translations are often incomplete — the
 	// aliases endpoint has all known alternate titles across languages.
+	// Aliases matching the user's metadata language are added first.
 	if aliasSvc, ok := s.metadata.(metadataAliasService); ok && chosen.TVDBID > 0 {
-		for _, a := range aliasSvc.FetchAliases(chosen.MediaType, chosen.TVDBID) {
+		langAliases := aliasSvc.FetchAliasesWithLanguage(chosen.MediaType, chosen.TVDBID)
+		lang := strings.ToLower(strings.TrimSpace(metadataLang))
+		var langMatched, others []string
+		for _, la := range langAliases {
+			if lang != "" && strings.ToLower(strings.TrimSpace(la.Language)) == lang {
+				langMatched = append(langMatched, la.Name)
+			} else {
+				others = append(others, la.Name)
+			}
+		}
+		for _, a := range langMatched {
 			add(a)
 		}
+		for _, a := range others {
+			add(a)
+		}
+	}
+
+	if maxAlternates > 0 && len(aliases) > maxAlternates {
+		log.Printf("[indexer] capping alternate titles from %d to %d for %q", len(aliases), maxAlternates, opts.Query)
+		aliases = aliases[:maxAlternates]
 	}
 
 	if len(aliases) == 0 {
@@ -1497,6 +1534,9 @@ type torznabAttr struct {
 }
 
 func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
+	apiCallNum := s.usenetAPICallCount.Add(1)
+	log.Printf("[search-stats] usenet API call #%d to indexer=%q (query=%q)", apiCallNum, idx.Name, opts.Query)
+
 	endpoint := strings.TrimSpace(idx.URL)
 	if endpoint == "" {
 		return nil, fmt.Errorf("indexer %s missing url", idx.Name)

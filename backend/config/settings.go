@@ -135,6 +135,7 @@ type StreamingSettings struct {
 	MultiProviderMode           MultiProviderMode        `json:"multiProviderMode,omitempty"`     // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec  int                      `json:"usenetResolutionTimeoutSec"`      // Timeout for usenet content resolution in seconds (0 = no limit)
 	IndexerTimeoutSec           int                      `json:"indexerTimeoutSec"`               // Timeout for indexer/scraper searches in seconds (default: 5)
+	MaxAlternateTitleSearches   int                      `json:"maxAlternateTitleSearches"`       // Max alternate/international titles to search per item (0 = unlimited)
 }
 
 // SearchMode determines how scraper/indexer results are aggregated
@@ -614,7 +615,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
