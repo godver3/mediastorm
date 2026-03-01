@@ -3368,27 +3368,13 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 				return
 			}
 		} else if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-			// We're responsible for extracting this track
-			log.Printf("[hls] subtitle track %d not pre-extracted, attempting on-demand extraction for session %s", requestedTrack, sessionID)
-			extractErr := m.extractSubtitleTrackToVTT(session, requestedTrack, vttPath)
-
-			// Clear the extraction flag
-			session.subtitleExtractionMu.Lock()
-			delete(session.subtitleExtracting, requestedTrack)
-			session.subtitleExtractionMu.Unlock()
-
-			if extractErr != nil {
-				log.Printf("[hls] failed to extract subtitle track %d: %v", requestedTrack, extractErr)
-				// Return empty VTT instead of error to avoid breaking playback
-				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Write([]byte("WEBVTT\n\n"))
-				return
-			}
-
-			// Wait a moment for filesystem to flush (race condition fix)
-			time.Sleep(50 * time.Millisecond)
+			// Subtitle extraction disabled — the player handles subtitles natively.
+			log.Printf("[hls] subtitle track %d not available, returning empty VTT for session %s", requestedTrack, sessionID)
+			w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Write([]byte("WEBVTT\n\n"))
+			return
 		}
 	}
 

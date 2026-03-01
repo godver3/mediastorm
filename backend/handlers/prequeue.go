@@ -1272,6 +1272,13 @@ func (h *PrequeueHandler) StartSubtitles(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("[prequeue] StartSubtitles called for %s with startOffset=%.3f", prequeueID, req.StartOffset)
 
+	// Subtitle extraction disabled — the player handles subtitles natively.
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(StartSubtitlesResponse{
+		SubtitleSessions: make(map[int]*models.SubtitleSessionInfo),
+	})
+	return
+
 	// Get the prequeue entry
 	entry, exists := h.store.Get(prequeueID)
 	if !exists {

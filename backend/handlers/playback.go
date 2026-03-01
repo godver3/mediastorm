@@ -70,32 +70,10 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[playback-handler] TIMING: resolve complete (took: %v)", time.Since(handlerStart))
 
-	// Pre-extract subtitles for direct streaming (non-HLS) path
-	if h.SubtitleExtractor != nil && h.VideoProber != nil && resolution.WebDAVPath != "" {
-		log.Printf("[playback-handler] Probing subtitle streams for pre-extraction")
-		probeResult, probeErr := h.VideoProber.ProbeVideoFull(r.Context(), resolution.WebDAVPath)
-		if probeErr != nil {
-			log.Printf("[playback-handler] Probe failed (non-fatal): %v", probeErr)
-		} else if probeResult != nil && len(probeResult.SubtitleStreams) > 0 {
-			// Check if this is DV/HDR10 content (which requires HLS for video transcoding)
-			// Note: TrueHD audio alone doesn't require HLS - player can handle it natively
-			// So we still pre-extract subtitles for TrueHD content
-			needsHLS := probeResult.HasDolbyVision || probeResult.HasHDR10
-			if !needsHLS {
-				// Use background context so extraction continues after HTTP response is sent
-				// The request context would cancel extraction when the response completes
-				resolution.SubtitleSessions = StartSubtitleExtraction(
-					context.Background(),
-					h.SubtitleExtractor,
-					resolution.WebDAVPath,
-					probeResult.SubtitleStreams,
-					request.StartOffset,
-				)
-			} else {
-				log.Printf("[playback-handler] DV/HDR10 content detected, skipping subtitle pre-extraction (will use HLS sidecar)")
-			}
-		}
-	}
+	// Subtitle pre-extraction disabled — the player handles subtitles natively.
+	// The old extraction path opened concurrent connections to the streaming provider,
+	// which caused TCP socket exhaustion and playback failures.
+	// if h.SubtitleExtractor != nil && h.VideoProber != nil && resolution.WebDAVPath != "" { ... }
 
 	log.Printf("[playback-handler] TIMING: handler complete (TOTAL: %v)", time.Since(handlerStart))
 	w.Header().Set("Content-Type", "application/json")
