@@ -5516,6 +5516,75 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 	return results, filteredTotal, unfilteredTotal, nil
 }
 
+// CuratedItem represents a single item in a curated list provided by the caller.
+type CuratedItem struct {
+	Title     string `json:"title"`
+	Year      int    `json:"year"`
+	IMDBID    string `json:"imdbId"`
+	MediaType string `json:"mediaType"`
+}
+
+// GetCuratedList enriches a caller-provided list of curated items (identified by
+// IMDB ID) and returns them as TrendingItems, using the same concurrent enrichment
+// pipeline as custom MDBList lists.
+func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label string) ([]models.TrendingItem, error) {
+	// Convert CuratedItems into mdblistItems for the shared enrichment pipeline
+	mdbItems := make([]mdblistItem, len(items))
+	ids := make([]string, len(items))
+	for i, ci := range items {
+		mdbItems[i] = mdblistItem{
+			Rank:        i,
+			IMDBID:      ci.IMDBID,
+			Title:       ci.Title,
+			ReleaseYear: ci.Year,
+			MediaType:   ci.MediaType,
+		}
+		ids[i] = ci.IMDBID
+	}
+
+	// Build a deterministic cache key from sorted IMDB IDs + language
+	sort.Strings(ids)
+	sortedImdbIds := strings.Join(ids, ",")
+	cacheID := cacheKey("curated", "v1", sortedImdbIds, s.client.language)
+
+	var cached []models.TrendingItem
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		log.Printf("[metadata] curated list cache hit for %q (%d items)", label, len(cached))
+		return cached, nil
+	}
+
+	// Register progress tracking
+	progressID := "curated-list:" + label
+	cleanup := s.startProgressTask(progressID, label, "enriching", len(mdbItems))
+	defer cleanup()
+
+	// Concurrent enrichment with 10-worker pool (same pattern as GetCustomList)
+	const maxConcurrentEnrich = 10
+	sem := make(chan struct{}, maxConcurrentEnrich)
+	var wg sync.WaitGroup
+	results := make([]models.TrendingItem, len(mdbItems))
+
+	for i, item := range mdbItems {
+		wg.Add(1)
+		go func(idx int, it mdblistItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx] = s.enrichCustomListItem(ctx, it)
+			s.incrementProgress(progressID)
+		}(i, item)
+	}
+	wg.Wait()
+
+	// Cache results
+	if len(results) > 0 {
+		_ = s.cache.set(cacheID, results)
+		log.Printf("[metadata] cached %d enriched items for curated list %q", len(results), label)
+	}
+
+	return results, nil
+}
+
 // ExtractTrailerStreamURL uses yt-dlp to extract a direct stream URL from a YouTube video.
 // The extracted URL is an MP4 that can be played directly by video players.
 func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) (string, error) {

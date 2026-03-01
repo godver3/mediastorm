@@ -193,6 +193,8 @@ func Register(
 	protected.HandleFunc("/discover/new", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/lists/custom", metadataHandler.CustomList).Methods(http.MethodGet)
 	protected.HandleFunc("/lists/custom", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/lists/curated", metadataHandler.CuratedList).Methods(http.MethodPost)
+	protected.HandleFunc("/lists/curated", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/discover/genre", metadataHandler.DiscoverByGenre).Methods(http.MethodGet)
 	protected.HandleFunc("/discover/genre", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations", metadataHandler.GetAIRecommendations).Methods(http.MethodGet)

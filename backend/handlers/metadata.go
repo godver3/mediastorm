@@ -38,6 +38,7 @@ type metadataService interface {
 	StreamTrailer(context.Context, string, io.Writer) error
 	StreamTrailerWithRange(context.Context, string, string, io.Writer) error
 	GetCustomList(ctx context.Context, listURL string, opts metadatapkg.CustomListOptions) ([]models.TrendingItem, int, int, error)
+	GetCuratedList(ctx context.Context, items []metadatapkg.CuratedItem, label string) ([]models.TrendingItem, error)
 	// Trailer prequeue methods for 1080p YouTube trailers
 	PrequeueTrailer(videoURL string) (string, error)
 	GetTrailerPrequeueStatus(id string) (*metadatapkg.TrailerPrequeueItem, error)
@@ -891,6 +892,37 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// CuratedList enriches a caller-provided list of items (POST with JSON body).
+func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Items []metadatapkg.CuratedItem `json:"items"`
+		Label string                    `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if len(req.Items) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "items must not be empty"})
+		return
+	}
+
+	items, err := h.Service.GetCuratedList(r.Context(), req.Items, req.Label)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"items": items})
 }
 
 // DiscoverByGenre returns TMDB discover results for a specific genre

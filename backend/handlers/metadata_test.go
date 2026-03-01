@@ -139,6 +139,10 @@ func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ metad
 	return nil, 0, 0, nil
 }
 
+func (f *fakeMetadataService) GetCuratedList(_ context.Context, _ []metadata.CuratedItem, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+
 func (f *fakeMetadataService) ExtractTrailerStreamURL(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
