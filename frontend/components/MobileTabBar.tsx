@@ -11,8 +11,11 @@ import { useTheme } from '@/theme';
 import { isTablet } from '@/theme/tokens/tvScale';
 
 import { useShouldUseTabs } from '../hooks/useShouldUseTabs';
+import { useBackendSettings } from './BackendSettingsContext';
 import { useNavVisibility, type NavTabKey } from './NavVisibilityContext';
 import { useUserProfiles } from './UserProfilesContext';
+
+type TabKey = 'index' | 'search' | 'lists' | 'live' | 'profiles' | 'downloads' | 'settings';
 
 const TAB_KEY_TO_NAV_KEY: Partial<Record<TabKey, NavTabKey>> = {
   index: 'home',
@@ -24,7 +27,8 @@ const TAB_KEY_TO_NAV_KEY: Partial<Record<TabKey, NavTabKey>> = {
   // 'settings' is intentionally omitted — always visible
 };
 
-type TabKey = 'index' | 'search' | 'lists' | 'live' | 'profiles' | 'downloads' | 'settings';
+// Routes that remain accessible when backend is unreachable
+const ALWAYS_ACCESSIBLE_ROUTES: TabKey[] = ['index', 'downloads', 'settings'];
 
 type TabItem = {
   key: TabKey;
@@ -94,6 +98,10 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
   const insets = useSafeAreaInsets();
   const { activeUser, getIconUrl } = useUserProfiles();
   const { isTabVisible } = useNavVisibility();
+  const { isBackendReachable, loading: settingsLoading, isReady: settingsReady } = useBackendSettings();
+
+  // Backend is considered available if reachable OR still loading initially
+  const isBackendAvailable = isBackendReachable || (settingsLoading && !settingsReady);
 
   // Debug logging for profile icon
   useEffect(() => {
@@ -123,8 +131,10 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
         return !navKey || isTabVisible(navKey);
       }).map((item) => {
         const isActive = currentTab === item.key;
+        const isDisabled = !isBackendAvailable && !ALWAYS_ACCESSIBLE_ROUTES.includes(item.key);
 
         const onPress = () => {
+          if (isDisabled) return;
           if (pathname === item.route) {
             return;
           }
@@ -143,9 +153,9 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
           <Pressable
             key={item.key}
             accessibilityRole="tab"
-            accessibilityState={{ selected: isActive }}
+            accessibilityState={{ selected: isActive, disabled: isDisabled }}
             onPress={onPress}
-            style={styles.tabButton}
+            style={[styles.tabButton, isDisabled && styles.tabButtonDisabled]}
             testID={`mobile-tab-${item.key}`}>
             {item.key === 'profiles' && activeUser ? (
               activeUser.hasIcon ? (
@@ -180,10 +190,10 @@ export function MobileTabBar({ activeTab }: MobileTabBarProps) {
               <MaterialCommunityIcons
                 name={item.icon}
                 size={TAB_ICON_SIZE}
-                color={isActive ? theme.colors.accent.primary : theme.colors.text.muted}
+                color={isDisabled ? theme.colors.text.disabled : isActive ? theme.colors.accent.primary : theme.colors.text.muted}
               />
             )}
-            <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]} numberOfLines={1}>
+            <Text style={[styles.tabLabel, isActive && styles.tabLabelActive, isDisabled && styles.tabLabelDisabled]} numberOfLines={1}>
               {item.label}
             </Text>
           </Pressable>
@@ -225,6 +235,9 @@ const createStyles = (theme: NovaTheme, bottomInset: number) => {
       paddingVertical: theme.spacing.xs,
       paddingHorizontal: 1,
     },
+    tabButtonDisabled: {
+      opacity: 0.35,
+    },
     tabLabel: {
       fontSize: 10,
       lineHeight: 13,
@@ -233,6 +246,9 @@ const createStyles = (theme: NovaTheme, bottomInset: number) => {
     },
     tabLabelActive: {
       color: theme.colors.accent.primary,
+    },
+    tabLabelDisabled: {
+      color: theme.colors.text.disabled,
     },
   });
 };

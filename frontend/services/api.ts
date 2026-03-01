@@ -1103,14 +1103,15 @@ class ApiService {
     return { ...headers } as Record<string, string>;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit & { timeout?: number } = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
-    const requestInit: RequestInit = { ...options };
-    const headerMap: Record<string, string> = this.mergeHeaders(options.headers);
+    const { timeout: customTimeout, ...fetchOptions } = options;
+    const requestInit: RequestInit = { ...fetchOptions };
+    const headerMap: Record<string, string> = this.mergeHeaders(fetchOptions.headers);
 
     // Don't set Content-Type for FormData - let the browser set it with boundary
-    const isFormData = options.body instanceof FormData;
+    const isFormData = fetchOptions.body instanceof FormData;
     if (!headerMap['Content-Type'] && !isFormData) {
       headerMap['Content-Type'] = 'application/json';
     }
@@ -1137,20 +1138,20 @@ class ApiService {
     requestInit.headers = headerMap;
 
     // Check if operation was aborted before making request
-    if (options.signal?.aborted) {
+    if (fetchOptions.signal?.aborted) {
       const error = new Error('Operation was aborted');
       error.name = 'AbortError';
       throw error;
     }
 
-    // Apply a default timeout (15s) if no AbortSignal was provided by the caller.
-    // This prevents fetch from hanging for 30-120s on unreachable hosts (e.g. the
-    // Android emulator address 10.0.2.2 on real devices).
+    // Apply a default timeout if no AbortSignal was provided by the caller.
+    // Default is 15s to prevent hanging on unreachable hosts (e.g. Android
+    // emulator address 10.0.2.2). Callers can override with the timeout option.
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (!requestInit.signal) {
       const controller = new AbortController();
       requestInit.signal = controller.signal;
-      timeoutId = setTimeout(() => controller.abort(), 15_000);
+      timeoutId = setTimeout(() => controller.abort(), customTimeout ?? 15_000);
     }
 
     const requestStartTime = DEBUG_API_TIMING ? performance.now() : 0;
@@ -1297,8 +1298,10 @@ class ApiService {
     const url = `/discover/new?${params.toString()}`;
     console.log('[API] getTrendingMovies URL:', url);
     // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
+    // Longer timeout: Trending() can take 20-30s on cold start during metadata enrichment
     const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       url,
+      { timeout: 45_000 },
     );
     console.log('[API] getTrendingMovies response: total=', response.total, 'items.length=', response.items?.length);
     // If limit was specified, return full response for pagination
@@ -1337,8 +1340,10 @@ class ApiService {
       params.set('hideWatched', 'true');
     }
     // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
+    // Longer timeout: Trending() can take 20-30s on cold start during metadata enrichment
     const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/discover/new?${params.toString()}`,
+      { timeout: 45_000 },
     );
     // If limit was specified, return full response for pagination
     if (limit && limit > 0) {
@@ -1698,7 +1703,9 @@ class ApiService {
     }
     const qs = params.toString();
     const url = `/users/${safeUserId}/startup${qs ? `?${qs}` : ''}`;
-    return this.request<StartupData>(url);
+    // Longer timeout: the startup bundle aggregates many backend calls including
+    // trending enrichment which can take 10-20s on cold start during metadata fetching.
+    return this.request<StartupData>(url, { timeout: 45_000 });
   }
 
   // Fetch all details-page data in a single request (bundle endpoint)
