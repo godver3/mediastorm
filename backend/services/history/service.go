@@ -2491,6 +2491,16 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 					}
 				}
 			}
+			// Also check if any shared external ID key has the same value
+			// (e.g. both have imdb: tt0115108 even though series IDs differ)
+			if !match && len(update.ExternalIDs) > 0 && len(existingProg.ExternalIDs) > 0 {
+				for k, v := range update.ExternalIDs {
+					if ev, ok := existingProg.ExternalIDs[k]; ok && ev == v {
+						match = true
+						break
+					}
+				}
+			}
 			if match {
 				existingProg.HiddenFromContinueWatching = false
 				perUser[existingKey] = existingProg
