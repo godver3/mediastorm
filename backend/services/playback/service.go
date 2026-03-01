@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"novastream/config"
@@ -48,6 +49,11 @@ type Service struct {
 	debrid      *debrid.PlaybackService
 	nzbSystem   *integration.NzbSystem
 	metadataSvc metadataService
+
+	// NZB fetch/process counters for diagnostics (atomic, safe for concurrent use).
+	// Grep logs for [search-stats] to see totals during playback.
+	nzbFetchCount   atomic.Int64 // NZB file downloads from indexers
+	nzbProcessCount atomic.Int64 // NZB files sent for immediate processing
 }
 
 var (
@@ -164,6 +170,9 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 
 	// Process NZB immediately without queuing
 	service := s.nzbSystem.ImporterService()
+	processNum := s.nzbProcessCount.Add(1)
+	log.Printf("[search-stats] NZB process #%d started (fileName=%q, totals: fetches=%d, processes=%d)",
+		processNum, fileName, s.nzbFetchCount.Load(), s.nzbProcessCount.Load())
 	log.Printf("[playback] processing NZB immediately fileName=%q", fileName)
 
 	// Apply usenet resolution timeout if configured
@@ -413,6 +422,9 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 
 	// Process NZB immediately without queuing
 	service := s.nzbSystem.ImporterService()
+	processNum := s.nzbProcessCount.Add(1)
+	log.Printf("[search-stats] NZB process #%d started (fileName=%q, totals: fetches=%d, processes=%d)",
+		processNum, result.FileName, s.nzbFetchCount.Load(), s.nzbProcessCount.Load())
 	log.Printf("[playback] processing NZB immediately fileName=%q", result.FileName)
 
 	// Apply usenet resolution timeout if configured
@@ -520,6 +532,8 @@ func (s *Service) QueueStatus(_ context.Context, queueID int64) (*models.Playbac
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
+	fetchNum := s.nzbFetchCount.Add(1)
+	log.Printf("[search-stats] NZB fetch #%d started (title=%q, indexer=%q)", fetchNum, strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Indexer))
 	log.Printf("[playback] fetching nzb url=%q title=%q", downloadURL, strings.TrimSpace(candidate.Title))
 
 	// Create a context with timeout for the entire fetch operation
