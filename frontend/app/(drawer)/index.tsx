@@ -3310,6 +3310,12 @@ const ShelfCardContent = React.memo(
                 trackingLabel={trackingLabel}
               />
             )}
+            {/* Year badge (top-right) */}
+            {card.year ? (
+              <View style={styles.landscapeYearBadge} pointerEvents="none">
+                <Text style={styles.landscapeYearText}>{card.year}</Text>
+              </View>
+            ) : null}
             {/* Desaturation overlay for unreleased episodes */}
             {card.isUnreleased && !isFocused && (
               <View style={styles.unreleasedOverlay} pointerEvents="none" />
@@ -3324,7 +3330,7 @@ const ShelfCardContent = React.memo(
                 style={styles.cardTextGradient}
               />
               <Text style={isAndroidTV ? styles.landscapeCardTitleAndroidTV : styles.landscapeCardTitle} numberOfLines={2}>
-                {card.title}{card.year ? <Text style={{ fontStyle: 'italic' }}>  {card.year}</Text> : null}
+                {card.title}
               </Text>
             </View>
             {/* Coming soon badge (top-right) */}
@@ -4165,6 +4171,23 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       color: theme.colors.text.secondary,
       textAlign: 'left',
       zIndex: 1,
+    },
+    landscapeYearBadge: {
+      position: 'absolute',
+      top: isTV ? theme.spacing.sm : theme.spacing.xs,
+      right: isTV ? theme.spacing.sm : theme.spacing.xs,
+      paddingHorizontal: isTV ? 8 : 6,
+      paddingVertical: isTV ? 3 : 2,
+      borderRadius: 8,
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
+      zIndex: 5,
+    },
+    landscapeYearText: {
+      ...(isTV ? theme.typography.caption.sm : theme.typography.caption.sm),
+      fontSize: isTV ? Math.round(theme.typography.caption.sm.fontSize * 1.1 * tvScale) : theme.typography.caption.sm.fontSize,
+      color: theme.colors.text.secondary,
+      fontWeight: '300',
+      fontStyle: 'italic',
     },
     // Progress bar styles (at bottom of landscape card)
     unreleasedBadge: {
