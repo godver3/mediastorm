@@ -553,6 +553,7 @@ export const launchNativePlayer = async (
     passthroughDescription?: string; // AIOStreams passthrough format: raw description
     preselectedAudioTrack?: number; // 0-based native player track index
     preselectedSubtitleTrack?: number; // 0-based native player track index
+    releaseDate?: string; // Release date for player display (aired date for TV, digital/theatrical for movies)
     useNativePlayer?: boolean; // Use NativePlayer (KSPlayer/MPV) instead of HLS
     userId?: string; // For native Android TV player progress reporting
     // Video/audio stream metadata (for native Android TV player controls)
@@ -597,6 +598,7 @@ export const launchNativePlayer = async (
     passthroughDescription,
     preselectedAudioTrack,
     preselectedSubtitleTrack,
+    releaseDate,
     useNativePlayer: useNativePlayerOption,
     userId,
     resolution,
@@ -658,6 +660,7 @@ export const launchNativePlayer = async (
       ...(preExtractedSubtitles ? { preExtractedSubtitles } : {}),
       ...(passthroughName ? { passthroughName } : {}),
       ...(passthroughDescription ? { passthroughDescription } : {}),
+      ...(releaseDate ? { releaseDate } : {}),
       ...(typeof preselectedAudioTrack === 'number' && preselectedAudioTrack >= 0
         ? { preselectedAudioTrack: preselectedAudioTrack.toString() }
         : {}),
@@ -701,6 +704,7 @@ export const initiatePlayback = async (
     shuffleMode?: boolean;
     trackOverrides?: { audioTrack?: number; subtitleTrack?: number }; // Manual track selection override
     userId?: string; // For native Android TV player progress reporting
+    releaseDate?: string; // Release date for player display
   } = {},
 ) => {
   setSelectionError(null);

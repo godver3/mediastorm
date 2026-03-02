@@ -143,6 +143,7 @@ export default function PlayerScreen() {
     subtitleDebug: subtitleDebugParam,
     preselectedAudioTrack: preselectedAudioTrackParam,
     preselectedSubtitleTrack: preselectedSubtitleTrackParam,
+    releaseDate: releaseDateParam,
     passthroughName: passthroughNameParam,
     passthroughDescription: passthroughDescriptionParam,
     tvgId: tvgIdParam,
@@ -376,6 +377,10 @@ export default function PlayerScreen() {
   const episodeName = useMemo(() => {
     return Array.isArray(episodeNameParam) ? episodeNameParam[0] : episodeNameParam;
   }, [episodeNameParam]);
+
+  const releaseDate = useMemo(() => {
+    return Array.isArray(releaseDateParam) ? releaseDateParam[0] : releaseDateParam;
+  }, [releaseDateParam]);
 
   const titleId = useMemo(() => {
     return Array.isArray(titleIdParam) ? titleIdParam[0] : titleIdParam;
@@ -6199,6 +6204,7 @@ export default function PlayerScreen() {
                             onFilenameDisplayChange={setIsFilenameDisplayed}
                             hdrInfo={hdrInfo}
                             resolution={streamInfo?.resolution}
+                            releaseDate={releaseDate}
                             safeAreaInsets={safeAreaInsets}
                           />
                         </View>
@@ -6371,6 +6377,7 @@ export default function PlayerScreen() {
                         onShowStreamInfo={() => setMobileStreamInfoVisible(true)}
                         hdrInfo={hdrInfo}
                         resolution={streamInfo?.resolution}
+                        releaseDate={releaseDate}
                         safeAreaInsets={safeAreaInsets}
                       />
                     </View>

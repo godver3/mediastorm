@@ -47,6 +47,7 @@ export interface PlayerParams extends Record<string, any> {
   shuffleMode?: string; // Random episode playback mode
   preselectedAudioTrack?: string; // Track index already baked into HLS session by prequeue (relative index for native player)
   preselectedSubtitleTrack?: string; // Track index already baked into HLS session by prequeue (relative index for native player)
+  releaseDate?: string; // Release date string (aired date for TV, digital/theatrical for movies)
   passthroughName?: string; // AIOStreams passthrough format: raw display name
   passthroughDescription?: string; // AIOStreams passthrough format: raw description
   useNativePlayer?: string; // Use NativePlayer (KSPlayer/MPV) instead of HLS

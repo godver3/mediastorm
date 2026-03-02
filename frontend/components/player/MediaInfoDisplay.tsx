@@ -36,6 +36,7 @@ interface MediaInfoDisplayProps {
   onShowStreamInfo?: () => void; // Called when user taps on mobile to show stream info modal
   hdrInfo?: HdrInfo;
   resolution?: string; // Raw resolution (e.g., "3840x2160") - will be formatted to category
+  releaseDate?: string; // Release date string (aired date for TV, digital/theatrical for movies)
   safeAreaInsets?: SafeAreaInsets;
 }
 
@@ -100,6 +101,19 @@ const getResolutionColor = (resolution: string): { bg: string; text: string } =>
   }
 };
 
+const formatReleaseDate = (dateStr?: string): string | null => {
+  if (!dateStr) return null;
+  try {
+    // Parse ISO date string (e.g., "2024-03-15" or "2024-03-15T00:00:00Z")
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return null;
+    // Format as short date: "Mar 15, 2024"
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  } catch {
+    return null;
+  }
+};
+
 export default function MediaInfoDisplay({
   mediaType = 'movie',
   title,
@@ -115,6 +129,7 @@ export default function MediaInfoDisplay({
   onShowStreamInfo,
   hdrInfo,
   resolution,
+  releaseDate,
   safeAreaInsets,
 }: MediaInfoDisplayProps) {
   const theme = useTheme();
@@ -261,6 +276,7 @@ export default function MediaInfoDisplay({
   const hdrDisplay = buildHdrDisplay();
   const resolutionBadge = formatResolution(resolution);
   const resolutionColors = resolutionBadge ? getResolutionColor(resolutionBadge) : null;
+  const releaseDateFormatted = formatReleaseDate(releaseDate);
 
   // Allow more lines for filename display since they tend to be longer
   const maxLines = showFilename ? 3 : 2;
@@ -270,7 +286,7 @@ export default function MediaInfoDisplay({
   const isSDR = !hdrDisplay.badge;
 
   // Check if we have any badges to display (always true now since we show SDR)
-  const hasBadges = resolutionBadge || formatBadge;
+  const hasBadges = resolutionBadge || formatBadge || releaseDateFormatted;
 
   // Hide color info for native players (VLC/RNV) - only show for Expo/Web/System players
   const showColorInfo = playerImplementation !== 'React Native VLC' && playerImplementation !== 'React Native Video';
@@ -284,6 +300,11 @@ export default function MediaInfoDisplay({
         {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
         {hasBadges && (
           <View style={styles.badgesColumn}>
+            {releaseDateFormatted && (
+              <View style={styles.releaseDateBadgeContainer}>
+                <Text style={styles.releaseDateBadgeText}>{releaseDateFormatted}</Text>
+              </View>
+            )}
             <View style={isSDR ? styles.sdrBadgeContainer : styles.hdrBadgeContainer}>
               <Text style={isSDR ? styles.sdrBadgeText : styles.hdrBadgeText}>{formatBadge}</Text>
             </View>
@@ -307,6 +328,11 @@ export default function MediaInfoDisplay({
       {playerImplementation && <Text style={styles.playerImplementationText}>{playerImplementation}</Text>}
       {hasBadges && (
         <View style={styles.badgesColumn}>
+          {releaseDateFormatted && (
+            <View style={styles.releaseDateBadgeContainer}>
+              <Text style={styles.releaseDateBadgeText}>{releaseDateFormatted}</Text>
+            </View>
+          )}
           <View style={isSDR ? styles.sdrBadgeContainer : styles.hdrBadgeContainer}>
             <Text style={isSDR ? styles.sdrBadgeText : styles.hdrBadgeText}>{formatBadge}</Text>
           </View>
@@ -415,6 +441,19 @@ const createStyles = (
       color: '#fff',
       textAlign: 'center',
       letterSpacing: getScaledValue(0.5),
+    },
+    releaseDateBadgeContainer: {
+      backgroundColor: 'rgba(107, 114, 128, 0.85)',
+      paddingHorizontal: getScaledValue(8),
+      paddingVertical: getScaledValue(3),
+      borderRadius: getScaledValue(4),
+    },
+    releaseDateBadgeText: {
+      fontSize: getScaledValue(isWeb ? 10 : 11),
+      fontWeight: '600',
+      color: '#fff',
+      textAlign: 'center' as const,
+      letterSpacing: getScaledValue(0.3),
     },
     resolutionBadgeContainer: {
       paddingHorizontal: getScaledValue(8),

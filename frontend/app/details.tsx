@@ -943,6 +943,13 @@ export default function DetailsScreen() {
     return 'native';
   }, [userSettings?.playback?.preferredPlayer, settings?.playback?.preferredPlayer]);
 
+  // Compute release date for player display (movies only — TV uses episode aired date)
+  const movieReleaseDate = useMemo(() => {
+    if (isSeries || !movieDetails) return undefined;
+    // Prefer digital/physical release, fall back to theatrical
+    return movieDetails.homeRelease?.date || movieDetails.theatricalRelease?.date;
+  }, [isSeries, movieDetails]);
+
   const playback = usePlayback({
     titleId,
     title,
@@ -977,6 +984,7 @@ export default function DetailsScreen() {
     isDetailsPageActive,
     progressRefreshKey,
     setProgressRefreshKey,
+    releaseDate: movieReleaseDate,
   });
 
   // Bridge: stop trailer when content prequeue starts

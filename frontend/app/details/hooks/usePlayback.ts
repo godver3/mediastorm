@@ -154,6 +154,9 @@ export interface UsePlaybackParams {
   // Progress refresh (for re-fetch on return from player)
   progressRefreshKey: number;
   setProgressRefreshKey: React.Dispatch<React.SetStateAction<number>>;
+
+  // Release date for player display (movies: digital/theatrical, TV: from episode aired date)
+  releaseDate?: string;
 }
 
 export interface PlaybackResult {
@@ -281,6 +284,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
     isDetailsPageActive,
     progressRefreshKey,
     setProgressRefreshKey,
+    releaseDate,
   } = params;
 
   // -------------------------------------------------------------------------
@@ -1069,6 +1073,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
           profileName: activeUser?.name,
           shuffleMode: pendingShuffleModeRef.current || isShuffleMode,
           trackOverrides: overrides?.trackOverrides,
+          releaseDate: isSeries ? activeEpisode?.airedDate : releaseDate,
         },
       );
     },
@@ -1092,6 +1097,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
       imdbId,
       tvdbId,
       currentProgress,
+      releaseDate,
     ],
   );
 
@@ -1707,6 +1713,11 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
           ...(prequeueStatus.passthroughDescription
             ? { passthroughDescription: prequeueStatus.passthroughDescription }
             : {}),
+          // Release date for player display (aired date for TV, digital/theatrical for movies)
+          ...(() => {
+            const date = isSeries ? (activeEpisode || nextUpEpisode)?.airedDate : releaseDate;
+            return date ? { releaseDate: date } : {};
+          })(),
           // Native player flags for direct streaming (bypasses HLS)
           ...(isNativePlatform ? { useNativePlayer: '1' } : {}),
         },
@@ -1733,6 +1744,9 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
       trackOverrideSubtitle,
       activeUserId,
       activeUser,
+      activeEpisode,
+      nextUpEpisode,
+      releaseDate,
     ],
   );
 
@@ -2450,6 +2464,7 @@ export function usePlayback(params: UsePlaybackParams): PlaybackResult {
           tvdbId,
           seriesIdentifier,
           userId: activeUserId || undefined,
+          releaseDate: isSeries ? episodeForLocal?.airedDate : releaseDate,
           ...(pendingStartPercentRef.current != null
             ? { startPercent: pendingStartPercentRef.current }
             : pendingStartOffsetRef.current != null ? { startOffset: pendingStartOffsetRef.current } : {}),
