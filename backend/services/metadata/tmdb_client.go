@@ -274,7 +274,9 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 	if err != nil {
 		return nil, err
 	}
-	// Don't pass language param to get all images, then filter by preference
+	// Don't filter logos server-side — TMDB's include_image_language returns 0 results
+	// for many shows. Fetch all logos then filter client-side by language preference.
+	preferredLang := c.logoLanguage()
 	endpoint = endpoint + "?api_key=" + c.apiKey
 
 	var payload tmdbImagesResponse
@@ -284,28 +286,45 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 
 	result := &tmdbImagesResult{}
 
-	// Find best logo: prefer English, then no-language, then by vote average
+	// Find best logo: prefer user's language, then English, then no-language.
+	// Skip logos in other languages to avoid showing translated text.
 	if len(payload.Logos) > 0 {
-		sort.Slice(payload.Logos, func(i, j int) bool {
-			li, lj := payload.Logos[i], payload.Logos[j]
-			// Prefer English
-			iEng := li.ISO6391 == "en"
-			jEng := lj.ISO6391 == "en"
-			if iEng != jEng {
-				return iEng
+		var usable []tmdbImageItem
+		for _, l := range payload.Logos {
+			if l.ISO6391 == preferredLang || l.ISO6391 == "en" || l.ISO6391 == "" {
+				usable = append(usable, l)
 			}
-			// Then prefer no-language (often works universally)
-			iNull := li.ISO6391 == ""
-			jNull := lj.ISO6391 == ""
-			if iNull != jNull {
-				return iNull
+		}
+		if len(usable) > 0 {
+			sort.Slice(usable, func(i, j int) bool {
+				li, lj := usable[i], usable[j]
+				// Prefer user's language first
+				if preferredLang != "" && preferredLang != "en" {
+					iPref := li.ISO6391 == preferredLang
+					jPref := lj.ISO6391 == preferredLang
+					if iPref != jPref {
+						return iPref
+					}
+				}
+				// Then English
+				iEng := li.ISO6391 == "en"
+				jEng := lj.ISO6391 == "en"
+				if iEng != jEng {
+					return iEng
+				}
+				// Then no-language over anything else
+				iNull := li.ISO6391 == ""
+				jNull := lj.ISO6391 == ""
+				if iNull != jNull {
+					return iNull
+				}
+				// Finally sort by vote average
+				return li.VoteAverage > lj.VoteAverage
+			})
+			result.Logo = buildTMDBImage(usable[0].FilePath, tmdbLogoSize, "logo")
+			if result.Logo != nil {
+				result.Logo.IsDark = c.isImageDark(ctx, result.Logo.URL)
 			}
-			// Finally sort by vote average
-			return li.VoteAverage > lj.VoteAverage
-		})
-		result.Logo = buildTMDBImage(payload.Logos[0].FilePath, tmdbLogoSize, "logo")
-		if result.Logo != nil {
-			result.Logo.IsDark = c.isImageDark(ctx, result.Logo.URL)
 		}
 	}
 
@@ -427,6 +446,25 @@ func (c *tmdbClient) fetchSeriesGenres(ctx context.Context, tmdbID int64) ([]str
 		}
 	}
 	return genres, nil
+}
+
+// logoLanguage returns the 2-letter ISO 639-1 language code for logo filtering.
+// Handles inputs like "en", "eng", "en-US", "pt-BR", etc.
+func (c *tmdbClient) logoLanguage() string {
+	lang := strings.TrimSpace(c.language)
+	if lang == "" {
+		return "en"
+	}
+	lang = strings.ReplaceAll(lang, "_", "-")
+	// Convert 3-letter codes first
+	if len(lang) == 3 {
+		return iso639_2to1(lang)
+	}
+	// Extract 2-letter prefix from "en-US" style
+	if len(lang) >= 2 {
+		return strings.ToLower(lang[:2])
+	}
+	return "en"
 }
 
 func normalizeLanguage(lang string) string {
