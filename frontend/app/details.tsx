@@ -2422,68 +2422,72 @@ export default function DetailsScreen() {
           <SpatialNavigationNode orientation="horizontal">
             {(playback.prequeueDisplayInfo?.audioTracks?.length || playback.prequeueDisplayInfo?.subtitleTracks?.length) ? (
               <View style={styles.tvTrackSelectionContainer}>
-                {playback.prequeueDisplayInfo!.audioTracks && playback.prequeueDisplayInfo!.audioTracks.length > 0 && (
-                  <SpatialNavigationFocusableView
-                    onSelect={() => playback.setShowAudioTrackModal(true)}
-                    onFocus={handleActionsFocusDismissTrailer}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                        <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                        <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                <View style={styles.tvTrackSelectionWrapper}>
+                  {playback.prequeueDisplayInfo!.audioTracks && playback.prequeueDisplayInfo!.audioTracks.length > 0 && (
+                    <SpatialNavigationFocusableView
+                      style={styles.tvTrackSelectionItem}
+                      onSelect={() => playback.setShowAudioTrackModal(true)}
+                      onFocus={handleActionsFocusDismissTrailer}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                          <Ionicons name="volume-high" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                            {(() => {
+                              const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
+                              const track = selectedIdx !== undefined && selectedIdx >= 0
+                                ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
+                                : playback.prequeueDisplayInfo?.audioTracks?.[0];
+                              if (!track) return 'Default';
+                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                            })()}
+                          </Text>
                           {(() => {
                             const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
                             const track = selectedIdx !== undefined && selectedIdx >= 0
                               ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
                               : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                            if (!track) return 'Default';
-                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                            if (track?.codec) {
+                              return (
+                                <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                                  {track.codec.toUpperCase()}
+                                </Text>
+                              );
+                            }
+                            return null;
                           })()}
-                        </Text>
-                        {(() => {
-                          const selectedIdx = playback.trackOverrideAudio ?? playback.prequeueDisplayInfo?.selectedAudioTrack;
-                          const track = selectedIdx !== undefined && selectedIdx >= 0
-                            ? playback.prequeueDisplayInfo?.audioTracks?.find((t) => t.index === selectedIdx)
-                            : playback.prequeueDisplayInfo?.audioTracks?.[0];
-                          if (track?.codec) {
-                            return (
-                              <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
-                                {track.codec.toUpperCase()}
-                              </Text>
-                            );
-                          }
-                          return null;
-                        })()}
-                        {playback.prequeueDisplayInfo!.audioTracks!.length > 1 && (
+                          {playback.prequeueDisplayInfo!.audioTracks!.length > 1 && (
+                            <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
+                          )}
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  )}
+                  {(playback.prequeueDisplayInfo!.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo!.subtitleTracks?.length ?? 0) > 0 && (
+                    <View style={styles.tvTrackSelectionDivider} />
+                  )}
+                  {playback.prequeueDisplayInfo!.subtitleTracks && playback.prequeueDisplayInfo!.subtitleTracks.length > 0 && (
+                    <SpatialNavigationFocusableView
+                      style={styles.tvTrackSelectionItem}
+                      onSelect={() => playback.setShowSubtitleTrackModal(true)}
+                      onFocus={handleActionsFocusDismissTrailer}>
+                      {({ isFocused }: { isFocused: boolean }) => (
+                        <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
+                          <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
+                          <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
+                            {(() => {
+                              const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
+                              if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                              const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
+                              if (!track) return 'Off';
+                              return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                            })()}
+                          </Text>
                           <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
-                        )}
-                      </View>
-                    )}
-                  </SpatialNavigationFocusableView>
-                )}
-                {(playback.prequeueDisplayInfo!.audioTracks?.length ?? 0) > 0 && (playback.prequeueDisplayInfo!.subtitleTracks?.length ?? 0) > 0 && (
-                  <Text style={styles.prequeueTrackSeparator}>{'\u2022'}</Text>
-                )}
-                {playback.prequeueDisplayInfo!.subtitleTracks && playback.prequeueDisplayInfo!.subtitleTracks.length > 0 && (
-                  <SpatialNavigationFocusableView
-                    onSelect={() => playback.setShowSubtitleTrackModal(true)}
-                    onFocus={handleActionsFocusDismissTrailer}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.prequeueTrackPressable, isFocused && styles.prequeueTrackFocused]}>
-                        <Ionicons name="text" size={16 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.secondary} />
-                        <Text style={[styles.prequeueTrackValue, isFocused && styles.prequeueTrackValueFocused]} numberOfLines={1}>
-                          {(() => {
-                            const selectedIdx = playback.trackOverrideSubtitle ?? playback.prequeueDisplayInfo?.selectedSubtitleTrack;
-                            if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
-                            const track = playback.prequeueDisplayInfo?.subtitleTracks?.find((t) => t.index === selectedIdx);
-                            if (!track) return 'Off';
-                            return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
-                          })()}
-                        </Text>
-                        <Ionicons name="chevron-forward" size={12 * tvScale} color={isFocused ? theme.colors.text.inverse : theme.colors.text.muted} />
-                      </View>
-                    )}
-                  </SpatialNavigationFocusableView>
-                )}
+                        </View>
+                      )}
+                    </SpatialNavigationFocusableView>
+                  )}
+                </View>
               </View>
             ) : (
               <View style={styles.tvTrackSelectionPlaceholder} />

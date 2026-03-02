@@ -423,9 +423,9 @@ export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
       gap: isTV ? theme.spacing.sm : theme.spacing.xs,
       // On mobile, limit width so both audio and subtitle fit on one line
       ...(isTV ? {
-        paddingVertical: theme.spacing.xs,
-        paddingHorizontal: theme.spacing.sm,
-        borderRadius: theme.radius.sm,
+        flex: 1,
+        paddingVertical: theme.spacing.sm,
+        paddingHorizontal: theme.spacing.md,
       } : { flex: 1, maxWidth: '48%' }),
     },
     prequeueTrackFocused: {
@@ -434,11 +434,25 @@ export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
     prequeueTrackValueFocused: {
       color: theme.colors.text.inverse,
     },
+    tvTrackSelectionWrapper: {
+      flexDirection: 'row' as const,
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.border.subtle,
+      overflow: 'hidden' as const,
+    },
+    tvTrackSelectionItem: {
+      alignSelf: 'stretch' as const,
+    },
+    tvTrackSelectionDivider: {
+      width: 1,
+      backgroundColor: theme.colors.border.subtle,
+    },
     tvTrackSelectionContainer: {
       // Match prequeueInfoContainer positioning for TV
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
-      gap: theme.spacing.sm,
       marginLeft: tvScale * 48,
       marginTop: -(tvScale * 16),
       marginBottom: tvScale * 16, // Space before next section
