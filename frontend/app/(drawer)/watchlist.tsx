@@ -1514,7 +1514,7 @@ export default function WatchlistScreen() {
               loadingMore={exploreLoadingMore}
               hasMoreItems={hasMoreItems}
               ListHeaderComponent={personHeaderComponent}
-              listKey={isPersonMode ? filmographySort : undefined}
+              listKey={`${isPersonMode ? filmographySort : 'default'}-genres${availableGenres.length}`}
             />
           </SpatialNavigationNode>
         </View>
