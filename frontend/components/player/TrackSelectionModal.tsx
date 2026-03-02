@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, findNodeHandle, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import {
@@ -50,6 +50,23 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
 
   const selectedLabel = useMemo(() => options.find((option) => option.id === selectedId)?.label, [options, selectedId]);
 
+  // Explicit focus bridge: overflow:hidden on the scroll container creates a focus
+  // boundary that prevents the native TV focus engine from reaching the footer.
+  // We capture node handles for the first footer button and the last list item so
+  // we can wire nextFocusDown / nextFocusUp explicitly.
+  const [footerNodeHandle, setFooterNodeHandle] = useState<number | null>(null);
+  const footerButtonCallbackRef = useCallback((node: View | null) => {
+    if (node) {
+      setFooterNodeHandle(findNodeHandle(node as unknown as React.Component));
+    }
+  }, []);
+  const [lastOptionNodeHandle, setLastOptionNodeHandle] = useState<number | null>(null);
+  const lastOptionCallbackRef = useCallback((node: View | null) => {
+    if (node) {
+      setLastOptionNodeHandle(findNodeHandle(node as unknown as React.Component));
+    }
+  }, []);
+
   // Manual scroll handling for TV platforms using animated transform
   const scrollOffsetRef = useRef(new Animated.Value(0)).current;
   const itemLayoutsRef = useRef<{ y: number; height: number }[]>([]);
@@ -82,13 +99,15 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     return Math.min(Math.round(720 * tvS), screenHeight * 0.7);
   }, [screenHeight, tvS]);
 
-  // Reset scroll position when modal opens/closes
+  // Reset scroll position and focus handles when modal opens/closes
   useEffect(() => {
     if (!visible) {
       scrollOffsetRef.setValue(0);
       currentScrollRef.current = 0;
       itemLayoutsRef.current = [];
       contentHeightRef.current = 0;
+      setFooterNodeHandle(null);
+      setLastOptionNodeHandle(null);
     }
   }, [visible, scrollOffsetRef]);
 
@@ -438,14 +457,17 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
     const shouldHaveInitialFocus = option.id === defaultFocusOptionId;
 
     if (Platform.isTV) {
+      const isLastOption = index === options.length - 1;
       // TV: Use native Pressable for proper select handling inside Modals
       // (SpatialNavigationFocusableView can't receive select events inside tvOS Modal)
       return (
         <Pressable
           key={option.id}
+          ref={isLastOption ? lastOptionCallbackRef : undefined}
           onPress={() => handleOptionSelect(option.id)}
           onFocus={() => handleItemFocus(index)}
-          hasTVPreferredFocus={shouldHaveInitialFocus}>
+          hasTVPreferredFocus={shouldHaveInitialFocus}
+          nextFocusDown={isLastOption && footerNodeHandle ? footerNodeHandle : undefined}>
           {({ focused: isFocused }) => (
             <View
               onLayout={(event) => {
@@ -589,6 +611,9 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                 <View style={styles.modalFooter}>
                   {onSearchSubtitles && (
                     <Pressable
+                      ref={onSearchSubtitles ? footerButtonCallbackRef : undefined}
+                      nextFocusDown={onSearchSubtitles ? (footerNodeHandle ?? undefined) : undefined}
+                      nextFocusUp={lastOptionNodeHandle ?? undefined}
                       onPress={() => {
                         console.log('[TrackSelectionModal] Search Online pressed');
                         handleSearchSubtitles();
@@ -603,6 +628,9 @@ export const TrackSelectionModal: React.FC<TrackSelectionModalProps> = ({
                     </Pressable>
                   )}
                   <Pressable
+                    ref={!onSearchSubtitles ? footerButtonCallbackRef : undefined}
+                    nextFocusDown={!onSearchSubtitles ? (footerNodeHandle ?? undefined) : undefined}
+                    nextFocusUp={lastOptionNodeHandle ?? undefined}
                     onPress={handleClose}
                     hasTVPreferredFocus={!hasOptions && !onSearchSubtitles}>
                     {({ focused: isFocused }) => (
