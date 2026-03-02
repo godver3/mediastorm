@@ -34,7 +34,7 @@ import {
 } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { focusTextInputTV, prefocusTextInputTV } from '@/utils/tv-text-input';
-import { responsiveSize, tvScale } from '@/theme/tokens/tvScale';
+import { isTV, TV_REFERENCE_HEIGHT } from '@/theme/tokens/tvScale';
 
 type ResultTitle = Title & { uniqueKey: string };
 
@@ -125,6 +125,8 @@ function calculateSimilarity(
 export default function SearchScreen() {
   const theme = useTheme();
   const { width: screenWidth, height: screenHeight } = useTVDimensions();
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+  const vh = effectiveHeight / TV_REFERENCE_HEIGHT;
   const styles = useMemo(() => createStyles(theme, screenWidth, screenHeight), [theme, screenWidth, screenHeight]);
   const inputRef = useRef<TextInput>(null);
   const router = useRouter();
@@ -890,9 +892,12 @@ export default function SearchScreen() {
                   {filterOptions.map((option) => {
                     const isFilterActive = filter === option.key;
                     // Match TVActionButton sizing exactly
-                    const scale = tvScale(1.375, 1);
+                    // Theme values (spacing, typography) are already platform-scaled,
+                    // so the 1.375x multiplier applies uniformly. Only raw pixel
+                    // values (icon size) need additional vh scaling.
+                    const scale = Platform.isTV ? 1.375 : 1;
                     const baseIconSize = 24;
-                    const scaledIconSize = tvScale(baseIconSize * 1.375, baseIconSize);
+                    const scaledIconSize = Platform.isTV ? Math.round(baseIconSize * 1.375 * vh) : baseIconSize;
                     const paddingH = theme.spacing.md * scale;
                     const paddingV = theme.spacing.sm * scale;
                     const borderRadius = theme.radius.md * scale;
@@ -977,9 +982,14 @@ export default function SearchScreen() {
   );
 }
 
-const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: number) => {
-  // Calculate card dimensions for proper grid layout
+const createStyles = (theme: NovaTheme, screenWidth: number, screenHeight: number) => {
+  const isTVPlatform = Platform.isTV;
   const isCompact = theme.breakpoint === 'compact';
+
+  // Ensure we have valid screen dimensions (fallback to 1080p for TV)
+  const effectiveHeight = screenHeight > 0 ? screenHeight : isTV ? 1080 : 812;
+  // Viewport-height ratio: 1.0 on tvOS (1080p), ~0.5 on Android TV
+  const vh = effectiveHeight / TV_REFERENCE_HEIGHT;
 
   // Grid configuration - use 4 columns on wide mobile screens (foldables, tablets)
   const isWideCompact = isCompact && screenWidth >= 600;
@@ -1056,14 +1066,12 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     searchInput: {
       flex: 1,
-      // Android TV renders larger than tvOS, so use smaller font size
-      fontSize: isCompact ? theme.typography.body.lg.fontSize : Platform.OS === 'android' ? 16 : 32,
+      fontSize: isCompact ? theme.typography.body.lg.fontSize : Math.round(32 * vh),
       color: theme.colors.text.primary,
-      paddingHorizontal: isCompact ? theme.spacing.md : Platform.OS === 'android' ? theme.spacing.sm : theme.spacing.lg,
-      paddingVertical: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
+      paddingHorizontal: isCompact ? theme.spacing.md : Math.round(16 * vh),
+      paddingVertical: isCompact ? theme.spacing.sm : Math.round(12 * vh),
       backgroundColor: 'transparent',
-      // Android TV renders larger than tvOS, so use smaller minHeight
-      minHeight: isCompact ? 44 : Platform.OS === 'android' ? 36 : 60,
+      minHeight: isCompact ? 44 : Math.round(60 * vh),
     },
     searchInputFocused: {
       // Focus styling handled by searchInputBox
@@ -1142,21 +1150,20 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     badge: {
       position: 'absolute',
-      top: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
-      right: isCompact ? theme.spacing.xs : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.sm,
+      top: isCompact ? theme.spacing.xs : Math.round(8 * vh),
+      right: isCompact ? theme.spacing.xs : Math.round(8 * vh),
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      paddingHorizontal: isCompact ? theme.spacing.sm : Platform.OS === 'android' ? theme.spacing.xs : theme.spacing.md,
-      paddingVertical: isCompact ? 2 : Platform.OS === 'android' ? 1 : theme.spacing.xs,
+      paddingHorizontal: isCompact ? theme.spacing.sm : Math.round(12 * vh),
+      paddingVertical: isCompact ? 2 : Math.round(4 * vh),
       borderRadius: theme.radius.sm,
-      borderWidth: isCompact ? 1 : Platform.OS === 'android' ? 1 : 2,
+      borderWidth: isCompact ? 1 : Math.round(2 * vh),
       borderColor: theme.colors.accent.primary,
     },
     badgeText: {
       ...theme.typography.caption.sm,
       color: theme.colors.accent.primary,
       fontWeight: '700',
-      // Android TV renders larger, use smaller font
-      fontSize: isCompact ? 10 : Platform.OS === 'android' ? 10 : 16,
+      fontSize: isCompact ? 10 : Math.round(16 * vh),
       letterSpacing: 0.5,
     },
     cardTextContainer: {
@@ -1174,8 +1181,10 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       ...StyleSheet.absoluteFillObject,
     },
     cardTitle: {
-      ...(Platform.isTV ? theme.typography.body.lg : theme.typography.body.md),
-      ...(Platform.isTV && Platform.OS === 'ios'
+      ...(isTVPlatform ? theme.typography.body.lg : theme.typography.body.md),
+      // tvOS needs upscaled card text for readability; Android TV theme
+      // typography is already vh-scaled to the correct size.
+      ...(isTVPlatform && Platform.OS === 'ios'
         ? {
             fontSize: Math.round(theme.typography.body.lg.fontSize * 1.5),
             lineHeight: Math.round(theme.typography.body.lg.lineHeight * 1.5),
@@ -1187,8 +1196,8 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
       fontWeight: '600',
     },
     cardYear: {
-      ...(Platform.isTV ? theme.typography.body.md : theme.typography.caption.sm),
-      ...(Platform.isTV && Platform.OS === 'ios'
+      ...(isTVPlatform ? theme.typography.body.md : theme.typography.caption.sm),
+      ...(isTVPlatform && Platform.OS === 'ios'
         ? {
             fontSize: Math.round(theme.typography.body.md.fontSize * 1.25),
             lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.25),
@@ -1308,7 +1317,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number, _screenHeight: numb
     },
     recentSearchTextTV: {
       ...theme.typography.body.lg,
-      fontSize: responsiveSize(theme.typography.body.lg.fontSize * 1.25, screenWidth),
+      fontSize: Math.round(theme.typography.body.lg.fontSize * 1.25),
       color: theme.colors.text.primary,
       flex: 1,
     },
