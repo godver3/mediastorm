@@ -11,7 +11,7 @@ import {
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { responsiveSize } from '@/theme/tokens/tvScale';
+import { responsiveSize, isAndroidTV } from '@/theme/tokens/tvScale';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
@@ -190,6 +190,10 @@ const createStyles = (theme: NovaTheme) =>
       ...theme.typography.body.md,
       color: theme.colors.text.muted,
       marginTop: 4,
+      ...(isAndroidTV ? {
+        fontSize: Math.round(theme.typography.body.md.fontSize * 1.4),
+        lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.4),
+      } : null),
     },
     tvRow: {
       flex: 1,

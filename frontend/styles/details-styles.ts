@@ -265,9 +265,9 @@ export const createDetailsStyles = (theme: NovaTheme, screenHeight = 0) => {
       maxWidth: theme.breakpoint === 'compact' ? '100%' : '60%',
       ...(isTV
         ? {
-            // TV description - use tvTitleScale (no Android TV reduction for readability)
-            fontSize: Math.round(theme.typography.body.lg.fontSize * tvTitleScale),
-            lineHeight: Math.round(theme.typography.body.lg.lineHeight * tvTitleScale),
+            // TV description - use tvTitleScale, Android TV bumped for readability
+            fontSize: Math.round(theme.typography.body.lg.fontSize * (isAndroidTV ? 1.2 : tvTitleScale)),
+            lineHeight: Math.round(theme.typography.body.lg.lineHeight * (isAndroidTV ? 1.2 : tvTitleScale)),
             marginLeft: tvScale * 48,
           }
         : null),

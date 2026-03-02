@@ -7,7 +7,7 @@ import { Image } from '@/components/Image';
 
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
-import { responsiveSize } from '@/theme/tokens/tvScale';
+import { responsiveSize, isAndroidTV } from '@/theme/tokens/tvScale';
 
 interface BaseCardProps {
   isFocused?: boolean;
@@ -125,7 +125,7 @@ export function ListCard(props: ListCardProps) {
                 <CardIcon name={props.iconName} family={props.iconFamily} size={iconSize} />
               )}
               <View style={{ flex: 1 }}>
-                <Text style={styles.gradientTitle} numberOfLines={Platform.isTV ? 1 : 2}>
+                <Text style={styles.gradientTitle} numberOfLines={isAndroidTV ? 2 : Platform.isTV ? 1 : 2}>
                   {props.title}
                 </Text>
                 {props.subtitle && (
@@ -233,7 +233,7 @@ const createStyles = (theme: NovaTheme) =>
     },
     collageCount: {
       color: 'rgba(255,255,255,0.7)',
-      fontSize: Platform.isTV ? responsiveSize(14, 11) : 11,
+      fontSize: Platform.isTV ? responsiveSize(isAndroidTV ? 19 : 14, 11) : 11,
       marginTop: 2,
     },
     // Gradient
@@ -259,18 +259,18 @@ const createStyles = (theme: NovaTheme) =>
     },
     gradientTitle: {
       color: theme.colors.text.primary,
-      fontSize: Platform.isTV ? responsiveSize(18, 14) : 12,
+      fontSize: Platform.isTV ? responsiveSize(isAndroidTV ? 22 : 18, 14) : 12,
       fontWeight: '600',
     },
     gradientSubtitle: {
       color: theme.colors.text.secondary,
-      fontSize: Platform.isTV ? responsiveSize(13, 10) : 11,
+      fontSize: Platform.isTV ? responsiveSize(isAndroidTV ? 18 : 13, 10) : 11,
       marginTop: 2,
     },
     // Backdrop
     backdropSeed: {
       color: 'rgba(255,255,255,0.6)',
-      fontSize: Platform.isTV ? responsiveSize(13, 10) : 10,
+      fontSize: Platform.isTV ? responsiveSize(isAndroidTV ? 18 : 13, 10) : 10,
       fontWeight: '500',
       marginBottom: 2,
     },

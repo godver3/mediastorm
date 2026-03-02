@@ -225,9 +225,9 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.body.md,
       ...(isTV
         ? {
-            // Design for tvOS at 1.5x, Android TV auto-scales
-            fontSize: Math.round(theme.typography.body.md.fontSize * 1.5 * tvTextScale),
-            lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.5 * tvTextScale),
+            // Design for tvOS at 1.5x, Android TV at 2.1x
+            fontSize: Math.round(theme.typography.body.md.fontSize * (isAndroidTV ? 2.1 : 1.5) * tvTextScale),
+            lineHeight: Math.round(theme.typography.body.md.lineHeight * (isAndroidTV ? 2.1 : 1.5) * tvTextScale),
           }
         : null),
       color: theme.colors.text.primary,
@@ -253,9 +253,9 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.body.sm,
       ...(isTV
         ? {
-            // Design for tvOS at 1.25x, Android TV auto-scales
-            fontSize: Math.round(theme.typography.body.sm.fontSize * 1.25 * tvTextScale),
-            lineHeight: Math.round(theme.typography.body.sm.lineHeight * 1.25 * tvTextScale),
+            // Design for tvOS at 1.25x, Android TV at 2.0x
+            fontSize: Math.round(theme.typography.body.sm.fontSize * (isAndroidTV ? 2.0 : 1.25) * tvTextScale),
+            lineHeight: Math.round(theme.typography.body.sm.lineHeight * (isAndroidTV ? 2.0 : 1.25) * tvTextScale),
           }
         : null),
       color: theme.colors.text.secondary,
@@ -279,10 +279,10 @@ const createStyles = (theme: NovaTheme) => {
     },
     subtitleTV: {
       fontSize: isTV
-        ? Math.round(theme.typography.body.sm.fontSize * 1.25 * tvTextScale)
+        ? Math.round(theme.typography.body.sm.fontSize * (isAndroidTV ? 2.1 : 1.25) * tvTextScale)
         : theme.typography.body.sm.fontSize,
       lineHeight: isTV
-        ? Math.round(theme.typography.body.sm.lineHeight * 1.25 * tvTextScale)
+        ? Math.round(theme.typography.body.sm.lineHeight * (isAndroidTV ? 2.1 : 1.25) * tvTextScale)
         : theme.typography.body.sm.lineHeight,
       color: '#fff',
       textAlign: 'center',
@@ -298,12 +298,12 @@ const createStyles = (theme: NovaTheme) => {
     // Android TV: reduce size by 30% (multiply by 0.7)
     badge: {
       position: 'absolute',
-      top: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
-      right: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
+      top: Math.round(theme.spacing.sm * (isAndroidTV ? 0.5 : 1)),
+      right: Math.round(theme.spacing.sm * (isAndroidTV ? 0.5 : 1)),
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      paddingHorizontal: Math.round(theme.spacing.md * (isAndroidTV ? 0.7 : 1)),
-      paddingVertical: Math.round(theme.spacing.xs * (isAndroidTV ? 0.7 : 1)),
-      borderRadius: Math.round(theme.radius.sm * (isAndroidTV ? 0.7 : 1)),
+      paddingHorizontal: Math.round(theme.spacing.md * (isAndroidTV ? 0.5 : 1)),
+      paddingVertical: Math.round(theme.spacing.xs * (isAndroidTV ? 0.5 : 1)),
+      borderRadius: Math.round(theme.radius.sm * (isAndroidTV ? 0.5 : 1)),
       borderWidth: isAndroidTV ? 1 : 2,
       borderColor: theme.colors.accent.primary,
       zIndex: 2,
@@ -312,7 +312,7 @@ const createStyles = (theme: NovaTheme) => {
       ...theme.typography.caption.sm,
       color: theme.colors.accent.primary,
       fontWeight: '700',
-      fontSize: Math.round(16 * (isAndroidTV ? 0.7 : 1)),
+      fontSize: Math.round(16 * (isAndroidTV ? 0.5 : 1)),
       letterSpacing: 0.5,
     },
     progressBadge: {
@@ -648,8 +648,9 @@ const MediaItem = memo(function MediaItem({
           <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
         </View>
       )}
-      {/* Progress badge - hide if less than 5% */}
-      {title.mediaType !== 'more' &&
+      {/* Progress badge - hide if less than 5%, hidden on Android TV */}
+      {!isAndroidTV &&
+        title.mediaType !== 'more' &&
         title.mediaType !== 'explore' &&
         shouldShowBadge('watchProgress', badgeVisibility) &&
         title.percentWatched !== undefined &&

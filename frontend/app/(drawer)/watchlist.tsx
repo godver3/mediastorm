@@ -1760,8 +1760,8 @@ const createStyles = (theme: NovaTheme) => {
     },
     filteredCountTV: {
       ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * tvScale,
-      lineHeight: theme.typography.label.md.lineHeight * tvScale,
+      fontSize: theme.typography.label.md.fontSize * (isNonTvosTV ? 1.3 : 1) * tvScale,
+      lineHeight: theme.typography.label.md.lineHeight * (isNonTvosTV ? 1.3 : 1) * tvScale,
       color: theme.colors.text.muted,
       marginLeft: 'auto' as const,
     },

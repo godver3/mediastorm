@@ -10,7 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import type { SeriesEpisode } from '@/services/api';
 import type { NovaTheme } from '@/theme';
-import { tvScale } from '@/theme/tokens/tvScale';
+import { tvScale, isAndroidTV } from '@/theme/tokens/tvScale';
 
 // Pre-computed gradient props - avoids creating new arrays on every render
 const GRADIENT_COLORS = ['transparent', 'rgba(0, 0, 0, 0.85)'] as const;
@@ -167,13 +167,13 @@ const createStyles = (theme: NovaTheme) =>
       top: tvScale(8),
       left: tvScale(8),
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: tvScale(10),
-      paddingVertical: tvScale(4),
+      paddingHorizontal: tvScale(isAndroidTV ? 14 : 10),
+      paddingVertical: tvScale(isAndroidTV ? 6 : 4),
       borderRadius: tvScale(4),
     },
     episodeBadgeText: {
       color: '#fff',
-      fontSize: tvScale(14),
+      fontSize: tvScale(isAndroidTV ? 20 : 14),
       fontWeight: '700',
     },
     progressBadge: {
@@ -181,13 +181,13 @@ const createStyles = (theme: NovaTheme) =>
       top: tvScale(8),
       right: tvScale(8),
       backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: tvScale(8),
-      paddingVertical: tvScale(4),
+      paddingHorizontal: tvScale(isAndroidTV ? 12 : 8),
+      paddingVertical: tvScale(isAndroidTV ? 6 : 4),
       borderRadius: tvScale(4),
     },
     progressBadgeText: {
       color: theme.colors.accent.primary,
-      fontSize: tvScale(12),
+      fontSize: tvScale(isAndroidTV ? 18 : 12),
       fontWeight: '700',
     },
     watchedBadge: {
@@ -229,7 +229,7 @@ const createStyles = (theme: NovaTheme) =>
     },
     episodeCode: {
       color: '#fff',
-      fontSize: tvScale(14),
+      fontSize: tvScale(isAndroidTV ? 20 : 14),
       fontWeight: '700',
       textShadowColor: 'rgba(0, 0, 0, 0.8)',
       textShadowOffset: { width: 0, height: 1 },
@@ -262,13 +262,13 @@ const createStyles = (theme: NovaTheme) =>
       bottom: tvScale(8),
       left: tvScale(8),
       backgroundColor: theme.colors.accent.primary,
-      paddingHorizontal: tvScale(8),
-      paddingVertical: tvScale(3),
+      paddingHorizontal: tvScale(isAndroidTV ? 12 : 8),
+      paddingVertical: tvScale(isAndroidTV ? 5 : 3),
       borderRadius: tvScale(4),
     },
     selectedBadgeText: {
       color: theme.colors.text.inverse,
-      fontSize: tvScale(11),
+      fontSize: tvScale(isAndroidTV ? 16 : 11),
       fontWeight: '600',
     },
   });
