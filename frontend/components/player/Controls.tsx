@@ -871,19 +871,21 @@ const Controls: React.FC<ControlsProps> = ({
                   )}
                   {/* Info button for TV platforms (not for live TV) */}
                   {isTvPlatform && streamInfo && !isLiveTV && (
-                    <FocusablePressable
-                      ref={infoButtonRef}
-                      icon="information-circle"
-                      focusKey="info-button"
-                      onSelect={handleOpenInfoMenu}
-                      onFocus={handleInfoFocus}
-                      style={[styles.controlButton, styles.trackButton]}
-                      disabled={isSeeking || activeMenu !== null}
-                    />
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      <FocusablePressable
+                        ref={infoButtonRef}
+                        icon="information-circle"
+                        focusKey="info-button"
+                        onSelect={handleOpenInfoMenu}
+                        onFocus={handleInfoFocus}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                      />
+                    </View>
                   )}
                   {/* Speed button for TV platforms - after info button */}
                   {isTvPlatform && hasSpeedSelection && (
-                    <View style={styles.tvSpeedGroup} pointerEvents="box-none">
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
                       <FocusablePressable
                         ref={speedButtonRef}
                         icon="speedometer-outline"
@@ -893,7 +895,7 @@ const Controls: React.FC<ControlsProps> = ({
                         style={[styles.controlButton, styles.trackButton]}
                         disabled={isSeeking || activeMenu !== null}
                       />
-                      <Text style={styles.trackLabel}>{speedSummary}</Text>
+                      <Text style={[styles.trackLabel, styles.tvTrackLabel]}>{speedSummary}</Text>
                     </View>
                   )}
                 </View>
@@ -1090,11 +1092,6 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number, screenHeight: 
       position: 'relative' as const,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    tvSpeedGroup: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginLeft: theme.spacing.md,
     },
     speedBadge: {
       position: 'absolute' as const,
