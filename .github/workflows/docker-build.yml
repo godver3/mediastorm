@@ -28,6 +28,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Read version
+        id: version
+        run: echo "version=$(cat backend/version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -37,6 +41,15 @@ jobs:
           push: true
           tags: |
             godver3/mediastorm:latest
+            godver3/mediastorm:${{ steps.version.outputs.version }}
             godver3/mediastorm:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create version tag
+        run: |
+          VERSION="v${{ steps.version.outputs.version }}"
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            git tag "$VERSION"
+            git push origin "$VERSION"
+          fi
