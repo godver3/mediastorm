@@ -4014,6 +4014,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	// Fetch translations
 	translatedName := base.Name
 	translatedOverview := base.Overview
+	gotTranslatedOverview := false
 
 	if translation, err := s.client.movieTranslations(tvdbID, s.client.language); err == nil && translation != nil {
 		if strings.TrimSpace(translation.Name) != "" {
@@ -4022,9 +4023,25 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}
 		if strings.TrimSpace(translation.Overview) != "" {
 			translatedOverview = translation.Overview
+			gotTranslatedOverview = true
 		}
 	} else if err != nil {
 		log.Printf("[metadata] failed to fetch movie translations tvdbId=%d lang=%s err=%v", tvdbID, s.client.language, err)
+	}
+
+	// If TVDB didn't provide a translated overview, try TMDB which often has better translations
+	tmdbIDForOverview := req.TMDBID
+	if !gotTranslatedOverview && s.tmdb != nil && s.tmdb.isConfigured() {
+		if tmdbIDForOverview <= 0 {
+			// We may not have the TMDB ID yet — try to get it from extended data below.
+			// For now, skip and let the hydration step handle it.
+			log.Printf("[metadata] no translated overview from TVDB and no TMDB ID yet tvdbId=%d lang=%s", tvdbID, s.client.language)
+		} else {
+			if tmdbMovie, err := s.tmdb.movieDetails(ctx, tmdbIDForOverview); err == nil && tmdbMovie != nil && strings.TrimSpace(tmdbMovie.Overview) != "" {
+				translatedOverview = tmdbMovie.Overview
+				log.Printf("[metadata] using TMDB overview fallback for movie tvdbId=%d tmdbId=%d lang=%s", tvdbID, tmdbIDForOverview, s.tmdb.language)
+			}
+		}
 	}
 
 	finalName := strings.TrimSpace(firstNonEmpty(translatedName, base.Name, req.Name))
@@ -4090,6 +4107,14 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	}
 	if req.TMDBID > 0 {
 		movieTitle.TMDBID = req.TMDBID
+	}
+
+	// If TVDB didn't provide a translated overview and we now have a TMDB ID (resolved from extended data), try TMDB
+	if !gotTranslatedOverview && tmdbIDForOverview <= 0 && movieTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if tmdbMovie, err := s.tmdb.movieDetails(ctx, movieTitle.TMDBID); err == nil && tmdbMovie != nil && strings.TrimSpace(tmdbMovie.Overview) != "" {
+			movieTitle.Overview = tmdbMovie.Overview
+			log.Printf("[metadata] using TMDB overview fallback (late resolve) for movie tvdbId=%d tmdbId=%d", tvdbID, movieTitle.TMDBID)
+		}
 	}
 
 	// If TVDB didn't provide images or runtime, try TMDB as fallback now that we have remote IDs.
@@ -4239,6 +4264,24 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	}
 
 	return updated
+}
+
+// maybeHydrateOverviewFromTMDB fills in the overview from TMDB when the TVDB
+// translation didn't provide one in the user's language. The TMDB movieDetails
+// result is cached, so repeated calls for the same ID are essentially free.
+func (s *Service) maybeHydrateOverviewFromTMDB(ctx context.Context, title *models.Title, tmdbID int64) {
+	if title == nil || s.tmdb == nil || !s.tmdb.isConfigured() || tmdbID <= 0 {
+		return
+	}
+	tmdbMovie, err := s.tmdb.movieDetails(ctx, tmdbID)
+	if err != nil || tmdbMovie == nil {
+		return
+	}
+	tmdbOverview := strings.TrimSpace(tmdbMovie.Overview)
+	if tmdbOverview != "" && tmdbOverview != strings.TrimSpace(title.Overview) {
+		title.Overview = tmdbOverview
+		log.Printf("[metadata] hydrated overview from TMDB for tmdbId=%d", tmdbID)
+	}
 }
 
 // cachedReleasesWithCert is the cached structure for movie releases including certification
@@ -5181,6 +5224,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 	}
 
 	var found bool
+	gotTranslatedOverview := false
 
 	// Try TVDB ID from MDBList first
 	if item.TVDBID != nil && *item.TVDBID > 0 {
@@ -5217,6 +5261,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 					}
 					if trans.Overview != "" {
 						title.Overview = trans.Overview
+						gotTranslatedOverview = true
 					}
 				}
 			}
@@ -5304,6 +5349,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 					}
 					if result.Overviews != nil && lang3 != "" && lang3 != "eng" && result.Overviews[lang3] != "" {
 						title.Overview = result.Overviews[lang3]
+						gotTranslatedOverview = true
 					}
 					// Fetch translations for the user's language (authoritative)
 					if trans, err := s.cachedMovieTranslations(tvdbID, s.client.language); err == nil && trans != nil {
@@ -5312,6 +5358,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 						}
 						if trans.Overview != "" {
 							title.Overview = trans.Overview
+							gotTranslatedOverview = true
 						}
 					}
 					found = true
@@ -5394,6 +5441,10 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 		}
 		if tmdbID > 0 {
 			s.enrichMovieReleases(ctx, &title, tmdbID)
+			// If TVDB didn't provide a translated overview, try TMDB
+			if !gotTranslatedOverview {
+				s.maybeHydrateOverviewFromTMDB(ctx, &title, tmdbID)
+			}
 		}
 	}
 
