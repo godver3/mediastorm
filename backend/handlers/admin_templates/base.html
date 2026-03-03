@@ -1114,6 +1114,10 @@
             border-left: 3px solid var(--danger);
         }
 
+        .toast.info {
+            border-left: 3px solid var(--warning);
+        }
+
         .spinner {
             width: 20px;
             height: 20px;
@@ -1659,7 +1663,7 @@
                 <span>${message}</span>
             `;
             container.appendChild(toast);
-            setTimeout(() => toast.remove(), 4000);
+            setTimeout(() => toast.remove(), type === 'info' ? 6000 : 4000);
         }
 
         async function apiCall(url, method = 'GET', data = null) {

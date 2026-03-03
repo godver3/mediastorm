@@ -1408,6 +1408,15 @@
             value = value ? 'true' : 'false';
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
+
+        // Show reminder when adding an AIOStreams scraper
+        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && value === 'aiostreams') {
+            const timeout = currentSettings.streaming?.indexerTimeoutSec || 5;
+            if (timeout <= 5) {
+                showToast('AIOStreams may need more than the default 5s search timeout. Consider increasing it under Search & Resolution.', 'info');
+            }
+        }
+
         // Re-render to update validation indicators (renderSettings runs validation)
         renderSettings();
     }
@@ -2069,7 +2078,14 @@
                 return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
-            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div></div>';
+            let hintHtml = '';
+            if (sectionKey === 'torrentScrapers' && item.type === 'aiostreams' && item.enabled && (currentSettings.streaming?.indexerTimeoutSec || 5) <= 5) {
+                hintHtml = '<div style="margin-top:0.75rem;padding:0.6rem 0.75rem;background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:6px;font-size:0.8rem;color:var(--warning);display:flex;align-items:center;gap:0.5rem;">' +
+                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+                    'AIOStreams typically needs more than the default 5s search timeout. Increase it under <strong>Search &amp; Resolution</strong>.' +
+                    '</div>';
+            }
+            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
         }).join('');
         return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
